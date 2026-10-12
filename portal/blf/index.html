@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Touches des postes</title>
+<link rel="stylesheet" href="./style.css">
+</head>
+<body>
+<div id="app">
+  <header class="topbar">
+    <div class="brand">Touches des postes</div>
+    <div id="conn" class="conn muted">Connexion…</div>
+  </header>
+
+  <!-- Connexion hors portail (tests) -->
+  <section id="standalone" class="card narrow" hidden>
+    <h2>Connexion directe</h2>
+    <p class="muted">Page ouverte hors du portail Wazo : connectez-vous à un serveur pour tester.</p>
+    <label>Serveur <input id="sa-host" placeholder="https://wazo.client.fr"></label>
+    <label>Identifiant <input id="sa-user" autocomplete="username"></label>
+    <label>Mot de passe <input id="sa-pass" type="password" autocomplete="current-password"></label>
+    <p class="muted small">ou</p>
+    <label>Token existant <input id="sa-token"></label>
+    <button id="sa-go" class="primary">Se connecter</button>
+    <p id="sa-err" class="error"></p>
+  </section>
+
+  <main id="main" hidden>
+    <aside id="sidebar">
+      <input id="search" type="search" placeholder="Rechercher un utilisateur…">
+      <div class="tabs">
+        <button data-side="users" class="active">Postes</button>
+        <button data-side="labels">Libellés</button>
+      </div>
+      <ul id="userlist" class="list"></ul>
+      <div id="labelsPane" hidden>
+        <p class="muted small">Touches vers un collègue dont le libellé ne correspond plus à son nom actuel (renommage, faute…). Les libellés volontairement différents peuvent être laissés décochés.</p>
+        <button id="scanLabels">Analyser tous les postes</button>
+        <div id="labelsResult"></div>
+      </div>
+    </aside>
+
+    <section id="workbench">
+      <div id="empty" class="muted center">Choisissez un utilisateur.</div>
+      <div id="editor" hidden>
+        <div class="phonehead">
+          <div>
+            <h2 id="ed-name"></h2>
+            <div id="ed-device" class="muted"></div>
+          </div>
+          <div class="linekeys">
+            <span>Touches ligne</span>
+            <button id="lk-minus" aria-label="moins">−</button>
+            <strong id="lk-val">1</strong>
+            <button id="lk-plus" aria-label="plus">+</button>
+          </div>
+        </div>
+        <div id="warnings"></div>
+        <div id="pages"></div>
+        <div class="actions">
+          <button id="addModule">Afficher un module d'extension</button>
+          <span class="spacer"></span>
+          <label class="inline"><input type="checkbox" id="resync" checked> Resynchroniser le poste</label>
+          <button id="revert">Annuler les modifications</button>
+          <button id="save" class="primary" disabled>Enregistrer</button>
+        </div>
+      </div>
+    </section>
+
+    <aside id="detail" hidden>
+      <h3 id="dt-title"></h3>
+      <label>Type
+        <select id="dt-type">
+          <option value="user">Collègue (BLF)</option>
+          <option value="custom">Numéro</option>
+          <option value="group">Groupe</option>
+          <option value="queue">File d'attente</option>
+          <option value="conference">Conférence</option>
+        </select>
+      </label>
+      <div id="dt-valuewrap"></div>
+      <label>Libellé <input id="dt-label"></label>
+      <label class="inline"><input type="checkbox" id="dt-blf"> Supervision (BLF)</label>
+      <div class="btnrow">
+        <button id="dt-left" title="Déplacer vers la gauche">◀</button>
+        <button id="dt-right" title="Déplacer vers la droite">▶</button>
+        <button id="dt-insert" title="Insérer une case vide avant, les suivantes reculent">Insérer avant</button>
+      </div>
+      <div class="btnrow">
+        <button id="dt-clear" title="La case reste, vide">Vider</button>
+        <button id="dt-delete" class="danger" title="Retire la touche, les suivantes remontent">Supprimer</button>
+      </div>
+      <p class="muted small">Vider : la case reste vide, rien ne bouge.<br>Supprimer : les touches suivantes remontent.</p>
+    </aside>
+  </main>
+
+  <div id="modal" class="modal" hidden><div class="modal-box"><div id="modal-body"></div>
+    <div class="btnrow right"><button id="modal-cancel">Annuler</button><button id="modal-ok" class="primary">Confirmer</button></div></div></div>
+  <div id="toast" class="toast" hidden></div>
+</div>
+<script type="module" src="./app.js"></script>
+</body>
+</html>

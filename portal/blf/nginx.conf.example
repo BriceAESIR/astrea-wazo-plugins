@@ -1,0 +1,17 @@
+# Hébergement du plugin Portal (exemple nginx). HTTPS obligatoire en pratique :
+# le portail est en HTTPS et le navigateur bloque une page HTTP dans un iframe.
+server {
+    listen 443 ssl http2;
+    server_name plugins.exemple.fr;                 # à adapter
+    ssl_certificate     /etc/letsencrypt/live/plugins.exemple.fr/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/plugins.exemple.fr/privkey.pem;
+
+    root /var/www/wazo-portal-blf;
+
+    location / {
+        # Exigé par Wazo sur manifest.json ; sans risque sur le reste (fichiers statiques)
+        add_header Access-Control-Allow-Origin "*" always;
+        add_header Cache-Control "no-cache" always;
+        try_files $uri =404;
+    }
+}

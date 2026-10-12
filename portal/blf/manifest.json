@@ -1,0 +1,18 @@
+{
+  "productType": "portal",
+  "staticTabs": [
+    {
+      "entityId": "astrea-blf-user",
+      "context": ["pbx.users"],
+      "name": "Touches",
+      "contentUrl": "./index.html?view=user"
+    },
+    {
+      "entityId": "astrea-blf-overview",
+      "context": ["pbxMenu"],
+      "name": "Touches des postes",
+      "icon": "Dialpad",
+      "contentUrl": "./index.html?view=overview"
+    }
+  ]
+}
