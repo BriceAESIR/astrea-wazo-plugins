@@ -107,12 +107,15 @@ function refreshFromPortal() { try { applyStack(stackFromContext()); } catch { /
 // Thème du portail : ctx.app.theme est documenté comme « palette Material UI »
 // sans plus de détail ; on accepte un thème complet ({palette, typography,
 // shape}) ou la palette seule. Diagnostic : __blfSdk.getContext().app.theme
+// Dans le portail, on ne suit pas le mode sombre du système : le portail a son
+// propre mode (clair par défaut), donc clair sauf si le thème dit « dark ».
 function applyTheme(theme) {
-  if (!theme || typeof theme !== 'object') return;
-  const pal = theme.palette || theme;
   const root = document.documentElement;
+  console.info('[astrea] thème du portail', theme);
+  const pal = (theme && typeof theme === 'object' && (theme.palette || theme)) || {};
+  root.dataset.theme = (pal.mode || pal.type) === 'dark' ? 'dark' : 'light';
+  if (!theme || typeof theme !== 'object') return;
   const set = (v, x) => { if (typeof x === 'string' && x) root.style.setProperty(v, x); };
-  if (pal.mode === 'dark' || pal.mode === 'light') root.dataset.theme = pal.mode;
   set('--accent', pal.primary?.main);
   set('--accent-ink', pal.primary?.contrastText);
   set('--bg', pal.background?.default);
