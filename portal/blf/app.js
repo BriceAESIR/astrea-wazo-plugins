@@ -414,7 +414,15 @@ function capacityInfo() {
   const [per, maxMods] = EXP[c.exp] || [0, 0];
   return { lk: c.lk, per, maxMods, known: true };
 }
+// Bandeau de recommandation : en grand à l'ouverture, puis réduit à une ligne
+// dans la colonne de gauche dès la première action (poste ouvert, menu).
+function shrinkAdvice() {
+  if ($('advice').hidden) return;
+  $('advice').hidden = true;
+  $('advice-mini').hidden = false;
+}
 function renderEditor() {
+  shrinkAdvice();
   const c = S.cur;
   $('empty').hidden = true;
   $('editor').hidden = false;
@@ -1214,6 +1222,7 @@ function confirmModal(html, onOk, okText = 'Confirmer') {
 $('search').oninput = renderUserList;
 document.querySelectorAll('[data-side]').forEach((b) => (b.onclick = () => {
   const side = b.dataset.side;
+  shrinkAdvice();
   const go = () => {
     const wasDeploy = !$('deploy').hidden || !!S.cur?.tpl;
     if (S.cur?.tpl) { S.cur = null; S.sel = null; $('editor').hidden = true; $('detail').hidden = true; }

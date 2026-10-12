@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Mulish:wght@300..800&display=swap">
-<link rel="stylesheet" href="./style.css?v=0.9.3">
+<link rel="stylesheet" href="./style.css?v=0.9.4">
 </head>
 <body>
 <div id="app">
@@ -46,13 +46,14 @@
       </div>
       <div id="deployPane" hidden>
         <p class="muted small">Créez ou modifiez un modèle (touches ligne comprises), puis appliquez-le à plusieurs utilisateurs en une fois. Les modèles sont enregistrés dans les « Modèles de touches » de Wazo ; le nombre de touches ligne est noté dans le nom (<code>blf-linekeys=N</code>).</p>
-        <p class="muted small">Applique un même jeu de touches à plusieurs utilisateurs en une fois. Sur chaque poste, la touche qui vise son propriétaire est retirée et les suivantes remontent. Les touches ligne de chacun sont respectées.</p>
+        <p class="muted small">Applique un même jeu de touches à plusieurs utilisateurs en une fois. Sur chaque poste, la touche qui vise son propriétaire est retirée et les suivantes remontent. En mode « Remplacer », le nombre de touches ligne du modèle est appliqué (postes Yealink) ; en mode « Ajouter », celui de chacun est conservé.</p>
         <p class="muted small">Les touches sont écrites dans les touches propres à chaque utilisateur : le modèle Wazo n'est pas rattaché, sinon chacun aurait sa propre touche.</p>
       </div>
+      <p id="advice-mini" class="advice-mini" hidden>À utiliser à la place des « Modèles de touches » et des touches de la fiche utilisateur de Wazo.</p>
     </aside>
 
     <section id="workbench">
-      <div class="advice" role="note">
+      <div id="advice" class="advice" role="note">
         <strong>Gérez les touches des postes ici plutôt qu'avec les outils de base de Wazo</strong> (« Modèles de touches », touches de la fiche utilisateur).
         Cet outil respecte la disposition réelle des postes (pages, modules, touches ligne), ne fait jamais superviser un utilisateur par lui-même et garde les libellés à jour. Une modification faite ailleurs peut être écrasée ou décaler les touches.
       </div>
@@ -152,6 +153,6 @@
     <div class="btnrow right"><button id="modal-cancel">Annuler</button><button id="modal-ok" class="primary">Confirmer</button></div></div></div>
   <div id="toast" class="toast" hidden></div>
 </div>
-<script type="module" src="./app.js?v=0.9.3"></script>
+<script type="module" src="./app.js?v=0.9.4"></script>
 </body>
 </html>

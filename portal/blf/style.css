@@ -203,6 +203,13 @@ button.icon:hover:not(:disabled) { color: var(--danger); background: color-mix(i
 .advice { margin: 0 0 20px; padding: 10px 16px; border-left: 4px solid var(--brand-red); border-radius: var(--radius); background: color-mix(in srgb, var(--brand-red) 8%, var(--panel)); color: var(--ink); font-size: .8125rem; line-height: 1.5; }
 .advice strong { display: block; color: color-mix(in srgb, var(--brand-red) 80%, var(--ink)); font-size: .875rem; margin-bottom: 2px; }
 
+/* Colonnes latérales à hauteur d'écran (défilement interne) : le rappel reste
+   visible en bas à gauche et le détail suit quand l'éditeur est long. */
+#sidebar { display: flex; flex-direction: column; }
+#sidebar, #detail { position: sticky; top: 0; align-self: start; height: calc(100vh - 57px); }
+body.in-portal.ready #sidebar, body.in-portal.ready #detail { height: 100vh; }
+.advice-mini { margin: auto -16px -16px; padding: 10px 16px 10px 13px; border-top: 1px solid var(--line); border-left: 3px solid var(--brand-red); background: color-mix(in srgb, var(--brand-red) 6%, var(--panel)); color: var(--muted); font-size: .75rem; line-height: 1.4; }
+
 /* Alertes (MUI Alert « standard ») */
 .warn { display: flex; gap: 12px; align-items: flex-start; background: color-mix(in srgb, var(--warn) 12%, var(--panel)); color: color-mix(in srgb, var(--warn) 45%, var(--ink)); padding: 6px 16px; border-radius: var(--radius); margin-bottom: 8px; font-size: .875rem; line-height: 1.43; }
 .warn::before { content: "!"; flex: none; display: inline-grid; place-items: center; width: 20px; height: 20px; margin-top: 1px; border-radius: 50%; background: var(--warn); color: #fff; font-size: .75rem; font-weight: 700; }
@@ -227,5 +234,6 @@ button.icon:hover:not(:disabled) { color: var(--danger); background: color-mix(i
 @media (max-width: 800px) {
   #main, #main.no-detail, #main.user-mode { grid-template-columns: 1fr; }
   #sidebar { border-right: 0; border-bottom: 1px solid var(--line); max-height: 40vh; }
+  #sidebar, #detail, body.in-portal.ready #sidebar, body.in-portal.ready #detail { position: static; height: auto; }
   #workbench { padding: 16px; }
 }
