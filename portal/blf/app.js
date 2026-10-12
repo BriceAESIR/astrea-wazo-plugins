@@ -219,6 +219,18 @@ function showStandalone() {
 
 async function boot() {
   $('conn').textContent = 'Chargement…';
+  // Autre tenant (ou autre serveur) : tout ce qui est en mémoire appartient à
+  // l'ancien (poste ouvert, modèles, cases cochées du déploiement).
+  const scope = `${S.base}|${S.tenant}`;
+  if (S.scope && S.scope !== scope) {
+    if (isDirty()) toast('Changement de client : modifications non enregistrées abandonnées.', 6000);
+    S.cur = null; S.sel = null;
+    D.templates = null; D.src = null; D.srcLines = 1; D.picked.clear(); D.plan = [];
+    $('editor').hidden = true; $('detail').hidden = true;
+    $('dp-preview').innerHTML = ''; $('dp-source').value = '';
+    if ($('deploy').hidden) $('empty').hidden = false;
+  }
+  S.scope = scope;
   try {
     const [users, devices] = await Promise.all([listAll('/users'), listAll('/devices').catch(() => [])]);
     S.users = users.sort((a, b) => fullName(a).localeCompare(fullName(b), 'fr'));
@@ -234,6 +246,7 @@ async function boot() {
     $('main').hidden = false;
     document.body.classList.add('ready');
     renderUserList();
+    if (!$('deploy').hidden) openDeploy(); // relit modèles et utilisateurs du nouveau tenant
     // Comme contactTab reçoit `contact` dans extra, l'onglet pbx.users reçoit
     // peut-être l'utilisateur affiché : on cherche un uuid connu dans extra.
     const ref = userRefFromExtra() || userRefFrom(location) || userRefFrom({ pathname: document.referrer });
@@ -332,21 +345,38 @@ function cleanDest(d) {
 function cleanKey(k) { return { blf: !!k.blf, label: k.label || null, destination: cleanDest(k.destination || {}) }; }
 const keySig = (k) => (k ? JSON.stringify(cleanKey(k)) : 'null');
 
+// Touches posées (dans Wazo) sur une position de ligne : elles seraient
+// masquées par la tuile « Ligne » puis perdues à l'enregistrement. On les
+// décale juste après les lignes (avertissement affiché, à enregistrer).
+function shiftLineClashes(slots, orig, lineKeys) {
+  const clash = Object.keys(orig).map(Number).filter((p) => p <= lineKeys).sort((a, b) => a - b);
+  if (clash.length) {
+    const moved = clash.map((p) => slots[p - 1]);
+    clash.forEach((p) => { slots[p - 1] = null; });
+    slots.splice(lineKeys, 0, ...moved);
+  }
+  return clash.length;
+}
+let selectSeq = 0;
 async function selectUser(u) {
-  S.sel = null;
+  const seq = ++selectSeq; // clics rapides : seule la dernière demande s'applique
   const dev = userDevice(u);
   const model = dev?.model || null;
   const prof = vendorOf(dev);
   const lk = prof?.linekeys[model] ?? null;
   const exp = prof?.exp(model) ?? null;
-  const data = await api('GET', `/users/${u.uuid}/funckeys`);
+  let data;
+  try { data = await api('GET', `/users/${u.uuid}/funckeys`); } catch (e) { if (seq === selectSeq) toast(`${fullName(u)} : ${e.message}`, 6000); return; }
+  if (seq !== selectSeq) return;
+  S.sel = null;
   const orig = {}, inherited = {};
   for (const [p, k] of Object.entries(data?.keys || {})) (k.inherited ? inherited : orig)[Number(p)] = cleanKey(k);
   const m = (u.userfield || '').match(LK_TOKEN);
   const lineKeys = m ? Number(m[1]) : 1;
   const maxPos = Math.max(0, ...Object.keys(orig).map(Number), ...Object.keys(inherited).map(Number));
   const slots = Array.from({ length: Math.max(maxPos, lineKeys) }, (_, i) => (orig[i + 1] ? structuredClone(orig[i + 1]) : null));
-  S.cur = { user: u, dev, prof, model, lk, exp, orig, inherited, lineKeys, origLineKeys: lineKeys, slots, extraModules: 0, extraPages: 0, pagesLeft: 0 };
+  const clash = shiftLineClashes(slots, orig, lineKeys);
+  S.cur = { user: u, dev, prof, model, lk, exp, orig, inherited, lineKeys, origLineKeys: lineKeys, slots, clash, extraModules: 0, extraPages: 0, pagesLeft: 0 };
   renderUserList();
   renderEditor();
 }
@@ -419,7 +449,7 @@ function renderEditor() {
   if (Object.keys(c.inherited).length) warns.push(`${Object.keys(c.inherited).length} touche(s) héritée(s) d'un modèle de touches partagé : visibles mais non modifiables ici.`);
   if (!isTpl && c.lineKeys !== c.origLineKeys) warns.push('Les touches ligne sont appliquées par le plugin serveur blf-sync à son prochain passage (15 min max).');
   if (isTpl) warns.push(`Modèle : l'aperçu sur ${esc(c.model)} sert seulement à placer les touches ; au déploiement, chaque poste reçoit les mêmes positions. Les touches ligne sont notées dans le nom du modèle Wazo (blf-linekeys=${c.lineKeys}).`);
-  if (isTpl && c.tpl.clash) warns.push(`${c.tpl.clash} touche(s) étaient placées dans Wazo sur des positions de ligne : elles ont été décalées après les lignes. Enregistrez pour corriger le modèle.`);
+  if (c.clash) warns.push(`${c.clash} touche(s) étaient placées dans Wazo sur des positions de ligne (masquées par les touches ligne) : elles ont été décalées juste après les lignes. Vérifiez puis enregistrez pour corriger.`);
   $('warnings').innerHTML = warns.map((w) => `<div class="warn">${w}</div>`).join('');
 
   const used = Math.max(c.slots.length, ...Object.keys(c.inherited).map(Number), c.lineKeys);
@@ -795,10 +825,30 @@ function wireDetail() {
   $('dt-label').oninput = () => { const k = S.cur.slots[S.sel - 1]; if (k) { k.label = $('dt-label').value || null; refreshTileOnly(); } };
   $('dt-blf').onchange = () => { const k = S.cur.slots[S.sel - 1]; if (k) { k.blf = $('dt-blf').checked; renderEditor(); } };
   $('dt-clear').onclick = () => { setKey(S.sel, null); renderEditor(); };
-  $('dt-delete').onclick = () => { const c = S.cur; if (S.sel - 1 < c.slots.length) c.slots.splice(S.sel - 1, 1); renderEditor(); };
-  $('dt-insert').onclick = () => { const c = S.cur; while (c.slots.length < S.sel - 1) c.slots.push(null); c.slots.splice(S.sel - 1, 0, null); renderEditor(); };
+  $('dt-delete').onclick = () => shiftInBlock(S.sel, -1);
+  $('dt-insert').onclick = () => shiftInBlock(S.sel, +1);
   $('dt-left').onclick = () => move(-1);
   $('dt-right').onclick = () => move(1);
+}
+// Supprimer (dir -1 : les suivantes remontent) / Insérer avant (dir +1 : elles
+// reculent), sans sortir du bloc de la touche : le poste, ou son module
+// d'extension. Les touches héritées ne bougent pas : refus si le bloc en a.
+function shiftInBlock(p, dir) {
+  const c = S.cur, cap = capacityInfo();
+  const end = p <= cap.lk || !cap.per ? cap.lk : cap.lk + Math.ceil((p - cap.lk) / cap.per) * cap.per;
+  const inh = Object.keys(c.inherited).map(Number).filter((x) => x >= p && x <= end);
+  if (inh.length) { toast(`Impossible : touche(s) ${inh.join(', ')} héritée(s) d'un modèle partagé dans la suite du bloc.`, 6000); return; }
+  while (c.slots.length < end) c.slots.push(null);
+  if (dir < 0) {
+    c.slots.splice(p - 1, 1);
+    c.slots.splice(end - 1, 0, null);
+  } else {
+    if (c.slots[end - 1]) { toast(`Plus de place : la touche ${end} (dernière ${end === cap.lk ? 'du poste' : 'du module'}) serait perdue. Videz-la d'abord.`, 6000); while (c.slots.length && !c.slots[c.slots.length - 1]) c.slots.pop(); return; }
+    c.slots.splice(end - 1, 1);
+    c.slots.splice(p - 1, 0, null);
+  }
+  while (c.slots.length && !c.slots[c.slots.length - 1]) c.slots.pop();
+  renderEditor();
 }
 function move(delta) {
   const c = S.cur, i = S.sel - 1, j = i + delta;
@@ -949,14 +999,12 @@ async function openTemplate(id) {
   await Promise.all([...new Set(Object.values(orig).map((k) => k.destination.type))].map(ensureNamed));
   const maxPos = Math.max(0, ...Object.keys(orig).map(Number));
   const slots = Array.from({ length: Math.max(maxPos, lineKeys) }, (_, i) => (orig[i + 1] ? structuredClone(orig[i + 1]) : null));
-  // Touches posées dans Wazo sur une position de ligne : décalées après les lignes.
-  const clash = Object.keys(orig).map(Number).filter((p) => p <= lineKeys).sort((a, b) => a - b);
-  if (clash.length) { const moved = clash.map((p) => slots[p - 1]); clash.forEach((p) => { slots[p - 1] = null; }); slots.splice(lineKeys, 0, ...moved); }
+  const clash = shiftLineClashes(slots, orig, lineKeys);
   const model = $('tpl-model').value || 'T54W';
   const prof = VENDORS.yealink;
   S.sel = null;
   S.cur = {
-    tpl: { id: tpl.id, name: tplName(tpl), origName: tplName(tpl), clash: clash.length },
+    tpl: { id: tpl.id, name: tplName(tpl), origName: tplName(tpl) }, clash,
     user: { uuid: '__modele__', id: -1, firstname: tplName(tpl) || 'Nouveau modèle', lines: [] },
     dev: { vendor: 'Yealink', model, mac: '', plugin: 'wazo-yealink' }, prof, model, lk: prof.linekeys[model], exp: prof.exp(model),
     orig, inherited: {}, lineKeys, origLineKeys: lineKeys, slots, extraModules: 0, extraPages: 0, pagesLeft: 0,
