@@ -426,11 +426,11 @@ function renderEditor() {
   const needMods = cap.per ? Math.max(0, Math.ceil((used - cap.lk) / cap.per)) : 0;
   const mods = Math.min(cap.maxMods, Math.max(needMods, c.extraModules));
   $('addModule').hidden = !cap.per || mods >= cap.maxMods;
+  c.modsShown = mods;
 
   const pages = buildPages(cap, mods);
   $('addPage').hidden = !c.pagesLeft;
-  $('delPage').hidden = !(c.pageInfo?.shown > 1);
-  const maxPos = pages[pages.length - 1].to;
+  const maxPos = cap.lk + mods * cap.per;
   const host = $('pages');
   host.innerHTML = '';
   let group = null;
@@ -489,6 +489,7 @@ function buildPages(cap, mods) {
           : empty ? `${name} · page ${i + 1} · vide, non affichée sur le poste` : `${name} · page ${i + 1}/${real}`;
         out.push({
           group: 'phone', from: i * per + 1, to: Math.min(cap.lk, (i + 1) * per), l, r, pageKey: 'on', inactive: empty,
+          remove: i >= 1 ? { kind: 'page', i } : null,
           title,
           screen: `Page ${i + 1}/${shown}`,
         });
@@ -498,15 +499,21 @@ function buildPages(cap, mods) {
   } else {
     out.push({ group: 'phone', title: c.dev ? `Touches du ${name}` : 'Touches', from: 1, to: cap.lk });
   }
+  // Modules : une seule carte par module, une page à la fois (sélecteur 1·2·3
+  // comme les touches de page physiques de l'EXP).
   const ef = c.prof?.expFace?.[c.exp];
+  c.modPage ||= {};
   for (let m = 1; m <= mods; m++) {
     const base = cap.lk + (m - 1) * cap.per;
+    const remove = { kind: 'module', m };
     if (ef) {
       const per = ef[0] + ef[1];
       const n = Math.ceil(cap.per / per);
-      for (let i = 0; i < n; i++) out.push({ group: `mod${m}`, title: `Module ${m} (${c.exp}) · page ${i + 1}/${n}`, from: base + i * per + 1, to: base + Math.min(cap.per, (i + 1) * per), l: ef[0], r: ef[1], screen: `${c.exp} · ${i + 1}/${n}` });
+      const cur = Math.min(c.modPage[m] || 0, n - 1);
+      const filled = Array.from({ length: n }, (_, i) => c.slots.slice(base + i * per, base + Math.min(cap.per, (i + 1) * per)).some(Boolean));
+      out.push({ group: `mod${m}`, title: `Module ${m} (${c.exp})`, from: base + cur * per + 1, to: base + Math.min(cap.per, (cur + 1) * per), l: ef[0], r: ef[1], screen: `${c.exp} · page ${cur + 1}/${n}`, remove, modTabs: { m, n, cur, filled } });
     } else {
-      out.push({ group: `mod${m}`, title: `Module ${m} (${c.exp})`, from: base + 1, to: base + cap.per });
+      out.push({ group: `mod${m}`, title: `Module ${m} (${c.exp})`, from: base + 1, to: base + cap.per, remove });
     }
   }
   return out;
@@ -514,7 +521,18 @@ function buildPages(cap, mods) {
 function pageEl(pg) {
   const div = document.createElement('div');
   div.className = `page${pg.inactive ? ' inactive' : ''}`;
-  div.innerHTML = `<h4>${esc(pg.title)} · positions ${pg.from}–${pg.to}</h4>`;
+  const head = document.createElement('div');
+  head.className = 'pagehead';
+  head.innerHTML = `<h4>${esc(pg.title)} · positions ${pg.from}–${pg.to}</h4>`;
+  if (pg.modTabs) {
+    const { m, n, cur, filled } = pg.modTabs;
+    head.insertAdjacentHTML('beforeend', `<div class="pagetabs" role="tablist">${Array.from({ length: n }, (_, i) => `<button role="tab" aria-selected="${i === cur}" class="${i === cur ? 'active' : ''}${filled[i] ? ' filled' : ''}" data-act="modpage" data-m="${m}" data-p="${i}" title="Page ${i + 1}${filled[i] ? ' (contient des touches)' : ''}">${i + 1}</button>`).join('')}</div>`);
+  }
+  if (pg.remove) {
+    const what = pg.remove.kind === 'page' ? `la page ${pg.remove.i + 1}` : `le module ${pg.remove.m}`;
+    head.insertAdjacentHTML('beforeend', `<button class="icon" data-act="remove" data-kind="${pg.remove.kind}" data-n="${pg.remove.kind === 'page' ? pg.remove.i : pg.remove.m}" title="Retirer ${what}" aria-label="Retirer ${what}">×</button>`);
+  }
+  div.appendChild(head);
   if (!pg.l) {
     const grid = document.createElement('div');
     grid.className = 'grid';
@@ -541,28 +559,45 @@ function pageEl(pg) {
   div.appendChild(face);
   return div;
 }
-// Retirer la dernière page : ses touches sont effacées (après confirmation).
-// En repassant à une seule page, la touche 10 (T54W) est conservée : elle
-// revient en page 1, seules les touches 11 et suivantes disparaissent.
-function removeLastPage() {
-  const c = S.cur, pi = c.pageInfo;
-  if (!pi || pi.shown < 2) return;
-  const target = pi.shown - 1;
-  const from = target === 1 ? pi.phys + 1 : target * pi.per + 1;
-  const to = Math.min(c.lk, pi.shown * pi.per);
-  const inh = Object.keys(c.inherited).map(Number).filter((p) => p >= from && p <= to);
+// Retirer une page du poste (2e ou suivante) ou un module : ses touches sont
+// effacées (après confirmation) et ce qui suit remonte d'un cran, dans les
+// limites du poste (pour une page) ou de l'ensemble des modules (pour un
+// module). En repassant à une seule page, la touche 10 (T54W) est conservée :
+// elle revient en page 1.
+function removeBlock(kind, n) {
+  const c = S.cur, cap = capacityInfo();
+  let from, to, end, label;
+  if (kind === 'page') {
+    const pi = c.pageInfo;
+    if (!pi || pi.shown < 2 || n < 1) return;
+    from = pi.shown === 2 ? pi.phys + 1 : n * pi.per + 1;
+    to = Math.min(cap.lk, (n + 1) * pi.per);
+    end = cap.lk;
+    label = `la page ${n + 1}`;
+  } else {
+    from = cap.lk + (n - 1) * cap.per + 1;
+    to = from + cap.per - 1;
+    end = cap.lk + c.modsShown * cap.per;
+    label = `le module ${n}`;
+  }
+  const count = to - from + 1;
+  const inh = Object.keys(c.inherited).map(Number).filter((p) => p >= from && p <= end);
   if (inh.length) { toast(`Touches ${inh.join(', ')} héritées d'un modèle partagé : à retirer du modèle dans Wazo.`, 6000); return; }
   const lost = [];
   for (let p = from; p <= to; p++) if (c.slots[p - 1]) lost.push(p);
+  const moved = c.slots.slice(to, end).some(Boolean);
   const apply = () => {
-    for (const p of lost) c.slots[p - 1] = null;
+    while (c.slots.length < end) c.slots.push(null);
+    c.slots.splice(from - 1, count);                          // retire le bloc…
+    c.slots.splice(end - count, 0, ...Array(count).fill(null)); // …et garde la suite (modules) à sa place
     while (c.slots.length && !c.slots[c.slots.length - 1]) c.slots.pop();
-    c.extraPages = target - 1;
-    if (S.sel >= from) S.sel = null;
+    if (kind === 'page') c.extraPages = Math.max(0, c.pageInfo.shown - 2);
+    else { c.extraModules = Math.max(0, c.modsShown - 1); c.modPage = {}; }
+    S.sel = null;
     renderEditor();
   };
   if (!lost.length) return apply();
-  confirmModal(`<h3>Retirer la page ${pi.shown}</h3><p>Ces touches seront effacées :</p><ul>${lost.map((p) => `<li>${p} · ${describe(c.slots[p - 1])}</li>`).join('')}</ul><p class="muted small">Rien n'est écrit tant que vous n'enregistrez pas.</p>`, apply, 'Retirer');
+  confirmModal(`<h3>Retirer ${label}</h3><p>Ces touches seront effacées :</p><ul>${lost.map((p) => `<li>${p} · ${describe(c.slots[p - 1])}</li>`).join('')}</ul>${moved ? '<p>Les touches suivantes remontent d\'un cran.</p>' : ''}<p class="muted small">Rien n'est écrit tant que vous n'enregistrez pas.</p>`, apply, 'Retirer');
 }
 function staticTile(cls, pos, lbl, title = '') {
   const el = document.createElement('div');
@@ -1166,9 +1201,17 @@ $('dp-go').onclick = previewDeploy;
 $('scanLabels').onclick = scanLabels;
 $('lk-minus').onclick = () => changeLineKeys(-1);
 $('lk-plus').onclick = () => changeLineKeys(1);
-$('addModule').onclick = () => { S.cur.extraModules++; renderEditor(); };
-$('addPage').onclick = () => { S.cur.extraPages++; renderEditor(); };
-$('delPage').onclick = removeLastPage;
+// « Ajouter » = une page / un module de plus que ce qui est affiché
+// (affiché = max(nécessaire, 1 + extraPages) pour les pages, max(nécessaire, extraModules) pour les modules).
+$('addModule').onclick = () => { S.cur.extraModules = (S.cur.modsShown || 0) + 1; renderEditor(); };
+$('addPage').onclick = () => { S.cur.extraPages = S.cur.pageInfo?.shown || 1; renderEditor(); };
+// Boutons des en-têtes de page / module (× et sélecteur de page du module).
+$('pages').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-act]');
+  if (!b || !S.cur) return;
+  if (b.dataset.act === 'remove') removeBlock(b.dataset.kind, Number(b.dataset.n));
+  if (b.dataset.act === 'modpage') { S.cur.modPage[Number(b.dataset.m)] = Number(b.dataset.p); renderEditor(); }
+});
 $('revert').onclick = () => { if (S.cur?.tpl) openTemplate(S.cur.tpl.id); else if (S.cur) selectUser(S.cur.user); };
 $('save').onclick = save;
 window.addEventListener('beforeunload', (e) => { if (isDirty()) { e.preventDefault(); e.returnValue = ''; } });

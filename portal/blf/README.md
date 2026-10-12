@@ -26,9 +26,13 @@ du serveur ouvert dans le portail, avec le token que fournit le portail.
   un utilisateur supprimé apparaît en rouge pointillé ;
 - récapitulatif avant/après avant chaque enregistrement, puis resynchro du
   poste (optionnelle) ;
-- pages Yealink : jusqu'à 10 touches (T54W) une seule page ; boutons
-  *Ajouter une page* / *Retirer la dernière page* (confirmation si des
-  touches sont effacées ; en revenant à 1 page, la touche 10 est gardée) ;
+- pages Yealink : jusqu'à 10 touches (T54W) une seule page ; *Ajouter une
+  page* / *Ajouter un module d'extension*, et un **×** sur chaque page (2e et
+  suivantes) et chaque module pour le retirer : confirmation si des touches
+  sont effacées, ce qui suit remonte d'un cran ; en revenant à 1 page, la
+  touche 10 est gardée ;
+- modules d'extension : une carte par module, une page à la fois, avec un
+  sélecteur 1·2·3 (point = page qui contient des touches) ;
 - onglet **Déploiement en masse** : *Nouveau modèle* / *Modifier ce modèle*
   ouvre l'éditeur de poste sur un modèle de touches Wazo (aperçu sur un modèle
   Yealink au choix), touches ligne comprises. Le nombre de touches ligne est

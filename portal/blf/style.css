@@ -155,6 +155,18 @@ body.in-portal.ready #main { min-height: 100vh; }
 .tile.dropover { outline: 2px dashed var(--accent); outline-offset: -2px; background: color-mix(in srgb, var(--accent) 14%, var(--panel)); }
 .tile.dropover.swap::before { content: "⇄"; position: absolute; right: 8px; bottom: 6px; color: var(--accent); font-weight: 700; }
 
+/* En-tête de carte : titre, sélecteur de page du module, bouton × */
+.pagehead { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; min-height: 28px; }
+.pagehead h4 { margin: 0; flex: 1; }
+.pagetabs { display: inline-flex; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.pagetabs button { position: relative; min-width: 32px; height: 28px; padding: 0 10px; border: 0; border-radius: 0; color: var(--muted); font-size: .8125rem; text-transform: none; }
+.pagetabs button + button { border-left: 1px solid var(--line); }
+.pagetabs button.active { background: var(--accent); color: var(--accent-ink); }
+.pagetabs button.active:hover { background: var(--accent-hover); }
+.pagetabs button.filled::after { content: ""; position: absolute; top: 4px; right: 4px; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+button.icon { min-width: 28px; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 50%; color: var(--muted); font-size: 1.125rem; line-height: 1; text-transform: none; }
+button.icon:hover:not(:disabled) { color: var(--danger); background: color-mix(in srgb, var(--danger) 8%, transparent); }
+
 /* Faces de poste : pages côte à côte, touches de part et d'autre de l'écran */
 .faces { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(380px, 100%), 1fr)); gap: 16px; margin-bottom: 16px; }
 .faces > .page { margin-bottom: 0; }
