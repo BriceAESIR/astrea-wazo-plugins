@@ -341,7 +341,7 @@ async function selectUser(u) {
   const lineKeys = m ? Number(m[1]) : 1;
   const maxPos = Math.max(0, ...Object.keys(orig).map(Number), ...Object.keys(inherited).map(Number));
   const slots = Array.from({ length: Math.max(maxPos, lineKeys) }, (_, i) => (orig[i + 1] ? structuredClone(orig[i + 1]) : null));
-  S.cur = { user: u, dev, prof, model, lk, exp, orig, inherited, lineKeys, origLineKeys: lineKeys, slots, extraModules: 0 };
+  S.cur = { user: u, dev, prof, model, lk, exp, orig, inherited, lineKeys, origLineKeys: lineKeys, slots, extraModules: 0, extraPages: 0, pagesLeft: 0 };
   renderUserList();
   renderEditor();
 }
@@ -409,6 +409,7 @@ function renderEditor() {
   $('addModule').hidden = !cap.per || mods >= cap.maxMods;
 
   const pages = buildPages(cap, mods);
+  $('addPage').hidden = !c.pagesLeft;
   const maxPos = pages[pages.length - 1].to;
   const host = $('pages');
   host.innerHTML = '';
@@ -439,6 +440,7 @@ function buildPages(cap, mods) {
   const c = S.cur;
   const name = c.dev ? [c.dev.vendor, c.model].filter(Boolean).join(' ') || 'poste' : '';
   const out = [];
+  c.pagesLeft = 0;
   const face = cap.known && c.prof?.face?.[c.model];
   if (face) {
     // Comportement Yealink (T54W : 10 emplacements) :
@@ -451,23 +453,26 @@ function buildPages(cap, mods) {
     const per = phys - 1;
     const n = Math.min(maxPages, Math.ceil(cap.lk / per));
     const used = Math.min(cap.lk, Math.max(c.lineKeys, ...c.slots.map((k, i) => (k ? i + 1 : 0)), ...Object.keys(c.inherited).map(Number)));
-    const paging = used > phys;
-    const shown = paging ? Math.min(n, Math.ceil(used / per)) : 1;
-    for (let i = 0; i < n; i++) {
-      const active = i < shown;
-      const pg = {
-        group: 'phone', from: i * per + 1, to: Math.min(cap.lk, (i + 1) * per), l, r,
-        title: active ? `${name} · page ${i + 1}/${shown}` : `${name} · page ${i + 1} · non affichée (vide)`,
-        pageKey: paging && active ? 'on' : 'off', inactive: !active,
-        screen: active ? `Page ${i + 1}/${shown}` : 'Page masquée',
-      };
-      if (!paging && i === 0) { pg.to = Math.min(cap.lk, phys); pg.pageKey = null; }
-      // Sans pagination, la touche 10 est en page 1 : sur la page 2 grisée, on
-      // indique seulement qu'elle viendra là.
-      if (!paging && i === 1) pg.ghost = pg.from;
-      out.push(pg);
+    const real = used > phys ? Math.min(n, Math.ceil(used / per)) : 1; // pages sur le poste
+    const shown = Math.min(n, Math.max(real, 1 + c.extraPages));         // pages affichées ici
+    c.pagesLeft = n - shown;
+    if (shown === 1) {
+      out.push({ group: 'phone', from: 1, to: Math.min(cap.lk, phys), l, r, title: `${name} · page 1/1`, screen: 'Page 1/1' });
+    } else {
+      for (let i = 0; i < shown; i++) {
+        const empty = i >= real;
+        // real === 1 : aperçu de la pagination, pas encore effective sur le poste.
+        const title = real === 1
+          ? `${name} · page ${i + 1} · aperçu (poste encore sur 1 page)`
+          : empty ? `${name} · page ${i + 1} · vide, non affichée sur le poste` : `${name} · page ${i + 1}/${real}`;
+        out.push({
+          group: 'phone', from: i * per + 1, to: Math.min(cap.lk, (i + 1) * per), l, r, pageKey: 'on', inactive: empty,
+          title,
+          screen: `Page ${i + 1}/${shown}`,
+        });
+      }
+      if (real === 1) out[shown - 1].note = `Tant qu'aucune touche après la ${phys} n'est remplie, le poste reste sur une seule page de ${phys} touches : la touche ${phys} reste en page 1 et il n'y a pas de touche de page.`;
     }
-    if (n > 1) out[n - 1].note = `Sur le poste : jusqu'à ${phys} touches, une seule page. Dès qu'une touche ${phys + 1} ou suivante est utilisée, l'emplacement ${phys} devient la touche de page et la touche ${phys} passe en tête de la page 2. Une page vide ne s'affiche pas.`;
   } else {
     out.push({ group: 'phone', title: c.dev ? `Touches du ${name}` : 'Touches', from: 1, to: cap.lk });
   }
@@ -487,7 +492,7 @@ function buildPages(cap, mods) {
 function pageEl(pg) {
   const div = document.createElement('div');
   div.className = `page${pg.inactive ? ' inactive' : ''}`;
-  div.innerHTML = `<h4>${esc(pg.title)} · positions ${pg.ghost ? pg.ghost + 1 : pg.from}–${pg.to}</h4>`;
+  div.innerHTML = `<h4>${esc(pg.title)} · positions ${pg.from}–${pg.to}</h4>`;
   if (!pg.l) {
     const grid = document.createElement('div');
     grid.className = 'grid';
@@ -500,8 +505,6 @@ function pageEl(pg) {
   const cells = [];
   for (let k = 0; k < slots; k++) {
     if (pg.pageKey === 'on' && k === slots - 1) cells.push(staticTile('pagekey', '⇆', 'Page'));
-    else if (pg.pageKey === 'off' && k === slots - 1) cells.push(staticTile('pagekey off', '', 'Page', 'Touche de page : apparaît dès que la page 2 est utilisée'));
-    else if (pg.ghost && k === 0) cells.push(staticTile('none ghost', String(pg.ghost), `↳ touche ${pg.ghost}`, `La touche ${pg.ghost} vient ici dès que la page 2 est utilisée`));
     else if (pg.from + k <= pg.to) cells.push(tileEl(pg.from + k));
     else cells.push(staticTile('none', '', '—'));
   }
@@ -806,6 +809,7 @@ $('scanLabels').onclick = scanLabels;
 $('lk-minus').onclick = () => changeLineKeys(-1);
 $('lk-plus').onclick = () => changeLineKeys(1);
 $('addModule').onclick = () => { S.cur.extraModules++; renderEditor(); };
+$('addPage').onclick = () => { S.cur.extraPages++; renderEditor(); };
 $('revert').onclick = () => S.cur && selectUser(S.cur.user);
 $('save').onclick = save;
 window.addEventListener('beforeunload', (e) => { if (isDirty()) { e.preventDefault(); e.returnValue = ''; } });
