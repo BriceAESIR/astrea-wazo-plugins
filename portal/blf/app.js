@@ -410,6 +410,7 @@ function renderEditor() {
 
   const pages = buildPages(cap, mods);
   $('addPage').hidden = !c.pagesLeft;
+  $('delPage').hidden = !(c.pageInfo?.shown > 1);
   const maxPos = pages[pages.length - 1].to;
   const host = $('pages');
   host.innerHTML = '';
@@ -441,6 +442,7 @@ function buildPages(cap, mods) {
   const name = c.dev ? [c.dev.vendor, c.model].filter(Boolean).join(' ') || 'poste' : '';
   const out = [];
   c.pagesLeft = 0;
+  c.pageInfo = null;
   const face = cap.known && c.prof?.face?.[c.model];
   if (face) {
     // Comportement Yealink (T54W : 10 emplacements) :
@@ -456,6 +458,7 @@ function buildPages(cap, mods) {
     const real = used > phys ? Math.min(n, Math.ceil(used / per)) : 1; // pages sur le poste
     const shown = Math.min(n, Math.max(real, 1 + c.extraPages));         // pages affichées ici
     c.pagesLeft = n - shown;
+    c.pageInfo = { shown, phys, per };
     if (shown === 1) {
       out.push({ group: 'phone', from: 1, to: Math.min(cap.lk, phys), l, r, title: `${name} · page 1/1`, screen: 'Page 1/1' });
     } else {
@@ -518,6 +521,29 @@ function pageEl(pg) {
   if (pg.r) face.appendChild(col(cells.slice(pg.l)));
   div.appendChild(face);
   return div;
+}
+// Retirer la dernière page : ses touches sont effacées (après confirmation).
+// En repassant à une seule page, la touche 10 (T54W) est conservée : elle
+// revient en page 1, seules les touches 11 et suivantes disparaissent.
+function removeLastPage() {
+  const c = S.cur, pi = c.pageInfo;
+  if (!pi || pi.shown < 2) return;
+  const target = pi.shown - 1;
+  const from = target === 1 ? pi.phys + 1 : target * pi.per + 1;
+  const to = Math.min(c.lk, pi.shown * pi.per);
+  const inh = Object.keys(c.inherited).map(Number).filter((p) => p >= from && p <= to);
+  if (inh.length) { toast(`Touches ${inh.join(', ')} héritées d'un modèle partagé : à retirer du modèle dans Wazo.`, 6000); return; }
+  const lost = [];
+  for (let p = from; p <= to; p++) if (c.slots[p - 1]) lost.push(p);
+  const apply = () => {
+    for (const p of lost) c.slots[p - 1] = null;
+    while (c.slots.length && !c.slots[c.slots.length - 1]) c.slots.pop();
+    c.extraPages = target - 1;
+    if (S.sel >= from) S.sel = null;
+    renderEditor();
+  };
+  if (!lost.length) return apply();
+  confirmModal(`<h3>Retirer la page ${pi.shown}</h3><p>Ces touches seront effacées :</p><ul>${lost.map((p) => `<li>${p} · ${describe(c.slots[p - 1])}</li>`).join('')}</ul><p class="muted small">Rien n'est écrit tant que vous n'enregistrez pas.</p>`, apply, 'Retirer');
 }
 function staticTile(cls, pos, lbl, title = '') {
   const el = document.createElement('div');
@@ -786,6 +812,145 @@ async function scanLabels() {
 }
 
 // ---------------------------------------------------------------------------
+// Déploiement en masse
+// ---------------------------------------------------------------------------
+// Source : un modèle de touches Wazo (/funckeys/templates) ou les touches
+// propres d'un utilisateur. Écrit dans les touches privées de chaque cible
+// (pas de rattachement au modèle partagé, qui mettrait à chacun sa propre
+// touche). Tuiles : la touche vers le propriétaire est retirée et les
+// suivantes remontent ; les cases vides entre deux touches sont gardées ;
+// le bloc commence après les touches ligne de chaque utilisateur.
+const D = { templates: null, src: null, picked: new Set(), plan: [] };
+const lineKeysOf = (u) => { const m = (u.userfield || '').match(LK_TOKEN); return m ? Number(m[1]) : 1; };
+const destSig = (k) => JSON.stringify(cleanDest(k.destination || {}));
+function capOf(u) {
+  const dev = userDevice(u), prof = vendorOf(dev);
+  const lk = prof?.linekeys[dev?.model];
+  if (lk == null) return null;
+  const [per, maxMods] = EXP[prof.exp(dev.model)] || [0, 0];
+  return lk + per * maxMods;
+}
+
+async function openDeploy() {
+  $('editor').hidden = true; $('empty').hidden = true; $('detail').hidden = true; $('deploy').hidden = false;
+  layout();
+  if (!D.templates) {
+    // Format supposé identique aux touches utilisateur ({keys: {pos: {...}}}) — à vérifier en réel.
+    try { D.templates = await listAll('/funckeys/templates'); } catch (e) { D.templates = []; toast(`Lecture des modèles de touches impossible : ${e.message}`, 6000); }
+  }
+  const cur = $('dp-source').value;
+  $('dp-source').innerHTML = '<option value="">— choisir —</option>'
+    + (D.templates.length ? `<optgroup label="Modèles de touches Wazo">${D.templates.map((t) => `<option value="t:${t.id}">${esc(t.name || `Modèle ${t.id}`)}</option>`).join('')}</optgroup>` : '')
+    + `<optgroup label="Copier les touches d'un utilisateur">${S.users.filter(listed).map((u) => `<option value="u:${u.uuid}">${esc(fullName(u))} · ${esc(userExten(u))}</option>`).join('')}</optgroup>`;
+  $('dp-source').value = cur;
+  renderDeployUsers();
+}
+function closeDeploy() {
+  $('deploy').hidden = true;
+  if (S.cur) selectUser(S.cur.user); // relit l'utilisateur : le déploiement a pu le modifier
+  else $('empty').hidden = false;
+  layout();
+}
+async function loadSource() {
+  const v = $('dp-source').value;
+  D.src = null;
+  $('dp-preview').innerHTML = '';
+  if (v) {
+    try {
+      let keys = {};
+      if (v.startsWith('t:')) keys = (await api('GET', `/funckeys/templates/${v.slice(2)}`))?.keys || {};
+      else for (const [p, k] of Object.entries((await api('GET', `/users/${v.slice(2)}/funckeys`))?.keys || {})) if (!k.inherited) keys[p] = k;
+      D.src = {};
+      for (const [p, k] of Object.entries(keys)) D.src[Number(p)] = cleanKey(k);
+      await Promise.all([...new Set(Object.values(D.src).map((k) => k.destination.type))].map(ensureNamed));
+      const ps = Object.keys(D.src).map(Number).sort((a, b) => a - b);
+      $('dp-preview').innerHTML = ps.length
+        ? `<table class="diff"><tr><th>Pos.</th><th>Touche</th><th>BLF</th></tr>${ps.map((p) => `<tr><td>${p}</td><td>${describe(D.src[p])}</td><td>${D.src[p].blf ? '●' : ''}</td></tr>`).join('')}</table>
+           <p class="muted small">Chez chaque utilisateur, le bloc commence juste après ses touches ligne ; les cases vides entre deux touches sont conservées.</p>`
+        : '<p class="muted">Aucune touche dans cette source.</p>';
+    } catch (e) { toast(e.message, 6000); }
+  }
+  updateDeployBtn();
+}
+function renderDeployUsers() {
+  const q = $('dp-search').value.trim().toLowerCase();
+  const ul = $('dp-users');
+  ul.innerHTML = '';
+  for (const u of S.users.filter(listed)) {
+    const d = userDevice(u);
+    if (q && !`${fullName(u)} ${u.username || ''} ${userExten(u)} ${d?.model || ''}`.toLowerCase().includes(q)) continue;
+    const li = document.createElement('li');
+    li.innerHTML = `<label class="inline"><input type="checkbox" data-uuid="${u.uuid}" ${D.picked.has(u.uuid) ? 'checked' : ''}> ${esc(fullName(u))}</label><span class="sub">${esc(userExten(u))}${d ? ' · ' + esc(d.model || '') : ''}</span>`;
+    ul.appendChild(li);
+  }
+  updateDeployBtn();
+}
+function updateDeployBtn() {
+  $('dp-count').textContent = `${D.picked.size} sélectionné${D.picked.size > 1 ? 's' : ''}`;
+  $('dp-go').disabled = !D.src || !Object.keys(D.src).length || !D.picked.size;
+}
+function deployKeysFor(u, current, mode) {
+  const ps = Object.keys(D.src).map(Number).sort((a, b) => a - b);
+  const seq = [];
+  for (let p = ps[0]; p <= ps[ps.length - 1]; p++) seq.push(D.src[p] || null);
+  let selfRemoved = false;
+  const existing = new Set(Object.values(current).map(destSig));
+  const kept = seq.filter((k) => {
+    if (k && k.destination.type === 'user' && k.destination.user_id === u.id) { selfRemoved = true; return false; }
+    return !(k && mode === 'append' && existing.has(destSig(k))); // pas de doublon en ajout
+  });
+  const out = mode === 'append' ? { ...current } : {};
+  const start = (mode === 'append' ? Math.max(lineKeysOf(u), ...Object.keys(current).map(Number)) : lineKeysOf(u)) + 1;
+  kept.forEach((k, i) => { if (k) out[start + i] = structuredClone(k); });
+  return { keys: out, selfRemoved };
+}
+async function previewDeploy() {
+  const mode = document.querySelector('input[name="dp-mode"]:checked').value;
+  const users = [...D.picked].map((id) => S.byUuid.get(id)).filter(Boolean);
+  const btn = $('dp-go');
+  btn.disabled = true;
+  D.plan = [];
+  const rows = [];
+  for (const [i, u] of users.entries()) {
+    btn.textContent = `Lecture ${i + 1}/${users.length}…`;
+    try {
+      const data = await api('GET', `/users/${u.uuid}/funckeys`);
+      const cur = {};
+      let inh = 0;
+      for (const [p, k] of Object.entries(data?.keys || {})) if (k.inherited) inh++; else cur[Number(p)] = cleanKey(k);
+      const { keys, selfRemoved } = deployKeysFor(u, cur, mode);
+      const changed = JSON.stringify(normMap(keys)) !== JSON.stringify(normMap(cur));
+      const cap = capOf(u);
+      const over = cap ? Object.keys(keys).map(Number).filter((p) => p > cap) : [];
+      D.plan.push({ u, keys, changed });
+      const notes = [selfRemoved && 'sa propre touche retirée', inh && `${inh} héritée(s) inchangée(s)`, over.length && `<span class="error">hors capacité : ${over.join(', ')}</span>`].filter(Boolean);
+      rows.push(`<tr><td>${esc(fullName(u))}</td><td>${Object.keys(cur).length}</td><td>${Object.keys(keys).length}</td><td>${changed ? 'oui' : '<span class="muted">identique</span>'}</td><td>${notes.join(' · ')}</td></tr>`);
+    } catch (e) { rows.push(`<tr><td>${esc(fullName(u))}</td><td colspan="4" class="error">${esc(e.message)}</td></tr>`); }
+  }
+  btn.textContent = 'Prévisualiser le déploiement';
+  updateDeployBtn();
+  const n = D.plan.filter((x) => x.changed).length;
+  confirmModal(`<h3>Déploiement : ${n} utilisateur${n > 1 ? 's' : ''} à modifier</h3>
+    <p class="muted small">Mode : ${mode === 'append' ? 'ajout à la suite des touches existantes (sans doublon)' : 'remplacement de toutes les touches'}. Nombre de touches avant → après.</p>
+    <table class="diff"><tr><th>Utilisateur</th><th>Avant</th><th>Après</th><th>Modifié</th><th>Remarques</th></tr>${rows.join('')}</table>`,
+  applyDeploy, `Déployer (${n})`);
+}
+async function applyDeploy() {
+  const todo = D.plan.filter((x) => x.changed);
+  let ok = 0, ko = 0;
+  for (const [i, x] of todo.entries()) {
+    toast(`Déploiement ${i + 1}/${todo.length}…`, 60000);
+    try {
+      await api('PUT', `/users/${x.u.uuid}/funckeys`, { keys: x.keys });
+      ok++;
+      const dev = userDevice(x.u);
+      if ($('dp-resync').checked && dev) { try { await api('GET', `/devices/${dev.id}/synchronize`); } catch { /* resynchro facultative */ } }
+    } catch (e) { ko++; console.error(fullName(x.u), e); }
+  }
+  toast(`Déploiement terminé : ${ok} utilisateur${ok > 1 ? 's' : ''} mis à jour${ko ? `, ${ko} en erreur (détail dans la console)` : ''}.`, 8000);
+}
+
+// ---------------------------------------------------------------------------
 // Modale
 // ---------------------------------------------------------------------------
 function confirmModal(html, onOk, okText = 'Confirmer') {
@@ -801,15 +966,36 @@ function confirmModal(html, onOk, okText = 'Confirmer') {
 // ---------------------------------------------------------------------------
 $('search').oninput = renderUserList;
 document.querySelectorAll('[data-side]').forEach((b) => (b.onclick = () => {
-  document.querySelectorAll('[data-side]').forEach((x) => x.classList.toggle('active', x === b));
-  $('userlist').hidden = b.dataset.side !== 'users';
-  $('labelsPane').hidden = b.dataset.side !== 'labels';
+  const side = b.dataset.side;
+  const go = () => {
+    const wasDeploy = !$('deploy').hidden;
+    document.querySelectorAll('[data-side]').forEach((x) => x.classList.toggle('active', x === b));
+    $('userlist').hidden = side !== 'users';
+    $('labelsPane').hidden = side !== 'labels';
+    $('deployPane').hidden = side !== 'deploy';
+    $('search').hidden = side === 'deploy';
+    if (side === 'deploy') openDeploy();
+    else if (wasDeploy) closeDeploy();
+  };
+  if (side === 'deploy') guardUnsaved(go); else go();
 }));
+$('dp-source').onchange = loadSource;
+$('dp-search').oninput = renderDeployUsers;
+$('dp-users').onchange = (e) => {
+  const cb = e.target.closest('input[data-uuid]');
+  if (!cb) return;
+  if (cb.checked) D.picked.add(cb.dataset.uuid); else D.picked.delete(cb.dataset.uuid);
+  updateDeployBtn();
+};
+$('dp-all').onclick = () => { $('dp-users').querySelectorAll('input[data-uuid]').forEach((cb) => { cb.checked = true; D.picked.add(cb.dataset.uuid); }); updateDeployBtn(); };
+$('dp-none').onclick = () => { $('dp-users').querySelectorAll('input[data-uuid]').forEach((cb) => { cb.checked = false; D.picked.delete(cb.dataset.uuid); }); updateDeployBtn(); };
+$('dp-go').onclick = previewDeploy;
 $('scanLabels').onclick = scanLabels;
 $('lk-minus').onclick = () => changeLineKeys(-1);
 $('lk-plus').onclick = () => changeLineKeys(1);
 $('addModule').onclick = () => { S.cur.extraModules++; renderEditor(); };
 $('addPage').onclick = () => { S.cur.extraPages++; renderEditor(); };
+$('delPage').onclick = removeLastPage;
 $('revert').onclick = () => S.cur && selectUser(S.cur.user);
 $('save').onclick = save;
 window.addEventListener('beforeunload', (e) => { if (isDirty()) { e.preventDefault(); e.returnValue = ''; } });

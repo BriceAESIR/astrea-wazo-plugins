@@ -23,6 +23,15 @@ du serveur ouvert dans le portail, avec le token que fournit le portail.
   un utilisateur supprimé apparaît en rouge pointillé ;
 - récapitulatif avant/après avant chaque enregistrement, puis resynchro du
   poste (optionnelle) ;
+- pages Yealink : jusqu'à 10 touches (T54W) une seule page ; boutons
+  *Ajouter une page* / *Retirer la dernière page* (confirmation si des
+  touches sont effacées ; en revenant à 1 page, la touche 10 est gardée) ;
+- onglet **Déploiement** : applique un modèle de touches Wazo ou les touches
+  d'un utilisateur à une sélection d'utilisateurs, en remplacement ou à la
+  suite (sans doublon). Sa propre touche est retirée chez chacun, les suivantes
+  remontent ; le bloc commence après les touches ligne de chacun. Aperçu
+  avant/après, un seul PUT par utilisateur modifié, resynchro optionnelle.
+  Le modèle partagé n'est pas rattaché (il mettrait à chacun sa propre touche) ;
 - onglet **Libellés** : repère les touches dont le libellé ne correspond plus
   au nom du collègue (renommage) et les corrige en lot, sur les touches cochées.
 
