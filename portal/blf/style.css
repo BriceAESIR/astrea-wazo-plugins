@@ -128,6 +128,9 @@ body.in-portal.ready #main { min-height: 100vh; }
 .linekeys { display: flex; align-items: center; gap: 8px; padding: 4px 4px 4px 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); }
 .linekeys span { color: var(--muted); font-size: .75rem; text-transform: uppercase; letter-spacing: .08333em; font-weight: 500; }
 .linekeys strong { min-width: 20px; text-align: center; font-size: 1rem; font-weight: 500; }
+.lkwrap { display: flex; flex-direction: column; gap: 6px; align-items: stretch; }
+.lkwrap .linekeys { justify-content: space-between; }
+#lk-others { display: flex; flex-direction: column; gap: 6px; }
 .linekeys button { width: 32px; height: 32px; padding: 0; min-width: 0; border: 0; border-radius: 50%; font-size: 1.125rem; }
 
 .page { background: var(--panel); border-radius: var(--radius); border: 1px solid var(--line); padding: 16px; margin-bottom: 16px; }

@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Mulish:wght@300..800&display=swap">
-<link rel="stylesheet" href="./style.css?v=0.13.1">
+<link rel="stylesheet" href="./style.css?v=0.14.0">
 </head>
 <body>
 <div id="app">
@@ -68,11 +68,14 @@
               <label>Aperçu sur <select id="tpl-model"></select></label>
             </div>
           </div>
+          <div class="lkwrap">
           <div class="linekeys">
-            <span>Touches ligne</span>
+            <span id="lk-title">Touches ligne</span>
             <button id="lk-minus" aria-label="moins">−</button>
             <strong id="lk-val">1</strong>
             <button id="lk-plus" aria-label="plus">+</button>
+          </div>
+          <div id="lk-others" hidden></div>
           </div>
         </div>
         <div id="warnings"></div>
@@ -182,6 +185,6 @@
     <div class="btnrow right"><button id="modal-cancel">Annuler</button><button id="modal-ok" class="primary">Confirmer</button></div></div></div>
   <div id="toast" class="toast" hidden></div>
 </div>
-<script type="module" src="./app.js?v=0.13.1"></script>
+<script type="module" src="./app.js?v=0.14.0"></script>
 </body>
 </html>
