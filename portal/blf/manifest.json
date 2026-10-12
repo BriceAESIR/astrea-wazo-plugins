@@ -1,12 +1,12 @@
 {
   "manifestVersion": "0.1",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "id": "astrea-blf",
   "packageName": "io.github.briceaesir.astrea.blf",
   "productType": "portal",
   "name": {
-    "short": "Touches des postes",
-    "full": "Astrea - Touches des postes"
+    "short": "ASTREA - BLF Manager",
+    "full": "ASTREA - BLF Manager"
   },
   "description": {
     "short": "Gestion des touches de fonction (BLF) et des touches ligne des postes",
@@ -30,7 +30,7 @@
       "entityId": "astrea-blf-overview",
       "context": ["pbxMenu"],
       "parent": "common.layout.pbxMenu.userManagement",
-      "name": "Touches des postes",
+      "name": "ASTREA - BLF Manager",
       "icon": "Dialpad",
       "contentUrl": "./index.html?view=overview"
     }

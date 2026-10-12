@@ -3,16 +3,16 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Touches des postes</title>
+<title>ASTREA - BLF Manager</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Mulish:wght@300..800&display=swap">
-<link rel="stylesheet" href="./style.css?v=0.9.2">
+<link rel="stylesheet" href="./style.css?v=0.9.3">
 </head>
 <body>
 <div id="app">
   <header class="topbar">
-    <div class="brand">Touches des postes</div>
+    <div class="brand">ASTREA - BLF Manager</div>
     <div id="conn" class="conn muted">Connexion…</div>
   </header>
 
@@ -52,6 +52,10 @@
     </aside>
 
     <section id="workbench">
+      <div class="advice" role="note">
+        <strong>Gérez les touches des postes ici plutôt qu'avec les outils de base de Wazo</strong> (« Modèles de touches », touches de la fiche utilisateur).
+        Cet outil respecte la disposition réelle des postes (pages, modules, touches ligne), ne fait jamais superviser un utilisateur par lui-même et garde les libellés à jour. Une modification faite ailleurs peut être écrasée ou décaler les touches.
+      </div>
       <div id="empty" class="muted center">Choisissez un utilisateur.</div>
       <div id="editor" hidden>
         <div class="phonehead">
@@ -148,6 +152,6 @@
     <div class="btnrow right"><button id="modal-cancel">Annuler</button><button id="modal-ok" class="primary">Confirmer</button></div></div></div>
   <div id="toast" class="toast" hidden></div>
 </div>
-<script type="module" src="./app.js?v=0.9.2"></script>
+<script type="module" src="./app.js?v=0.9.3"></script>
 </body>
 </html>

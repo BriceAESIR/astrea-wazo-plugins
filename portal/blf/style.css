@@ -199,6 +199,10 @@ button.icon:hover:not(:disabled) { color: var(--danger); background: color-mix(i
 .btnrow { display: flex; gap: 8px; margin: 12px 0; flex-wrap: wrap; }
 .btnrow.right { justify-content: flex-end; }
 
+/* Bandeau de recommandation (couleur de marque rouge, distincte des alertes) */
+.advice { margin: 0 0 20px; padding: 10px 16px; border-left: 4px solid var(--brand-red); border-radius: var(--radius); background: color-mix(in srgb, var(--brand-red) 8%, var(--panel)); color: var(--ink); font-size: .8125rem; line-height: 1.5; }
+.advice strong { display: block; color: color-mix(in srgb, var(--brand-red) 80%, var(--ink)); font-size: .875rem; margin-bottom: 2px; }
+
 /* Alertes (MUI Alert « standard ») */
 .warn { display: flex; gap: 12px; align-items: flex-start; background: color-mix(in srgb, var(--warn) 12%, var(--panel)); color: color-mix(in srgb, var(--warn) 45%, var(--ink)); padding: 6px 16px; border-radius: var(--radius); margin-bottom: 8px; font-size: .875rem; line-height: 1.43; }
 .warn::before { content: "!"; flex: none; display: inline-grid; place-items: center; width: 20px; height: 20px; margin-top: 1px; border-radius: 50%; background: var(--warn); color: #fff; font-size: .75rem; font-weight: 700; }
