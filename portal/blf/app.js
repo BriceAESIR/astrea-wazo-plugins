@@ -596,8 +596,56 @@ function tileEl(p) {
   }
   if (keySig(k) !== keySig(c.orig[p])) el.classList.add('changed');
   if (S.sel === p) el.classList.add('sel');
+  el.dataset.pos = p; // case éditable : cible de glisser-déposer
+  if (k) { el.draggable = true; el.title = 'Glisser pour déplacer'; }
   el.onclick = () => { S.sel = p; $('dt-type').dataset.pending = ''; renderEditor(); };
   return el;
+}
+
+// Glisser-déposer : sur une case vide, la touche y est déplacée ; sur une
+// autre touche, les deux sont échangées. Lignes, touches héritées et touche
+// de page ne sont ni déplaçables ni des cibles (pas de data-pos).
+let dragFrom = null;
+function wireDragDrop() {
+  const host = $('pages');
+  const target = (e) => e.target.closest?.('.tile[data-pos]');
+  host.addEventListener('dragstart', (e) => {
+    const t = target(e);
+    if (!t || !t.draggable) return;
+    dragFrom = Number(t.dataset.pos);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', String(dragFrom));
+    requestAnimationFrame(() => t.classList.add('dragging'));
+  });
+  host.addEventListener('dragover', (e) => {
+    const t = target(e);
+    if (dragFrom == null || !t) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    host.querySelectorAll('.dropover').forEach((x) => x !== t && x.classList.remove('dropover'));
+    t.classList.add('dropover', S.cur.slots[Number(t.dataset.pos) - 1] ? 'swap' : 'move');
+  });
+  host.addEventListener('dragleave', (e) => { const t = target(e); if (t && !t.contains(e.relatedTarget)) t.classList.remove('dropover', 'swap', 'move'); });
+  host.addEventListener('drop', (e) => {
+    const t = target(e);
+    if (dragFrom == null || !t) return;
+    e.preventDefault();
+    moveKey(dragFrom, Number(t.dataset.pos));
+    dragFrom = null;
+  });
+  host.addEventListener('dragend', () => {
+    dragFrom = null;
+    host.querySelectorAll('.dragging, .dropover').forEach((x) => x.classList.remove('dragging', 'dropover', 'swap', 'move'));
+  });
+}
+function moveKey(from, to) {
+  const c = S.cur;
+  if (from === to || to <= c.lineKeys || c.inherited[to]) return;
+  while (c.slots.length < Math.max(from, to)) c.slots.push(null);
+  [c.slots[from - 1], c.slots[to - 1]] = [c.slots[to - 1], c.slots[from - 1]];
+  while (c.slots.length && !c.slots[c.slots.length - 1]) c.slots.pop();
+  S.sel = to;
+  renderEditor();
 }
 function layout() {
   const main = $('main');
@@ -1125,4 +1173,5 @@ $('revert').onclick = () => { if (S.cur?.tpl) openTemplate(S.cur.tpl.id); else i
 $('save').onclick = save;
 window.addEventListener('beforeunload', (e) => { if (isDirty()) { e.preventDefault(); e.returnValue = ''; } });
 wireDetail();
+wireDragDrop();
 connect();

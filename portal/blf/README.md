@@ -13,6 +13,9 @@ du serveur ouvert dans le portail, avec le token que fournit le portail.
   T43U, T42S/U, T41S, T33G/P) : touches de part et d'autre de l'écran, touche
   de page en bas à droite (ex. T54W : 3 pages de 9 touches + touche de page).
   Les modèles tactiles (T48, T57W, T58, T7x, T8x) restent en grille simple ;
+- **glisser-déposer** : une touche déposée sur une case vide y est déplacée ;
+  sur une autre touche, les deux sont échangées (entre pages et modules aussi).
+  Lignes, touches héritées et touche de page ne bougent pas ;
 - *Vider* : la case reste vide. *Supprimer* : les touches suivantes remontent.
   *Insérer avant* ajoute une case vide, ◀ ▶ déplacent une touche ;
 - **touches ligne** (bouton − / +) : les touches suivent. Le nombre est
