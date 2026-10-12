@@ -56,6 +56,22 @@ du serveur ouvert dans le portail, avec le token que fournit le portail.
 - (ancien onglet **Libellés**) : repère les touches dont le libellé ne correspond plus
   au nom du collègue (renommage) et les corrige en lot, sur les touches cochées.
 
+## Sécurité : auto-contrôle et sauvegardes
+
+- **Auto-contrôle au démarrage** : forme des réponses confd (utilisateurs avec
+  `uuid`/`id`/`lines[].device_id`, postes avec `model`/`vendor`/`plugin`,
+  touches `keys`) et version de stack (`TESTED_STACK` dans `app.js`). Format
+  inattendu → bandeau rouge et **lecture seule** (aucune écriture possible) ;
+  version non validée → simple avertissement orange. Détail dans la console
+  (`[astrea] auto-contrôle`).
+- **Sauvegarde automatique** avant chaque déploiement en masse et chaque mise
+  à jour d'étiquettes : fichier JSON téléchargé + copie dans le navigateur.
+  Restauration depuis l'onglet *Déploiement en masse* (fichier ou dernière
+  sauvegarde) : touches propres et userfield des utilisateurs concernés.
+- Pages des T73/T74 (8/10 touches × 5 pages) et du T85W (12 × 5) : touche de
+  page physique dédiée, aucune touche prise. Au-delà de 5 pages, Wazo numérote
+  encore des positions que le poste n'affiche pas (signalé).
+
 ## Déploiement (doc Wazo : developers.wazo.io/docs/plugins/ui/deploy)
 
 1. Copier ce dossier sur un serveur web **public en HTTPS**, avec l'en-tête

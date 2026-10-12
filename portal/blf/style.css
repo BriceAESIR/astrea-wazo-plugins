@@ -206,6 +206,12 @@ button.icon:hover:not(:disabled) { color: var(--danger); background: color-mix(i
 .btnrow { display: flex; gap: 8px; margin: 12px 0; flex-wrap: wrap; }
 .btnrow.right { justify-content: flex-end; }
 
+/* Auto-contrôle de compatibilité : avertissement (orange) ou blocage (rouge) */
+.compat { margin: 0 0 16px; padding: 10px 16px; border-left: 4px solid var(--warn); border-radius: var(--radius); background: color-mix(in srgb, var(--warn) 10%, var(--panel)); font-size: .8125rem; line-height: 1.5; }
+.compat.blocking { border-left-color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, var(--panel)); }
+.compat div + div { margin-top: 4px; }
+body.readonly #save, body.readonly #dp-go, body.readonly #lb-save { opacity: .5; }
+
 /* Bandeau de recommandation (couleur de marque rouge, distincte des alertes) */
 .advice { margin: 0 0 20px; padding: 10px 16px; border-left: 4px solid var(--brand-red); border-radius: var(--radius); background: color-mix(in srgb, var(--brand-red) 8%, var(--panel)); color: var(--ink); font-size: .8125rem; line-height: 1.5; }
 .advice strong { display: block; color: color-mix(in srgb, var(--brand-red) 80%, var(--ink)); font-size: .875rem; margin-bottom: 2px; }

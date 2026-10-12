@@ -35,11 +35,21 @@ function yealinkExp(model) {
 // (la touche du bas à droite devient touche de page). T33 : une seule colonne,
 // disposition supposée. Modèles tactiles (T48, T57W, T58, T7x, T8x) : pas de
 // pages, vue étendue → grille simple.
+// 4e valeur 'dedicated' : touche de page physique séparée (T7x, T85W) — les
+// pages font toutes `gauche + droite` touches, aucun emplacement n'est pris.
+// Source : datasheets Yealink (T73W 8 touches / 5 pages / 40 ; T74W 10 / 5 /
+// 50 ; T85W 12 / 5 / 60). Répartition gauche/droite supposée (moitié/moitié).
+// Wazo numérote plus loin (48 / 60 / 72) : au-delà de 5 pages, positions non
+// affichées par le poste. Tactiles sans disposition fixe (T77U, T87W, T88W) :
+// grille simple.
 const YEALINK_FACE = {
   T54W: [5, 5, 3], T46S: [5, 5, 3], T46U: [5, 5, 3],
   T53: [4, 4, 3], T53W: [4, 4, 3], T53C: [4, 4, 3], T43U: [4, 4, 3],
   T42S: [3, 3, 3], T42U: [3, 3, 3], T41S: [3, 3, 3],
   T33G: [4, 0, 4], T33P: [4, 0, 4],
+  T73W: [4, 4, 5, 'dedicated'], T73U: [4, 4, 5, 'dedicated'],
+  T74W: [5, 5, 5, 'dedicated'], T74U: [5, 5, 5, 'dedicated'],
+  T85W: [6, 6, 5, 'dedicated'],
 };
 // Modules : touches par page [gauche, droite], déduites des totaux Wazo
 // (EXP40 40 = 2 × 20, EXP43/EXP50 60 = 3 × 20, EXP55 78 = 3 × 26). À vérifier.
@@ -103,6 +113,8 @@ function toast(msg, ms = 2600) { const t = $('toast'); t.textContent = msg; t.hi
 // ---------------------------------------------------------------------------
 class ApiError extends Error { constructor(status, msg) { super(msg); this.status = status; } }
 async function api(method, path, body) {
+  // Lecture seule (auto-contrôle de compatibilité en échec) : aucune écriture.
+  if (S.readonly && method !== 'GET') throw new ApiError(0, `Lecture seule : ${S.readonly}`);
   const headers = { 'X-Auth-Token': S.token, Accept: 'application/json' };
   if (S.tenant) headers['Wazo-Tenant'] = S.tenant;
   if (body !== undefined) headers['Content-Type'] = 'application/json';
@@ -118,6 +130,56 @@ async function api(method, path, body) {
   return txt ? JSON.parse(txt) : null;
 }
 const listAll = async (path) => (await api('GET', `${path}?recurse=true&limit=10000`))?.items || [];
+
+// ---------------------------------------------------------------------------
+// Auto-contrôle de compatibilité (mise à jour Wazo, portail, API)
+// ---------------------------------------------------------------------------
+// Versions de stack sur lesquelles l'appli a été validée (préfixe). Hors de
+// cette liste : simple avertissement. Format de réponse inattendu : lecture
+// seule (on préfère ne rien écrire que d'écrire de travers).
+const TESTED_STACK = ['26.07'];
+const TESTED_LABEL = 'stack 26.07, plugin provd wazo-yealink v86/v87, SDK euc-plugins 1.1.1';
+// À appeler au début de chaque action d'écriture : message clair plutôt
+// qu'une suite d'échecs.
+function canWrite() {
+  if (!S.readonly) return true;
+  toast(`Lecture seule : ${S.readonly}. Rien n'a été modifié.`, 8000);
+  return false;
+}
+function setReadonly(reason) {
+  if (S.readonly) return;
+  S.readonly = reason;
+  document.body.classList.add('readonly');
+  showCompat();
+}
+function showCompat() {
+  const box = $('compat');
+  const parts = [];
+  if (S.readonly) parts.push(`<strong>Lecture seule : incompatibilité détectée.</strong> ${esc(S.readonly)}. Aucune modification ne sera écrite. Prévenez le support Astrea avec ce message et la console du navigateur.`);
+  for (const w of S.compatWarns || []) parts.push(esc(w));
+  box.innerHTML = parts.map((p) => `<div>${p}</div>`).join('');
+  box.classList.toggle('blocking', !!S.readonly);
+  box.hidden = !parts.length;
+}
+function selfCheck(users, devices, devicesOk) {
+  S.compatWarns = [];
+  const problems = [];
+  if (!Array.isArray(users)) problems.push('liste des utilisateurs illisible');
+  else {
+    const bad = users.filter((u) => typeof u?.uuid !== 'string' || typeof u?.id !== 'number' || !Array.isArray(u?.lines));
+    if (bad.length) problems.push(`${bad.length} utilisateur(s) sans uuid / id / lines au format attendu`);
+    const lines = users.flatMap((u) => u?.lines || []);
+    if (devices.length && lines.length && !lines.some((l) => l && 'device_id' in l)) problems.push('les lignes des utilisateurs n\'indiquent plus leur poste (device_id absent)');
+  }
+  if (devices.length && !devices.some((d) => d && 'model' in d && ('vendor' in d || 'plugin' in d))) problems.push('format des postes inattendu (model / vendor / plugin absents)');
+  if (!devicesOk) S.compatWarns.push('Lecture des postes impossible : la disposition par modèle est indisponible (droits du token ?).');
+  let v = null;
+  try { v = sdk.getContext()?.app?.extra?.stack?.version || null; } catch { /* hors portail */ }
+  if (v && !TESTED_STACK.some((t) => String(v).startsWith(t))) S.compatWarns.push(`Version de la stack ${v} non encore validée avec cet outil (validé : ${TESTED_LABEL}). Vérifiez le résultat avant d'enregistrer, ou demandez une validation.`);
+  console.info('[astrea] auto-contrôle', { stack: v, problems, warnings: S.compatWarns });
+  if (problems.length) setReadonly(problems.join(' ; '));
+  else showCompat();
+}
 
 // ---------------------------------------------------------------------------
 // Connexion : portail ou autonome
@@ -236,13 +298,16 @@ async function boot() {
     S.cur = null; S.sel = null;
     D.templates = null; D.src = null; D.srcLines = 1; D.picked.clear(); D.plan = [];
     L.edits.clear(); $('lb-result-wrap').hidden = true;
+    S.readonly = null; document.body.classList.remove('readonly'); // l'auto-contrôle est refait ci-dessous
     $('editor').hidden = true; $('detail').hidden = true;
     $('dp-preview').innerHTML = ''; $('dp-source').value = '';
     if ($('deploy').hidden) $('empty').hidden = false;
   }
   S.scope = scope;
   try {
-    const [users, devices] = await Promise.all([listAll('/users'), listAll('/devices').catch(() => [])]);
+    let devicesOk = true;
+    const [users, devices] = await Promise.all([listAll('/users'), listAll('/devices').catch(() => { devicesOk = false; return []; })]);
+    selfCheck(users, devices, devicesOk);
     S.users = users.sort((a, b) => fullName(a).localeCompare(fullName(b), 'fr'));
     S.byId = new Map(users.map((u) => [u.id, u]));
     S.byUuid = new Map(users.map((u) => [u.uuid, u]));
@@ -379,6 +444,7 @@ async function selectUser(u) {
   let data;
   try { data = await api('GET', `/users/${u.uuid}/funckeys`); } catch (e) { if (seq === selectSeq) toast(`${fullName(u)} : ${e.message}`, 6000); return; }
   if (seq !== selectSeq) return;
+  if (data && (typeof data.keys !== 'object' || data.keys === null || Array.isArray(data.keys))) setReadonly('format des touches renvoyé par confd inattendu (keys)');
   S.sel = null;
   const orig = {}, inherited = {};
   for (const [p, k] of Object.entries(data?.keys || {})) (k.inherited ? inherited : orig)[Number(p)] = cleanKey(k);
@@ -494,7 +560,8 @@ function renderEditor() {
     group.appendChild(pageEl(pg));
     if (pg.note) host.insertAdjacentHTML('beforeend', `<p class="muted small facenote">${pg.note}</p>`);
   }
-  const overflow = c.slots.map((k, i) => (k ? i + 1 : 0)).filter((p) => p > maxPos);
+  // Hors capacité, ou numérotée par Wazo mais au-delà des pages du poste (T7x/T85W).
+  const overflow = c.slots.map((k, i) => (k ? i + 1 : 0)).filter((p) => p > maxPos || (c.phoneVisible && p > c.phoneVisible && p <= cap.lk));
   if (overflow.length) $('warnings').insertAdjacentHTML('beforeend', `<div class="warn">Positions ${overflow.join(', ')} au-delà de la capacité affichée : elles ne seront pas visibles sur le téléphone.</div>`);
 
   $('save').disabled = !isDirty();
@@ -511,6 +578,7 @@ function buildPages(cap, mods) {
   const out = [];
   c.pagesLeft = 0;
   c.pageInfo = null;
+  c.phoneVisible = null;
   const face = cap.known && c.prof?.face?.[c.model];
   if (face) {
     // Comportement Yealink (T54W : 10 emplacements) :
@@ -518,12 +586,16 @@ function buildPages(cap, mods) {
     // - dès la 11e, l'emplacement du bas à droite devient la touche de page et
     //   les pages font 9 touches (la touche 10 passe en tête de la page 2) ;
     // - une page vide n'apparaît pas sur le poste ; ici elle reste éditable, en grisé.
-    const [l, r, maxPages] = face;
+    // Touche de page dédiée (T7x, T85W) : toutes les pages font `phys` touches.
+    const [l, r, maxPages, mode] = face;
+    const dedicated = mode === 'dedicated';
     const phys = l + r;
-    const per = phys - 1;
+    const per = dedicated ? phys : phys - 1;
     const n = Math.min(maxPages, Math.ceil(cap.lk / per));
-    const used = Math.min(cap.lk, Math.max(c.lineKeys, ...c.slots.map((k, i) => (k ? i + 1 : 0)), ...Object.keys(c.inherited).map(Number)));
-    const real = used > phys ? Math.min(n, Math.ceil(used / per)) : 1; // pages sur le poste
+    c.phoneVisible = Math.min(cap.lk, n * per); // au-delà : numéroté par Wazo mais pas affiché
+    const used = Math.min(c.phoneVisible, Math.max(c.lineKeys, ...c.slots.map((k, i) => (k ? i + 1 : 0)), ...Object.keys(c.inherited).map(Number)));
+    const real = dedicated ? Math.max(1, Math.ceil(used / per))           // pages sur le poste
+      : used > phys ? Math.min(n, Math.ceil(used / per)) : 1;
     const shown = Math.min(n, Math.max(real, 1 + c.extraPages));         // pages affichées ici
     c.pagesLeft = n - shown;
     c.pageInfo = { shown, phys, per };
@@ -532,18 +604,19 @@ function buildPages(cap, mods) {
     } else {
       for (let i = 0; i < shown; i++) {
         const empty = i >= real;
-        // real === 1 : aperçu de la pagination, pas encore effective sur le poste.
-        const title = real === 1
+        // real === 1 (touche de page prise sur un emplacement) : aperçu de la
+        // pagination, pas encore effective sur le poste.
+        const title = !dedicated && real === 1
           ? `${name} · page ${i + 1} · aperçu (poste encore sur 1 page)`
-          : empty ? `${name} · page ${i + 1} · vide, non affichée sur le poste` : `${name} · page ${i + 1}/${real}`;
+          : empty ? `${name} · page ${i + 1} · vide` : `${name} · page ${i + 1}/${real}`;
         out.push({
-          group: 'phone', from: i * per + 1, to: Math.min(cap.lk, (i + 1) * per), l, r, pageKey: 'on', inactive: empty,
+          group: 'phone', from: i * per + 1, to: Math.min(cap.lk, (i + 1) * per), l, r, pageKey: dedicated ? null : 'on', inactive: empty,
           remove: i >= 1 ? { kind: 'page', i } : null,
           title,
           screen: `Page ${i + 1}/${shown}`,
         });
       }
-      if (real === 1) out[shown - 1].note = `Tant qu'aucune touche après la ${phys} n'est remplie, le poste reste sur une seule page de ${phys} touches : la touche ${phys} reste en page 1 et il n'y a pas de touche de page.`;
+      if (!dedicated && real === 1) out[shown - 1].note = `Tant qu'aucune touche après la ${phys} n'est remplie, le poste reste sur une seule page de ${phys} touches : la touche ${phys} reste en page 1 et il n'y a pas de touche de page.`;
     }
   } else {
     out.push({ group: 'phone', title: c.dev ? `Touches du ${name}` : 'Touches', from: 1, to: cap.lk });
@@ -928,6 +1001,7 @@ const setUserLineKeys = (u, n) => setUserToken(u, LK_TOKEN, n > 1 ? `blf-linekey
 // blf-label=… : étiquette de touche (vide ou égale au nom = pas de jeton).
 const setUserKeyLabel = (u, label) => setUserToken(u, LBL_TOKEN, label && label !== fullName(u) ? `blf-label=${encodeURIComponent(label)}` : '');
 function save() {
+  if (!canWrite()) return;
   const c = S.cur;
   if (c.tpl) return saveTemplate();
   const target = targetKeys();
@@ -984,7 +1058,10 @@ function updateLabelsBtn() {
   $('lb-save').textContent = n ? `Enregistrer les étiquettes (${n})` : 'Enregistrer les étiquettes';
 }
 async function saveLabels() {
+  if (!canWrite()) return;
   const todo = pendingLabels();
+  if (!todo.length) return;
+  try { makeBackup(`Avant modification de ${todo.length} étiquette(s) de touche`, await snapshot(todo.map(([u]) => u))); } catch (e) { toast(`Sauvegarde impossible, rien n'est modifié : ${e.message}`, 8000); return; }
   const changed = new Set();
   let ok = 0;
   for (const [u, v] of todo) {
@@ -1029,9 +1106,12 @@ async function scanLabels(justChanged = new Set()) {
   $('lbl-all').onclick = () => out.querySelectorAll('input[type=checkbox]').forEach((x) => (x.checked = true));
   $('lbl-none').onclick = () => out.querySelectorAll('input[type=checkbox]').forEach((x) => (x.checked = false));
   $('lbl-apply').onclick = async () => {
+    if (!canWrite()) return;
     const picked = [...out.querySelectorAll('input:checked')].map((x) => found[Number(x.dataset.i)]);
     const byOwner = new Map();
     for (const f of picked) (byOwner.get(f.owner.uuid) || byOwner.set(f.owner.uuid, []).get(f.owner.uuid)).push(f);
+    if (!byOwner.size) return;
+    try { makeBackup(`Avant mise à jour des étiquettes sur ${byOwner.size} poste(s)`, await snapshot([...byOwner.keys()].map((id) => S.byUuid.get(id)))); } catch (e) { toast(`Sauvegarde impossible, rien n'est modifié : ${e.message}`, 8000); return; }
     let ok = 0;
     for (const [uuid, list] of byOwner) {
       try {
@@ -1103,6 +1183,7 @@ function setTemplateModel(model) {
   renderEditor();
 }
 async function saveTemplate() {
+  if (!canWrite()) return;
   const c = S.cur;
   const name = c.tpl.name.trim();
   if (!name) { toast('Donnez un nom au modèle.'); $('tpl-name').focus(); return; }
@@ -1250,7 +1331,7 @@ async function previewDeploy() {
       const changed = keysChanged || linesChanged;
       const cap = capOf(u);
       const over = cap ? Object.keys(keys).map(Number).filter((p) => p > cap) : [];
-      D.plan.push({ u, keys, lines, keysChanged, linesChanged, changed });
+      D.plan.push({ u, keys, lines, keysChanged, linesChanged, changed, before: { userfield: u.userfield || '', keys: cur } });
       const notes = [
         linesChanged && `touches ligne ${lineKeysOf(u)} → ${lines}`,
         linesSkipped && `<span class="error">touches ligne multiples non gérées pour cette marque : ${lineKeysOf(u) + 1 === D.srcLines ? `position ${D.srcLines} laissée vide` : `positions ${lineKeysOf(u) + 1}–${D.srcLines} laissées vides`}</span>`,
@@ -1269,7 +1350,10 @@ async function previewDeploy() {
   applyDeploy, `Déployer (${n})`);
 }
 async function applyDeploy() {
+  if (!canWrite()) return;
   const todo = D.plan.filter((x) => x.changed);
+  if (!todo.length) return;
+  makeBackup(`Avant déploiement en masse (${todo.length} utilisateur(s))`, todo.map((x) => ({ uuid: x.u.uuid, name: fullName(x.u), ...x.before })));
   let ok = 0, ko = 0;
   for (const [i, x] of todo.entries()) {
     toast(`Déploiement ${i + 1}/${todo.length}…`, 60000);
@@ -1282,6 +1366,68 @@ async function applyDeploy() {
     } catch (e) { ko++; console.error(fullName(x.u), e); }
   }
   toast(`Déploiement terminé : ${ok} utilisateur${ok > 1 ? 's' : ''} mis à jour${ko ? `, ${ko} en erreur (détail dans la console)` : ''}.`, 8000);
+}
+
+// ---------------------------------------------------------------------------
+// Sauvegardes avant écriture en masse
+// ---------------------------------------------------------------------------
+// Format : { app, version, created, base, tenant, reason, entries: [{ uuid,
+// name, userfield, keys }] } — keys = touches propres (hors héritées).
+const BK_STORE = 'astrea-blf-last-backup';
+const APP_VERSION = '0.11.0';
+function makeBackup(reason, entries) {
+  const bk = { app: 'astrea-blf', version: APP_VERSION, created: new Date().toISOString(), base: S.base, tenant: S.tenant, reason, entries };
+  const json = JSON.stringify(bk, null, 1);
+  try { localStorage.setItem(BK_STORE, json); } catch { /* stockage indisponible : le fichier suffit */ }
+  try {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([json], { type: 'application/json' }));
+    a.download = `astrea-blf-sauvegarde-${bk.created.replace(/[:.]/g, '-')}.json`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  } catch (e) { console.warn('téléchargement de la sauvegarde', e); }
+  refreshBackupInfo();
+}
+// Lit les touches propres + userfield des utilisateurs avant modification.
+async function snapshot(users) {
+  const entries = [];
+  for (const u of users) {
+    const data = await api('GET', `/users/${u.uuid}/funckeys`);
+    const keys = {};
+    for (const [p, k] of Object.entries(data?.keys || {})) if (!k.inherited) keys[p] = cleanKey(k);
+    entries.push({ uuid: u.uuid, name: fullName(u), userfield: u.userfield || '', keys });
+  }
+  return entries;
+}
+function lastBackup() { try { return JSON.parse(localStorage.getItem(BK_STORE) || 'null'); } catch { return null; } }
+function refreshBackupInfo() {
+  const bk = lastBackup();
+  $('bk-last').disabled = !bk;
+  $('bk-info').textContent = bk ? `Dernière sauvegarde dans ce navigateur : ${new Date(bk.created).toLocaleString('fr-FR')} — ${bk.reason}.` : '';
+}
+function restoreBackup(bk) {
+  if (!canWrite()) return;
+  if (!bk || bk.app !== 'astrea-blf' || !Array.isArray(bk.entries)) { toast('Fichier de sauvegarde non reconnu.', 6000); return; }
+  const known = bk.entries.filter((e) => S.byUuid.has(e.uuid));
+  const otherTenant = bk.tenant && S.tenant && bk.tenant !== S.tenant;
+  confirmModal(`<h3>Restaurer la sauvegarde</h3>
+    <p>${esc(bk.reason)} — ${esc(new Date(bk.created).toLocaleString('fr-FR'))}</p>
+    ${otherTenant ? '<div class="warn">Cette sauvegarde vient d\'un autre client (tenant) que celui ouvert dans le portail.</div>' : ''}
+    <p>${known.length} utilisateur(s) retrouvé(s) sur ${bk.entries.length}. Leurs touches propres et leur userfield vont être remis à l'état sauvegardé (les modifications faites depuis seront perdues).</p>`,
+  async () => {
+    let ok = 0, ko = 0;
+    for (const [i, e] of known.entries()) {
+      toast(`Restauration ${i + 1}/${known.length}…`, 60000);
+      try {
+        await api('PUT', `/users/${e.uuid}/funckeys`, { keys: e.keys });
+        const u = S.byUuid.get(e.uuid);
+        if ((u.userfield || '') !== (e.userfield || '')) { await api('PUT', `/users/${e.uuid}`, { userfield: e.userfield || null }); u.userfield = e.userfield; }
+        ok++;
+      } catch (err) { ko++; console.error(e.name, err); }
+    }
+    toast(`Restauration terminée : ${ok} utilisateur(s)${ko ? `, ${ko} en erreur (console)` : ''}.`, 8000);
+    if (S.cur && !S.cur.tpl) selectUser(S.cur.user);
+  }, 'Restaurer');
 }
 
 // ---------------------------------------------------------------------------
@@ -1336,6 +1482,15 @@ $('dp-users').onchange = (e) => {
 $('dp-all').onclick = () => { $('dp-users').querySelectorAll('input[data-uuid]').forEach((cb) => { cb.checked = true; D.picked.add(cb.dataset.uuid); }); updateDeployBtn(); };
 $('dp-none').onclick = () => { $('dp-users').querySelectorAll('input[data-uuid]').forEach((cb) => { cb.checked = false; D.picked.delete(cb.dataset.uuid); }); updateDeployBtn(); };
 $('dp-go').onclick = previewDeploy;
+$('bk-file').onclick = () => $('bk-input').click();
+$('bk-input').onchange = async () => {
+  const f = $('bk-input').files[0];
+  $('bk-input').value = '';
+  if (!f) return;
+  try { restoreBackup(JSON.parse(await f.text())); } catch { toast('Fichier illisible (JSON attendu).', 6000); }
+};
+$('bk-last').onclick = () => restoreBackup(lastBackup());
+refreshBackupInfo();
 $('lb-scan').onclick = scanLabels;
 $('lb-save').onclick = saveLabels;
 $('lb-search').oninput = renderLabels;
