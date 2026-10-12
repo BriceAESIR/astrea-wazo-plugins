@@ -433,6 +433,25 @@ function userDevice(u) {
   const devs = (u.lines || []).map((l) => l.device_id && S.devices.get(l.device_id)).filter(Boolean);
   return devs.find(hasKeys) || devs[0] || null;
 }
+// Poste partagé (plusieurs comptes SIP sur un même téléphone). Vérifié dans
+// le code confd/plugin Yealink : la `position` d'une ligne sur le poste = son
+// numéro de compte (account.N) ; la ligne N a sa touche ligne en position N
+// (sauf si une touche de fonction l'occupe : elle masque alors la ligne) ; seules
+// les touches de l'utilisateur de la plus petite position vont sur le poste.
+const lineCache = new Map(); // id de ligne → ligne confd (position, device_id…)
+const sharesDevice = (dev) => !!dev && S.users.flatMap((x) => (x.lines || []).filter((l) => l.device_id === dev.id)).length > 1;
+async function deviceLines(dev) {
+  if (!dev) return [];
+  const refs = [];
+  for (const x of S.users) for (const l of x.lines || []) if (l.device_id === dev.id) refs.push({ user: x, ref: l });
+  const out = [];
+  for (const { user, ref } of refs) {
+    let line = lineCache.get(ref.id);
+    if (!line) { line = await api('GET', `/lines/${ref.id}`); lineCache.set(ref.id, line); }
+    out.push({ pos: Number(line?.position) || 1, user, number: (ref.extensions || [])[0]?.exten || '' });
+  }
+  return out.sort((a, b) => a.pos - b.pos);
+}
 // Liste : seulement les utilisateurs qui ont un poste à touches (pas les
 // utilisateurs sans ligne, ni ceux qui n'ont qu'un DECT ou une ligne analogique).
 const listed = (u) => hasKeys(userDevice(u));
@@ -451,7 +470,7 @@ function renderUserList() {
     const d = userDevice(u);
     const li = document.createElement('li');
     li.className = S.cur?.user.uuid === u.uuid ? 'sel' : '';
-    li.innerHTML = `<span>${esc(fullName(u))}</span><span class="sub">${esc(userExten(u))}${d ? ' · ' + esc(d.model || '?') : ''}</span>`;
+    li.innerHTML = `<span>${esc(fullName(u))}</span><span class="sub">${esc(userExten(u))}${d ? ' · ' + esc(d.model || '?') : ''}${sharesDevice(d) ? ' · partagé' : ''}</span>`;
     li.onclick = () => guardUnsaved(() => selectUser(u));
     ul.appendChild(li);
   }
@@ -488,9 +507,10 @@ async function selectUser(u) {
   const prof = vendorOf(dev);
   const lk = prof?.linekeys[model] ?? null;
   const exp = prof?.exp(model) ?? null;
-  let data, lineKeys;
+  let data, lineKeys, devLines = [];
   try {
-    [data, lineKeys] = await Promise.all([api('GET', `/users/${u.uuid}/funckeys`), loadLineKeys(u)]);
+    [data, lineKeys, devLines] = await Promise.all([api('GET', `/users/${u.uuid}/funckeys`), loadLineKeys(u),
+      sharesDevice(dev) ? deviceLines(dev) : Promise.resolve([])]);
   } catch (e) { if (seq === selectSeq) toast(`${fullName(u)} : ${e.message}`, 6000); return; }
   if (seq !== selectSeq) return;
   if (data && (typeof data.keys !== 'object' || data.keys === null || Array.isArray(data.keys))) setReadonly('format des touches renvoyé par confd inattendu (keys)');
@@ -500,7 +520,13 @@ async function selectUser(u) {
   const maxPos = Math.max(0, ...Object.keys(orig).map(Number), ...Object.keys(inherited).map(Number));
   const slots = Array.from({ length: Math.max(maxPos, lineKeys) }, (_, i) => (orig[i + 1] ? structuredClone(orig[i + 1]) : null));
   const clash = shiftLineClashes(slots, orig, lineKeys);
-  S.cur = { user: u, dev, prof, model, lk, exp, orig, inherited, lineKeys, origLineKeys: lineKeys, slots, clash, extraModules: 0, extraPages: 0, pagesLeft: 0 };
+  // Poste partagé : propriétaire = utilisateur de la plus petite position.
+  const shared = devLines.length > 1 ? {
+    owner: devLines[0].user,
+    isOwner: devLines[0].user.uuid === u.uuid,
+    others: devLines.slice(1), // comptes 2, 3… : touche ligne à leur position
+  } : null;
+  S.cur = { user: u, dev, prof, model, lk, exp, orig, inherited, lineKeys, origLineKeys: lineKeys, slots, clash, shared, extraModules: 0, extraPages: 0, pagesLeft: 0 };
   renderUserList();
   renderEditor();
 }
@@ -568,10 +594,10 @@ function renderEditor() {
   $('lk-val').textContent = c.lineKeys;
   // Touches ligne multiples : seulement pour les profils qui les gèrent (et
   // toujours pour un modèle) ; « − » reste actif pour revenir à 1.
-  const multi = !!c.prof?.multiLine || isTpl;
+  const multi = (!!c.prof?.multiLine || isTpl) && !c.shared;
   $('lk-plus').disabled = !multi;
   $('lk-minus').disabled = c.lineKeys <= 1;
-  $('lk-plus').title = multi ? '' : 'Touches ligne multiples non gérées pour cette marque';
+  $('lk-plus').title = c.shared ? 'Poste à plusieurs comptes : touches ligne supplémentaires pas encore gérées' : multi ? '' : 'Touches ligne multiples non gérées pour cette marque';
 
   const cap = capacityInfo();
   const warns = [];
@@ -581,6 +607,12 @@ function renderEditor() {
   if (Object.keys(c.inherited).length) warns.push(`${Object.keys(c.inherited).length} touche(s) héritée(s) d'un modèle de touches partagé : visibles mais non modifiables ici.`);
   if (!isTpl && c.lineKeys !== c.origLineKeys) warns.push(`Touches ligne : appliquées sur le poste à l'enregistrement, à condition que les lignes Astrea soient présentes dans le base.tpl personnalisé du plugin provd ${esc(c.dev?.plugin || '')} (var/templates/base.tpl). Sans elles, rien ne change sur le téléphone.`);
   if (isTpl) warns.push(`Modèle : l'aperçu sur ${esc(c.model)} sert seulement à placer les touches ; au déploiement, chaque poste reçoit les mêmes positions. Les touches ligne sont notées dans le nom du modèle Wazo (blf-linekeys=${c.lineKeys}).`);
+  if (c.shared && !c.shared.isOwner) warns.push(`<strong>Poste partagé : ces touches ne s'affichent pas sur ce téléphone.</strong> Il affiche celles du compte 1 (${esc(fullName(c.shared.owner))}). Les touches de ce compte-ci ne servent que sur ses autres postes ou applis. Pour modifier ce que montre le téléphone, ouvrez ${esc(fullName(c.shared.owner))}.`);
+  if (c.shared && c.shared.isOwner) {
+    warns.push(`Poste partagé : ${c.shared.others.map((l) => `compte ${l.pos} (${esc(fullName(l.user))}${l.number ? ' · ' + esc(l.number) : ''}) en touche ${l.pos}`).join(', ')}. Ces positions sont réservées. Touches ligne supplémentaires pas encore gérées sur un poste à plusieurs comptes.`);
+    const masked = c.shared.others.filter((l) => c.slots[l.pos - 1]).map((l) => l.pos);
+    if (masked.length) warns.push(`<span class="error">Touche(s) de fonction en position ${masked.join(', ')} : elles masquent la ligne du compte correspondant sur le téléphone. Déplacez-les.</span>`);
+  }
   if (c.clash) warns.push(`${c.clash} touche(s) étaient placées dans Wazo sur des positions de ligne (masquées par les touches ligne) : elles ont été décalées juste après les lignes. Vérifiez puis enregistrez pour corriger.`);
   $('warnings').innerHTML = warns.map((w) => `<div class="warn">${w}</div>`).join('');
 
@@ -786,6 +818,14 @@ function tileEl(p) {
     el.innerHTML += `<div class="lbl">Ligne</div><div class="dst">${c.tpl ? 'ligne de l\'utilisateur' : esc(userExten(c.user) || 'compte 1')}</div>`;
     return el;
   }
+  // Poste partagé : la position d'un autre compte porte sa touche ligne.
+  const other = c.shared?.isOwner && c.shared.others.find((l) => l.pos === p);
+  if (other && !k) {
+    el.className = 'tile line other';
+    el.title = `Compte ${other.pos} : ${fullName(other.user)} — position réservée`;
+    el.innerHTML += `<div class="lbl">Ligne ${other.pos}</div><div class="dst">${esc(other.number || fullName(other.user))}</div>`;
+    return el;
+  }
   if (k) {
     const vacant = k.destination.type === 'user' && !S.byId.has(k.destination.user_id);
     el.className = `tile key${vacant ? ' vacant' : ''}`;
@@ -800,6 +840,7 @@ function tileEl(p) {
   }
   if (keySig(k) !== keySig(c.orig[p])) el.classList.add('changed');
   if (S.sel === p) el.classList.add('sel');
+  if (other && k) { el.classList.add('over'); el.title = `Masque la ligne du compte ${other.pos} (${fullName(other.user)}) : à déplacer`; }
   el.dataset.pos = p; // case éditable : cible de glisser-déposer
   if (k) { el.draggable = true; el.title = 'Glisser pour déplacer'; }
   el.onclick = () => { S.sel = p; $('dt-type').dataset.pending = ''; renderEditor(); };
@@ -845,6 +886,7 @@ function wireDragDrop() {
 function moveKey(from, to) {
   const c = S.cur;
   if (from === to || to <= c.lineKeys || c.inherited[to]) return;
+  if (c.shared?.isOwner && c.shared.others.some((l) => l.pos === to)) { toast(`Position ${to} réservée à la ligne d'un autre compte.`); return; }
   while (c.slots.length < Math.max(from, to)) c.slots.push(null);
   [c.slots[from - 1], c.slots[to - 1]] = [c.slots[to - 1], c.slots[from - 1]];
   while (c.slots.length && !c.slots[c.slots.length - 1]) c.slots.pop();
@@ -982,6 +1024,8 @@ function wireDetail() {
 function shiftInBlock(p, dir) {
   const c = S.cur, cap = capacityInfo();
   const end = p <= cap.lk || !cap.per ? cap.lk : cap.lk + Math.ceil((p - cap.lk) / cap.per) * cap.per;
+  const reserved = c.shared?.isOwner ? c.shared.others.map((l) => l.pos).filter((x) => x >= p && x <= end) : [];
+  if (reserved.length) { toast(`Impossible : la suite du bloc contient la ligne d'un autre compte (position ${reserved.join(', ')}). Utilisez le glisser-déposer.`, 6000); return; }
   const inh = Object.keys(c.inherited).map(Number).filter((x) => x >= p && x <= end);
   if (inh.length) { toast(`Impossible : touche(s) ${inh.join(', ')} héritée(s) d'un modèle partagé dans la suite du bloc.`, 6000); return; }
   while (c.slots.length < end) c.slots.push(null);
@@ -999,6 +1043,7 @@ function shiftInBlock(p, dir) {
 function move(delta) {
   const c = S.cur, i = S.sel - 1, j = i + delta;
   if (j < c.lineKeys) return;
+  if (c.shared?.isOwner && c.shared.others.some((l) => l.pos === j + 1)) { toast(`Position ${j + 1} réservée à la ligne d'un autre compte.`); return; }
   while (c.slots.length <= Math.max(i, j)) c.slots.push(null);
   [c.slots[i], c.slots[j]] = [c.slots[j], c.slots[i]];
   S.sel = j + 1;
@@ -1051,6 +1096,7 @@ const clearLegacyLineKeys = (u) => setUserToken(u, LK_TOKEN, '');
 async function applyLineKeys(u, dev, n) {
   if (!dev) throw new Error(`${fullName(u)} : aucun poste, touches ligne non applicables`);
   if (!vendorOf(dev)?.multiLine) throw new Error(`${fullName(u)} : touches ligne multiples non gérées pour ${dev.vendor || 'cette marque'}`);
+  if (n > 1 && sharesDevice(dev)) throw new Error(`${fullName(u)} : poste partagé entre plusieurs comptes, touches ligne supplémentaires pas encore gérées`);
   await setDeviceLineKeys(dev.id, n);
   await clearLegacyLineKeys(u);
 }
@@ -1360,7 +1406,7 @@ function updateDeployBtn() {
 // les touches gardent leurs positions (les positions de ligne restent vides).
 function deployKeysFor(u, current, mode) {
   const own = lineKeysOf(u);
-  const multiOk = !!vendorOf(userDevice(u))?.multiLine;
+  const multiOk = !!vendorOf(userDevice(u))?.multiLine && !sharesDevice(userDevice(u)); // poste partagé : pas encore géré
   const lines = mode === 'append' || !multiOk ? own : D.srcLines; // à écrire dans le userfield
   const base = mode === 'append' ? own : D.srcLines;               // les touches commencent après
   const ps = Object.keys(D.src).map(Number).sort((a, b) => a - b);
@@ -1405,7 +1451,20 @@ async function previewDeploy() {
       const cap = capOf(u);
       const over = cap ? Object.keys(keys).map(Number).filter((p) => p > cap) : [];
       D.plan.push({ u, keys, lines, keysChanged, linesChanged, changed, before: { userfield: u.userfield || '', keys: cur, linekeys: lineKeysOf(u) } });
+      // Poste partagé : compte secondaire (touches non affichées) ou positions
+      // réservées aux autres comptes.
+      const tdev = userDevice(u);
+      let sharedNote = '';
+      if (sharesDevice(tdev)) {
+        const dl = await deviceLines(tdev);
+        if (dl[0]?.user.uuid !== u.uuid) sharedNote = `<span class="error">poste partagé : touches non affichées sur ce téléphone (celles de ${esc(fullName(dl[0]?.user))})</span>`;
+        else {
+          const hit = dl.slice(1).filter((l) => keys[l.pos]).map((l) => l.pos);
+          if (hit.length) sharedNote = `<span class="error">masque la ligne du compte en position ${hit.join(', ')}</span>`;
+        }
+      }
       const notes = [
+        sharedNote,
         linesChanged && `touches ligne ${lineKeysOf(u)} → ${lines}`,
         linesSkipped && `<span class="error">touches ligne multiples non gérées pour cette marque : ${lineKeysOf(u) + 1 === D.srcLines ? `position ${D.srcLines} laissée vide` : `positions ${lineKeysOf(u) + 1}–${D.srcLines} laissées vides`}</span>`,
         selfRemoved && 'sa propre touche retirée', inh && `${inh} héritée(s) inchangée(s)`,
@@ -1447,7 +1506,7 @@ async function applyDeploy() {
 // Format : { app, version, created, base, tenant, reason, entries: [{ uuid,
 // name, userfield, keys }] } — keys = touches propres (hors héritées).
 const BK_STORE = 'astrea-blf-last-backup';
-const APP_VERSION = '0.12.2';
+const APP_VERSION = '0.13.0';
 function makeBackup(reason, entries) {
   const bk = { app: 'astrea-blf', version: APP_VERSION, created: new Date().toISOString(), base: S.base, tenant: S.tenant, reason, entries };
   const json = JSON.stringify(bk, null, 1);

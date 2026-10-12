@@ -13,6 +13,12 @@ du serveur ouvert dans le portail, avec le token que fournit le portail.
   T43U, T42S/U, T41S, T33G/P) : touches de part et d'autre de l'écran, touche
   de page en bas à droite (ex. T54W : 3 pages de 9 touches + touche de page).
   Les modèles tactiles (T48, T57W, T58, T7x, T8x) restent en grille simple ;
+- **poste partagé** (plusieurs comptes SIP sur un téléphone ; position de la
+  ligne = numéro de compte) : seules les touches du compte 1 vont sur le poste
+  (vérifié dans le code confd). Compte secondaire : bandeau « ces touches ne
+  s'affichent pas sur ce téléphone ». Compte 1 : positions des autres comptes
+  affichées « Ligne N » et réservées (une touche de fonction y masquerait la
+  ligne). Touches ligne supplémentaires bloquées sur un poste partagé (à tester) ;
 - **glisser-déposer** : une touche déposée sur une case vide y est déplacée ;
   sur une autre touche, les deux sont échangées (entre pages et modules aussi).
   Lignes, touches héritées et touche de page ne bougent pas ;

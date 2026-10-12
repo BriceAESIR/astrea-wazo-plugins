@@ -149,7 +149,8 @@ body.in-portal.ready #main { min-height: 100vh; }
 .tile.empty .lbl { color: var(--muted); font-weight: 400; }
 .tile.changed::after { content: ""; position: absolute; right: 8px; top: 8px; width: 8px; height: 8px; border-radius: 50%; background: var(--warn); }
 .tile.sel { border: 1px solid var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
-.tile.over { outline: 2px solid var(--danger); }
+.tile.over { outline: 2px solid var(--danger); outline-offset: -2px; }
+.tile.line.other { background: color-mix(in srgb, var(--accent) 12%, var(--panel)); border: 1px dashed var(--accent); }
 .tile[draggable="true"] { cursor: grab; }
 .tile.dragging { opacity: .35; }
 .tile.dropover { outline: 2px dashed var(--accent); outline-offset: -2px; background: color-mix(in srgb, var(--accent) 14%, var(--panel)); }
