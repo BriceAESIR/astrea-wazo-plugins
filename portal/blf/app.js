@@ -351,7 +351,8 @@ async function selectUser(u) {
 function isDirty() {
   const c = S.cur;
   if (!c) return false;
-  return c.lineKeys !== c.origLineKeys || JSON.stringify(targetKeys()) !== JSON.stringify(normMap(c.orig));
+  return c.lineKeys !== c.origLineKeys || JSON.stringify(targetKeys()) !== JSON.stringify(normMap(c.orig))
+    || (!!c.tpl && (c.tpl.name.trim() !== c.tpl.origName || !c.tpl.id));
 }
 function normMap(m) { const o = {}; for (const p of Object.keys(m).map(Number).sort((a, b) => a - b)) o[p] = cleanKey(m[p]); return o; }
 function targetKeys() {
@@ -384,14 +385,25 @@ function renderEditor() {
   const c = S.cur;
   $('empty').hidden = true;
   $('editor').hidden = false;
+  const isTpl = !!c.tpl;
+  $('ed-name').hidden = isTpl;
+  $('ed-device').hidden = isTpl;
+  $('tpl-head').hidden = !isTpl;
+  $('tpl-back').hidden = !isTpl;
+  $('resync-wrap').hidden = isTpl;
+  $('save').textContent = isTpl ? 'Enregistrer le modèle' : 'Enregistrer';
+  if (isTpl) {
+    if (document.activeElement !== $('tpl-name')) $('tpl-name').value = c.tpl.name;
+    $('tpl-model').value = c.model;
+  }
   $('ed-name').textContent = fullName(c.user);
   $('ed-device').textContent = c.dev
     ? `${[c.dev.vendor, c.dev.model].filter(Boolean).join(' ') || 'modèle inconnu'} · ${c.dev.mac || ''}${c.lk ? ` · ${c.lk} touches` : ''}${c.exp ? ` · module ${c.exp}` : ''}`
     : 'Aucun poste associé (les touches restent enregistrées sur l\'utilisateur)';
   $('lk-val').textContent = c.lineKeys;
-  // Touches ligne multiples : seulement pour les profils qui les gèrent ; on
-  // laisse « − » actif pour pouvoir revenir à 1 si un jeton traîne.
-  const multi = !!c.prof?.multiLine;
+  // Touches ligne multiples : seulement pour les profils qui les gèrent (et
+  // toujours pour un modèle) ; « − » reste actif pour revenir à 1.
+  const multi = !!c.prof?.multiLine || isTpl;
   $('lk-plus').disabled = !multi;
   $('lk-minus').disabled = c.lineKeys <= 1;
   $('lk-plus').title = multi ? '' : 'Touches ligne multiples non gérées pour cette marque';
@@ -402,7 +414,9 @@ function renderEditor() {
   else if (!cap.known && c.dev) warns.push(`Modèle ${esc(c.model)} absent de la table ${esc(c.prof.name)} : capacité non vérifiée.`);
   if (c.dev && !multi && c.lineKeys > 1) warns.push('Touches ligne multiples : non gérées pour cette marque, elles ne seront pas appliquées.');
   if (Object.keys(c.inherited).length) warns.push(`${Object.keys(c.inherited).length} touche(s) héritée(s) d'un modèle de touches partagé : visibles mais non modifiables ici.`);
-  if (c.lineKeys !== c.origLineKeys) warns.push('Les touches ligne sont appliquées par le plugin serveur blf-sync à son prochain passage (15 min max).');
+  if (!isTpl && c.lineKeys !== c.origLineKeys) warns.push('Les touches ligne sont appliquées par le plugin serveur blf-sync à son prochain passage (15 min max).');
+  if (isTpl) warns.push(`Modèle : l'aperçu sur ${esc(c.model)} sert seulement à placer les touches ; au déploiement, chaque poste reçoit les mêmes positions. Les touches ligne sont notées dans le nom du modèle Wazo (blf-linekeys=${c.lineKeys}).`);
+  if (isTpl && c.tpl.clash) warns.push(`${c.tpl.clash} touche(s) étaient placées dans Wazo sur des positions de ligne : elles ont été décalées après les lignes. Enregistrez pour corriger le modèle.`);
   $('warnings').innerHTML = warns.map((w) => `<div class="warn">${w}</div>`).join('');
 
   const used = Math.max(c.slots.length, ...Object.keys(c.inherited).map(Number), c.lineKeys);
@@ -562,7 +576,7 @@ function tileEl(p) {
   el.innerHTML = `<span class="pos">${p}</span>`;
   if (p <= c.lineKeys) {
     el.className = 'tile line';
-    el.innerHTML += `<div class="lbl">Ligne</div><div class="dst">${esc(userExten(c.user) || 'compte 1')}</div>`;
+    el.innerHTML += `<div class="lbl">Ligne</div><div class="dst">${c.tpl ? 'ligne de l\'utilisateur' : esc(userExten(c.user) || 'compte 1')}</div>`;
     return el;
   }
   if (k) {
@@ -736,8 +750,20 @@ function changeLineKeys(delta) {
 // Enregistrement
 // ---------------------------------------------------------------------------
 function describe(k) { return k ? `${esc(k.label || '')} <span class="muted">(${esc(destText(k))})</span>` : '<span class="muted">vide</span>'; }
+// Jeton blf-linekeys=N dans le userfield (lu par astrea/blf-sync).
+async function setUserLineKeys(u, n) {
+  const before = (u.userfield || '').trim();
+  let uf = before.replace(LK_TOKEN, '').trim();
+  if (n > 1) uf = `${uf} blf-linekeys=${n}`.trim();
+  if (uf === before) return false;
+  if (uf.length > 128) throw new Error(`${fullName(u)} : userfield trop long (128 caractères max)`);
+  await api('PUT', `/users/${u.uuid}`, { userfield: uf || null });
+  u.userfield = uf;
+  return true;
+}
 function save() {
   const c = S.cur;
+  if (c.tpl) return saveTemplate();
   const target = targetKeys();
   const orig = normMap(c.orig);
   const rows = [];
@@ -750,13 +776,7 @@ function save() {
   confirmModal(html, async () => {
     try {
       if (rows.length) await api('PUT', `/users/${c.user.uuid}/funckeys`, { keys: target });
-      if (lkChanged) {
-        let uf = (c.user.userfield || '').replace(LK_TOKEN, '').trim();
-        if (c.lineKeys > 1) uf = `${uf} blf-linekeys=${c.lineKeys}`.trim();
-        if (uf.length > 128) throw new Error('userfield trop long (128 caractères max)');
-        await api('PUT', `/users/${c.user.uuid}`, { userfield: uf || null });
-        c.user.userfield = uf;
-      }
+      if (lkChanged) await setUserLineKeys(c.user, c.lineKeys);
       if ($('resync').checked && c.dev && (rows.length || lkChanged)) {
         try { await api('GET', `/devices/${c.dev.id}/synchronize`); } catch (e) { toast(`Enregistré, mais resynchro impossible : ${e.message}`, 6000); }
       }
@@ -822,8 +842,75 @@ async function scanLabels() {
 // touche). Tuiles : la touche vers le propriétaire est retirée et les
 // suivantes remontent ; les cases vides entre deux touches sont gardées ;
 // le bloc commence après les touches ligne de chaque utilisateur.
-const D = { templates: null, src: null, picked: new Set(), plan: [] };
+const D = { templates: null, src: null, srcLines: 1, picked: new Set(), plan: [] };
 const lineKeysOf = (u) => { const m = (u.userfield || '').match(LK_TOKEN); return m ? Number(m[1]) : 1; };
+// Modèle Wazo : le nombre de touches ligne est noté dans le nom avec le même
+// jeton que le userfield (« Commerciaux blf-linekeys=2 ») ; sans jeton = 1.
+const tplLines = (t) => { const m = (t?.name || '').match(LK_TOKEN); return m ? Number(m[1]) : 1; };
+const tplName = (t) => (t?.name || '').replace(LK_TOKEN, '').trim();
+const tplLabel = (t) => `${tplName(t) || `Modèle ${t.id}`}${tplLines(t) > 1 ? ` · ${tplLines(t)} lignes` : ''}`;
+
+// Éditeur de modèle : réutilise l'éditeur de poste avec un poste fictif
+// (aperçu sur un modèle Yealink au choix) et un utilisateur fictif.
+async function openTemplate(id) {
+  let tpl = { id: null, name: '', keys: {} };
+  if (id) {
+    try { tpl = await api('GET', `/funckeys/templates/${id}`); } catch (e) { toast(e.message, 6000); return; }
+  }
+  const lineKeys = tplLines(tpl);
+  const orig = {};
+  for (const [p, k] of Object.entries(tpl.keys || {})) orig[Number(p)] = cleanKey(k);
+  await Promise.all([...new Set(Object.values(orig).map((k) => k.destination.type))].map(ensureNamed));
+  const maxPos = Math.max(0, ...Object.keys(orig).map(Number));
+  const slots = Array.from({ length: Math.max(maxPos, lineKeys) }, (_, i) => (orig[i + 1] ? structuredClone(orig[i + 1]) : null));
+  // Touches posées dans Wazo sur une position de ligne : décalées après les lignes.
+  const clash = Object.keys(orig).map(Number).filter((p) => p <= lineKeys).sort((a, b) => a - b);
+  if (clash.length) { const moved = clash.map((p) => slots[p - 1]); clash.forEach((p) => { slots[p - 1] = null; }); slots.splice(lineKeys, 0, ...moved); }
+  const model = $('tpl-model').value || 'T54W';
+  const prof = VENDORS.yealink;
+  S.sel = null;
+  S.cur = {
+    tpl: { id: tpl.id, name: tplName(tpl), origName: tplName(tpl), clash: clash.length },
+    user: { uuid: '__modele__', id: -1, firstname: tplName(tpl) || 'Nouveau modèle', lines: [] },
+    dev: { vendor: 'Yealink', model, mac: '', plugin: 'wazo-yealink' }, prof, model, lk: prof.linekeys[model], exp: prof.exp(model),
+    orig, inherited: {}, lineKeys, origLineKeys: lineKeys, slots, extraModules: 0, extraPages: 0, pagesLeft: 0,
+  };
+  $('deploy').hidden = true;
+  renderEditor();
+}
+function setTemplateModel(model) {
+  const c = S.cur;
+  if (!c?.tpl) return;
+  c.model = model;
+  c.dev.model = model;
+  c.lk = c.prof.linekeys[model];
+  c.exp = c.prof.exp(model);
+  c.extraPages = 0;
+  c.extraModules = 0;
+  renderEditor();
+}
+async function saveTemplate() {
+  const c = S.cur;
+  const name = c.tpl.name.trim();
+  if (!name) { toast('Donnez un nom au modèle.'); $('tpl-name').focus(); return; }
+  const body = { name: c.lineKeys > 1 ? `${name} blf-linekeys=${c.lineKeys}` : name, keys: targetKeys() };
+  try {
+    let id = c.tpl.id;
+    if (id) await api('PUT', `/funckeys/templates/${id}`, body);
+    else id = (await api('POST', '/funckeys/templates', body))?.id;
+    toast(`Modèle « ${name} » enregistré dans Wazo`);
+    D.templates = null; // relu à l'ouverture du déploiement
+    backToDeploy(id ? `t:${id}` : '');
+  } catch (e) { toast(e.message, 8000); }
+}
+async function backToDeploy(source) {
+  S.cur = null;
+  S.sel = null;
+  $('editor').hidden = true;
+  $('detail').hidden = true;
+  await openDeploy();
+  if (source !== undefined) { $('dp-source').value = source; await loadSource(); }
+}
 const destSig = (k) => JSON.stringify(cleanDest(k.destination || {}));
 function capOf(u) {
   const dev = userDevice(u), prof = vendorOf(dev);
@@ -842,7 +929,7 @@ async function openDeploy() {
   }
   const cur = $('dp-source').value;
   $('dp-source').innerHTML = '<option value="">— choisir —</option>'
-    + (D.templates.length ? `<optgroup label="Modèles de touches Wazo">${D.templates.map((t) => `<option value="t:${t.id}">${esc(t.name || `Modèle ${t.id}`)}</option>`).join('')}</optgroup>` : '')
+    + (D.templates.length ? `<optgroup label="Modèles de touches Wazo">${D.templates.map((t) => `<option value="t:${t.id}">${esc(tplLabel(t))}</option>`).join('')}</optgroup>` : '')
     + `<optgroup label="Copier les touches d'un utilisateur">${S.users.filter(listed).map((u) => `<option value="u:${u.uuid}">${esc(fullName(u))} · ${esc(userExten(u))}</option>`).join('')}</optgroup>`;
   $('dp-source').value = cur;
   renderDeployUsers();
@@ -856,20 +943,28 @@ function closeDeploy() {
 async function loadSource() {
   const v = $('dp-source').value;
   D.src = null;
+  D.srcLines = 1;
   $('dp-preview').innerHTML = '';
+  $('dp-edit').disabled = !v.startsWith('t:');
   if (v) {
     try {
       let keys = {};
-      if (v.startsWith('t:')) keys = (await api('GET', `/funckeys/templates/${v.slice(2)}`))?.keys || {};
-      else for (const [p, k] of Object.entries((await api('GET', `/users/${v.slice(2)}/funckeys`))?.keys || {})) if (!k.inherited) keys[p] = k;
+      if (v.startsWith('t:')) {
+        const t = await api('GET', `/funckeys/templates/${v.slice(2)}`);
+        keys = t?.keys || {};
+        D.srcLines = tplLines(t);
+      } else {
+        for (const [p, k] of Object.entries((await api('GET', `/users/${v.slice(2)}/funckeys`))?.keys || {})) if (!k.inherited) keys[p] = k;
+        D.srcLines = lineKeysOf(S.byUuid.get(v.slice(2)) || {});
+      }
       D.src = {};
       for (const [p, k] of Object.entries(keys)) D.src[Number(p)] = cleanKey(k);
       await Promise.all([...new Set(Object.values(D.src).map((k) => k.destination.type))].map(ensureNamed));
       const ps = Object.keys(D.src).map(Number).sort((a, b) => a - b);
-      $('dp-preview').innerHTML = ps.length
+      $('dp-preview').innerHTML = `<p><strong>Touches ligne : ${D.srcLines}</strong> <span class="muted small">(appliquées en mode « Remplacer »)</span></p>` + (ps.length
         ? `<table class="diff"><tr><th>Pos.</th><th>Touche</th><th>BLF</th></tr>${ps.map((p) => `<tr><td>${p}</td><td>${describe(D.src[p])}</td><td>${D.src[p].blf ? '●' : ''}</td></tr>`).join('')}</table>
-           <p class="muted small">Chez chaque utilisateur, le bloc commence juste après ses touches ligne ; les cases vides entre deux touches sont conservées.</p>`
-        : '<p class="muted">Aucune touche dans cette source.</p>';
+           <p class="muted small">Les touches gardent leur position ; en mode « Ajouter », le bloc vient après les touches existantes de chacun. Les cases vides entre deux touches sont conservées.</p>`
+        : '<p class="muted">Aucune touche de fonction dans cette source.</p>');
     } catch (e) { toast(e.message, 6000); }
   }
   updateDeployBtn();
@@ -889,12 +984,20 @@ function renderDeployUsers() {
 }
 function updateDeployBtn() {
   $('dp-count').textContent = `${D.picked.size} sélectionné${D.picked.size > 1 ? 's' : ''}`;
-  $('dp-go').disabled = !D.src || !Object.keys(D.src).length || !D.picked.size;
+  $('dp-go').disabled = !D.src || (!Object.keys(D.src).length && D.srcLines <= 1) || !D.picked.size;
 }
+// Remplacer : nombre de touches ligne de la source, touches à leurs positions.
+// Ajouter : touches ligne de l'utilisateur inchangées, bloc après ses touches.
+// Marque sans touches ligne multiples : le nombre de lignes n'est pas modifié,
+// les touches gardent leurs positions (les positions de ligne restent vides).
 function deployKeysFor(u, current, mode) {
+  const own = lineKeysOf(u);
+  const multiOk = !!vendorOf(userDevice(u))?.multiLine;
+  const lines = mode === 'append' || !multiOk ? own : D.srcLines; // à écrire dans le userfield
+  const base = mode === 'append' ? own : D.srcLines;               // les touches commencent après
   const ps = Object.keys(D.src).map(Number).sort((a, b) => a - b);
   const seq = [];
-  for (let p = ps[0]; p <= ps[ps.length - 1]; p++) seq.push(D.src[p] || null);
+  if (ps.length) for (let p = Math.min(ps[0], D.srcLines + 1); p <= ps[ps.length - 1]; p++) seq.push(D.src[p] || null);
   let selfRemoved = false;
   const existing = new Set(Object.values(current).map(destSig));
   const kept = seq.filter((k) => {
@@ -902,9 +1005,9 @@ function deployKeysFor(u, current, mode) {
     return !(k && mode === 'append' && existing.has(destSig(k))); // pas de doublon en ajout
   });
   const out = mode === 'append' ? { ...current } : {};
-  const start = (mode === 'append' ? Math.max(lineKeysOf(u), ...Object.keys(current).map(Number)) : lineKeysOf(u)) + 1;
+  const start = (mode === 'append' ? Math.max(base, ...Object.keys(current).map(Number)) : base) + 1;
   kept.forEach((k, i) => { if (k) out[start + i] = structuredClone(k); });
-  return { keys: out, selfRemoved };
+  return { keys: out, selfRemoved, lines, linesSkipped: mode !== 'append' && !multiOk && D.srcLines > own };
 }
 async function previewDeploy() {
   const mode = document.querySelector('input[name="dp-mode"]:checked').value;
@@ -920,12 +1023,19 @@ async function previewDeploy() {
       const cur = {};
       let inh = 0;
       for (const [p, k] of Object.entries(data?.keys || {})) if (k.inherited) inh++; else cur[Number(p)] = cleanKey(k);
-      const { keys, selfRemoved } = deployKeysFor(u, cur, mode);
-      const changed = JSON.stringify(normMap(keys)) !== JSON.stringify(normMap(cur));
+      const { keys, selfRemoved, lines, linesSkipped } = deployKeysFor(u, cur, mode);
+      const keysChanged = JSON.stringify(normMap(keys)) !== JSON.stringify(normMap(cur));
+      const linesChanged = lines !== lineKeysOf(u);
+      const changed = keysChanged || linesChanged;
       const cap = capOf(u);
       const over = cap ? Object.keys(keys).map(Number).filter((p) => p > cap) : [];
-      D.plan.push({ u, keys, changed });
-      const notes = [selfRemoved && 'sa propre touche retirée', inh && `${inh} héritée(s) inchangée(s)`, over.length && `<span class="error">hors capacité : ${over.join(', ')}</span>`].filter(Boolean);
+      D.plan.push({ u, keys, lines, keysChanged, linesChanged, changed });
+      const notes = [
+        linesChanged && `touches ligne ${lineKeysOf(u)} → ${lines}`,
+        linesSkipped && `<span class="error">touches ligne multiples non gérées pour cette marque : ${lineKeysOf(u) + 1 === D.srcLines ? `position ${D.srcLines} laissée vide` : `positions ${lineKeysOf(u) + 1}–${D.srcLines} laissées vides`}</span>`,
+        selfRemoved && 'sa propre touche retirée', inh && `${inh} héritée(s) inchangée(s)`,
+        over.length && `<span class="error">hors capacité : ${over.join(', ')}</span>`,
+      ].filter(Boolean);
       rows.push(`<tr><td>${esc(fullName(u))}</td><td>${Object.keys(cur).length}</td><td>${Object.keys(keys).length}</td><td>${changed ? 'oui' : '<span class="muted">identique</span>'}</td><td>${notes.join(' · ')}</td></tr>`);
     } catch (e) { rows.push(`<tr><td>${esc(fullName(u))}</td><td colspan="4" class="error">${esc(e.message)}</td></tr>`); }
   }
@@ -933,7 +1043,7 @@ async function previewDeploy() {
   updateDeployBtn();
   const n = D.plan.filter((x) => x.changed).length;
   confirmModal(`<h3>Déploiement : ${n} utilisateur${n > 1 ? 's' : ''} à modifier</h3>
-    <p class="muted small">Mode : ${mode === 'append' ? 'ajout à la suite des touches existantes (sans doublon)' : 'remplacement de toutes les touches'}. Nombre de touches avant → après.</p>
+    <p class="muted small">Mode : ${mode === 'append' ? 'ajout à la suite des touches existantes (sans doublon), touches ligne inchangées' : `remplacement de toutes les touches, ${D.srcLines} touche(s) ligne`}. Nombre de touches de fonction avant → après. Les touches ligne au-delà de la 1re sont appliquées sur le poste par le plugin serveur astrea/blf-sync.</p>
     <table class="diff"><tr><th>Utilisateur</th><th>Avant</th><th>Après</th><th>Modifié</th><th>Remarques</th></tr>${rows.join('')}</table>`,
   applyDeploy, `Déployer (${n})`);
 }
@@ -943,7 +1053,8 @@ async function applyDeploy() {
   for (const [i, x] of todo.entries()) {
     toast(`Déploiement ${i + 1}/${todo.length}…`, 60000);
     try {
-      await api('PUT', `/users/${x.u.uuid}/funckeys`, { keys: x.keys });
+      if (x.keysChanged) await api('PUT', `/users/${x.u.uuid}/funckeys`, { keys: x.keys });
+      if (x.linesChanged) await setUserLineKeys(x.u, x.lines);
       ok++;
       const dev = userDevice(x.u);
       if ($('dp-resync').checked && dev) { try { await api('GET', `/devices/${dev.id}/synchronize`); } catch { /* resynchro facultative */ } }
@@ -970,7 +1081,8 @@ $('search').oninput = renderUserList;
 document.querySelectorAll('[data-side]').forEach((b) => (b.onclick = () => {
   const side = b.dataset.side;
   const go = () => {
-    const wasDeploy = !$('deploy').hidden;
+    const wasDeploy = !$('deploy').hidden || !!S.cur?.tpl;
+    if (S.cur?.tpl) { S.cur = null; S.sel = null; $('editor').hidden = true; $('detail').hidden = true; }
     document.querySelectorAll('[data-side]').forEach((x) => x.classList.toggle('active', x === b));
     $('userlist').hidden = side !== 'users';
     $('labelsPane').hidden = side !== 'labels';
@@ -980,8 +1092,15 @@ document.querySelectorAll('[data-side]').forEach((b) => (b.onclick = () => {
     if (side === 'deploy') openDeploy();
     else if (wasDeploy) closeDeploy();
   };
-  if (side === 'deploy') guardUnsaved(go); else go();
+  if (side === 'deploy' || S.cur?.tpl) guardUnsaved(go); else go();
 }));
+$('dp-new').onclick = () => openTemplate(null);
+$('dp-edit').onclick = () => { const v = $('dp-source').value; if (v.startsWith('t:')) openTemplate(v.slice(2)); };
+$('tpl-model').innerHTML = Object.keys(YEALINK_LINEKEYS).map((m) => `<option value="${m}">Yealink ${m}</option>`).join('');
+$('tpl-model').value = 'T54W';
+$('tpl-model').onchange = () => setTemplateModel($('tpl-model').value);
+$('tpl-name').oninput = () => { if (S.cur?.tpl) { S.cur.tpl.name = $('tpl-name').value; $('save').disabled = !isDirty(); } };
+$('tpl-back').onclick = () => guardUnsaved(() => backToDeploy(S.cur?.tpl?.id ? `t:${S.cur.tpl.id}` : undefined));
 $('dp-source').onchange = loadSource;
 $('dp-search').oninput = renderDeployUsers;
 $('dp-users').onchange = (e) => {
@@ -999,7 +1118,7 @@ $('lk-plus').onclick = () => changeLineKeys(1);
 $('addModule').onclick = () => { S.cur.extraModules++; renderEditor(); };
 $('addPage').onclick = () => { S.cur.extraPages++; renderEditor(); };
 $('delPage').onclick = removeLastPage;
-$('revert').onclick = () => S.cur && selectUser(S.cur.user);
+$('revert').onclick = () => { if (S.cur?.tpl) openTemplate(S.cur.tpl.id); else if (S.cur) selectUser(S.cur.user); };
 $('save').onclick = save;
 window.addEventListener('beforeunload', (e) => { if (isDirty()) { e.preventDefault(); e.returnValue = ''; } });
 wireDetail();

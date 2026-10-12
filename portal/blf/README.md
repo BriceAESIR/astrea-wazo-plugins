@@ -26,9 +26,16 @@ du serveur ouvert dans le portail, avec le token que fournit le portail.
 - pages Yealink : jusqu'à 10 touches (T54W) une seule page ; boutons
   *Ajouter une page* / *Retirer la dernière page* (confirmation si des
   touches sont effacées ; en revenant à 1 page, la touche 10 est gardée) ;
-- onglet **Déploiement** : applique un modèle de touches Wazo ou les touches
-  d'un utilisateur à une sélection d'utilisateurs, en remplacement ou à la
-  suite (sans doublon). Sa propre touche est retirée chez chacun, les suivantes
+- onglet **Déploiement en masse** : *Nouveau modèle* / *Modifier ce modèle*
+  ouvre l'éditeur de poste sur un modèle de touches Wazo (aperçu sur un modèle
+  Yealink au choix), touches ligne comprises. Le nombre de touches ligne est
+  noté dans le nom du modèle Wazo avec le même jeton que le userfield
+  (`Commerciaux blf-linekeys=2` ; sans jeton = 1 ligne). Une touche placée
+  dans Wazo sur une position de ligne est décalée après les lignes (avec
+  avertissement). Applique ensuite le modèle (ou les touches d'un
+  utilisateur) à une sélection d'utilisateurs, en remplacement (touches + nombre
+  de touches ligne, Yealink seulement pour les lignes) ou à la suite (sans
+  doublon, lignes inchangées). Sa propre touche est retirée chez chacun, les suivantes
   remontent ; le bloc commence après les touches ligne de chacun. Aperçu
   avant/après, un seul PUT par utilisateur modifié, resynchro optionnelle.
   Le modèle partagé n'est pas rattaché (il mettrait à chacun sa propre touche) ;

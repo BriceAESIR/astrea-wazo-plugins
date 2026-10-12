@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap">
-<link rel="stylesheet" href="./style.css?v=0.7.1">
+<link rel="stylesheet" href="./style.css?v=0.8.0">
 </head>
 <body>
 <div id="app">
@@ -34,7 +34,7 @@
       <nav class="sidenav">
         <button data-side="users" class="active">Postes</button>
         <button data-side="labels">Libellés</button>
-        <button data-side="deploy">Déploiement</button>
+        <button data-side="deploy">Déploiement en masse</button>
       </nav>
       <input id="search" type="search" placeholder="Rechercher un utilisateur…">
       <div id="count" class="muted small"></div>
@@ -45,6 +45,7 @@
         <div id="labelsResult"></div>
       </div>
       <div id="deployPane" hidden>
+        <p class="muted small">Créez ou modifiez un modèle (touches ligne comprises), puis appliquez-le à plusieurs utilisateurs en une fois. Les modèles sont enregistrés dans les « Modèles de touches » de Wazo ; le nombre de touches ligne est noté dans le nom (<code>blf-linekeys=N</code>).</p>
         <p class="muted small">Applique un même jeu de touches à plusieurs utilisateurs en une fois. Sur chaque poste, la touche qui vise son propriétaire est retirée et les suivantes remontent. Les touches ligne de chacun sont respectées.</p>
         <p class="muted small">Les touches sont écrites dans les touches propres à chaque utilisateur : le modèle Wazo n'est pas rattaché, sinon chacun aurait sa propre touche.</p>
       </div>
@@ -57,6 +58,10 @@
           <div>
             <h2 id="ed-name"></h2>
             <div id="ed-device" class="muted"></div>
+            <div id="tpl-head" class="tplhead" hidden>
+              <label>Nom du modèle <input id="tpl-name" placeholder="Ex. Commerciaux"></label>
+              <label>Aperçu sur <select id="tpl-model"></select></label>
+            </div>
           </div>
           <div class="linekeys">
             <span>Touches ligne</span>
@@ -68,11 +73,12 @@
         <div id="warnings"></div>
         <div id="pages"></div>
         <div class="actions">
+          <button id="tpl-back" hidden>← Retour au déploiement</button>
           <button id="addPage" hidden>Ajouter une page</button>
           <button id="delPage" hidden>Retirer la dernière page</button>
           <button id="addModule">Afficher un module d'extension</button>
           <span class="spacer"></span>
-          <label class="inline"><input type="checkbox" id="resync" checked> Resynchroniser le poste</label>
+          <label class="inline" id="resync-wrap"><input type="checkbox" id="resync" checked> Resynchroniser le poste</label>
           <button id="revert">Annuler les modifications</button>
           <button id="save" class="primary" disabled>Enregistrer</button>
         </div>
@@ -83,12 +89,16 @@
         <div class="page">
           <h4>1 · Touches à déployer</h4>
           <label>Source <select id="dp-source"></select></label>
+          <div class="btnrow">
+            <button id="dp-new">Nouveau modèle</button>
+            <button id="dp-edit" disabled>Modifier ce modèle</button>
+          </div>
           <div id="dp-preview"></div>
         </div>
         <div class="page">
           <h4>2 · Mode</h4>
-          <label class="inline"><input type="radio" name="dp-mode" value="replace" checked> Remplacer toutes les touches de l'utilisateur</label><br>
-          <label class="inline"><input type="radio" name="dp-mode" value="append"> Ajouter à la suite de ses touches existantes</label><br>
+          <label class="inline"><input type="radio" name="dp-mode" value="replace" checked> Remplacer toutes les touches de l'utilisateur, et son nombre de touches ligne</label><br>
+          <label class="inline"><input type="radio" name="dp-mode" value="append"> Ajouter à la suite de ses touches existantes (touches ligne inchangées)</label><br>
           <label class="inline"><input type="checkbox" id="dp-resync" checked> Resynchroniser les postes modifiés</label>
         </div>
         <div class="page">
@@ -139,6 +149,6 @@
     <div class="btnrow right"><button id="modal-cancel">Annuler</button><button id="modal-ok" class="primary">Confirmer</button></div></div></div>
   <div id="toast" class="toast" hidden></div>
 </div>
-<script type="module" src="./app.js?v=0.7.1"></script>
+<script type="module" src="./app.js?v=0.8.0"></script>
 </body>
 </html>
