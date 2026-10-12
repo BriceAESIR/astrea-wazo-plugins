@@ -47,6 +47,17 @@ const YEALINK_EXP_FACE = { EXP40: [10, 10], EXP43: [10, 10], EXP50: [10, 10], EX
 const VENDORS = {
   yealink: { name: 'Yealink', linekeys: YEALINK_LINEKEYS, exp: yealinkExp, face: YEALINK_FACE, expFace: YEALINK_EXP_FACE, multiLine: true },
 };
+// Appareils sans touches de fonction : DECT (bases et combinés), passerelles
+// analogiques / ATA (lignes RTC), téléphones de conférence. Heuristique sur le
+// modèle et la marque, à compléter au fil des parcs clients.
+const NO_KEYS = /dect|\bata\b|^w\d|^cp\d|^m\d{2,3}\b|^n\d{3}|^ht\d|^dp\d|^spa\d|^gxw|^ta\d|^dag|^mp\d|^sn4/i;
+function hasKeys(dev) {
+  if (!dev) return false;
+  const prof = vendorOf(dev);
+  // Marque vérifiée : seulement les modèles de sa table de touches.
+  if (prof) return dev.model in prof.linekeys;
+  return !NO_KEYS.test(dev.model || '') && !/gigaset/i.test(dev.vendor || '');
+}
 // Le device confd porte `vendor` (ex. « Yealink ») et `plugin` (ex. « wazo-yealink-v87 »).
 function vendorOf(dev) {
   if (!dev) return null;
@@ -213,7 +224,8 @@ async function boot() {
     S.devices = new Map(devices.map((d) => [d.id, d]));
     S.named = {};
     $('conn').textContent = `${new URL(S.base).host} · ${users.length} utilisateurs`;
-    $('count').textContent = `${users.length} utilisateurs`;
+    const n = users.filter(listed).length;
+    $('count').textContent = `${n} utilisateur${n > 1 ? 's' : ''} avec un poste à touches${users.length > n ? ` (${users.length - n} masqué${users.length - n > 1 ? 's' : ''} : sans ligne, DECT ou analogique)` : ''}`;
     $('main').hidden = false;
     document.body.classList.add('ready');
     renderUserList();
@@ -274,10 +286,15 @@ function openUserByRef(ref) {
 // ---------------------------------------------------------------------------
 // Liste des utilisateurs
 // ---------------------------------------------------------------------------
+// Poste de l'utilisateur : le premier poste à touches parmi ses lignes (un
+// utilisateur peut avoir un DECT et un poste de bureau), sinon le premier poste.
 function userDevice(u) {
-  for (const l of u.lines || []) if (l.device_id && S.devices.has(l.device_id)) return S.devices.get(l.device_id);
-  return null;
+  const devs = (u.lines || []).map((l) => l.device_id && S.devices.get(l.device_id)).filter(Boolean);
+  return devs.find(hasKeys) || devs[0] || null;
 }
+// Liste : seulement les utilisateurs qui ont un poste à touches (pas les
+// utilisateurs sans ligne, ni ceux qui n'ont qu'un DECT ou une ligne analogique).
+const listed = (u) => hasKeys(userDevice(u));
 function userExten(u) {
   for (const l of u.lines || []) for (const e of l.extensions || []) if (e.exten) return e.exten;
   return '';
@@ -287,6 +304,7 @@ function renderUserList() {
   const ul = $('userlist');
   ul.innerHTML = '';
   for (const u of S.users) {
+    if (!listed(u)) continue;
     const hay = `${fullName(u)} ${u.username || ''} ${userExten(u)}`.toLowerCase();
     if (q && !hay.includes(q)) continue;
     const d = userDevice(u);
@@ -423,13 +441,25 @@ function buildPages(cap, mods) {
   const out = [];
   const face = cap.known && c.prof?.face?.[c.model];
   if (face) {
+    // Comportement Yealink : une page n'existe sur le poste que si l'une de
+    // ses touches est utilisée ; la touche de page (bas à droite) n'apparaît
+    // que s'il y a au moins 2 pages, et alors sur chacune d'elles. Les pages
+    // vides restent éditables ici, en grisé.
     const [l, r, maxPages] = face;
     const per = l + r - 1;
     const n = Math.min(maxPages, Math.ceil(cap.lk / per));
+    const used = Math.max(c.lineKeys, ...c.slots.map((k, i) => (k ? i + 1 : 0)), ...Object.keys(c.inherited).map(Number));
+    const shown = Math.max(1, Math.min(n, Math.ceil(Math.min(used, cap.lk) / per)));
     for (let i = 0; i < n; i++) {
-      out.push({ group: 'phone', title: `${name} · page ${i + 1}/${n}`, from: i * per + 1, to: Math.min(cap.lk, (i + 1) * per), l, r, pageKey: n > 1, screen: `Page ${i + 1}/${n}` });
+      const active = i < shown;
+      out.push({
+        group: 'phone', from: i * per + 1, to: Math.min(cap.lk, (i + 1) * per), l, r,
+        title: active ? `${name} · page ${i + 1}/${shown}` : `${name} · page ${i + 1} · non affichée (vide)`,
+        pageKey: shown > 1 && active ? 'on' : 'off', inactive: !active,
+        screen: active ? `Page ${i + 1}/${shown}` : 'Page masquée',
+      });
     }
-    if (n > 1) out[n - 1].note = `Touche de page : sur le poste, elle n'apparaît que si une touche au-delà de la n° ${l + r} est utilisée ; sinon la touche ${l + r} reste en page 1.`;
+    if (n > 1) out[n - 1].note = `Sur le poste, une page n'apparaît que si l'une de ses touches est utilisée. La touche de page (en bas à droite) n'apparaît qu'à partir de 2 pages, c'est-à-dire dès que la touche ${per + 1} ou une suivante est utilisée.`;
   } else {
     out.push({ group: 'phone', title: c.dev ? `Touches du ${name}` : 'Touches', from: 1, to: cap.lk });
   }
@@ -448,7 +478,7 @@ function buildPages(cap, mods) {
 }
 function pageEl(pg) {
   const div = document.createElement('div');
-  div.className = 'page';
+  div.className = `page${pg.inactive ? ' inactive' : ''}`;
   div.innerHTML = `<h4>${esc(pg.title)} · positions ${pg.from}–${pg.to}</h4>`;
   if (!pg.l) {
     const grid = document.createElement('div');
@@ -461,7 +491,8 @@ function pageEl(pg) {
   const slots = pg.l + pg.r;
   const cells = [];
   for (let k = 0; k < slots; k++) {
-    if (pg.pageKey && k === slots - 1) cells.push(staticTile('pagekey', '⇆', 'Page'));
+    if (pg.pageKey === 'on' && k === slots - 1) cells.push(staticTile('pagekey', '⇆', 'Page'));
+    else if (pg.pageKey === 'off' && k === slots - 1) cells.push(staticTile('pagekey off', '', 'Page', 'Touche de page : apparaît dès que la page 2 est utilisée'));
     else if (pg.from + k <= pg.to) cells.push(tileEl(pg.from + k));
     else cells.push(staticTile('none', '', '—'));
   }
@@ -476,9 +507,10 @@ function pageEl(pg) {
   div.appendChild(face);
   return div;
 }
-function staticTile(cls, pos, lbl) {
+function staticTile(cls, pos, lbl, title = '') {
   const el = document.createElement('div');
   el.className = `tile ${cls}`;
+  if (title) el.title = title;
   el.innerHTML = `<span class="pos">${esc(pos)}</span><div class="lbl">${esc(lbl)}</div>`;
   return el;
 }
@@ -701,7 +733,7 @@ async function scanLabels() {
   const out = $('labelsResult');
   out.innerHTML = '<p class="muted small">Analyse…</p>';
   const found = [];
-  const owners = S.users.filter((u) => (u.lines || []).length);
+  const owners = S.users.filter(listed);
   let done = 0;
   for (const u of owners) {
     try {

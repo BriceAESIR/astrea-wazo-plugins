@@ -155,6 +155,11 @@ body.in-portal.ready #main { min-height: 100vh; }
 .tile.pagekey { background: transparent; border: 1px dashed var(--accent); cursor: default; }
 .tile.pagekey .lbl { color: var(--accent); }
 .tile.pagekey:hover { border-color: var(--accent); }
+.tile.pagekey.off { border-color: var(--line); opacity: .45; }
+.tile.pagekey.off .lbl { color: var(--muted); }
+.page.inactive { background: transparent; box-shadow: none; border: 1px dashed var(--line); }
+.page.inactive h4 { font-style: italic; }
+.page.inactive .tile:not(.sel) { opacity: .7; }
 .tile.none { background: transparent; border: 1px dashed var(--line); opacity: .45; cursor: default; }
 .tile.none:hover { border-color: var(--line); }
 .facenote { margin: -8px 0 16px; }
