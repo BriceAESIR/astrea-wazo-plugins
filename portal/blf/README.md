@@ -4,13 +4,17 @@ Onglet **Touches** dans la fiche utilisateur du portail Wazo, et vue globale
 **Touches des postes**. L'appli lit et écrit directement les touches des postes
 du serveur ouvert dans le portail, avec le token que fournit le portail.
 
-- tuiles par position, avec la numérotation exacte du plugin Yealink de Wazo ;
-  les modules EXP s'affichent au besoin ;
+- tuiles par position, toutes marques de postes confondues. Profils
+  constructeur dans `VENDORS` (`app.js`). Seul **Yealink** est vérifié :
+  numérotation exacte du plugin Yealink de Wazo, modules EXP affichés au
+  besoin, touches ligne multiples. Pour les autres marques, la grille est
+  indicative (capacité non vérifiée), sans module ni touches ligne multiples ;
 - *Vider* : la case reste vide. *Supprimer* : les touches suivantes remontent.
   *Insérer avant* ajoute une case vide, ◀ ▶ déplacent une touche ;
 - **touches ligne** (bouton − / +) : les touches suivent. Le nombre est
   enregistré dans le champ `userfield` de l'utilisateur (`blf-linekeys=N`).
-  C'est le stack plugin `astrea/blf-sync` qui l'applique sur le poste ;
+  C'est le stack plugin `astrea/blf-sync` qui l'applique sur le poste
+  (Yealink uniquement) ;
 - l'utilisateur lui-même n'est jamais proposé comme cible ; une touche vers
   un utilisateur supprimé apparaît en rouge pointillé ;
 - récapitulatif avant/après avant chaque enregistrement, puis resynchro du

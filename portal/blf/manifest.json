@@ -1,16 +1,16 @@
 {
   "manifestVersion": "0.1",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "id": "astrea-blf",
   "packageName": "io.github.briceaesir.astrea.blf",
   "productType": "portal",
   "name": {
     "short": "Touches des postes",
-    "full": "Astrea - Touches des postes Yealink"
+    "full": "Astrea - Touches des postes"
   },
   "description": {
-    "short": "Gestion des touches BLF et ligne des postes Yealink",
-    "full": "Edition des touches de fonction (BLF, numerotation rapide, parking) et des touches ligne des postes Yealink, par utilisateur ou en vue d'ensemble, avec prise en compte du modele et des modules d'extension."
+    "short": "Gestion des touches de fonction (BLF) et des touches ligne des postes",
+    "full": "Edition des touches de fonction (supervision BLF, numerotation rapide, groupes, files, conferences) des utilisateurs, poste par poste ou en vue d'ensemble, avec harmonisation des libelles apres un renommage. Pour les postes Yealink : capacite selon le modele et les modules d'extension, et touches ligne multiples."
   },
   "icons": {
     "color": "./icon.svg",

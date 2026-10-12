@@ -6,9 +6,14 @@
 import { App } from './vendor/euc-plugins-sdk/app.js';
 
 // ---------------------------------------------------------------------------
-// Données de référence (recopiées du plugin wazo-yealink v86/v87)
+// Profils constructeur
 // ---------------------------------------------------------------------------
-const LINEKEYS = {
+// Seul Yealink est vérifié : numérotation recopiée du plugin wazo-yealink
+// v86/v87, touches ligne multiples appliquées par astrea/blf-sync. Les autres
+// marques passent en profil générique : capacité non vérifiée, pas de module,
+// une seule touche ligne. Pour en ajouter une : lire son plugin provd
+// (wazo-provd-plugins) et compléter VENDORS.
+const YEALINK_LINEKEYS = {
   T27G: 21, T31: 2, T31G: 2, T31P: 2, T31W: 2, T33G: 12, T33P: 12, T34W: 12,
   T41S: 15, T41U: 15, T42S: 15, T42U: 15, T43U: 15, T44W: 24, T44U: 24,
   T46S: 27, T46U: 27, T48S: 29, T48U: 29, T53: 21, T53W: 21, T54S: 27, T54W: 27,
@@ -16,13 +21,22 @@ const LINEKEYS = {
   T77U: 95, T85W: 72, T87W: 95, T88W: 95, T88V: 95,
 };
 const EXP = { EXP40: [40, 6], EXP43: [60, 3], EXP50: [60, 3], EXP55: [78, 3] };
-function expFor(model) {
+function yealinkExp(model) {
   if (!model) return null;
   if (['T27G', 'T46S', 'T48S'].includes(model)) return 'EXP40';
   if (['T43U', 'T46U', 'T48U'].includes(model)) return 'EXP43';
   if (model.startsWith('T5')) return 'EXP50';
   if (model.startsWith('T7') || model.startsWith('T8')) return 'EXP55';
   return null;
+}
+const VENDORS = {
+  yealink: { name: 'Yealink', linekeys: YEALINK_LINEKEYS, exp: yealinkExp, multiLine: true },
+};
+// Le device confd porte `vendor` (ex. « Yealink ») et `plugin` (ex. « wazo-yealink-v87 »).
+function vendorOf(dev) {
+  if (!dev) return null;
+  const s = `${dev.vendor || ''} ${dev.plugin || ''}`.toLowerCase();
+  return VENDORS[Object.keys(VENDORS).find((k) => s.includes(k))] || null;
 }
 const DEST_PARAMS = {
   user: ['user_id'], group: ['group_id'], groupmember: ['group_id', 'action'],
@@ -281,8 +295,9 @@ async function selectUser(u) {
   S.sel = null;
   const dev = userDevice(u);
   const model = dev?.model || null;
-  const lk = LINEKEYS[model] ?? null;
-  const exp = expFor(model);
+  const prof = vendorOf(dev);
+  const lk = prof?.linekeys[model] ?? null;
+  const exp = prof?.exp(model) ?? null;
   const data = await api('GET', `/users/${u.uuid}/funckeys`);
   const orig = {}, inherited = {};
   for (const [p, k] of Object.entries(data?.keys || {})) (k.inherited ? inherited : orig)[Number(p)] = cleanKey(k);
@@ -290,7 +305,7 @@ async function selectUser(u) {
   const lineKeys = m ? Number(m[1]) : 1;
   const maxPos = Math.max(0, ...Object.keys(orig).map(Number), ...Object.keys(inherited).map(Number));
   const slots = Array.from({ length: Math.max(maxPos, lineKeys) }, (_, i) => (orig[i + 1] ? structuredClone(orig[i + 1]) : null));
-  S.cur = { user: u, dev, model, lk, exp, orig, inherited, lineKeys, origLineKeys: lineKeys, slots, extraModules: 0 };
+  S.cur = { user: u, dev, prof, model, lk, exp, orig, inherited, lineKeys, origLineKeys: lineKeys, slots, extraModules: 0 };
   renderUserList();
   renderEditor();
 }
@@ -333,14 +348,21 @@ function renderEditor() {
   $('editor').hidden = false;
   $('ed-name').textContent = fullName(c.user);
   $('ed-device').textContent = c.dev
-    ? `${c.dev.model || 'modèle inconnu'} · ${c.dev.mac || ''}${c.lk ? ` · ${c.lk} touches` : ''}${c.exp ? ` · module ${c.exp}` : ''}`
+    ? `${[c.dev.vendor, c.dev.model].filter(Boolean).join(' ') || 'modèle inconnu'} · ${c.dev.mac || ''}${c.lk ? ` · ${c.lk} touches` : ''}${c.exp ? ` · module ${c.exp}` : ''}`
     : 'Aucun poste associé (les touches restent enregistrées sur l\'utilisateur)';
   $('lk-val').textContent = c.lineKeys;
+  // Touches ligne multiples : seulement pour les profils qui les gèrent ; on
+  // laisse « − » actif pour pouvoir revenir à 1 si un jeton traîne.
+  const multi = !!c.prof?.multiLine;
+  $('lk-plus').disabled = !multi;
+  $('lk-minus').disabled = c.lineKeys <= 1;
+  $('lk-plus').title = multi ? '' : 'Touches ligne multiples non gérées pour cette marque';
 
   const cap = capacityInfo();
   const warns = [];
-  if (!cap.known && c.dev) warns.push(`Modèle ${esc(c.model)} absent de la table du plugin Yealink : capacité non vérifiée.`);
-  if (c.dev && !(c.dev.plugin || '').startsWith('wazo-yealink') && c.lineKeys > 1) warns.push('Touches ligne multiples : gérées seulement pour les postes Yealink.');
+  if (c.dev && !c.prof) warns.push(`Marque ${esc(c.dev.vendor || 'inconnue')} : nombre de touches et modules d'extension non vérifiés, la grille affichée est indicative.`);
+  else if (!cap.known && c.dev) warns.push(`Modèle ${esc(c.model)} absent de la table ${esc(c.prof.name)} : capacité non vérifiée.`);
+  if (c.dev && !multi && c.lineKeys > 1) warns.push('Touches ligne multiples : non gérées pour cette marque, elles ne seront pas appliquées.');
   if (Object.keys(c.inherited).length) warns.push(`${Object.keys(c.inherited).length} touche(s) héritée(s) d'un modèle de touches partagé : visibles mais non modifiables ici.`);
   if (c.lineKeys !== c.origLineKeys) warns.push('Les touches ligne sont appliquées par le plugin serveur blf-sync à son prochain passage (15 min max).');
   $('warnings').innerHTML = warns.map((w) => `<div class="warn">${w}</div>`).join('');
@@ -350,7 +372,7 @@ function renderEditor() {
   const mods = Math.min(cap.maxMods, Math.max(needMods, c.extraModules));
   $('addModule').hidden = !cap.per || mods >= cap.maxMods;
 
-  const pages = [{ title: c.dev ? `Touches du ${c.model || 'poste'}` : 'Touches', from: 1, to: cap.lk }];
+  const pages = [{ title: c.dev ? `Touches du ${[c.dev.vendor, c.model].filter(Boolean).join(' ') || 'poste'}` : 'Touches', from: 1, to: cap.lk }];
   for (let m = 1; m <= mods; m++) pages.push({ title: `Module ${m} (${c.exp})`, from: cap.lk + (m - 1) * cap.per + 1, to: cap.lk + m * cap.per });
   const maxPos = pages[pages.length - 1].to;
   const host = $('pages');
@@ -540,7 +562,7 @@ function changeLineKeys(delta) {
   const c = S.cur;
   const max = c.lk ?? 12;
   const n = c.lineKeys + delta;
-  if (n < 1 || n > max) return;
+  if (n < 1 || n > max || (delta > 0 && !c.prof?.multiLine)) return;
   // Les touches suivent : +1 ligne = toutes les touches reculent d'une case.
   while (c.slots.length < c.lineKeys) c.slots.push(null);
   if (delta > 0) c.slots.splice(c.lineKeys, 0, null);
