@@ -90,11 +90,38 @@ function applyStack(st) {
 }
 function refreshFromPortal() { try { applyStack(stackFromContext()); } catch { /* hors portail */ } }
 
+// Thème du portail : ctx.app.theme est documenté comme « palette Material UI »
+// sans plus de détail ; on accepte un thème complet ({palette, typography,
+// shape}) ou la palette seule. Diagnostic : __blfSdk.getContext().app.theme
+function applyTheme(theme) {
+  if (!theme || typeof theme !== 'object') return;
+  const pal = theme.palette || theme;
+  const root = document.documentElement;
+  const set = (v, x) => { if (typeof x === 'string' && x) root.style.setProperty(v, x); };
+  if (pal.mode === 'dark' || pal.mode === 'light') root.dataset.theme = pal.mode;
+  set('--accent', pal.primary?.main);
+  set('--accent-ink', pal.primary?.contrastText);
+  set('--bg', pal.background?.default);
+  set('--panel', pal.background?.paper);
+  set('--ink', pal.text?.primary);
+  set('--muted', pal.text?.secondary);
+  set('--line', pal.divider);
+  set('--danger', pal.error?.main);
+  set('--warn', pal.warning?.main);
+  set('--ok', pal.success?.main);
+  set('--font', theme.typography?.fontFamily);
+  const r = theme.shape?.borderRadius;
+  if (typeof r === 'number') root.style.setProperty('--radius', `${r}px`);
+  else set('--radius', r);
+}
+
 async function connect() {
   const inIframe = window.parent !== window;
   if (inIframe) {
     try {
       await sdk.initialize();
+      document.body.classList.add('in-portal');
+      try { applyTheme(sdk.getContext()?.app?.theme); } catch (e) { console.warn('thème', e); }
       sdk.onSwitchTenant = (uuid) => { S.tenant = uuid; boot(); };
       // La doc ne détaille pas stackSession : on prend ce qu'il contient
       // (host/port/token), sinon on relit le contexte initial.
@@ -154,7 +181,9 @@ async function boot() {
     S.devices = new Map(devices.map((d) => [d.id, d]));
     S.named = {};
     $('conn').textContent = `${new URL(S.base).host} · ${users.length} utilisateurs`;
+    $('count').textContent = `${users.length} utilisateurs`;
     $('main').hidden = false;
+    document.body.classList.add('ready');
     renderUserList();
     // Comme contactTab reçoit `contact` dans extra, l'onglet pbx.users reçoit
     // peut-être l'utilisateur affiché : on cherche un uuid connu dans extra.
