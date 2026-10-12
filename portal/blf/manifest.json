@@ -1,6 +1,6 @@
 {
   "manifestVersion": "0.1",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "id": "astrea-blf",
   "packageName": "io.github.briceaesir.astrea.blf",
   "productType": "portal",

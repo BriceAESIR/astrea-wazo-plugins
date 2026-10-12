@@ -225,7 +225,9 @@ async function boot() {
     S.named = {};
     $('conn').textContent = `${new URL(S.base).host} · ${users.length} utilisateurs`;
     const n = users.filter(listed).length;
-    $('count').textContent = `${n} utilisateur${n > 1 ? 's' : ''} avec un poste à touches${users.length > n ? ` (${users.length - n} masqué${users.length - n > 1 ? 's' : ''} : sans ligne, DECT ou analogique)` : ''}`;
+    const hid = users.length - n;
+    $('count').textContent = `${n} utilisateur${n > 1 ? 's' : ''}${hid ? ` · ${hid} masqué${hid > 1 ? 's' : ''}` : ''}`;
+    $('count').title = hid ? 'Masqués : utilisateurs sans ligne, avec seulement un DECT, une ligne analogique ou un poste sans touches.' : '';
     $('main').hidden = false;
     document.body.classList.add('ready');
     renderUserList();
@@ -973,7 +975,8 @@ document.querySelectorAll('[data-side]').forEach((b) => (b.onclick = () => {
     $('userlist').hidden = side !== 'users';
     $('labelsPane').hidden = side !== 'labels';
     $('deployPane').hidden = side !== 'deploy';
-    $('search').hidden = side === 'deploy';
+    $('search').hidden = side !== 'users';
+    $('count').hidden = side !== 'users';
     if (side === 'deploy') openDeploy();
     else if (wasDeploy) closeDeploy();
   };
