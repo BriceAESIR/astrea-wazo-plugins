@@ -170,33 +170,47 @@ function lineMapValue(m) {
   return Object.fromEntries(Object.entries(m).filter(([, n]) => n > 1));
 }
 const provdLinesCache = new Map(); // device id → { "1": n1, "2": n2… }
+// Étiquettes personnalisées des touches ligne, par compte (option provd
+// astrea_linelabels) : vide = numéro de l'extension. {n} = rang de la touche
+// dans le compte, {num} = numéro. Nettoyées : pas de retour à la ligne, pas de
+// %NULL% (valeur spéciale Yealink), 20 caractères max.
+const provdLabelsCache = new Map(); // device id → { "1": "Ligne {n}" }
+const cleanLineLabel = (s) => String(s || '').replace(/[\r\n\t]+/g, ' ').replace(/%NULL%/gi, '').trim().slice(0, 20);
+const renderLineLabel = (tpl, i, num) => (tpl ? tpl.replace(/\{n\}/g, String(i)).replace(/\{num\}/g, num || '') : num) || '';
 async function deviceLineMap(devId) {
   if (provdLinesCache.has(devId)) return provdLinesCache.get(devId);
   const d = (await provd('GET', `/dev_mgr/devices/${devId}`))?.device;
   const m = parseLineMap(d?.options?.astrea_linekeys);
+  const lb = d?.options?.astrea_linelabels;
+  provdLabelsCache.set(devId, lb && typeof lb === 'object' ? Object.fromEntries(Object.entries(lb).map(([k, v]) => [k, cleanLineLabel(v)]).filter(([, v]) => v)) : {});
   provdLinesCache.set(devId, m);
   return m;
 }
 const deviceLineKeys = async (devId) => (await deviceLineMap(devId))['1'];
 // Fusionne `patch` ({ "1": n } ou { "2": n }…) dans l'option du poste, puis
 // régénère son fichier. Valeurs à 1 retirées ; option supprimée si tout est à 1.
-async function setDeviceLineKeys(devId, patch) {
+async function setDeviceLineKeys(devId, patch, labelsPatch) {
   if (typeof patch === 'number') patch = { 1: patch };
   const d = (await provd('GET', `/dev_mgr/devices/${devId}`))?.device;
   if (!d) throw new Error(`poste ${devId} introuvable dans provd`);
   const cur = parseLineMap(d.options?.astrea_linekeys);
   const next = { ...cur };
-  for (const [k, n] of Object.entries(patch)) next[String(k)] = Math.max(1, Number(n) || 1);
-  const changed = JSON.stringify(lineMapValue(cur)) !== JSON.stringify(lineMapValue(next));
+  for (const [k, n] of Object.entries(patch || {})) next[String(k)] = Math.max(1, Number(n) || 1);
+  const curLb = d.options?.astrea_linelabels && typeof d.options.astrea_linelabels === 'object' ? d.options.astrea_linelabels : {};
+  const nextLb = { ...curLb };
+  for (const [k, v] of Object.entries(labelsPatch || {})) { const s = cleanLineLabel(v); if (s) nextLb[String(k)] = s; else delete nextLb[String(k)]; }
+  const changed = JSON.stringify(lineMapValue(cur)) !== JSON.stringify(lineMapValue(next)) || JSON.stringify(curLb) !== JSON.stringify(nextLb);
   if (changed) {
     const options = { ...(d.options || {}) };
     const v = lineMapValue(next);
     if (v === null) delete options.astrea_linekeys; else options.astrea_linekeys = v;
+    if (Object.keys(nextLb).length) options.astrea_linelabels = nextLb; else delete options.astrea_linelabels;
     d.options = options;
     await provd('PUT', `/dev_mgr/devices/${devId}`, { device: d });
   }
   await provd('POST', '/dev_mgr/reconfigure', { id: devId });
   provdLinesCache.set(devId, next);
+  provdLabelsCache.set(devId, nextLb);
   return changed;
 }
 
@@ -551,7 +565,8 @@ async function selectUser(u) {
   // Touches ligne des autres comptes (option provd du poste, par compte).
   const lineMap = dev && provdLinesCache.has(dev.id) ? provdLinesCache.get(dev.id) : { 1: lineKeys };
   const otherCounts = shared ? Object.fromEntries(shared.others.map((l) => [l.pos, lineMap[String(l.pos)] || 1])) : {};
-  S.cur = { user: u, dev, prof, model, lk, exp, orig, inherited, lineKeys, origLineKeys: lineKeys, slots, clash, shared, otherCounts, origOtherCounts: { ...otherCounts }, extraModules: 0, extraPages: 0, pagesLeft: 0 };
+  const lineLabels = dev && provdLabelsCache.has(dev.id) ? { ...provdLabelsCache.get(dev.id) } : {};
+  S.cur = { user: u, dev, prof, model, lk, exp, orig, inherited, lineKeys, origLineKeys: lineKeys, slots, clash, shared, otherCounts, origOtherCounts: { ...otherCounts }, lineLabels, origLineLabels: { ...lineLabels }, extraModules: 0, extraPages: 0, pagesLeft: 0 };
   renderUserList();
   renderEditor();
 }
@@ -561,6 +576,7 @@ function isDirty() {
   if (!c) return false;
   return c.lineKeys !== c.origLineKeys || JSON.stringify(targetKeys()) !== JSON.stringify(normMap(c.orig))
     || JSON.stringify(c.otherCounts || {}) !== JSON.stringify(c.origOtherCounts || {})
+    || JSON.stringify(c.lineLabels || {}) !== JSON.stringify(c.origLineLabels || {})
     || (!!c.tpl && (c.tpl.name.trim() !== c.tpl.origName || !c.tpl.id));
 }
 function normMap(m) { const o = {}; for (const p of Object.keys(m).map(Number).sort((a, b) => a - b)) o[p] = cleanKey(m[p]); return o; }
@@ -574,9 +590,10 @@ function normMap(m) { const o = {}; for (const p of Object.keys(m).map(Number).s
 // Mode « à la suite » (auto_linekeys) dès qu'un compte a plus d'une touche :
 // compte 1 sur 1..N1, puis chaque autre compte, dans l'ordre, sur ses Ni
 // touches (account.X.number_of_linekey). Sinon : placement Wazo.
+// `idx` = rang de la touche dans son compte (1, 2, 3…), pour l'étiquette {n}.
 function lineAt(p) {
   const c = S.cur;
-  const acc1 = { acc: 1, user: c.user, number: userExten(c.user) };
+  const acc1 = { acc: 1, user: c.user, number: userExten(c.user), idx: p };
   const sh = c.shared?.isOwner ? c.shared : null;
   if (!sh) return p <= c.lineKeys ? acc1 : null;
   const counts = c.otherCounts || {};
@@ -584,13 +601,13 @@ function lineAt(p) {
   if (!auto) {
     if (p === 1) return acc1;
     const o = sh.others.find((l) => l.pos === p);
-    return o ? { acc: o.pos, user: o.user, number: o.number } : null;
+    return o ? { acc: o.pos, user: o.user, number: o.number, idx: 1 } : null;
   }
   if (p <= c.lineKeys) return acc1;
   let start = c.lineKeys;
   for (const o of sh.others) {
     const n = counts[o.pos] || 1;
-    if (p <= start + n) return { acc: o.pos, user: o.user, number: o.number };
+    if (p <= start + n) return { acc: o.pos, user: o.user, number: o.number, idx: p - start };
     start += n;
   }
   return null;
@@ -698,8 +715,13 @@ function renderEditor() {
     const n = c.otherCounts[o.pos] || 1;
     return `<div class="linekeys" title="${esc(fullName(o.user))}"><span>Compte ${o.pos} · ${esc(o.number || fullName(o.user))}</span>
       <button data-acc="${o.pos}" data-d="-1" aria-label="moins" ${n <= 1 ? 'disabled' : ''}>−</button><strong>${n}</strong>
-      <button data-acc="${o.pos}" data-d="1" aria-label="plus">+</button></div>`;
+      <button data-acc="${o.pos}" data-d="1" aria-label="plus">+</button>
+      <input class="lklabel" id="lk-label-${o.pos}" data-acc-label="${o.pos}" maxlength="20" placeholder="Étiquette" value="${esc(c.lineLabels?.[String(o.pos)] || '')}" title="Vide = ${esc(o.number || 'numéro')}. {n} = rang de la touche, {num} = numéro."></div>`;
   }).join('') : '';
+  // Étiquette des touches ligne du compte 1 (Yealink seulement, hors modèle).
+  $('lk-label').hidden = !multi || isTpl;
+  if (document.activeElement !== $('lk-label')) $('lk-label').value = c.lineLabels?.['1'] || '';
+  $('lk-label').placeholder = `Étiquette (${userExten(c.user) || 'numéro'})`;
 
   const cap = capacityInfo();
   const warns = [];
@@ -920,7 +942,8 @@ function tileEl(p) {
   const la = lineAt(p);
   if (la?.acc === 1) {
     el.className = 'tile line';
-    el.innerHTML += `<div class="lbl">Ligne</div><div class="dst">${c.tpl ? 'ligne de l\'utilisateur' : esc(userExten(c.user) || 'compte 1')}</div>`;
+    if (c.tpl) el.innerHTML += '<div class="lbl">Ligne</div><div class="dst">ligne de l\'utilisateur</div>';
+    else el.innerHTML += `<div class="lbl">${esc(renderLineLabel(c.lineLabels?.['1'], la.idx, la.number) || 'Ligne')}</div><div class="dst">Ligne${c.shared ? ' · compte 1' : ''}</div>`;
     return el;
   }
   // Poste partagé : touche ligne d'un autre compte.
@@ -928,7 +951,7 @@ function tileEl(p) {
   if (other && !k) {
     el.className = 'tile line other';
     el.title = `Compte ${other.acc} : ${fullName(other.user)} — position réservée`;
-    el.innerHTML += `<div class="lbl">Ligne ${other.acc}</div><div class="dst">${esc(other.number || fullName(other.user))}</div>`;
+    el.innerHTML += `<div class="lbl">${esc(renderLineLabel(c.lineLabels?.[String(other.acc)], other.idx, other.number) || fullName(other.user))}</div><div class="dst">Ligne · compte ${other.acc}</div>`;
     return el;
   }
   if (k) {
@@ -1201,13 +1224,13 @@ const clearLegacyLineKeys = (u) => setUserToken(u, LK_TOKEN, '');
 // Touches ligne : option provd du poste (+ régénération) et nettoyage du
 // jeton historique. Postes d'une marque sans touches ligne multiples : refus.
 // `n` : nombre (compte 1) ou { "1": n1, "2": n2… } (poste à plusieurs comptes).
-async function applyLineKeys(u, dev, n) {
+async function applyLineKeys(u, dev, n, labels) {
   if (!dev) throw new Error(`${fullName(u)} : aucun poste, touches ligne non applicables`);
   if (!vendorOf(dev)?.multiLine) throw new Error(`${fullName(u)} : touches ligne multiples non gérées pour ${dev.vendor || 'cette marque'}`);
   const map = typeof n === 'number' ? { 1: n } : n;
   const wantsMore = Object.values(map).some((x) => x > 1);
   if (wantsMore && sharesDevice(dev) && (await deviceLines(dev))[0]?.user.uuid !== u.uuid) throw new Error(`${fullName(u)} : poste partagé, seul le compte 1 règle les touches ligne de ce téléphone`);
-  await setDeviceLineKeys(dev.id, map);
+  await setDeviceLineKeys(dev.id, map, labels);
   await clearLegacyLineKeys(u);
 }
 // blf-label=… : étiquette de touche (vide ou égale au nom = pas de jeton).
@@ -1222,14 +1245,19 @@ function save() {
   const positions = [...new Set([...Object.keys(target), ...Object.keys(orig)].map(Number))].sort((a, b) => a - b);
   for (const p of positions) if (keySig(target[p]) !== keySig(orig[p])) rows.push(`<tr><td>${p}</td><td>${describe(orig[p])}</td><td>${describe(target[p])}</td></tr>`);
   const othersChanged = (c.shared?.others || []).filter((o) => (c.otherCounts?.[o.pos] || 1) !== (c.origOtherCounts?.[o.pos] || 1));
-  const lkChanged = c.lineKeys !== c.origLineKeys || othersChanged.length > 0;
+  const labelsChanged = JSON.stringify(c.lineLabels || {}) !== JSON.stringify(c.origLineLabels || {});
+  const lkChanged = c.lineKeys !== c.origLineKeys || othersChanged.length > 0 || labelsChanged;
   const html = `<h3>Enregistrer ${esc(fullName(c.user))}</h3>
-    ${lkChanged ? `<p>Touches ligne${c.shared ? ' (compte 1)' : ''} : ${c.origLineKeys} → <strong>${c.lineKeys}</strong>${othersChanged.map((o) => ` ; compte ${o.pos} (${esc(fullName(o.user))}) : ${c.origOtherCounts[o.pos] || 1} → <strong>${c.otherCounts[o.pos]}</strong>`).join('')}. Option du poste dans provd, appliquée par les lignes Astrea du base.tpl ; le poste est resynchronisé.</p>` : ''}
+    ${lkChanged ? `<p>Touches ligne${c.shared ? ' (compte 1)' : ''} : ${c.origLineKeys} → <strong>${c.lineKeys}</strong>${othersChanged.map((o) => ` ; compte ${o.pos} (${esc(fullName(o.user))}) : ${c.origOtherCounts[o.pos] || 1} → <strong>${c.otherCounts[o.pos]}</strong>`).join('')}${labelsChanged ? ` ; étiquettes : ${Object.entries({ ...c.origLineLabels, ...c.lineLabels }).map(([k]) => `compte ${k} « ${esc(c.lineLabels[k] || 'numéro')} »`).join(', ')}` : ''}. Option du poste dans provd, appliquée par les lignes Astrea du base.tpl ; le poste est resynchronisé.</p>` : ''}
     ${rows.length ? `<table class="diff"><tr><th>Pos.</th><th>Avant</th><th>Après</th></tr>${rows.join('')}</table>` : '<p class="muted">Aucune touche de fonction modifiée.</p>'}`;
   confirmModal(html, async () => {
     try {
       if (rows.length) await api('PUT', `/users/${c.user.uuid}/funckeys`, { keys: target });
-      if (lkChanged) await applyLineKeys(c.user, c.dev, { 1: c.lineKeys, ...(c.otherCounts || {}) });
+      if (lkChanged) {
+        // Étiquettes : on envoie toutes les clés connues (vide = retour au numéro).
+        const labels = Object.fromEntries(Object.keys({ ...c.origLineLabels, ...c.lineLabels }).map((k) => [k, c.lineLabels[k] || '']));
+        await applyLineKeys(c.user, c.dev, { 1: c.lineKeys, ...(c.otherCounts || {}) }, labels);
+      }
       // Touches ligne : resynchro toujours (sinon rien ne change sur le poste).
       if (c.dev && (lkChanged || ($('resync').checked && rows.length))) {
         try { await api('GET', `/devices/${c.dev.id}/synchronize`); } catch (e) { toast(`Enregistré, mais resynchro impossible : ${e.message}`, 6000); }
@@ -1618,7 +1646,7 @@ async function applyDeploy() {
 // Format : { app, version, created, base, tenant, reason, entries: [{ uuid,
 // name, userfield, keys }] } — keys = touches propres (hors héritées).
 const BK_STORE = 'astrea-blf-last-backup';
-const APP_VERSION = '0.14.0';
+const APP_VERSION = '0.15.0';
 function makeBackup(reason, entries) {
   const bk = { app: 'astrea-blf', version: APP_VERSION, created: new Date().toISOString(), base: S.base, tenant: S.tenant, reason, entries };
   const json = JSON.stringify(bk, null, 1);
@@ -1756,6 +1784,16 @@ $('lb-rows').oninput = (e) => {
 };
 $('lk-minus').onclick = () => changeLineKeys(-1);
 $('lk-others').onclick = (e) => { const b = e.target.closest('button[data-acc]'); if (b && S.cur) changeOtherCount(Number(b.dataset.acc), Number(b.dataset.d)); };
+// Étiquettes des touches ligne : mise à jour de l'aperçu à la frappe.
+const setLineLabel = (acc, v) => {
+  const c = S.cur; if (!c) return;
+  const s = cleanLineLabel(v);
+  c.lineLabels = { ...(c.lineLabels || {}) };
+  if (s) c.lineLabels[acc] = s; else delete c.lineLabels[acc];
+  refreshTileOnly();
+};
+$('lk-label').oninput = () => setLineLabel('1', $('lk-label').value);
+$('lk-others').oninput = (e) => { const i = e.target.closest('input[data-acc-label]'); if (i) setLineLabel(i.dataset.accLabel, i.value); };
 $('lk-plus').onclick = () => changeLineKeys(1);
 // « Ajouter » = une page / un module de plus que ce qui est affiché
 // (affiché = max(nécessaire, 1 + extraPages) pour les pages, max(nécessaire, extraModules) pour les modules).

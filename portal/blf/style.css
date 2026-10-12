@@ -131,6 +131,7 @@ body.in-portal.ready #main { min-height: 100vh; }
 .lkwrap { display: flex; flex-direction: column; gap: 6px; align-items: stretch; }
 .lkwrap .linekeys { justify-content: space-between; }
 #lk-others { display: flex; flex-direction: column; gap: 6px; }
+.linekeys input.lklabel { width: 120px; height: 28px; font-size: .8125rem; margin-left: 4px; }
 .linekeys button { width: 32px; height: 32px; padding: 0; min-width: 0; border: 0; border-radius: 50%; font-size: 1.125rem; }
 
 .page { background: var(--panel); border-radius: var(--radius); border: 1px solid var(--line); padding: 16px; margin-bottom: 16px; }
