@@ -441,25 +441,33 @@ function buildPages(cap, mods) {
   const out = [];
   const face = cap.known && c.prof?.face?.[c.model];
   if (face) {
-    // Comportement Yealink : une page n'existe sur le poste que si l'une de
-    // ses touches est utilisée ; la touche de page (bas à droite) n'apparaît
-    // que s'il y a au moins 2 pages, et alors sur chacune d'elles. Les pages
-    // vides restent éditables ici, en grisé.
+    // Comportement Yealink (T54W : 10 emplacements) :
+    // - jusqu'à 10 touches utilisées, une seule page de 10 touches ;
+    // - dès la 11e, l'emplacement du bas à droite devient la touche de page et
+    //   les pages font 9 touches (la touche 10 passe en tête de la page 2) ;
+    // - une page vide n'apparaît pas sur le poste ; ici elle reste éditable, en grisé.
     const [l, r, maxPages] = face;
-    const per = l + r - 1;
+    const phys = l + r;
+    const per = phys - 1;
     const n = Math.min(maxPages, Math.ceil(cap.lk / per));
-    const used = Math.max(c.lineKeys, ...c.slots.map((k, i) => (k ? i + 1 : 0)), ...Object.keys(c.inherited).map(Number));
-    const shown = Math.max(1, Math.min(n, Math.ceil(Math.min(used, cap.lk) / per)));
+    const used = Math.min(cap.lk, Math.max(c.lineKeys, ...c.slots.map((k, i) => (k ? i + 1 : 0)), ...Object.keys(c.inherited).map(Number)));
+    const paging = used > phys;
+    const shown = paging ? Math.min(n, Math.ceil(used / per)) : 1;
     for (let i = 0; i < n; i++) {
       const active = i < shown;
-      out.push({
+      const pg = {
         group: 'phone', from: i * per + 1, to: Math.min(cap.lk, (i + 1) * per), l, r,
         title: active ? `${name} · page ${i + 1}/${shown}` : `${name} · page ${i + 1} · non affichée (vide)`,
-        pageKey: shown > 1 && active ? 'on' : 'off', inactive: !active,
+        pageKey: paging && active ? 'on' : 'off', inactive: !active,
         screen: active ? `Page ${i + 1}/${shown}` : 'Page masquée',
-      });
+      };
+      if (!paging && i === 0) { pg.to = Math.min(cap.lk, phys); pg.pageKey = null; }
+      // Sans pagination, la touche 10 est en page 1 : sur la page 2 grisée, on
+      // indique seulement qu'elle viendra là.
+      if (!paging && i === 1) pg.ghost = pg.from;
+      out.push(pg);
     }
-    if (n > 1) out[n - 1].note = `Sur le poste, une page n'apparaît que si l'une de ses touches est utilisée. La touche de page (en bas à droite) n'apparaît qu'à partir de 2 pages, c'est-à-dire dès que la touche ${per + 1} ou une suivante est utilisée.`;
+    if (n > 1) out[n - 1].note = `Sur le poste : jusqu'à ${phys} touches, une seule page. Dès qu'une touche ${phys + 1} ou suivante est utilisée, l'emplacement ${phys} devient la touche de page et la touche ${phys} passe en tête de la page 2. Une page vide ne s'affiche pas.`;
   } else {
     out.push({ group: 'phone', title: c.dev ? `Touches du ${name}` : 'Touches', from: 1, to: cap.lk });
   }
@@ -479,7 +487,7 @@ function buildPages(cap, mods) {
 function pageEl(pg) {
   const div = document.createElement('div');
   div.className = `page${pg.inactive ? ' inactive' : ''}`;
-  div.innerHTML = `<h4>${esc(pg.title)} · positions ${pg.from}–${pg.to}</h4>`;
+  div.innerHTML = `<h4>${esc(pg.title)} · positions ${pg.ghost ? pg.ghost + 1 : pg.from}–${pg.to}</h4>`;
   if (!pg.l) {
     const grid = document.createElement('div');
     grid.className = 'grid';
@@ -493,6 +501,7 @@ function pageEl(pg) {
   for (let k = 0; k < slots; k++) {
     if (pg.pageKey === 'on' && k === slots - 1) cells.push(staticTile('pagekey', '⇆', 'Page'));
     else if (pg.pageKey === 'off' && k === slots - 1) cells.push(staticTile('pagekey off', '', 'Page', 'Touche de page : apparaît dès que la page 2 est utilisée'));
+    else if (pg.ghost && k === 0) cells.push(staticTile('none ghost', String(pg.ghost), `↳ touche ${pg.ghost}`, `La touche ${pg.ghost} vient ici dès que la page 2 est utilisée`));
     else if (pg.from + k <= pg.to) cells.push(tileEl(pg.from + k));
     else cells.push(staticTile('none', '', '—'));
   }
