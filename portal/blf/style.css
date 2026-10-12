@@ -1,15 +1,18 @@
-/* Style aligné sur Material UI (base du portail Wazo). Les variables de base
-   sont écrasées au démarrage par la palette du portail (ctx.app.theme, voir
-   applyTheme() dans app.js) ; les teintes des touches en dérivent. */
+/* Style aligné sur le portail Wazo (MUI). Valeurs par défaut = variables CSS
+   relevées dans le portail E-UC (12/10/2026) : --default-font, --primary-*,
+   --secondary-*. Elles sont écrasées au démarrage par la palette transmise par
+   le portail (ctx.app.theme, voir applyTheme() dans app.js) ; les teintes des
+   touches en dérivent. */
 [hidden] { display: none !important; }
 :root {
-  --accent: #1976d2; --accent-ink: #ffffff;
-  --bg: #f5f5f5; --panel: #ffffff;
+  --accent: #203890; --accent-hover: #1a2e75; --accent-light: #ABB5D8; --accent-dark: #162764; --accent-ink: #ffffff;
+  --brand-red: #E62B40;
+  --bg: #ffffff; --panel: #ffffff;
   --ink: rgba(0, 0, 0, .87); --muted: rgba(0, 0, 0, .6); --line: rgba(0, 0, 0, .12);
   --field-line: color-mix(in srgb, var(--ink) 27%, transparent);
-  --ok: #2e7d32; --warn: #ed6c02; --danger: #d32f2f;
+  --ok: #2e7d32; --warn: #ed6c02; --danger: #E62B40;
   --radius: 4px;
-  --font: "Roboto", "Helvetica", "Arial", sans-serif;
+  --font: "Mulish Variable", "Mulish", "Helvetica", "Arial", sans-serif;
   --hover: color-mix(in srgb, var(--ink) 5%, transparent);
   --selected: color-mix(in srgb, var(--accent) 10%, transparent);
   --tile: color-mix(in srgb, var(--ink) 5%, var(--panel));
@@ -23,14 +26,14 @@
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --accent: #90caf9; --accent-ink: rgba(0, 0, 0, .87);
+    --accent: #ABB5D8; --accent-hover: #c4cbe5; --accent-ink: rgba(0, 0, 0, .87);
     --bg: #121212; --panel: #1e1e1e;
     --ink: #ffffff; --muted: rgba(255, 255, 255, .7); --line: rgba(255, 255, 255, .12);
     --ok: #66bb6a; --warn: #ffa726; --danger: #f44336;
   }
 }
 :root[data-theme="dark"] {
-  --accent: #90caf9; --accent-ink: rgba(0, 0, 0, .87);
+  --accent: #ABB5D8; --accent-hover: #c4cbe5; --accent-ink: rgba(0, 0, 0, .87);
   --bg: #121212; --panel: #1e1e1e;
   --ink: #ffffff; --muted: rgba(255, 255, 255, .7); --line: rgba(255, 255, 255, .12);
   --ok: #66bb6a; --warn: #ffa726; --danger: #f44336;
@@ -56,7 +59,7 @@ button:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 6%, t
 button:focus-visible { outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent); }
 button:disabled { color: color-mix(in srgb, var(--ink) 38%, transparent); border-color: color-mix(in srgb, var(--ink) 12%, transparent); cursor: default; }
 button.primary { background: var(--accent); color: var(--accent-ink); border-color: transparent; padding: 6px 16px; box-shadow: var(--shadow-2); }
-button.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 85%, #000); }
+button.primary:hover:not(:disabled) { background: var(--accent-hover); }
 button.primary:disabled { background: color-mix(in srgb, var(--ink) 12%, transparent); color: color-mix(in srgb, var(--ink) 38%, transparent); box-shadow: none; }
 button.danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 50%, transparent); }
 button.danger:hover:not(:disabled) { background: color-mix(in srgb, var(--danger) 6%, transparent); border-color: var(--danger); }
@@ -105,10 +108,10 @@ body.in-portal.ready #main { min-height: 100vh; }
 .sidenav { display: flex; flex-direction: column; margin: -16px -16px 16px; padding: 8px 0; border-bottom: 1px solid var(--line); }
 .sidenav button {
   justify-content: flex-start; min-height: 40px; padding: 8px 16px 8px 13px; border: 0; border-left: 3px solid transparent; border-radius: 0;
-  background: transparent; color: var(--ink); font-size: .875rem; font-weight: 400; letter-spacing: .01071em; text-transform: none; text-align: left;
+  background: transparent; color: var(--muted); font-size: .875rem; font-weight: 400; letter-spacing: .01071em; text-transform: none; text-align: left;
 }
-.sidenav button:hover:not(:disabled) { background: var(--hover); border-color: transparent; }
-.sidenav button.active, .sidenav button.active:hover { border-left-color: var(--accent); background: color-mix(in srgb, var(--ink) 6%, transparent); font-weight: 500; }
+.sidenav button:hover:not(:disabled) { background: var(--hover); border-color: transparent; color: var(--ink); }
+.sidenav button.active, .sidenav button.active:hover { border-left-color: var(--accent); background: color-mix(in srgb, var(--ink) 6%, transparent); color: var(--ink); font-weight: 600; }
 
 /* Listes */
 .list { list-style: none; margin: 0 -16px; padding: 0; }

@@ -152,7 +152,10 @@ function applyTheme(theme) {
   set('--danger', pal.error?.main);
   set('--warn', pal.warning?.main);
   set('--ok', pal.success?.main);
-  set('--font', theme.typography?.fontFamily);
+  set('--accent-dark', pal.primary?.dark);
+  set('--accent-light', pal.primary?.light);
+  // Police : on garde Mulish (--default-font réel du portail) ; le thème
+  // transmis peut annoncer la police MUI par défaut (Roboto) sans l'utiliser.
   const r = theme.shape?.borderRadius;
   if (typeof r === 'number') root.style.setProperty('--radius', `${r}px`);
   else set('--radius', r);
