@@ -18,7 +18,9 @@ du serveur ouvert dans le portail, avec le token que fournit le portail.
   (vérifié dans le code confd). Compte secondaire : bandeau « ces touches ne
   s'affichent pas sur ce téléphone ». Compte 1 : positions des autres comptes
   affichées « Ligne N » et réservées (une touche de fonction y masquerait la
-  ligne). Touches ligne supplémentaires bloquées sur un poste partagé (à tester) ;
+  ligne). Touches ligne du compte 1 réglables : avec N > 1, le téléphone place les
+  comptes à la suite (compte 1 sur 1..N, puis les autres, 1 touche chacun),
+  observé sur T46S ; avec 1 seule, placement Wazo (compte N en touche N) ;
 - **glisser-déposer** : une touche déposée sur une case vide y est déplacée ;
   sur une autre touche, les deux sont échangées (entre pages et modules aussi).
   Lignes, touches héritées et touche de page ne bougent pas ;
