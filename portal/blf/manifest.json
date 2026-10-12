@@ -1,5 +1,24 @@
 {
+  "manifestVersion": "0.1",
+  "version": "0.2.1",
+  "id": "astrea-blf",
+  "packageName": "io.github.briceaesir.astrea.blf",
   "productType": "portal",
+  "name": {
+    "short": "Touches des postes",
+    "full": "Astrea - Touches des postes Yealink"
+  },
+  "description": {
+    "short": "Gestion des touches BLF et ligne des postes Yealink",
+    "full": "Edition des touches de fonction (BLF, numerotation rapide, parking) et des touches ligne des postes Yealink, par utilisateur ou en vue d'ensemble, avec prise en compte du modele et des modules d'extension."
+  },
+  "icons": {
+    "color": "./icon.svg",
+    "outline": "./icon.svg"
+  },
+  "developer": {
+    "name": "Astrea"
+  },
   "staticTabs": [
     {
       "entityId": "astrea-blf-user",
@@ -10,6 +29,7 @@
     {
       "entityId": "astrea-blf-overview",
       "context": ["pbxMenu"],
+      "parent": "common.layout.pbxMenu.userManagement",
       "name": "Touches des postes",
       "icon": "Dialpad",
       "contentUrl": "./index.html?view=overview"
