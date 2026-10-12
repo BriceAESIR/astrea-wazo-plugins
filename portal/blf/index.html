@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Mulish:wght@300..800&display=swap">
-<link rel="stylesheet" href="./style.css?v=0.11.0">
+<link rel="stylesheet" href="./style.css?v=0.12.0">
 </head>
 <body>
 <div id="app">
@@ -55,7 +55,7 @@
       <div id="compat" class="compat" role="alert" hidden></div>
       <div id="advice" class="advice" role="note">
         <strong>Gérez les touches des postes ici plutôt qu'avec les outils de base de Wazo</strong> (« Modèles de touches », touches de la fiche utilisateur).
-        Cet outil respecte la disposition réelle des postes (pages, modules, touches ligne), ne fait jamais superviser un utilisateur par lui-même et garde les libellés à jour. Une modification faite ailleurs peut être écrasée ou décaler les touches.
+        Cet outil respecte la disposition réelle des postes (pages, modules, touches ligne), ne fait jamais superviser un utilisateur par lui-même et garde les libellés à jour. Une modification faite ailleurs peut être écrasée ou décaler les touches. Ne modifiez jamais une touche directement sur le téléphone : elle ne pourrait plus être gérée depuis Wazo.
       </div>
       <div id="empty" class="muted center">Choisissez un utilisateur.</div>
       <div id="editor" hidden>
@@ -182,6 +182,6 @@
     <div class="btnrow right"><button id="modal-cancel">Annuler</button><button id="modal-ok" class="primary">Confirmer</button></div></div></div>
   <div id="toast" class="toast" hidden></div>
 </div>
-<script type="module" src="./app.js?v=0.11.0"></script>
+<script type="module" src="./app.js?v=0.12.0"></script>
 </body>
 </html>

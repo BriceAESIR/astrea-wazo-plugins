@@ -1,15 +1,16 @@
-// Touches des postes — plugin Portal Wazo (Astrea)
+// ASTREA - BLF Manager — plugin Portal Wazo
 // Lit et écrit les touches de fonction des utilisateurs via wazo-confd, avec
 // le token fourni par le portail. Les touches « ligne » supplémentaires sont
-// stockées dans le champ `userfield` (jeton blf-linekeys=N) et appliquées
-// côté serveur par le stack plugin astrea/blf-sync.
+// l'option `astrea_linekeys` du poste dans provd, traduite par un template
+// personnalisé par modèle (fonction native Yealink auto_linekeys). Aucun
+// composant serveur.
 import { App } from './vendor/euc-plugins-sdk/app.js';
 
 // ---------------------------------------------------------------------------
 // Profils constructeur
 // ---------------------------------------------------------------------------
 // Seul Yealink est vérifié : numérotation recopiée du plugin wazo-yealink
-// v86/v87, touches ligne multiples appliquées par astrea/blf-sync. Les autres
+// v86/v87, touches ligne multiples (option provd + template). Les autres
 // marques passent en profil générique : capacité non vérifiée, pas de module,
 // une seule touche ligne. Pour en ajouter une : lire son plugin provd
 // (wazo-provd-plugins) et compléter VENDORS.
@@ -130,6 +131,52 @@ async function api(method, path, body) {
   return txt ? JSON.parse(txt) : null;
 }
 const listAll = async (path) => (await api('GET', `${path}?recurse=true&limit=10000`))?.items || [];
+
+// ---------------------------------------------------------------------------
+// provd : touches ligne par poste (option astrea_linekeys)
+// ---------------------------------------------------------------------------
+// Validé le 12/10/2026 (T46S) : l'option est stockée telle quelle par provd
+// (confd, lui, supprime les options inconnues) et lue par le template
+// personnalisé du modèle (var/templates/<modèle>.tpl). L'id provd = l'id du
+// device confd. Un PUT renvoie le document complet relu juste avant.
+const PROVD_TYPE = 'application/vnd.proformatique.provd+json';
+async function provd(method, path, body) {
+  if (S.readonly && method !== 'GET') throw new ApiError(0, `Lecture seule : ${S.readonly}`);
+  const headers = { 'X-Auth-Token': S.token, Accept: PROVD_TYPE };
+  if (S.tenant) headers['Wazo-Tenant'] = S.tenant;
+  if (body !== undefined) headers['Content-Type'] = PROVD_TYPE;
+  const r = await fetch(`${S.base}/api/provd/0.2${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+  if (!r.ok) {
+    let msg = `provd ${method} ${path} → ${r.status}`;
+    try { msg += ' ' + (await r.text()).slice(0, 300); } catch { /* */ }
+    throw new ApiError(r.status, msg);
+  }
+  const txt = r.status === 204 ? '' : await r.text();
+  return txt ? JSON.parse(txt) : null;
+}
+const provdLinesCache = new Map(); // device id → N (1 si option absente)
+async function deviceLineKeys(devId) {
+  if (provdLinesCache.has(devId)) return provdLinesCache.get(devId);
+  const d = (await provd('GET', `/dev_mgr/devices/${devId}`))?.device;
+  const n = Math.max(1, Number(d?.options?.astrea_linekeys) || 1);
+  provdLinesCache.set(devId, n);
+  return n;
+}
+// Écrit (N > 1) ou retire (N = 1) l'option, puis régénère le fichier du poste.
+async function setDeviceLineKeys(devId, n) {
+  const d = (await provd('GET', `/dev_mgr/devices/${devId}`))?.device;
+  if (!d) throw new Error(`poste ${devId} introuvable dans provd`);
+  const cur = Math.max(1, Number(d.options?.astrea_linekeys) || 1);
+  if (cur !== n) {
+    const options = { ...(d.options || {}) };
+    if (n > 1) options.astrea_linekeys = n; else delete options.astrea_linekeys;
+    d.options = options;
+    await provd('PUT', `/dev_mgr/devices/${devId}`, { device: d });
+  }
+  await provd('POST', '/dev_mgr/reconfigure', { id: devId });
+  provdLinesCache.set(devId, n);
+  return cur !== n;
+}
 
 // ---------------------------------------------------------------------------
 // Auto-contrôle de compatibilité (mise à jour Wazo, portail, API)
@@ -441,15 +488,15 @@ async function selectUser(u) {
   const prof = vendorOf(dev);
   const lk = prof?.linekeys[model] ?? null;
   const exp = prof?.exp(model) ?? null;
-  let data;
-  try { data = await api('GET', `/users/${u.uuid}/funckeys`); } catch (e) { if (seq === selectSeq) toast(`${fullName(u)} : ${e.message}`, 6000); return; }
+  let data, lineKeys;
+  try {
+    [data, lineKeys] = await Promise.all([api('GET', `/users/${u.uuid}/funckeys`), loadLineKeys(u)]);
+  } catch (e) { if (seq === selectSeq) toast(`${fullName(u)} : ${e.message}`, 6000); return; }
   if (seq !== selectSeq) return;
   if (data && (typeof data.keys !== 'object' || data.keys === null || Array.isArray(data.keys))) setReadonly('format des touches renvoyé par confd inattendu (keys)');
   S.sel = null;
   const orig = {}, inherited = {};
   for (const [p, k] of Object.entries(data?.keys || {})) (k.inherited ? inherited : orig)[Number(p)] = cleanKey(k);
-  const m = (u.userfield || '').match(LK_TOKEN);
-  const lineKeys = m ? Number(m[1]) : 1;
   const maxPos = Math.max(0, ...Object.keys(orig).map(Number), ...Object.keys(inherited).map(Number));
   const slots = Array.from({ length: Math.max(maxPos, lineKeys) }, (_, i) => (orig[i + 1] ? structuredClone(orig[i + 1]) : null));
   const clash = shiftLineClashes(slots, orig, lineKeys);
@@ -532,7 +579,7 @@ function renderEditor() {
   else if (!cap.known && c.dev) warns.push(`Modèle ${esc(c.model)} absent de la table ${esc(c.prof.name)} : capacité non vérifiée.`);
   if (c.dev && !multi && c.lineKeys > 1) warns.push('Touches ligne multiples : non gérées pour cette marque, elles ne seront pas appliquées.');
   if (Object.keys(c.inherited).length) warns.push(`${Object.keys(c.inherited).length} touche(s) héritée(s) d'un modèle de touches partagé : visibles mais non modifiables ici.`);
-  if (!isTpl && c.lineKeys !== c.origLineKeys) warns.push('Les touches ligne sont appliquées par le plugin serveur blf-sync à son prochain passage (15 min max).');
+  if (!isTpl && c.lineKeys !== c.origLineKeys) warns.push(`Touches ligne : appliquées sur le poste à l'enregistrement, à condition que le template Astrea du ${esc(c.model || 'modèle')} soit installé dans provd (var/templates/${esc(c.model || '<modèle>')}.tpl). Sans lui, rien ne change sur le téléphone.`);
   if (isTpl) warns.push(`Modèle : l'aperçu sur ${esc(c.model)} sert seulement à placer les touches ; au déploiement, chaque poste reçoit les mêmes positions. Les touches ligne sont notées dans le nom du modèle Wazo (blf-linekeys=${c.lineKeys}).`);
   if (c.clash) warns.push(`${c.clash} touche(s) étaient placées dans Wazo sur des positions de ligne (masquées par les touches ligne) : elles ont été décalées juste après les lignes. Vérifiez puis enregistrez pour corriger.`);
   $('warnings').innerHTML = warns.map((w) => `<div class="warn">${w}</div>`).join('');
@@ -996,8 +1043,17 @@ async function setUserToken(u, re, token) {
   u.userfield = uf;
   return true;
 }
-// blf-linekeys=N : touches ligne, lu par astrea/blf-sync.
-const setUserLineKeys = (u, n) => setUserToken(u, LK_TOKEN, n > 1 ? `blf-linekeys=${n}` : '');
+// Ancien jeton blf-linekeys=N (userfield, prévu pour astrea/blf-sync, jamais
+// installé) : retiré dès qu'on réécrit les touches ligne.
+const clearLegacyLineKeys = (u) => setUserToken(u, LK_TOKEN, '');
+// Touches ligne : option provd du poste (+ régénération) et nettoyage du
+// jeton historique. Postes d'une marque sans touches ligne multiples : refus.
+async function applyLineKeys(u, dev, n) {
+  if (!dev) throw new Error(`${fullName(u)} : aucun poste, touches ligne non applicables`);
+  if (!vendorOf(dev)?.multiLine) throw new Error(`${fullName(u)} : touches ligne multiples non gérées pour ${dev.vendor || 'cette marque'}`);
+  await setDeviceLineKeys(dev.id, n);
+  await clearLegacyLineKeys(u);
+}
 // blf-label=… : étiquette de touche (vide ou égale au nom = pas de jeton).
 const setUserKeyLabel = (u, label) => setUserToken(u, LBL_TOKEN, label && label !== fullName(u) ? `blf-label=${encodeURIComponent(label)}` : '');
 function save() {
@@ -1011,13 +1067,14 @@ function save() {
   for (const p of positions) if (keySig(target[p]) !== keySig(orig[p])) rows.push(`<tr><td>${p}</td><td>${describe(orig[p])}</td><td>${describe(target[p])}</td></tr>`);
   const lkChanged = c.lineKeys !== c.origLineKeys;
   const html = `<h3>Enregistrer ${esc(fullName(c.user))}</h3>
-    ${lkChanged ? `<p>Touches ligne : ${c.origLineKeys} → <strong>${c.lineKeys}</strong> (appliqué par le plugin serveur).</p>` : ''}
+    ${lkChanged ? `<p>Touches ligne : ${c.origLineKeys} → <strong>${c.lineKeys}</strong> (option du poste dans provd, appliquée par le template Astrea du modèle ; le poste est resynchronisé).</p>` : ''}
     ${rows.length ? `<table class="diff"><tr><th>Pos.</th><th>Avant</th><th>Après</th></tr>${rows.join('')}</table>` : '<p class="muted">Aucune touche de fonction modifiée.</p>'}`;
   confirmModal(html, async () => {
     try {
       if (rows.length) await api('PUT', `/users/${c.user.uuid}/funckeys`, { keys: target });
-      if (lkChanged) await setUserLineKeys(c.user, c.lineKeys);
-      if ($('resync').checked && c.dev && (rows.length || lkChanged)) {
+      if (lkChanged) await applyLineKeys(c.user, c.dev, c.lineKeys);
+      // Touches ligne : resynchro toujours (sinon rien ne change sur le poste).
+      if (c.dev && (lkChanged || ($('resync').checked && rows.length))) {
         try { await api('GET', `/devices/${c.dev.id}/synchronize`); } catch (e) { toast(`Enregistré, mais resynchro impossible : ${e.message}`, 6000); }
       }
       toast('Enregistré');
@@ -1138,7 +1195,22 @@ async function scanLabels(justChanged = new Set()) {
 // suivantes remontent ; les cases vides entre deux touches sont gardées ;
 // le bloc commence après les touches ligne de chaque utilisateur.
 const D = { templates: null, src: null, srcLines: 1, picked: new Set(), plan: [] };
-const lineKeysOf = (u) => { const m = (u.userfield || '').match(LK_TOKEN); return m ? Number(m[1]) : 1; };
+// Touches ligne d'un utilisateur = option provd de son poste (référence).
+// L'ancien jeton blf-linekeys du userfield n'est lu qu'à défaut de lecture
+// provd, et il est nettoyé au prochain enregistrement.
+function lineKeysOf(u) {
+  const dev = userDevice(u);
+  if (dev && provdLinesCache.has(dev.id)) return provdLinesCache.get(dev.id);
+  const m = (u?.userfield || '').match(LK_TOKEN);
+  return m ? Number(m[1]) : 1;
+}
+async function loadLineKeys(u) {
+  const dev = userDevice(u);
+  if (dev && vendorOf(dev)?.multiLine) {
+    try { await deviceLineKeys(dev.id); } catch (e) { console.warn('[astrea] lecture provd', dev.id, e.message); }
+  }
+  return lineKeysOf(u);
+}
 // Modèle Wazo : le nombre de touches ligne est noté dans le nom avec le même
 // jeton que le userfield (« Commerciaux blf-linekeys=2 ») ; sans jeton = 1.
 const tplLines = (t) => { const m = (t?.name || '').match(LK_TOKEN); return m ? Number(m[1]) : 1; };
@@ -1251,7 +1323,7 @@ async function loadSource() {
         D.srcLines = tplLines(t);
       } else {
         for (const [p, k] of Object.entries((await api('GET', `/users/${v.slice(2)}/funckeys`))?.keys || {})) if (!k.inherited) keys[p] = k;
-        D.srcLines = lineKeysOf(S.byUuid.get(v.slice(2)) || {});
+        D.srcLines = await loadLineKeys(S.byUuid.get(v.slice(2)) || {});
       }
       D.src = {};
       for (const [p, k] of Object.entries(keys)) D.src[Number(p)] = cleanKey(k);
@@ -1322,6 +1394,7 @@ async function previewDeploy() {
     btn.textContent = `Lecture ${i + 1}/${users.length}…`;
     try {
       const data = await api('GET', `/users/${u.uuid}/funckeys`);
+      await loadLineKeys(u); // touches ligne actuelles du poste (provd)
       const cur = {};
       let inh = 0;
       for (const [p, k] of Object.entries(data?.keys || {})) if (k.inherited) inh++; else cur[Number(p)] = cleanKey(k);
@@ -1331,7 +1404,7 @@ async function previewDeploy() {
       const changed = keysChanged || linesChanged;
       const cap = capOf(u);
       const over = cap ? Object.keys(keys).map(Number).filter((p) => p > cap) : [];
-      D.plan.push({ u, keys, lines, keysChanged, linesChanged, changed, before: { userfield: u.userfield || '', keys: cur } });
+      D.plan.push({ u, keys, lines, keysChanged, linesChanged, changed, before: { userfield: u.userfield || '', keys: cur, linekeys: lineKeysOf(u) } });
       const notes = [
         linesChanged && `touches ligne ${lineKeysOf(u)} → ${lines}`,
         linesSkipped && `<span class="error">touches ligne multiples non gérées pour cette marque : ${lineKeysOf(u) + 1 === D.srcLines ? `position ${D.srcLines} laissée vide` : `positions ${lineKeysOf(u) + 1}–${D.srcLines} laissées vides`}</span>`,
@@ -1345,7 +1418,7 @@ async function previewDeploy() {
   updateDeployBtn();
   const n = D.plan.filter((x) => x.changed).length;
   confirmModal(`<h3>Déploiement : ${n} utilisateur${n > 1 ? 's' : ''} à modifier</h3>
-    <p class="muted small">Mode : ${mode === 'append' ? 'ajout à la suite des touches existantes (sans doublon), touches ligne inchangées' : `remplacement de toutes les touches, ${D.srcLines} touche(s) ligne`}. Nombre de touches de fonction avant → après. Les touches ligne au-delà de la 1re sont appliquées sur le poste par le plugin serveur astrea/blf-sync.</p>
+    <p class="muted small">Mode : ${mode === 'append' ? 'ajout à la suite des touches existantes (sans doublon), touches ligne inchangées' : `remplacement de toutes les touches, ${D.srcLines} touche(s) ligne`}. Nombre de touches de fonction avant → après. Les touches ligne sont écrites dans l'option provd de chaque poste et appliquées par le template Astrea du modèle (à installer une fois par modèle sur la stack) ; les postes concernés sont resynchronisés.</p>
     <table class="diff"><tr><th>Utilisateur</th><th>Avant</th><th>Après</th><th>Modifié</th><th>Remarques</th></tr>${rows.join('')}</table>`,
   applyDeploy, `Déployer (${n})`);
 }
@@ -1359,10 +1432,10 @@ async function applyDeploy() {
     toast(`Déploiement ${i + 1}/${todo.length}…`, 60000);
     try {
       if (x.keysChanged) await api('PUT', `/users/${x.u.uuid}/funckeys`, { keys: x.keys });
-      if (x.linesChanged) await setUserLineKeys(x.u, x.lines);
-      ok++;
       const dev = userDevice(x.u);
-      if ($('dp-resync').checked && dev) { try { await api('GET', `/devices/${dev.id}/synchronize`); } catch { /* resynchro facultative */ } }
+      if (x.linesChanged) await applyLineKeys(x.u, dev, x.lines);
+      ok++;
+      if (dev && (x.linesChanged || $('dp-resync').checked)) { try { await api('GET', `/devices/${dev.id}/synchronize`); } catch { /* resynchro facultative */ } }
     } catch (e) { ko++; console.error(fullName(x.u), e); }
   }
   toast(`Déploiement terminé : ${ok} utilisateur${ok > 1 ? 's' : ''} mis à jour${ko ? `, ${ko} en erreur (détail dans la console)` : ''}.`, 8000);
@@ -1374,7 +1447,7 @@ async function applyDeploy() {
 // Format : { app, version, created, base, tenant, reason, entries: [{ uuid,
 // name, userfield, keys }] } — keys = touches propres (hors héritées).
 const BK_STORE = 'astrea-blf-last-backup';
-const APP_VERSION = '0.11.0';
+const APP_VERSION = '0.12.0';
 function makeBackup(reason, entries) {
   const bk = { app: 'astrea-blf', version: APP_VERSION, created: new Date().toISOString(), base: S.base, tenant: S.tenant, reason, entries };
   const json = JSON.stringify(bk, null, 1);
@@ -1395,7 +1468,7 @@ async function snapshot(users) {
     const data = await api('GET', `/users/${u.uuid}/funckeys`);
     const keys = {};
     for (const [p, k] of Object.entries(data?.keys || {})) if (!k.inherited) keys[p] = cleanKey(k);
-    entries.push({ uuid: u.uuid, name: fullName(u), userfield: u.userfield || '', keys });
+    entries.push({ uuid: u.uuid, name: fullName(u), userfield: u.userfield || '', keys, linekeys: await loadLineKeys(u) });
   }
   return entries;
 }
@@ -1422,6 +1495,12 @@ function restoreBackup(bk) {
         await api('PUT', `/users/${e.uuid}/funckeys`, { keys: e.keys });
         const u = S.byUuid.get(e.uuid);
         if ((u.userfield || '') !== (e.userfield || '')) { await api('PUT', `/users/${e.uuid}`, { userfield: e.userfield || null }); u.userfield = e.userfield; }
+        // Touches ligne (option provd), si la sauvegarde les contient.
+        const dev = userDevice(u);
+        if (e.linekeys && dev && vendorOf(dev)?.multiLine && (await loadLineKeys(u)) !== e.linekeys) {
+          await setDeviceLineKeys(dev.id, e.linekeys);
+          try { await api('GET', `/devices/${dev.id}/synchronize`); } catch { /* resynchro facultative */ }
+        }
         ok++;
       } catch (err) { ko++; console.error(e.name, err); }
     }
