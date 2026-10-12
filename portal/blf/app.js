@@ -29,8 +29,23 @@ function yealinkExp(model) {
   if (model.startsWith('T7') || model.startsWith('T8')) return 'EXP55';
   return null;
 }
+// Face avant des modèles à pages : [touches à gauche, touches à droite, pages].
+// Source : doc Yealink « DSS Keys » (liste des modèles à pages, 3 pages, 4
+// pour les T3x, et total de touches) ; touches physiques = total / pages + 1
+// (la touche du bas à droite devient touche de page). T33 : une seule colonne,
+// disposition supposée. Modèles tactiles (T48, T57W, T58, T7x, T8x) : pas de
+// pages, vue étendue → grille simple.
+const YEALINK_FACE = {
+  T54W: [5, 5, 3], T46S: [5, 5, 3], T46U: [5, 5, 3],
+  T53: [4, 4, 3], T53W: [4, 4, 3], T53C: [4, 4, 3], T43U: [4, 4, 3],
+  T42S: [3, 3, 3], T42U: [3, 3, 3], T41S: [3, 3, 3],
+  T33G: [4, 0, 4], T33P: [4, 0, 4],
+};
+// Modules : touches par page [gauche, droite], déduites des totaux Wazo
+// (EXP40 40 = 2 × 20, EXP43/EXP50 60 = 3 × 20, EXP55 78 = 3 × 26). À vérifier.
+const YEALINK_EXP_FACE = { EXP40: [10, 10], EXP43: [10, 10], EXP50: [10, 10], EXP55: [13, 13] };
 const VENDORS = {
-  yealink: { name: 'Yealink', linekeys: YEALINK_LINEKEYS, exp: yealinkExp, multiLine: true },
+  yealink: { name: 'Yealink', linekeys: YEALINK_LINEKEYS, exp: yealinkExp, face: YEALINK_FACE, expFace: YEALINK_EXP_FACE, multiLine: true },
 };
 // Le device confd porte `vendor` (ex. « Yealink ») et `plugin` (ex. « wazo-yealink-v87 »).
 function vendorOf(dev) {
@@ -375,20 +390,21 @@ function renderEditor() {
   const mods = Math.min(cap.maxMods, Math.max(needMods, c.extraModules));
   $('addModule').hidden = !cap.per || mods >= cap.maxMods;
 
-  const pages = [{ title: c.dev ? `Touches du ${[c.dev.vendor, c.model].filter(Boolean).join(' ') || 'poste'}` : 'Touches', from: 1, to: cap.lk }];
-  for (let m = 1; m <= mods; m++) pages.push({ title: `Module ${m} (${c.exp})`, from: cap.lk + (m - 1) * cap.per + 1, to: cap.lk + m * cap.per });
+  const pages = buildPages(cap, mods);
   const maxPos = pages[pages.length - 1].to;
   const host = $('pages');
   host.innerHTML = '';
+  let group = null;
   for (const pg of pages) {
-    const div = document.createElement('div');
-    div.className = 'page';
-    div.innerHTML = `<h4>${esc(pg.title)} · positions ${pg.from}–${pg.to}</h4>`;
-    const grid = document.createElement('div');
-    grid.className = 'grid';
-    for (let p = pg.from; p <= pg.to; p++) grid.appendChild(tileEl(p));
-    div.appendChild(grid);
-    host.appendChild(div);
+    // Les pages d'un même appareil (poste ou module) côte à côte.
+    if (!group || group.dataset.key !== pg.group) {
+      group = document.createElement('div');
+      group.className = 'faces';
+      group.dataset.key = pg.group;
+      host.appendChild(group);
+    }
+    group.appendChild(pageEl(pg));
+    if (pg.note) host.insertAdjacentHTML('beforeend', `<p class="muted small facenote">${pg.note}</p>`);
   }
   const overflow = c.slots.map((k, i) => (k ? i + 1 : 0)).filter((p) => p > maxPos);
   if (overflow.length) $('warnings').insertAdjacentHTML('beforeend', `<div class="warn">Positions ${overflow.join(', ')} au-delà de la capacité affichée : elles ne seront pas visibles sur le téléphone.</div>`);
@@ -396,6 +412,75 @@ function renderEditor() {
   $('save').disabled = !isDirty();
   renderDetail();
   layout();
+}
+// Découpage en pages comme sur le téléphone. Modèle à pages connu : chaque
+// page montre `gauche + droite` touches physiques, la dernière (en bas à
+// droite) servant de touche de page. Sinon (tactile, marque non vérifiée) :
+// une seule grille.
+function buildPages(cap, mods) {
+  const c = S.cur;
+  const name = c.dev ? [c.dev.vendor, c.model].filter(Boolean).join(' ') || 'poste' : '';
+  const out = [];
+  const face = cap.known && c.prof?.face?.[c.model];
+  if (face) {
+    const [l, r, maxPages] = face;
+    const per = l + r - 1;
+    const n = Math.min(maxPages, Math.ceil(cap.lk / per));
+    for (let i = 0; i < n; i++) {
+      out.push({ group: 'phone', title: `${name} · page ${i + 1}/${n}`, from: i * per + 1, to: Math.min(cap.lk, (i + 1) * per), l, r, pageKey: n > 1, screen: `Page ${i + 1}/${n}` });
+    }
+    if (n > 1) out[n - 1].note = `Touche de page : sur le poste, elle n'apparaît que si une touche au-delà de la n° ${l + r} est utilisée ; sinon la touche ${l + r} reste en page 1.`;
+  } else {
+    out.push({ group: 'phone', title: c.dev ? `Touches du ${name}` : 'Touches', from: 1, to: cap.lk });
+  }
+  const ef = c.prof?.expFace?.[c.exp];
+  for (let m = 1; m <= mods; m++) {
+    const base = cap.lk + (m - 1) * cap.per;
+    if (ef) {
+      const per = ef[0] + ef[1];
+      const n = Math.ceil(cap.per / per);
+      for (let i = 0; i < n; i++) out.push({ group: `mod${m}`, title: `Module ${m} (${c.exp}) · page ${i + 1}/${n}`, from: base + i * per + 1, to: base + Math.min(cap.per, (i + 1) * per), l: ef[0], r: ef[1], screen: `${c.exp} · ${i + 1}/${n}` });
+    } else {
+      out.push({ group: `mod${m}`, title: `Module ${m} (${c.exp})`, from: base + 1, to: base + cap.per });
+    }
+  }
+  return out;
+}
+function pageEl(pg) {
+  const div = document.createElement('div');
+  div.className = 'page';
+  div.innerHTML = `<h4>${esc(pg.title)} · positions ${pg.from}–${pg.to}</h4>`;
+  if (!pg.l) {
+    const grid = document.createElement('div');
+    grid.className = 'grid';
+    for (let p = pg.from; p <= pg.to; p++) grid.appendChild(tileEl(p));
+    div.appendChild(grid);
+    return div;
+  }
+  // Ordre Yealink : colonne de gauche de haut en bas, puis colonne de droite.
+  const slots = pg.l + pg.r;
+  const cells = [];
+  for (let k = 0; k < slots; k++) {
+    if (pg.pageKey && k === slots - 1) cells.push(staticTile('pagekey', '⇆', 'Page'));
+    else if (pg.from + k <= pg.to) cells.push(tileEl(pg.from + k));
+    else cells.push(staticTile('none', '', '—'));
+  }
+  const face = document.createElement('div');
+  face.className = `face${pg.r ? '' : ' one'}`;
+  const col = (list) => { const d = document.createElement('div'); d.className = 'col'; list.forEach((x) => d.appendChild(x)); return d; };
+  const screen = document.createElement('div');
+  screen.className = 'screen';
+  screen.textContent = pg.screen;
+  face.append(col(cells.slice(0, pg.l)), screen);
+  if (pg.r) face.appendChild(col(cells.slice(pg.l)));
+  div.appendChild(face);
+  return div;
+}
+function staticTile(cls, pos, lbl) {
+  const el = document.createElement('div');
+  el.className = `tile ${cls}`;
+  el.innerHTML = `<span class="pos">${esc(pos)}</span><div class="lbl">${esc(lbl)}</div>`;
+  return el;
 }
 function tileEl(p) {
   const c = S.cur;

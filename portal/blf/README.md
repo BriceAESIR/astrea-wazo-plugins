@@ -9,6 +9,10 @@ du serveur ouvert dans le portail, avec le token que fournit le portail.
   numérotation exacte du plugin Yealink de Wazo, modules EXP affichés au
   besoin, touches ligne multiples. Pour les autres marques, la grille est
   indicative (capacité non vérifiée), sans module ni touches ligne multiples ;
+- **pages comme sur le poste** pour les Yealink à pages (T54W, T46S/U, T53/W/C,
+  T43U, T42S/U, T41S, T33G/P) : touches de part et d'autre de l'écran, touche
+  de page en bas à droite (ex. T54W : 3 pages de 9 touches + touche de page).
+  Les modèles tactiles (T48, T57W, T58, T7x, T8x) restent en grille simple ;
 - *Vider* : la case reste vide. *Supprimer* : les touches suivantes remontent.
   *Insérer avant* ajoute une case vide, ◀ ▶ déplacent une touche ;
 - **touches ligne** (bouton − / +) : les touches suivent. Le nombre est
