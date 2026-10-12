@@ -187,6 +187,13 @@ button.icon:hover:not(:disabled) { color: var(--danger); background: color-mix(i
 .tile.none:hover { border-color: var(--line); }
 .facenote { margin: -8px 0 16px; }
 
+/* Étiquettes de touches */
+#labelsView h2 { margin: 0 0 16px; }
+.lbltable td { vertical-align: middle; padding-top: 4px; padding-bottom: 4px; }
+.lbltable td:last-child { width: 45%; }
+.lbltable tr.changed td { background: color-mix(in srgb, var(--warn) 8%, var(--panel)); }
+#labelsResult .diff { margin-top: 8px; }
+
 /* Déploiement */
 #deploy h2 { margin: 0 0 16px; }
 #deploy .page label.inline { margin: 4px 0; }

@@ -75,6 +75,15 @@ const DEST_PARAMS = {
 const NAMED = { group: ['/groups', 'group_id'], queue: ['/queues', 'queue_id'], conference: ['/conferences', 'conference_id'] };
 const TYPE_LABEL = { user: 'Collègue', custom: 'Numéro', group: 'Groupe', queue: 'File', conference: 'Conférence' };
 const LK_TOKEN = /\s*\bblf-linekeys=(\d+)\b/;
+// Étiquette de touche d'un utilisateur (texte des BLF qui le visent chez ses
+// collègues) : jeton « blf-label=<texte encodé URI> » dans son userfield.
+const LBL_TOKEN = /\s*\bblf-label=(\S*)/;
+function customKeyLabel(u) {
+  const m = (u?.userfield || '').match(LBL_TOKEN);
+  if (!m) return '';
+  try { return decodeURIComponent(m[1]); } catch { return m[1]; }
+}
+const keyLabelOf = (u) => customKeyLabel(u) || fullName(u);
 
 // ---------------------------------------------------------------------------
 // État
@@ -226,6 +235,7 @@ async function boot() {
     if (isDirty()) toast('Changement de client : modifications non enregistrées abandonnées.', 6000);
     S.cur = null; S.sel = null;
     D.templates = null; D.src = null; D.srcLines = 1; D.picked.clear(); D.plan = [];
+    L.edits.clear(); $('lb-result-wrap').hidden = true;
     $('editor').hidden = true; $('detail').hidden = true;
     $('dp-preview').innerHTML = ''; $('dp-source').value = '';
     if ($('deploy').hidden) $('empty').hidden = false;
@@ -247,6 +257,7 @@ async function boot() {
     document.body.classList.add('ready');
     renderUserList();
     if (!$('deploy').hidden) openDeploy(); // relit modèles et utilisateurs du nouveau tenant
+    if (!$('labelsView').hidden) renderLabels();
     // Comme contactTab reçoit `contact` dans extra, l'onglet pbx.users reçoit
     // peut-être l'utilisateur affiché : on cherche un uuid connu dans extra.
     const ref = userRefFromExtra() || userRefFrom(location) || userRefFrom({ pathname: document.referrer });
@@ -731,10 +742,17 @@ function layout() {
 function autoLabel(k) {
   if (!k) return '';
   const d = k.destination;
-  if (d.type === 'user') return fullName(S.byId.get(d.user_id));
+  if (d.type === 'user') return keyLabelOf(S.byId.get(d.user_id));
   if (d.type === 'custom') return d.exten || '';
   if (NAMED[d.type]) { const it = (S.named[d.type] || []).find((x) => x.id === d[NAMED[d.type][1]]); return it ? it.label || it.name : ''; }
   return '';
+}
+// Libellé « automatique » (donc remplaçable) : vide, égal à l'étiquette
+// attendue, ou — pour un collègue — égal à son nom complet (ancien défaut).
+function isAutoLabel(k) {
+  if (!k?.label) return true;
+  if (k.label === autoLabel(k)) return true;
+  return k.destination.type === 'user' && k.label === fullName(S.byId.get(k.destination.user_id));
 }
 async function ensureNamed(type) {
   if (!NAMED[type] || S.named[type]) return;
@@ -785,8 +803,8 @@ function renderValueField(type, k) {
       if (!li) return;
       const u = S.byId.get(Number(li.dataset.id));
       const old = c.slots[p - 1];
-      const keepLabel = old && old.label && old.label !== autoLabel(old);
-      setKey(p, { blf: old ? old.blf : true, label: keepLabel ? old.label : fullName(u), destination: { type: 'user', user_id: u.id } });
+      const keepLabel = old && !isAutoLabel(old);
+      setKey(p, { blf: old ? old.blf : true, label: keepLabel ? old.label : keyLabelOf(u), destination: { type: 'user', user_id: u.id } });
       renderEditor();
     };
   } else if (type === 'custom') {
@@ -795,7 +813,7 @@ function renderValueField(type, k) {
       const v = $('dt-exten').value.trim();
       if (!v) return;
       const old = c.slots[p - 1];
-      const keepLabel = old && old.label && old.label !== autoLabel(old);
+      const keepLabel = old && !isAutoLabel(old);
       setKey(p, { blf: old?.destination.type === 'custom' ? old.blf : false, label: keepLabel ? old.label : v, destination: { type: 'custom', exten: v } });
       renderEditor();
     };
@@ -811,7 +829,7 @@ function renderValueField(type, k) {
         const id = Number($('dt-named').value);
         if (!id) return;
         const old = c.slots[p - 1];
-        const keepLabel = old && old.label && old.label !== autoLabel(old);
+        const keepLabel = old && !isAutoLabel(old);
         const it = items.find((x) => x.id === id);
         setKey(p, { blf: false, label: keepLabel ? old.label : it.label || it.name, destination: { type, [param]: id } });
         renderEditor();
@@ -894,17 +912,21 @@ function changeLineKeys(delta) {
 // Enregistrement
 // ---------------------------------------------------------------------------
 function describe(k) { return k ? `${esc(k.label || '')} <span class="muted">(${esc(destText(k))})</span>` : '<span class="muted">vide</span>'; }
-// Jeton blf-linekeys=N dans le userfield (lu par astrea/blf-sync).
-async function setUserLineKeys(u, n) {
+// Jetons du userfield : remplace (ou retire si token vide) le jeton `re`.
+async function setUserToken(u, re, token) {
   const before = (u.userfield || '').trim();
-  let uf = before.replace(LK_TOKEN, '').trim();
-  if (n > 1) uf = `${uf} blf-linekeys=${n}`.trim();
+  let uf = before.replace(re, '').trim();
+  if (token) uf = `${uf} ${token}`.trim();
   if (uf === before) return false;
   if (uf.length > 128) throw new Error(`${fullName(u)} : userfield trop long (128 caractères max)`);
   await api('PUT', `/users/${u.uuid}`, { userfield: uf || null });
   u.userfield = uf;
   return true;
 }
+// blf-linekeys=N : touches ligne, lu par astrea/blf-sync.
+const setUserLineKeys = (u, n) => setUserToken(u, LK_TOKEN, n > 1 ? `blf-linekeys=${n}` : '');
+// blf-label=… : étiquette de touche (vide ou égale au nom = pas de jeton).
+const setUserKeyLabel = (u, label) => setUserToken(u, LBL_TOKEN, label && label !== fullName(u) ? `blf-label=${encodeURIComponent(label)}` : '');
 function save() {
   const c = S.cur;
   if (c.tpl) return saveTemplate();
@@ -931,9 +953,55 @@ function save() {
 }
 
 // ---------------------------------------------------------------------------
-// Harmonisation des libellés (renommages)
+// Étiquettes de touches (texte des BLF qui visent un utilisateur)
 // ---------------------------------------------------------------------------
-async function scanLabels() {
+const L = { edits: new Map() }; // uuid → étiquette saisie (pas encore enregistrée)
+function openLabels() {
+  $('editor').hidden = true; $('empty').hidden = true; $('detail').hidden = true; $('deploy').hidden = true;
+  $('labelsView').hidden = false;
+  layout();
+  renderLabels();
+}
+function renderLabels() {
+  const q = $('lb-search').value.trim().toLowerCase();
+  // Toutes les personnes supervisables (y compris DECT / sans poste à touches).
+  $('lb-rows').innerHTML = S.users
+    .filter((u) => !q || `${fullName(u)} ${u.username || ''} ${userExten(u)} ${keyLabelOf(u)}`.toLowerCase().includes(q))
+    .map((u) => {
+      const v = L.edits.has(u.uuid) ? L.edits.get(u.uuid) : customKeyLabel(u);
+      const changed = L.edits.has(u.uuid) && L.edits.get(u.uuid) !== customKeyLabel(u);
+      return `<tr${changed ? ' class="changed"' : ''}><td>${esc(fullName(u))}</td><td class="muted">${esc(userExten(u))}</td>
+        <td><input data-uuid="${u.uuid}" value="${esc(v)}" placeholder="${esc(fullName(u))}" maxlength="64"></td></tr>`;
+    }).join('') || '<tr><td colspan="3" class="muted">Aucun utilisateur.</td></tr>';
+  updateLabelsBtn();
+}
+function pendingLabels() {
+  return [...L.edits].map(([uuid, v]) => [S.byUuid.get(uuid), v.trim()]).filter(([u, v]) => u && v !== customKeyLabel(u) && !(v === fullName(u) && !customKeyLabel(u)));
+}
+function updateLabelsBtn() {
+  const n = pendingLabels().length;
+  $('lb-save').disabled = !n;
+  $('lb-save').textContent = n ? `Enregistrer les étiquettes (${n})` : 'Enregistrer les étiquettes';
+}
+async function saveLabels() {
+  const todo = pendingLabels();
+  const changed = new Set();
+  let ok = 0;
+  for (const [u, v] of todo) {
+    try { await setUserKeyLabel(u, v); ok++; L.edits.delete(u.uuid); changed.add(u.uuid); } catch (e) { toast(e.message, 6000); }
+  }
+  toast(`${ok} étiquette(s) enregistrée(s). Vérification des touches…`);
+  renderLabels();
+  scanLabels(changed);
+}
+
+// Analyse : touches vers un collègue dont le libellé diffère de son étiquette.
+// Cochées d'office : les personnes dont l'étiquette vient de changer, et les
+// libellés automatiques (vides / ancien nom complet). Les autres libellés
+// (courts, volontaires) sont proposés mais décochés.
+async function scanLabels(justChanged = new Set()) {
+  if (!(justChanged instanceof Set)) justChanged = new Set();
+  $('lb-result-wrap').hidden = false;
   const out = $('labelsResult');
   out.innerHTML = '<p class="muted small">Analyse…</p>';
   const found = [];
@@ -946,17 +1014,20 @@ async function scanLabels() {
         if (k.inherited || k.destination?.type !== 'user') continue;
         const t = S.byId.get(k.destination.user_id);
         if (!t) continue;
-        const want = fullName(t);
-        if ((k.label || '').trim() && k.label.trim() !== want) found.push({ owner: u, pos: Number(p), from: k.label, to: want });
+        const want = keyLabelOf(t);
+        const from = (k.label || '').trim();
+        if (from !== want) found.push({ owner: u, target: t, pos: Number(p), from, to: want, pre: justChanged.has(t.uuid) || !from || from === fullName(t) });
       }
     } catch { /* ignoré */ }
     if (++done % 10 === 0) out.innerHTML = `<p class="muted small">Analyse… ${done}/${owners.length}</p>`;
   }
-  if (!found.length) { out.innerHTML = '<p class="muted small">Tous les libellés correspondent aux noms actuels.</p>'; return; }
-  out.innerHTML = `<p class="small">${found.length} libellé(s) différent(s) du nom actuel :</p>
-    <ul class="list">${found.map((f, i) => `<li><label class="inline"><input type="checkbox" data-i="${i}"> <span><strong>${esc(fullName(f.owner))}</strong> #${f.pos}<br><span class="muted">${esc(f.from)} → ${esc(f.to)}</span></span></label></li>`).join('')}</ul>
-    <div class="btnrow"><button id="lbl-all">Tout cocher</button><button id="lbl-apply" class="primary">Mettre à jour</button></div>`;
+  if (!found.length) { out.innerHTML = '<p class="muted small">Toutes les touches portent l\'étiquette de la personne qu\'elles supervisent.</p>'; return; }
+  out.innerHTML = `<p class="small">${found.length} touche(s) avec une étiquette différente. Cochées d'office : étiquettes que vous venez de modifier et libellés par défaut (nom complet). Les libellés personnalisés sont laissés décochés.</p>
+    <table class="diff"><tr><th></th><th>Poste de</th><th>Touche</th><th>Supervise</th><th>Actuelle → nouvelle</th></tr>
+    ${found.map((f, i) => `<tr><td><input type="checkbox" data-i="${i}"${f.pre ? ' checked' : ''}></td><td>${esc(fullName(f.owner))}</td><td>${f.pos}</td><td>${esc(fullName(f.target))}</td><td><span class="muted">${esc(f.from) || '(vide)'}</span> → <strong>${esc(f.to)}</strong></td></tr>`).join('')}</table>
+    <div class="btnrow"><button id="lbl-all">Tout cocher</button><button id="lbl-none">Tout décocher</button><span class="spacer"></span><button id="lbl-apply" class="primary">Mettre à jour les touches cochées</button></div>`;
   $('lbl-all').onclick = () => out.querySelectorAll('input[type=checkbox]').forEach((x) => (x.checked = true));
+  $('lbl-none').onclick = () => out.querySelectorAll('input[type=checkbox]').forEach((x) => (x.checked = false));
   $('lbl-apply').onclick = async () => {
     const picked = [...out.querySelectorAll('input:checked')].map((x) => found[Number(x.dataset.i)]);
     const byOwner = new Map();
@@ -967,12 +1038,12 @@ async function scanLabels() {
         const data = await api('GET', `/users/${uuid}/funckeys`);
         const keys = {};
         for (const [p, k] of Object.entries(data?.keys || {})) if (!k.inherited) keys[p] = cleanKey(k);
-        for (const f of list) if (keys[f.pos] && keys[f.pos].label === f.from) keys[f.pos].label = f.to;
+        for (const f of list) if (keys[f.pos] && (keys[f.pos].label || '') === f.from) keys[f.pos].label = f.to;
         await api('PUT', `/users/${uuid}/funckeys`, { keys });
         ok += list.length;
       } catch (e) { toast(e.message, 6000); }
     }
-    toast(`${ok} libellé(s) mis à jour`);
+    toast(`${ok} touche(s) mise(s) à jour`);
     scanLabels();
   };
 }
@@ -1063,7 +1134,7 @@ function capOf(u) {
 }
 
 async function openDeploy() {
-  $('editor').hidden = true; $('empty').hidden = true; $('detail').hidden = true; $('deploy').hidden = false;
+  $('editor').hidden = true; $('empty').hidden = true; $('detail').hidden = true; $('labelsView').hidden = true; $('deploy').hidden = false;
   layout();
   if (!D.templates) {
     // Format supposé identique aux touches utilisateur ({keys: {pos: {...}}}) — à vérifier en réel.
@@ -1076,9 +1147,11 @@ async function openDeploy() {
   $('dp-source').value = cur;
   renderDeployUsers();
 }
+// Retour à « Postes » depuis Déploiement ou Étiquettes.
 function closeDeploy() {
   $('deploy').hidden = true;
-  if (S.cur) selectUser(S.cur.user); // relit l'utilisateur : le déploiement a pu le modifier
+  $('labelsView').hidden = true;
+  if (S.cur) selectUser(S.cur.user); // relit l'utilisateur : déploiement / étiquettes ont pu le modifier
   else $('empty').hidden = false;
   layout();
 }
@@ -1148,7 +1221,13 @@ function deployKeysFor(u, current, mode) {
   });
   const out = mode === 'append' ? { ...current } : {};
   const start = (mode === 'append' ? Math.max(base, ...Object.keys(current).map(Number)) : base) + 1;
-  kept.forEach((k, i) => { if (k) out[start + i] = structuredClone(k); });
+  kept.forEach((k, i) => {
+    if (!k) return;
+    const nk = structuredClone(k);
+    // Touche vers un collègue au libellé automatique : son étiquette de touche.
+    if (nk.destination.type === 'user' && isAutoLabel(nk)) nk.label = keyLabelOf(S.byId.get(nk.destination.user_id)) || nk.label;
+    out[start + i] = nk;
+  });
   return { keys: out, selfRemoved, lines, linesSkipped: mode !== 'append' && !multiOk && D.srcLines > own };
 }
 async function previewDeploy() {
@@ -1224,7 +1303,7 @@ document.querySelectorAll('[data-side]').forEach((b) => (b.onclick = () => {
   const side = b.dataset.side;
   shrinkAdvice();
   const go = () => {
-    const wasDeploy = !$('deploy').hidden || !!S.cur?.tpl;
+    const wasOther = !$('deploy').hidden || !$('labelsView').hidden || !!S.cur?.tpl;
     if (S.cur?.tpl) { S.cur = null; S.sel = null; $('editor').hidden = true; $('detail').hidden = true; }
     document.querySelectorAll('[data-side]').forEach((x) => x.classList.toggle('active', x === b));
     $('userlist').hidden = side !== 'users';
@@ -1232,10 +1311,12 @@ document.querySelectorAll('[data-side]').forEach((b) => (b.onclick = () => {
     $('deployPane').hidden = side !== 'deploy';
     $('search').hidden = side !== 'users';
     $('count').hidden = side !== 'users';
+    $('labelsView').hidden = side !== 'labels';
     if (side === 'deploy') openDeploy();
-    else if (wasDeploy) closeDeploy();
+    else if (side === 'labels') openLabels();
+    else if (wasOther) closeDeploy();
   };
-  if (side === 'deploy' || S.cur?.tpl) guardUnsaved(go); else go();
+  if (side !== 'users' || S.cur?.tpl) guardUnsaved(go); else go();
 }));
 $('dp-new').onclick = () => openTemplate(null);
 $('dp-edit').onclick = () => { const v = $('dp-source').value; if (v.startsWith('t:')) openTemplate(v.slice(2)); };
@@ -1255,7 +1336,16 @@ $('dp-users').onchange = (e) => {
 $('dp-all').onclick = () => { $('dp-users').querySelectorAll('input[data-uuid]').forEach((cb) => { cb.checked = true; D.picked.add(cb.dataset.uuid); }); updateDeployBtn(); };
 $('dp-none').onclick = () => { $('dp-users').querySelectorAll('input[data-uuid]').forEach((cb) => { cb.checked = false; D.picked.delete(cb.dataset.uuid); }); updateDeployBtn(); };
 $('dp-go').onclick = previewDeploy;
-$('scanLabels').onclick = scanLabels;
+$('lb-scan').onclick = scanLabels;
+$('lb-save').onclick = saveLabels;
+$('lb-search').oninput = renderLabels;
+$('lb-rows').oninput = (e) => {
+  const inp = e.target.closest('input[data-uuid]');
+  if (!inp) return;
+  L.edits.set(inp.dataset.uuid, inp.value);
+  inp.closest('tr').classList.toggle('changed', inp.value.trim() !== customKeyLabel(S.byUuid.get(inp.dataset.uuid)));
+  updateLabelsBtn();
+};
 $('lk-minus').onclick = () => changeLineKeys(-1);
 $('lk-plus').onclick = () => changeLineKeys(1);
 // « Ajouter » = une page / un module de plus que ce qui est affiché

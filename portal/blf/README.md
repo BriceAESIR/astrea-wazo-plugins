@@ -46,7 +46,14 @@ du serveur ouvert dans le portail, avec le token que fournit le portail.
   remontent ; le bloc commence après les touches ligne de chacun. Aperçu
   avant/après, un seul PUT par utilisateur modifié, resynchro optionnelle.
   Le modèle partagé n'est pas rattaché (il mettrait à chacun sa propre touche) ;
-- onglet **Libellés** : repère les touches dont le libellé ne correspond plus
+- onglet **Étiquettes de touches** : une étiquette par utilisateur (texte des
+  BLF qui le supervisent chez ses collègues ; vide = nom complet), enregistrée
+  dans son `userfield` (jeton `blf-label=<texte encodé URI>`). Reprise par
+  l'éditeur et le déploiement en masse. *Vérifier les touches de tous les
+  postes* liste les touches dont l'étiquette diffère : cochées d'office pour
+  les étiquettes qui viennent de changer et les libellés par défaut, décochées
+  pour les libellés personnalisés ;
+- (ancien onglet **Libellés**) : repère les touches dont le libellé ne correspond plus
   au nom du collègue (renommage) et les corrige en lot, sur les touches cochées.
 
 ## Déploiement (doc Wazo : developers.wazo.io/docs/plugins/ui/deploy)
