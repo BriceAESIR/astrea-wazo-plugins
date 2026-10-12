@@ -579,7 +579,7 @@ function renderEditor() {
   else if (!cap.known && c.dev) warns.push(`Modèle ${esc(c.model)} absent de la table ${esc(c.prof.name)} : capacité non vérifiée.`);
   if (c.dev && !multi && c.lineKeys > 1) warns.push('Touches ligne multiples : non gérées pour cette marque, elles ne seront pas appliquées.');
   if (Object.keys(c.inherited).length) warns.push(`${Object.keys(c.inherited).length} touche(s) héritée(s) d'un modèle de touches partagé : visibles mais non modifiables ici.`);
-  if (!isTpl && c.lineKeys !== c.origLineKeys) warns.push(`Touches ligne : appliquées sur le poste à l'enregistrement, à condition que le template Astrea du ${esc(c.model || 'modèle')} soit installé dans provd (var/templates/${esc(c.model || '<modèle>')}.tpl). Sans lui, rien ne change sur le téléphone.`);
+  if (!isTpl && c.lineKeys !== c.origLineKeys) warns.push(`Touches ligne : appliquées sur le poste à l'enregistrement, à condition que les lignes Astrea soient présentes dans le base.tpl personnalisé du plugin provd ${esc(c.dev?.plugin || '')} (var/templates/base.tpl). Sans elles, rien ne change sur le téléphone.`);
   if (isTpl) warns.push(`Modèle : l'aperçu sur ${esc(c.model)} sert seulement à placer les touches ; au déploiement, chaque poste reçoit les mêmes positions. Les touches ligne sont notées dans le nom du modèle Wazo (blf-linekeys=${c.lineKeys}).`);
   if (c.clash) warns.push(`${c.clash} touche(s) étaient placées dans Wazo sur des positions de ligne (masquées par les touches ligne) : elles ont été décalées juste après les lignes. Vérifiez puis enregistrez pour corriger.`);
   $('warnings').innerHTML = warns.map((w) => `<div class="warn">${w}</div>`).join('');
@@ -1418,7 +1418,7 @@ async function previewDeploy() {
   updateDeployBtn();
   const n = D.plan.filter((x) => x.changed).length;
   confirmModal(`<h3>Déploiement : ${n} utilisateur${n > 1 ? 's' : ''} à modifier</h3>
-    <p class="muted small">Mode : ${mode === 'append' ? 'ajout à la suite des touches existantes (sans doublon), touches ligne inchangées' : `remplacement de toutes les touches, ${D.srcLines} touche(s) ligne`}. Nombre de touches de fonction avant → après. Les touches ligne sont écrites dans l'option provd de chaque poste et appliquées par le template Astrea du modèle (à installer une fois par modèle sur la stack) ; les postes concernés sont resynchronisés.</p>
+    <p class="muted small">Mode : ${mode === 'append' ? 'ajout à la suite des touches existantes (sans doublon), touches ligne inchangées' : `remplacement de toutes les touches, ${D.srcLines} touche(s) ligne`}. Nombre de touches de fonction avant → après. Les touches ligne sont écrites dans l'option provd de chaque poste et appliquées par les lignes Astrea du base.tpl personnalisé de chaque plugin provd (à installer une fois par stack) ; les postes concernés sont resynchronisés.</p>
     <table class="diff"><tr><th>Utilisateur</th><th>Avant</th><th>Après</th><th>Modifié</th><th>Remarques</th></tr>${rows.join('')}</table>`,
   applyDeploy, `Déployer (${n})`);
 }
@@ -1447,7 +1447,7 @@ async function applyDeploy() {
 // Format : { app, version, created, base, tenant, reason, entries: [{ uuid,
 // name, userfield, keys }] } — keys = touches propres (hors héritées).
 const BK_STORE = 'astrea-blf-last-backup';
-const APP_VERSION = '0.12.0';
+const APP_VERSION = '0.12.1';
 function makeBackup(reason, entries) {
   const bk = { app: 'astrea-blf', version: APP_VERSION, created: new Date().toISOString(), base: S.base, tenant: S.tenant, reason, entries };
   const json = JSON.stringify(bk, null, 1);

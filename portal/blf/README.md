@@ -22,9 +22,8 @@ du serveur ouvert dans le portail, avec le token que fournit le portail.
   écrit dans l'**option provd du poste** (`options.astrea_linekeys`, via
   `/api/provd/0.2`), puis le poste est régénéré et resynchronisé. Sur le
   poste, c'est la fonction native Yealink (`features.auto_linekeys.enable`,
-  `account.1.number_of_linekey`) posée par un **template personnalisé par
-  modèle** à installer une fois par stack dans
-  `/var/lib/wazo-provd/plugins/<plugin>/var/templates/<modèle>.tpl` (voir
+  `account.1.number_of_linekey`) posée par quelques lignes ajoutées au **`base.tpl` personnalisé** de chaque
+  plugin provd (`var/templates/base.tpl`, tous modèles ; voir
   `../provd-templates/`). Validé sur T46S le 12/10/2026. L'ancien jeton
   `blf-linekeys=N` du userfield est lu en repli puis retiré à l'enregistrement ;
 - l'utilisateur lui-même n'est jamais proposé comme cible ; une touche vers
