@@ -6,7 +6,8 @@
 // docs/PHONE-MANAGER.md (statut vérifié / supposé de chaque paramètre).
 //
 // Champs : { key, label, type: 'int' | 'select' | 'time' | 'days' | 'password',
-//            min, max, def, ydef, options: [[valeur, libellé]…] }
+//            min, max, def, ydef, options: [[valeur, libellé, modèles?]…] }
+// (3e élément facultatif d'une option de liste : RegExp des modèles qui la proposent)
 // ydef = valeur par défaut Yealink, affichée (grisée) quand l'option est
 // décochée et reprise quand on la coche ; def = valeur proposée sinon.
 // offText (option) : texte affiché à la place des champs quand c'est décoché
@@ -63,6 +64,11 @@ export const CATALOG = [
     params: (v) => ({ 'screensaver.wait_time': v.wait, 'screensaver.display_clock.enable': v.clock }),
   },
   {
+    id: 'backlight', label: 'Rétroéclairage', kinds: ['phone'],
+    help: 'Délai d\'inactivité (en secondes) avant que l\'écran baisse son éclairage. Paramètre phone_setting.backlight_time : 0 = toujours allumé (défaut), 15, 30, 60, 120, 300, 600 ou 1800 s ; 1 = toujours éteint, seulement sur T27G, T41S, T42S, T53W et CP920 (doc Yealink).',
+    fields: [{ key: 'time', label: 'Délai', type: 'select', def: '0', ydef: '0', options: [['0', 'Toujours allumé (défaut Yealink)'], ['1', 'Toujours éteint', /^(T27G|T41S|T42S|T53W|CP920)$/], ['15', '15 s'], ['30', '30 s'], ['60', '1 min'], ['120', '2 min'], ['300', '5 min'], ['600', '10 min'], ['1800', '30 min']] }],
+    params: (v) => ({ 'phone_setting.backlight_time': v.time }),
+  },  {
     id: 'aec', label: 'Annulation d\'écho (AEC)', kinds: ['phone'],
     help: 'Supprime l\'écho de la voix du correspondant renvoyée par le haut-parleur. Paramètre voice.echo_cancellation (défaut : activé). À ne désactiver que pour un diagnostic.',
     fields: [{ key: 'on', label: 'AEC', type: 'select', def: '1', ydef: '1', options: onOff }],

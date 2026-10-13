@@ -12,8 +12,8 @@
 //  - confd régénère la config provd, mais ne synchronise pas l'appareil.
 // Supposé, à vérifier en réel : GET /lines renvoie device_id et position ;
 // un PUT /lines/{id} avec l'objet relu par GET est accepté.
-import { S, $, esc, toast, api, listAll, confirmModal, connect, fullName, canWrite, setReadonly, showCompat, loaded, loadFailed, provd, provdDevice, updateProvdOptions, downloadJson, calldGet } from '../common/core.js?v=0.22.0';
-import { CATALOG, randomPassword, checkField } from './catalog.js?v=0.22.0';
+import { S, $, esc, toast, api, listAll, confirmModal, connect, fullName, canWrite, setReadonly, showCompat, loaded, loadFailed, provd, provdDevice, updateProvdOptions, downloadJson, calldGet } from '../common/core.js?v=0.22.1';
+import { CATALOG, randomPassword, checkField } from './catalog.js?v=0.22.1';
 
 // Comptes SIP par modèle (_NB_SIP_ACCOUNTS / plugin-info des plugins provd).
 const DECT_MAX = {
@@ -554,7 +554,7 @@ function guardCfg(fn) {
 function fieldHtml(o, f, val, off = false) {
   const id = off ? '' : `f-${o.id}-${f.key}`;
   const attrs = off ? 'disabled' : `id="${id}" data-opt="${o.id}" data-key="${f.key}"`;
-  if (f.type === 'select') return `<label>${esc(f.label)} <select ${attrs}>${f.options.map(([v, l]) => `<option value="${esc(v)}"${String(val) === v ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select></label>`;
+  if (f.type === 'select') return `<label>${esc(f.label)} <select ${attrs}>${f.options.filter(([v, , re]) => !re || re.test(String(devById(C.sel)?.model || '').toUpperCase()) || String(val) === v).map(([v, l]) => `<option value="${esc(v)}"${String(val) === v ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select></label>`;
   if (f.type === 'days') return `<div class="days"><span class="muted small">${esc(f.label)}</span>${f.options.map(([v, l]) => `<label class="inline"><input type="checkbox" data-opt="${o.id}" data-key="${f.key}" data-day="${v}"${String(val).includes(v) ? ' checked' : ''}> ${esc(l)}</label>`).join('')}</div>`;
   if (f.type === 'password') return `<label>${esc(f.label)} <span class="pwrow"><input ${attrs} value="${esc(val)}" maxlength="32" autocomplete="off" spellcheck="false"><button data-gen="${o.id}" data-key="${f.key}">Générer</button></span></label>`;
   if (f.type === 'time') return `<label>${esc(f.label)} <input type="time" ${attrs} value="${esc(val)}"></label>`;
