@@ -17,11 +17,31 @@ Cadrage, sources et décisions : `docs/USER-MANAGER.md` (dépôt de dev).
   clic sur un en-tête trie la colonne. Un clic sur une ligne affiche le détail
   de l'utilisateur.
 
-Rien n'est écrit. La modification en masse et la fiche utilisateur
-modifiable arrivent dans les lots suivants.
+## Modification en masse
+- Cocher des utilisateurs dans le tableau (la case de l'en-tête coche les
+  lignes affichées : combiner avec les filtres), puis « Modifier la
+  sélection ». Choisir le réglage et la valeur : l'aperçu montre avant / après
+  pour chaque utilisateur, ceux déjà à la bonne valeur et ceux pour qui c'est
+  impossible (ex. groupe pour un utilisateur sans ligne).
+- Réglages (`settings.js`) : ne pas déranger, filtrage, renvois d'appel
+  (occupé, inconditionnel, pas de réponse), durée de sonnerie, appels
+  simultanés, musique d'attente, langue, fuseau, groupes, droits d'appel,
+  horaire.
+- À l'exécution, chaque utilisateur est relu ; rien n'est écrit s'il a déjà la
+  valeur. Une **sauvegarde** JSON des valeurs précédentes est téléchargée avant
+  la première écriture (et gardée dans le navigateur). « Restaurer… » la
+  réapplique, avec aperçu.
+- Les réglages de l'utilisateur lui-même (sonnerie, musique, langue…) et les
+  groupes rechargent la configuration d'Asterisk et des postes à chaque
+  écriture : elles sont espacées.
+
+La fiche utilisateur modifiable et les renvois par défaut arrivent ensuite.
 
 ## Droits utilisés
-`confd.users.read`, plus, pour les libellés, `confd.moh.read`,
-`confd.groups.read` et `confd.voicemails.read`. Si l'un d'eux est refusé,
+Lecture : `confd.users.read`, plus, pour les libellés, `confd.moh.read`,
+`confd.groups.read`, `confd.voicemails.read`, `confd.callpermissions.read`
+et `confd.schedules.read`. Écriture : `confd.users.{id}.update`,
+`…services.*`, `…forwards.*`, `…groups.update`, `…callpermissions.*`,
+`…schedules.*` (non vérifiés en réel pour le token du portail). Si l'un d'eux est refusé,
 l'audit fonctionne quand même et affiche les valeurs techniques, avec un
 avertissement.

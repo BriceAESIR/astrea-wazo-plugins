@@ -26,6 +26,16 @@
 .grid-users td.alert { color: var(--danger); font-weight: 600; }
 .grid-users tr.disabled td:first-child { text-decoration: line-through; color: var(--muted); }
 
+.grid-users input.pick { width: 16px; height: 16px; margin: 0 6px 0 0; vertical-align: -3px; cursor: pointer; }
+
+/* Modification en masse */
+.mprev { max-height: 320px; overflow: auto; margin-top: 8px; }
+.mprev .diff td, .mprev .diff th { padding: 6px 10px; }
+#m-form label.inline, .modal-box label.inline { margin: 6px 0; }
+.massres { position: relative; margin: 0 0 16px; padding: 10px 40px 10px 16px; border-left: 4px solid var(--ok); border-radius: var(--radius); background: color-mix(in srgb, var(--ok) 10%, var(--panel)); font-size: .8125rem; line-height: 1.5; }
+.massres.bad { border-left-color: var(--danger); background: color-mix(in srgb, var(--danger) 8%, var(--panel)); }
+.massres button.icon { position: absolute; right: 6px; top: 6px; }
+
 /* Panneau de détail */
 #detail { padding-top: 8px; }
 .detailhead { display: flex; align-items: center; gap: 8px; }

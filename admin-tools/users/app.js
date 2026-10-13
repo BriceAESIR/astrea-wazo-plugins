@@ -1,5 +1,5 @@
 // User Manager (Astrea Admin Tools) — audit des réglages des utilisateurs
-// (lot 1, lecture seule). Cadrage : astrea-wazo-dev/docs/USER-MANAGER.md.
+// (lot 1) et modification en masse (lot 2a, réglages dans settings.js). Cadrage : astrea-wazo-dev/docs/USER-MANAGER.md.
 // Vérifié dans le code de wazo-confd (master, 13/10/2026) :
 //  - GET /users (vue complète, UserSchema) renvoie forwards {busy, noanswer,
 //    unconditional: {enabled, destination}}, services {dnd, incallfilter:
@@ -12,9 +12,10 @@
 //    queue_label, voicemail_name, ivr_name… ajoutés par confd.
 // Supposé, à vérifier en réel : le token du portail peut lire /moh,
 // /voicemails, /callpermissions, /schedules (sinon libellés techniques).
-import { S, $, esc, toast, api, listAll, connect, fullName, setReadonly, showCompat, loaded, loadFailed } from '../common/core.js?v=0.23.2';
+import { S, $, esc, toast, api, listAll, connect, fullName, setReadonly, showCompat, loaded, loadFailed, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.24.0';
+import { SETTINGS, settingById, same, LANG } from './settings.js?v=0.24.0';
 
-const A = { users: [], byId: new Map(), moh: new Map(), groups: new Map(), vms: new Map(), sort: { col: 'name', dir: 1 }, sel: null, scope: null, cols: null };
+const A = { users: [], byId: new Map(), moh: new Map(), groups: new Map(), vms: new Map(), perms: new Map(), scheds: new Map(), picked: new Set(), sort: { col: 'name', dir: 1 }, sel: null, scope: null, cols: null };
 
 // ---------------------------------------------------------------------------
 // Libellés
@@ -22,7 +23,6 @@ const A = { users: [], byId: new Map(), moh: new Map(), groups: new Map(), vms: 
 const exten = (u) => { for (const l of u.lines || []) for (const e of l.extensions || []) if (e.exten) return e.exten; return ''; };
 const groupLabel = (g) => A.groups.get(g.uuid)?.label || g.label || g.name || `#${g.id}`;
 const mohLabel = (name) => (!name ? '' : name === 'default' ? 'Par défaut' : A.moh.get(name) || name);
-const LANG = { fr_FR: 'Français', fr_CA: 'Français (CA)', en_US: 'Anglais', de_DE: 'Allemand', es_ES: 'Espagnol', it_IT: 'Italien', nl_NL: 'Néerlandais' };
 // outgoing_caller_id : jetons « default » / « anonymous » acceptés par confd.
 const callerId = (v) => (!v ? '' : v === 'default' ? 'Par défaut' : v === 'anonymous' ? 'Anonyme' : v);
 const HANGUP ={ busy: 'occupé', congestion: 'encombré', normal: 'normal' };
@@ -142,8 +142,9 @@ async function lookup(path, what, warns) {
 }
 async function reload() {
   const warns = [];
-  const [users, moh, groups, vms] = await Promise.all([
+  const [users, moh, groups, vms, perms, scheds] = await Promise.all([
     loadUsers(), lookup('/moh', 'Libellés des musiques d\'attente', warns), lookup('/groups', 'Libellés des groupes', warns), lookup('/voicemails', 'Détails des messageries', warns),
+    lookup('/callpermissions', 'Droits d\'appel', warns), lookup('/schedules', 'Horaires', warns),
   ]);
   selfCheck(users);
   A.users = users.sort((a, b) => fullName(a).localeCompare(fullName(b), 'fr'));
@@ -151,6 +152,9 @@ async function reload() {
   A.moh = new Map(moh.map((m) => [m.name, m.label || m.name]));
   A.groups = new Map(groups.map((g) => [g.uuid, g]));
   A.vms = new Map(vms.map((v) => [v.id, v]));
+  A.perms = new Map(perms.map((p) => [p.id, p]));
+  A.scheds = new Map(scheds.map((s) => [s.id, s]));
+  for (const id of [...A.picked]) if (!A.byId.has(id)) A.picked.delete(id);
   $('lookwarn').innerHTML = warns.map((w) => `<div class="warn">${esc(w)}</div>`).join('');
   const cur = $('f-group').value;
   $('f-group').innerHTML = '<option value="">Tous les utilisateurs</option>' + [...A.groups.values()]
@@ -197,13 +201,20 @@ function render() {
   if ($('f-oddonly').checked) list = data.filter((r) => r.v.some((x, i) => odd[i] != null && x.k !== odd[i]));
   const si = Math.max(0, cols.findIndex((c) => c.id === A.sort.col));
   list = [...list].sort((a, b) => A.sort.dir * a.v[si].k.localeCompare(b.v[si].k, 'fr', { numeric: true }) || fullName(a.u).localeCompare(fullName(b.u), 'fr'));
-  $('g-head').innerHTML = `<tr>${cols.map((c) => `<th data-col="${c.id}">${esc(c.label)}${c.id === A.sort.col ? `<span class="arrow">${A.sort.dir > 0 ? '▲' : '▼'}</span>` : ''}</th>`).join('')}</tr>`;
+  // Cases à cocher (sélection pour la masse) dans la première colonne ; celle
+  // de l'en-tête coche / décoche les lignes affichées.
+  A.shown = list.map((r) => r.u.id);
+  const allOn = list.length && list.every((r) => A.picked.has(r.u.id));
+  $('g-head').innerHTML = `<tr>${cols.map((c, i) => `<th data-col="${c.id}">${i ? '' : `<input type="checkbox" class="pick" id="pick-all" title="Cocher les lignes affichées"${allOn ? ' checked' : ''}> `}${esc(c.label)}${c.id === A.sort.col ? `<span class="arrow">${A.sort.dir > 0 ? '▲' : '▼'}</span>` : ''}</th>`).join('')}</tr>`;
   $('g-body').innerHTML = list.map((r) => `<tr data-u="${r.u.id}" class="${r.u.id === A.sel ? 'sel' : ''}${r.u.enabled === false ? ' disabled' : ''}">${r.v.map((x, i) => {
     const cls = [x.c, oddOn && odd[i] != null && x.k !== odd[i] ? 'odd' : ''].filter(Boolean).join(' ');
-    return `<td${cls ? ` class="${cls}"` : ''} title="${esc(x.t)}">${esc(x.t)}</td>`;
+    const box = i ? '' : `<input type="checkbox" class="pick" data-pick="${r.u.id}"${A.picked.has(r.u.id) ? ' checked' : ''}> `;
+    return `<td${cls ? ` class="${cls}"` : ''} title="${esc(x.t)}">${box}${esc(x.t)}</td>`;
   }).join('')}</tr>`).join('') || `<tr><td colspan="${cols.length}" class="none">Aucun utilisateur.</td></tr>`;
   const nOdd = data.filter((r) => r.v.some((x, i) => odd[i] != null && x.k !== odd[i])).length;
   $('count').textContent = `${list.length} / ${A.users.length} utilisateur(s)${nOdd ? ` · ${nOdd} avec un écart` : ''}`;
+  $('mass').textContent = `Modifier la sélection (${A.picked.size})`;
+  $('mass').disabled = !A.picked.size;
   renderDetail();
 }
 function renderCols() {
@@ -241,9 +252,130 @@ function renderDetail() {
 }
 
 // ---------------------------------------------------------------------------
+// Modification en masse (lot 2a)
+// Aperçu calculé sur les données de l'audit ; à l'exécution, chaque
+// utilisateur est relu (GET /users/{uuid}) et la valeur cible recalculée sur
+// cette lecture. Sauvegarde (valeurs relues) téléchargée AVANT la première
+// écriture, copie dans le navigateur pour la restauration.
+// ---------------------------------------------------------------------------
+const ctx = () => ({ moh: A.moh, groups: A.groups, perms: A.perms, scheds: A.scheds });
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const LAST_BACKUP = 'astrea-users-last-backup';
+// Classe les utilisateurs : à modifier / déjà à la valeur / impossible.
+function plan(s, target, users) {
+  const out = { change: [], same: [], bad: [] };
+  for (const u of users) {
+    const cur = s.read(u), next = target(cur, u);
+    if (same(cur, next)) { out.same.push(u); continue; }
+    const err = s.check?.(u, next);
+    if (err) out.bad.push({ u, err }); else out.change.push({ u, cur, next });
+  }
+  return out;
+}
+function planHtml(s, p) {
+  const c = ctx();
+  return `<p class="small"><strong>${p.change.length}</strong> à modifier · ${p.same.length} déjà à cette valeur${p.bad.length ? ` · <span class="error">${p.bad.length} impossible(s)</span>` : ''}</p>
+    ${p.change.length ? `<table class="diff"><tr><th>Utilisateur</th><th>Avant</th><th>Après</th></tr>${p.change.slice(0, 300).map((x) => `<tr><td>${esc(fullName(x.u))}</td><td class="muted">${esc(s.text(x.cur, c))}</td><td><strong>${esc(s.text(x.next, c))}</strong></td></tr>`).join('')}</table>` : ''}
+    ${p.bad.map((x) => `<div class="warn">${esc(fullName(x.u))} : ${esc(x.err)}</div>`).join('')}
+    ${s.heavy && p.change.length ? `<div class="warn">Chaque modification recharge la configuration d'Asterisk et régénère celle des postes de l'utilisateur : ${p.change.length} écriture(s), espacées.</div>` : ''}`;
+}
+function openMass() {
+  if (!canWrite() || !A.picked.size) return;
+  const users = [...A.picked].map((id) => A.byId.get(id)).filter(Boolean);
+  const grps = [...new Set(SETTINGS.map((s) => s.grp))];
+  confirmModal(`<h3>Modifier ${users.length} utilisateur(s)</h3>
+    <label>Réglage <select id="m-set">${grps.map((g) => `<optgroup label="${esc(g)}">${SETTINGS.filter((s) => s.grp === g).map((s) => `<option value="${s.id}">${esc(s.label)}</option>`).join('')}</optgroup>`).join('')}</select></label>
+    <div id="m-form"></div><div id="m-prev" class="mprev"></div>
+    <p class="muted small">Une sauvegarde des valeurs actuelles est téléchargée avant d'écrire (bouton « Restaurer » pour revenir en arrière).</p>`, async () => {
+    const s = settingById($('m-set').value);
+    let spec;
+    try { spec = s.parse(ctx()); } catch (e) { toast(e.message, 6000); return false; }
+    if (!plan(s, spec.target, users).change.length) { toast('Rien à modifier : les utilisateurs sélectionnés ont déjà cette valeur.', 6000); return false; }
+    await runMass(s, spec.desc, users, spec.target);
+  }, 'Appliquer');
+  const upd = () => {
+    const s = settingById($('m-set').value);
+    try { $('m-prev').innerHTML = planHtml(s, plan(s, s.parse(ctx()).target, users)); } catch (e) { $('m-prev').innerHTML = `<p class="error small">${esc(e.message)}</p>`; }
+  };
+  const setForm = () => { const s = settingById($('m-set').value); $('m-form').innerHTML = s.form(ctx()); s.wire?.(); upd(); };
+  $('m-set').onchange = setForm;
+  $('m-form').oninput = upd;
+  $('m-form').onchange = upd;
+  setForm();
+}
+// target(cur, u) → valeur à écrire. Lecture de tous, sauvegarde, puis écritures.
+async function runMass(s, desc, users, target) {
+  const todo = [], failed = [];
+  let unchanged = 0, ok = 0;
+  for (const [i, u0] of users.entries()) {
+    toast(`Lecture ${i + 1}/${users.length}…`, 60000);
+    try {
+      const u = await api('GET', `/users/${u0.uuid}`);
+      const cur = s.read(u), next = target(cur, u);
+      if (next === undefined || same(cur, next)) { unchanged++; continue; }
+      const err = s.check?.(u, next);
+      if (err) failed.push([fullName(u), err]); else todo.push({ u, cur, next });
+    } catch (e) { failed.push([fullName(u0), e.message]); }
+  }
+  if (todo.length) {
+    const backup = { app: 'astrea-users', kind: 'backup', created: new Date().toISOString(), base: S.base, tenant: S.tenant, setting: s.id, desc,
+      users: todo.map((x) => ({ id: x.u.id, uuid: x.u.uuid, name: fullName(x.u), before: x.cur, after: x.next })) };
+    downloadJson(`astrea-users-sauvegarde-${s.id}-${backup.created.replace(/[:.]/g, '-')}.json`, backup);
+    try { localStorage.setItem(LAST_BACKUP, JSON.stringify(backup)); } catch { /* stockage indisponible : le fichier suffit */ }
+    for (const [i, x] of todo.entries()) {
+      toast(`Écriture ${i + 1}/${todo.length}…`, 60000);
+      try { await s.write(x.u, x.next, x.cur); ok++; } catch (e) { failed.push([fullName(x.u), e.message]); console.error('[astrea]', fullName(x.u), e); }
+      if (s.heavy && i < todo.length - 1) await sleep(400);
+    }
+  }
+  $('massres').innerHTML = `<div class="massres${failed.length ? ' bad' : ''}"><strong>${esc(desc)}</strong> : ${ok} modifié(s), ${unchanged} déjà à la valeur${failed.length ? `, ${failed.length} en erreur` : ''}.${todo.length ? ' Sauvegarde téléchargée.' : ''}
+    ${failed.map(([n, m]) => `<div class="small">${esc(n)} : ${esc(m)}</div>`).join('')}<button class="icon" data-close title="Fermer">×</button></div>`;
+  toast(`${ok} utilisateur(s) modifié(s)${failed.length ? `, ${failed.length} en erreur` : ''}.`, 6000);
+  try { await reload(); } catch (e) { toast(e.message, 8000); }
+}
+// Restauration : remet les valeurs « before » d'une sauvegarde (fichier ou
+// dernière sauvegarde du navigateur). Même serveur et même tenant exigés.
+function openRestore() {
+  if (!canWrite()) return;
+  let last = null;
+  try { last = JSON.parse(localStorage.getItem(LAST_BACKUP)); } catch { /* */ }
+  confirmModal(`<h3>Restaurer une sauvegarde</h3>
+    ${last ? `<label class="inline"><input type="radio" name="m-src" value="last" checked> Dernière sauvegarde de ce navigateur : ${esc(last.desc)} (${last.users?.length || 0} utilisateur(s), ${esc(new Date(last.created).toLocaleString('fr-FR'))})</label>` : ''}
+    <label class="inline"><input type="radio" name="m-src" value="file"${last ? '' : ' checked'}> Fichier de sauvegarde (astrea-users-sauvegarde-….json)</label>
+    <input type="file" id="m-file" accept=".json,application/json">`, async () => {
+    let b;
+    try {
+      const src = document.querySelector('input[name="m-src"]:checked')?.value;
+      if (src === 'last') b = last;
+      else { const f = $('m-file').files[0]; if (!f) throw new Error('Choisissez un fichier.'); b = JSON.parse(await f.text()); }
+      if (b?.app !== 'astrea-users' || b.kind !== 'backup' || !Array.isArray(b.users)) throw new Error('Ce fichier n\'est pas une sauvegarde User Manager.');
+      if (!settingById(b.setting)) throw new Error(`Réglage inconnu dans la sauvegarde : ${b.setting}.`);
+      if (b.base !== S.base || (b.tenant || null) !== (S.tenant || null)) throw new Error('Cette sauvegarde vient d\'un autre serveur ou d\'un autre tenant.');
+    } catch (e) { toast(e.message, 7000); return false; }
+    setTimeout(() => confirmRestore(b), 0); // le dialogue se ferme d'abord
+  }, 'Suivant');
+}
+function confirmRestore(b) {
+  const s = settingById(b.setting);
+  const before = new Map(b.users.map((x) => [x.uuid, x.before]));
+  const users = A.users.filter((u) => before.has(u.uuid));
+  const missing = b.users.length - users.length;
+  const target = (cur, u) => before.get(u.uuid);
+  confirmModal(`<h3>Restaurer : ${esc(b.desc)}</h3>
+    <p class="muted small">Sauvegarde du ${esc(new Date(b.created).toLocaleString('fr-FR'))}. Les valeurs d'avant la modification sont réécrites ; une nouvelle sauvegarde est téléchargée avant.</p>
+    ${missing ? `<div class="warn">${missing} utilisateur(s) de la sauvegarde n'existent plus.</div>` : ''}
+    <div class="mprev">${planHtml(s, plan(s, target, users))}</div>`, async () => {
+    await runMass(s, `Restauration (${b.desc})`, users, target);
+  }, 'Restaurer');
+}
+
+// ---------------------------------------------------------------------------
 // Démarrage
 // ---------------------------------------------------------------------------
 A.cols = loadCols();
+$('mass').onclick = openMass;
+$('restore').onclick = openRestore;
+$('massres').onclick = (e) => { if (e.target.closest('[data-close]')) $('massres').innerHTML = ''; };
 $('q').oninput = render;
 $('f-group').onchange = render;
 $('f-odd').onchange = render;
@@ -257,12 +389,23 @@ $('cols').onchange = (e) => {
 };
 $('cols-default').onclick = () => { A.cols = new Set(COLS.filter((c) => c.def).map((c) => c.id)); saveCols(); render(); };
 $('g-head').onclick = (e) => {
+  if (e.target.id === 'pick-all') {
+    for (const id of A.shown || []) if (e.target.checked) A.picked.add(id); else A.picked.delete(id);
+    render();
+    return;
+  }
   const th = e.target.closest('th[data-col]');
   if (!th) return;
   A.sort = { col: th.dataset.col, dir: A.sort.col === th.dataset.col ? -A.sort.dir : 1 };
   render();
 };
 $('g-body').onclick = (e) => {
+  if (e.target.dataset.pick) {
+    const id = Number(e.target.dataset.pick);
+    if (e.target.checked) A.picked.add(id); else A.picked.delete(id);
+    render();
+    return;
+  }
   const tr = e.target.closest('tr[data-u]');
   if (!tr) return;
   const id = Number(tr.dataset.u);
