@@ -52,7 +52,7 @@ label.inline.batch input { margin-top: 2px; flex: none; }
 .detailhead h3 { flex: 1; margin: 8px 0; }
 .dsec { margin: 12px 0 0; }
 .dsec h4 { margin: 0 0 4px; font-size: .75rem; color: var(--muted); font-weight: 500; text-transform: uppercase; letter-spacing: .08333em; }
-.dsec dl { display: grid; grid-template-columns: 130px 1fr; gap: 2px 8px; margin: 0; font-size: .8125rem; }
+.dsec dl { display: grid; grid-template-columns: 158px 1fr; gap: 2px 8px; margin: 0; font-size: .8125rem; }
 .dsec dt { color: var(--muted); }
 .dsec dd { margin: 0; word-break: break-word; display: flex; align-items: flex-start; justify-content: space-between; gap: 4px; }
 .dsec dt { padding-top: 3px; }

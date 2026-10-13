@@ -12,8 +12,8 @@
 //    queue_label, voicemail_name, ivr_name… ajoutés par confd.
 // Supposé, à vérifier en réel : le token du portail peut lire /moh,
 // /voicemails, /callpermissions, /schedules (sinon libellés techniques).
-import { S, $, esc, toast, api, listAll, connect, fullName, setReadonly, showCompat, loaded, loadFailed, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.27.0';
-import { SETTINGS, settingById, same, LANG, subLabel } from './settings.js?v=0.27.0';
+import { S, $, esc, toast, api, listAll, connect, fullName, setReadonly, showCompat, loaded, loadFailed, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.27.1';
+import { SETTINGS, settingById, same, LANG, subLabel } from './settings.js?v=0.27.1';
 
 const A = { users: [], byId: new Map(), moh: new Map(), groups: new Map(), vms: new Map(), perms: new Map(), scheds: new Map(), queues: new Map(), sbs: new Map(), contexts: [], callerOpts: [], callerOptsErr: '', lr: null, picked: new Set(), sort: { col: 'name', dir: 1 }, sel: null, scope: null, cols: null };
 
@@ -97,8 +97,8 @@ const COLS = [
   { id: 'simul', label: 'Appels simult.', grp: 'Sonnerie', def: true, get: (u) => ({ t: u.simultaneous_calls ?? '—', k: String(u.simultaneous_calls ?? '').padStart(3, '0') }) },
   { id: 'callerid', label: 'Numéro présenté', grp: 'Identité d\'appel', def: true, get: (u) => txt(callerId(u.outgoing_caller_id)) },
   { id: 'mobile', label: 'Mobile', grp: 'Identité d\'appel', odd: false, get: (u) => txt(u.mobile_phone_number || '') },
-  { id: 'vm', label: 'Boîte vocale associée', tip: 'Boîte vocale associée à l\'utilisateur (numéro et nom). Les boîtes se configurent dans Messageries vocales.', grp: 'Messagerie', def: true, odd: false, get: vm },
-  { id: 'vm_email', label: 'E-mail (réglage de la boîte)', tip: 'E-mail renseigné dans la boîte vocale associée (page Messageries vocales) : adresse où partent les messages vocaux. Différent de l\'e-mail de l\'annuaire.', grp: 'Messagerie', odd: false, get: (u) => txt(A.vms.get(u.voicemail?.id)?.email || '') },
+  { id: 'vm', label: 'Boîte vocale associée', tip: 'Boîte vocale associée à l\'utilisateur (numéro et nom). Les boîtes se configurent dans Messageries vocales.', grp: 'Boîte vocale', def: true, odd: false, get: vm },
+  { id: 'vm_email', label: 'E-mail (réglage de la boîte)', tip: 'E-mail renseigné dans la boîte vocale associée (page Messageries vocales) : adresse où partent les messages vocaux. Différent de l\'e-mail de l\'annuaire.', grp: 'Boîte vocale', odd: false, get: (u) => txt(A.vms.get(u.voicemail?.id)?.email || '') },
   { id: 'moh', label: 'Musique d\'attente', grp: 'Divers', def: true, get: (u) => txt(mohLabel(u.music_on_hold)) },
   { id: 'lang', label: 'Langue', grp: 'Divers', def: true, get: (u) => txt(LANG[u.language] || u.language || '') },
   { id: 'tz', label: 'Fuseau', grp: 'Divers', get: (u) => txt(u.timezone || '') },
