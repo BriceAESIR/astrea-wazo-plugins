@@ -42,3 +42,5 @@
 #devlist li .muted.small { font-size: .6875rem; }.fields.off { opacity: .6; }
 .fields.off > span.muted { align-self: center; margin-top: 8px; }
 .offval { margin: 6px 0 0; }
+button.linkbtn { border: 0; padding: 0 4px; min-width: 0; text-transform: none; font-size: .75rem; }
+.pwmask { font-family: ui-monospace, Consolas, monospace; }

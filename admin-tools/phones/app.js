@@ -12,8 +12,8 @@
 //  - confd régénère la config provd, mais ne synchronise pas l'appareil.
 // Supposé, à vérifier en réel : GET /lines renvoie device_id et position ;
 // un PUT /lines/{id} avec l'objet relu par GET est accepté.
-import { S, $, esc, toast, api, listAll, confirmModal, connect, fullName, canWrite, setReadonly, showCompat, loaded, loadFailed, provdDevice, updateProvdOptions, downloadJson } from '../common/core.js?v=0.20.1';
-import { CATALOG, randomPassword, checkField } from './catalog.js?v=0.20.1';
+import { S, $, esc, toast, api, listAll, confirmModal, connect, fullName, canWrite, setReadonly, showCompat, loaded, loadFailed, provd, provdDevice, updateProvdOptions, downloadJson } from '../common/core.js?v=0.20.2';
+import { CATALOG, randomPassword, checkField } from './catalog.js?v=0.20.2';
 
 // Comptes SIP par modèle (_NB_SIP_ACCOUNTS / plugin-info des plugins provd).
 const DECT_MAX = {
@@ -426,7 +426,20 @@ function savePlan() {
 // v5 du template. Option décochée après avoir été appliquée : ses clés sont
 // écrites à %NULL% (valeur vide Yealink, utilisée aussi par Wazo), sauf
 // `keep` (VLAN, mot de passe : le modèle de provisionnement Wazo les réécrit).
-const C = { sel: null, orig: {}, edit: {}, loading: false };
+const C = { sel: null, orig: {}, edit: {}, loading: false, tpl: null };
+// Modèle de provisionnement de l'appareil (« Provisioning > Périphériques » du
+// portail) = configuration provd désignée par device.template_id (défaut :
+// defaultconfigdevice). Lu pour afficher ce qui s'applique quand une option
+// Astrea est décochée (VLAN, mot de passe admin). Cache par id.
+const tplCache = new Map();
+async function deviceTemplate(d) {
+  const id = d.template_id || 'defaultconfigdevice';
+  if (!tplCache.has(id)) {
+    tplCache.set(id, provd('GET', `/cfg_mgr/configs/${encodeURIComponent(id)}`).then((r) => r?.config || null).catch((e) => { console.warn('[astrea] modèle', id, e.message); return null; }));
+  }
+  const cfg = await tplCache.get(id);
+  return cfg ? { id, label: cfg.label || cfg.raw_config?.label || id, raw: cfg.raw_config || {} } : { id, label: id, raw: null };
+}
 const NOT_RESET = new Set(['vlan', 'adminpw']);
 const kindOf = (d) => (!d ? null : isDect(d) ? 'dect' : /yealink/i.test(`${d.vendor} ${d.plugin}`) && d.model ? 'phone' : null);
 const devName = (d) => d.description || d.mac || `Appareil ${d.id}`;
@@ -468,8 +481,9 @@ async function selectDevice(id) {
   C.sel = id; C.loading = true;
   renderDevList(); renderCfg();
   try {
-    const pd = await provdDevice(id);
+    const [pd, tpl] = await Promise.all([provdDevice(id), deviceTemplate(devById(id))]);
     if (C.sel !== id) return;
+    C.tpl = tpl;
     const s = pd.options?.astrea_settings;
     C.orig = s && typeof s === 'object' ? s : {};
     C.edit = JSON.parse(JSON.stringify(C.orig));
@@ -515,8 +529,23 @@ function renderCfg() {
   $('c-save').disabled = !cfgDirty();
   $('c-bulk').disabled = !Object.values(C.edit).some(isOn) && !Object.values(C.edit).some((s) => s?.__reset);
 }
+// VLAN / mot de passe décochés : valeurs du modèle de provisionnement de l'appareil.
+function templateText(o) {
+  if (!['vlan', 'adminpw'].includes(o.id) || !C.tpl) return '';
+  const name = `modèle « ${esc(C.tpl.label)} »`;
+  const r = C.tpl.raw;
+  if (!r) return `${name} (illisible : droits provd ?).`;
+  if (o.id === 'vlan') {
+    const on = r.vlan_enabled === true || r.vlan_enabled === 1 || r.vlan_enabled === '1';
+    return on ? `<strong>VLAN ${esc(r.vlan_id ?? '?')}</strong>, priorité ${esc(r.vlan_priority ?? 'non définie')}${r.vlan_pc_port_id ? `, port PC VLAN ${esc(r.vlan_pc_port_id)}` : ''} — ${name}.` : `<strong>pas de VLAN</strong> (untag) — ${name}.`;
+  }
+  if (!r.admin_password) return `aucun mot de passe admin défini dans le ${name} (valeur par défaut du poste).`;
+  return `utilisateur <strong>${esc(r.admin_username || 'admin')}</strong>, mot de passe <span class="pwmask" data-pw="${esc(r.admin_password)}">••••••••</span> <button class="linkbtn" data-reveal>Afficher</button> — ${name}.`;
+}
 // Option décochée : ce qui s'applique quand Astrea n'écrit rien (grisé).
 function offHtml(o) {
+  const tplText = templateText(o);
+  if (tplText) return `<p class="muted small offval">Décoché : ${tplText}</p>`;
   if (o.offText) return `<p class="muted small offval">Décoché : ${esc(o.offText)}</p>`;
   return `<div class="fields off">${o.fields.map((f) => (f.ydef !== undefined ? fieldHtml(o, f, f.ydef, true) : `<label>${esc(f.label)} <span class="muted small">${esc(f.ydefText || 'défaut Yealink')}</span></label>`)).join('')}<span class="muted small">Valeur par défaut Yealink (rien n'est écrit)</span></div>`;
 }
@@ -665,6 +694,8 @@ $('c-opts').addEventListener('change', (e) => {
 });
 $('c-opts').addEventListener('input', (e) => { if (e.target.dataset.opt && !e.target.dataset.day && e.target.tagName === 'INPUT') readField(e.target); });
 $('c-opts').addEventListener('click', (e) => {
+  const rv = e.target.closest('button[data-reveal]');
+  if (rv) { e.preventDefault(); const m = rv.previousElementSibling; const shown = m.textContent !== '••••••••'; m.textContent = shown ? '••••••••' : m.dataset.pw; rv.textContent = shown ? 'Afficher' : 'Masquer'; return; }
   const b = e.target.closest('button[data-gen]');
   if (!b) return;
   e.preventDefault();
