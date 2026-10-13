@@ -28,8 +28,10 @@ Sous-menu **Astrea Admin Tools > Phone Manager** (ex-DECT Manager), deux vues :
 - En masse : mêmes options et valeurs sur une sélection d'appareils du même
   type (mot de passe : un différent par appareil), ou retrait de ces options ;
   sauvegarde JSON des options précédentes téléchargée.
-- Testé contre `tests/mock-dect.ps1` (enregistrement, décochage, masse), pas
-  encore sur une vraie stack.
+- ✅ Validé en réel le 13/10/2026 (steven-seagull, T46S plugin v86, script
+  `astrea-provd.sh` bloc v5) : VAD et CNG réglés dans l'appli, appliqués sur le
+  poste (page Voix du poste conforme). Testé aussi contre `tests/mock-dect.ps1`
+  (décochage, masse). Reste à valider : bases DECT, VLAN, mot de passe, masse en réel.
 
 ## Bases DECT : ce que fait la vue
 - **Liste des bases** (modèles DECT reconnus par les plugins provd) avec
