@@ -15,7 +15,7 @@ Cadrage, sources et décisions : `docs/USER-MANAGER.md` (dépôt de dev).
   messagerie de l'utilisateur compte comme la même valeur pour tout le monde.
 - Filtres par texte (nom, numéro, e-mail, mobile) et par groupe d'appel. Un
   clic sur un en-tête trie la colonne. Un clic sur une ligne affiche le détail
-  de l'utilisateur.
+  de l'utilisateur (fiche modifiable, voir plus bas).
 
 ## Modification en masse
 - Cocher des utilisateurs dans le tableau (la case de l'en-tête coche les
@@ -48,7 +48,18 @@ Cadrage, sources et décisions : `docs/USER-MANAGER.md` (dépôt de dev).
   tout le serveur : s'il est trouvé coupé au chargement, un bandeau rouge
   propose de le réactiver. Sans ce droit, les écritures sont espacées.
 
-La fiche utilisateur modifiable et le CSV arrivent ensuite.
+## Fiche utilisateur
+- Clic sur une ligne : la fiche s'ouvre à droite, avec chaque réglage et un
+  bouton ✎ (formulaire prérempli, aperçu avant / après).
+- En plus des réglages de la masse : prénom, nom, e-mail (annuaire), mobile,
+  description, nom présenté (champs propres à chaque utilisateur, pas
+  modifiables en masse).
+- Chaque modification est sauvegardée dans le navigateur (« Restaurer… »)
+  sans téléchargement de fichier.
+- Pas de partie Authentification (identifiant, mot de passe, méthode) : elle
+  se gère dans le portail.
+
+Le CSV (export, création) arrive ensuite.
 ## Droits utilisés
 Lecture : `confd.users.read`, plus, pour les libellés, `confd.moh.read`,
 `confd.groups.read`, `confd.voicemails.read`, `confd.callpermissions.read`

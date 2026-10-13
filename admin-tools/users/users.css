@@ -54,7 +54,12 @@ label.inline.batch input { margin-top: 2px; flex: none; }
 .dsec h4 { margin: 0 0 4px; font-size: .75rem; color: var(--muted); font-weight: 500; text-transform: uppercase; letter-spacing: .08333em; }
 .dsec dl { display: grid; grid-template-columns: 130px 1fr; gap: 2px 8px; margin: 0; font-size: .8125rem; }
 .dsec dt { color: var(--muted); }
-.dsec dd { margin: 0; word-break: break-word; }
+.dsec dd { margin: 0; word-break: break-word; display: flex; align-items: flex-start; justify-content: space-between; gap: 4px; }
+.dsec dt { padding-top: 3px; }
+.dsec dd { padding-top: 3px; }
+.dsec button.icon.edit { flex: none; width: 24px; height: 24px; min-width: 24px; margin-top: -3px; font-size: .875rem; color: var(--muted); }
+.dsec button.icon.edit:hover:not(:disabled) { color: var(--accent); background: var(--selected); }
+#main:not(.no-detail) { grid-template-columns: 260px minmax(0, 1fr) 380px; }
 @media (max-width: 800px) {
   #main.no-detail, #main:not(.no-detail) { grid-template-columns: 1fr; }
   .tablewrap { max-height: none; }

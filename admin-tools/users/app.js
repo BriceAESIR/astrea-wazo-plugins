@@ -12,8 +12,8 @@
 //    queue_label, voicemail_name, ivr_name… ajoutés par confd.
 // Supposé, à vérifier en réel : le token du portail peut lire /moh,
 // /voicemails, /callpermissions, /schedules (sinon libellés techniques).
-import { S, $, esc, toast, api, listAll, connect, fullName, setReadonly, showCompat, loaded, loadFailed, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.26.0';
-import { SETTINGS, settingById, same, LANG, subLabel } from './settings.js?v=0.26.0';
+import { S, $, esc, toast, api, listAll, connect, fullName, setReadonly, showCompat, loaded, loadFailed, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.27.0';
+import { SETTINGS, settingById, same, LANG, subLabel } from './settings.js?v=0.27.0';
 
 const A = { users: [], byId: new Map(), moh: new Map(), groups: new Map(), vms: new Map(), perms: new Map(), scheds: new Map(), queues: new Map(), sbs: new Map(), contexts: [], callerOpts: [], callerOptsErr: '', lr: null, picked: new Set(), sort: { col: 'name', dir: 1 }, sel: null, scope: null, cols: null };
 
@@ -248,29 +248,44 @@ function renderCols() {
   }).join('');
   $('cols').dataset.ready = '1';
 }
-// Détail en lecture seule de l'utilisateur sélectionné (préfigure la fiche).
+// Fiche de l'utilisateur sélectionné (lot 3) : chaque réglage du catalogue
+// (settings.js), y compris les champs propres à la fiche, avec un bouton ✎.
 function renderDetail() {
   const u = A.byId.get(A.sel);
   $('detail').hidden = !u;
   $('main').classList.toggle('no-detail', !u);
   if (!u) return;
   $('d-name').textContent = fullName(u);
-  const row = (k, v) => `<dt>${esc(k)}</dt><dd>${v === '' || v == null ? '<span class="muted">—</span>' : esc(v)}</dd>`;
+  const c = ctx();
+  const row = (k, v, edit) => `<dt>${esc(k)}</dt><dd>${v === '' || v == null || v === '—' ? '<span class="muted">—</span>' : esc(v)}${edit ? ` <button class="icon edit" data-edit="${edit}" title="Modifier">✎</button>` : ''}</dd>`;
   const sec = (title, body) => `<section class="dsec"><h4>${esc(title)}</h4><dl>${body}</dl></section>`;
-  const f = (k) => { const x = u.forwards?.[k]; return x?.enabled ? `activé → ${x.destination || '?'}` : `désactivé${x?.destination ? ` (${x.destination})` : ''}`; };
-  const v = A.vms.get(u.voicemail?.id);
-  $('d-body').innerHTML = [
-    sec('Identité', row('Numéro', exten(u)) + row('E-mail (annuaire)', u.email) + row('Licence', subLabel(u.subscription_type)) + row('Actif', u.enabled === false ? 'non' : 'oui') + row('Mobile', u.mobile_phone_number) + row('Numéro présenté', callerId(u.outgoing_caller_id)) + row('Nom présenté', u.caller_id)),
-    sec('Services', row('Ne pas déranger', u.services?.dnd?.enabled ? 'activé' : 'désactivé') + row('Filtrage', u.services?.incallfilter?.enabled ? 'activé' : 'désactivé')),
-    sec('Renvois d\'appel (utilisateur)', row('Occupé', f('busy')) + row('Inconditionnel', f('unconditional')) + row('Pas de réponse', f('noanswer'))),
-    sec('Renvois par défaut (admin)', row('Si occupé', destText(u.fallbacks?.busy_destination)) + row('Congestion', destText(u.fallbacks?.congestion_destination))
-      + row('Échec', destText(u.fallbacks?.fail_destination)) + row('Non répondu', destText(u.fallbacks?.noanswer_destination))),
-    sec('Sonnerie', row('Durée', u.ring_seconds != null ? `${u.ring_seconds} s` : '') + row('Appels simultanés', u.simultaneous_calls)),
-    sec('Boîte vocale associée (réglages dans Messageries vocales)', u.voicemail ? row('Boîte', v ? `${v.number}@${v.context}` : u.voicemail.name) + row('Nom', v?.name || u.voicemail.name) + row('E-mail', v?.email)
-      + row('Joindre l\'audio', v ? (v.attach_audio ? 'oui' : 'non') : '') + row('Supprimer après envoi', v ? (v.delete_messages ? 'oui' : 'non') : '') + row('Demander le code', v ? (v.ask_password ? 'oui' : 'non') : '') : row('Boîte', '')),
-    sec('Divers', row('Musique d\'attente', mohLabel(u.music_on_hold)) + row('Langue', LANG[u.language] || u.language) + row('Fuseau', u.timezone)),
-    sec('Groupes et droits', row('Groupes', (u.groups || []).map(groupLabel).join(', ')) + row('Droits d\'appel', (u.call_permissions || []).map((c) => c.name).join(', ')) + row('Horaire', (u.schedules || []).map((s) => s.name || `#${s.id}`).join(', '))),
-  ].join('');
+  const grps = [...new Set(SETTINGS.map((s) => s.grp))];
+  const vm = A.vms.get(u.voicemail?.id);
+  $('d-body').innerHTML = sec('Ligne', row('Numéro interne', exten(u)))
+    + grps.map((g) => sec(g, SETTINGS.filter((s) => s.grp === g).map((s) => row(s.label, s.text(s.read(u), c), s.id)).join('')
+      + (g === 'Boîte vocale' && vm ? row('E-mail (réglage de la boîte)', vm.email) : ''))).join('')
+    + '<p class="muted small">Les réglages de la boîte vocale se modifient dans Messageries vocales.</p>';
+}
+// Modification d'un réglage pour l'utilisateur de la fiche : formulaire
+// prérempli, aperçu, puis même moteur que la masse (relecture, sauvegarde
+// gardée dans le navigateur sans téléchargement, restauration possible).
+function openEdit(id) {
+  const u = A.byId.get(A.sel), s = settingById(id);
+  if (!u || !s || !canWrite()) return;
+  const cur = s.read(u);
+  confirmModal(`<h3>${esc(s.label)}</h3><p class="muted small">${esc(fullName(u))}</p><div id="m-form">${s.form(ctx())}</div><div id="m-prev" class="mprev"></div>`, async () => {
+    let spec;
+    try { spec = s.parse(ctx()); } catch (e) { toast(e.message, 6000); return false; }
+    if (!plan(s, spec.target, [u]).change.length) { toast('Valeur inchangée ou impossible : rien à écrire.', 5000); return false; }
+    await runMass([{ s, desc: spec.desc, target: spec.target }], [u], `${fullName(u)} — ${spec.desc}`, { download: false });
+  }, 'Enregistrer');
+  const vals = s.prefill ? s.prefill(cur, u) : { 'm-v': cur ?? '' };
+  for (const [k, v] of Object.entries(vals)) { const e = document.getElementById(k); if (e && v != null) e.value = String(v); }
+  s.wire?.();
+  const preview = () => { try { $('m-prev').innerHTML = planHtml(s, plan(s, s.parse(ctx()).target, [u])); } catch (e) { $('m-prev').innerHTML = `<p class="error small">${esc(e.message)}</p>`; } };
+  $('m-form').oninput = preview;
+  $('m-form').onchange = preview;
+  preview();
 }
 
 // ---------------------------------------------------------------------------
@@ -341,8 +356,9 @@ function openMass() {
     const head = (t) => `<h3>${esc(t)}</h3><p class="muted small">${users.length} utilisateur(s) sélectionné(s)${W.step ? ` · étape ${W.step + 1} sur ${n + 2}` : ''}</p>`;
     let ok = 'Suivant';
     if (W.step === 0) {
-      const grps = [...new Set(SETTINGS.map((s) => s.grp))];
-      $('modal-body').innerHTML = `${head('Réglages à modifier')}<div class="wizsets">${grps.map((g) => `<div class="grp" data-grp="${esc(g)}" title="Cocher / décocher tout le groupe">${esc(g)}</div>${SETTINGS.filter((s) => s.grp === g).map((s) => `<label class="inline"><input type="checkbox" data-set="${s.id}" data-g="${esc(s.grp)}"${W.ids.includes(s.id) ? ' checked' : ''}> ${esc(s.label)}</label>`).join('')}`).join('')}</div>`;
+      const MASS = SETTINGS.filter((s) => !s.single); // champs propres à chacun : fiche seulement
+      const grps = [...new Set(MASS.map((s) => s.grp))];
+      $('modal-body').innerHTML = `${head('Réglages à modifier')}<div class="wizsets">${grps.map((g) => `<div class="grp" data-grp="${esc(g)}" title="Cocher / décocher tout le groupe">${esc(g)}</div>${MASS.filter((s) => s.grp === g).map((s) => `<label class="inline"><input type="checkbox" data-set="${s.id}" data-g="${esc(s.grp)}"${W.ids.includes(s.id) ? ' checked' : ''}> ${esc(s.label)}</label>`).join('')}`).join('')}</div>`;
     } else if (W.step <= n) {
       const s = list()[W.step - 1];
       $('modal-body').innerHTML = `${head(s.label)}<div id="m-form">${s.form(ctx())}</div><div id="m-prev" class="mprev"></div>${back}`;
@@ -381,7 +397,7 @@ function openMass() {
   render();
 }
 // items : [{ s, desc, target(cur, u) }]. Lecture de tous, sauvegarde, puis écritures.
-async function runMass(items, users, desc, { batch = false } = {}) {
+async function runMass(items, users, desc, { batch = false, download = true } = {}) {
   const todo = [], failed = [], skipped = [];
   let unchanged = 0, ok = 0, lrNote = '';
   A.running = true;
@@ -402,7 +418,7 @@ async function runMass(items, users, desc, { batch = false } = {}) {
       const created = new Date().toISOString();
       const backup = { app: 'astrea-users', kind: 'backup', v: 2, created, base: S.base, tenant: S.tenant, desc,
         items: items.map((it) => ({ setting: it.s.id, desc: it.desc, users: todo.filter((x) => x.it === it).map((x) => ({ id: x.u.id, uuid: x.u.uuid, name: fullName(x.u), before: x.cur, after: x.next })) })).filter((x) => x.users.length) };
-      downloadJson(`astrea-users-sauvegarde-${created.replace(/[:.]/g, '-')}.json`, backup);
+      if (download) downloadJson(`astrea-users-sauvegarde-${created.replace(/[:.]/g, '-')}.json`, backup);
       try { localStorage.setItem(LAST_BACKUP, JSON.stringify(backup)); } catch { /* stockage indisponible : le fichier suffit */ }
       let lrOff = false;
       if (batch && todo.filter((x) => x.it.s.heavy).length > 1) {
@@ -422,7 +438,7 @@ async function runMass(items, users, desc, { batch = false } = {}) {
       }
     }
   } finally { A.running = false; }
-  $('massres').innerHTML = `<div class="massres${failed.length ? ' bad' : ''}"><strong>${esc(desc)}</strong> : ${ok} modification(s) écrite(s), ${unchanged} déjà à la valeur${skipped.length ? `, ${skipped.length} ignorée(s) (impossible)` : ''}${failed.length ? `, ${failed.length} en erreur` : ''}.${todo.length ? ' Sauvegarde téléchargée.' : ''}
+  $('massres').innerHTML = `<div class="massres${failed.length ? ' bad' : ''}"><strong>${esc(desc)}</strong> : ${ok} modification(s) écrite(s), ${unchanged} déjà à la valeur${skipped.length ? `, ${skipped.length} ignorée(s) (impossible)` : ''}${failed.length ? `, ${failed.length} en erreur` : ''}.${todo.length ? (download ? ' Sauvegarde téléchargée.' : ' Sauvegarde gardée dans le navigateur (« Restaurer… »).') : ''}
     ${lrNote ? `<div class="small">${esc(lrNote)}.</div>` : ''}
     ${failed.map(([n, s, m]) => `<div class="small error">${esc(n)} · ${esc(s)} : ${esc(m)}</div>`).join('')}
     ${skipped.length ? `<details class="small"><summary>Ignorées (${skipped.length})</summary>${skipped.map(([n, s, m]) => `<div>${esc(n)} · ${esc(s)} : ${esc(m)}</div>`).join('')}</details>` : ''}<button class="icon" data-close title="Fermer">×</button></div>`;
@@ -594,6 +610,7 @@ $('g-body').onclick = (e) => {
   render();
 };
 $('d-close').onclick = () => { A.sel = null; render(); };
+$('d-body').onclick = (e) => { const b = e.target.closest('button[data-edit]'); if (b) openEdit(b.dataset.edit); };
 $('reload').onclick = async () => { try { await reload(); toast('Rechargé'); } catch (e) { toast(e.message, 8000); } };
 // Fermeture de la page pendant une opération : le live reload pourrait rester coupé.
 window.addEventListener('beforeunload', (e) => { if (A.running) { e.preventDefault(); e.returnValue = ''; } });

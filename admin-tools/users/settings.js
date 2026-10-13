@@ -5,12 +5,15 @@
 //  text(v, ctx)       valeur lisible (aperçu, sauvegarde)
 //  check(u, v)        message si l'écriture est impossible pour cet utilisateur
 //  write(u, v, cur)   écriture (seulement si v diffère de cur)
+//  prefill(v, u)      valeurs des champs (id → valeur) pour la fiche ; sans prefill,
+//                     la fiche met v dans #m-v s'il existe
+//  single             true = fiche seulement (champ propre à chaque utilisateur)
 //  heavy              true = l'écriture recharge Asterisk (écritures espacées, ou
 //                     regroupées en coupant le live reload) ; reload = type de
 //                     rechargement à redéclencher à la fin ('user')
 // Routes et sémantique vérifiées dans le code de wazo-confd (13/10/2026),
 // voir docs/USER-MANAGER.md. Écritures non encore testées en réel.
-import { api, esc, fullName } from '../common/core.js?v=0.26.0';
+import { api, esc, fullName } from '../common/core.js?v=0.27.0';
 
 // Comparaison indépendante de l'ordre des clés (objets relus vs construits).
 const canon = (v) => (Array.isArray(v) ? v.map(canon) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, canon(v[k])])) : v ?? null);
@@ -32,6 +35,7 @@ const userField = (field) => ({
 const service = (key, label) => ({
   id: key, label, grp: 'Services', form: () => onOff(label),
   parse: () => { const v = $v('m-v') === '1'; return { target: () => v, desc: `${label} : ${v ? 'activé' : 'désactivé'}` }; },
+  prefill: (v) => ({ 'm-v': v ? '1' : '0' }),
   read: (u) => u.services?.[key]?.enabled === true,
   text: (v) => (v ? 'activé' : 'désactivé'),
   write: (u, v) => api('PUT', `/users/${u.uuid}/services/${key}`, { enabled: v }),
@@ -48,6 +52,7 @@ const forward = (key, label) => ({
     if (!/^\+?[0-9*#]{1,40}$/.test(n)) throw new Error('Numéro de destination invalide (chiffres, *, #, + en tête).');
     return { target: () => ({ enabled: true, destination: n }), desc: `Renvoi ${label} : activé vers ${n}` };
   },
+  prefill: (v) => ({ 'm-mode': v?.enabled ? 'on' : 'off', 'm-v': v?.destination || '' }),
   read: (u) => ({ enabled: u.forwards?.[key]?.enabled === true, destination: u.forwards?.[key]?.destination ?? null }),
   text: (v) => (v?.enabled ? `→ ${v.destination}` : `désactivé${v?.destination ? ` (${v.destination})` : ''}`),
   write: (u, v) => api('PUT', `/users/${u.uuid}/forwards/${key}`, v),
@@ -113,6 +118,14 @@ const fallback = (k, label) => ({
     if (!/^[0-9*#]{1,255}$/.test(n)) throw new Error('Numéro invalide (chiffres, * et # seulement).');
     if (cx !== '@line') return fixed({ type: 'extension', exten: n, context: cx });
     return { target: (cur, u) => ({ type: 'extension', exten: n, context: lineContext(u) }), desc: `Renvoi par défaut ${label} : numéro ${n} (contexte de la ligne)` };
+  },
+  prefill: (v, u) => {
+    if (!v) return { 'm-dt': 'none' };
+    if (v.type === 'voicemail' && u?.voicemail && v.voicemail_id === u.voicemail.id) return { 'm-dt': 'selfvm' };
+    const f = { user: ['m-du', v.user_id], group: ['m-dg', v.group_id], queue: ['m-dq', v.queue_id], switchboard: ['m-ds', v.switchboard_uuid], hangup: ['m-dh', v.cause] }[v.type];
+    if (f) return { 'm-dt': v.type, [f[0]]: f[1] };
+    if (v.type === 'extension') return { 'm-dt': 'extension', 'm-dn': v.exten, 'm-dc': v.context };
+    return {};
   },
   read: (u) => normDest(u.fallbacks?.[`${k}_destination`]),
   text: (v, c) => c.destText(v) || 'aucun',
@@ -194,7 +207,55 @@ const voicemailLink = {
     if (v) await api('PUT', `/users/${u.uuid}/voicemails/${v}`);
   },
 };
+
+// ---------------------------------------------------------------------------
+// Lot 3 : fiche. Champs propres à chaque utilisateur (single : pas en masse).
+// ---------------------------------------------------------------------------
+const textField = (field, label, { required = false, re = null, max = 128, hint = '', check = null } = {}) => ({
+  id: field, label, grp: 'Identité', single: true, ...userField(field),
+  form: () => `<label>${esc(label)} <input id="m-v" maxlength="${max}"></label>${hint ? `<p class="muted small">${esc(hint)}</p>` : ''}`,
+  prefill: (v) => ({ 'm-v': v ?? '' }),
+  parse: () => {
+    const s = $v('m-v').trim();
+    if (!s && required) throw new Error(`${label} : obligatoire.`);
+    if (s && re && !re.test(s)) throw new Error(`${label} : format invalide.`);
+    const v = s || null;
+    return { target: () => v, desc: `${label} : ${s || 'vide'}` };
+  },
+  text: (v) => v || '—',
+  ...(check ? { check } : {}),
+});
+// Nom présenté : caller_id `"Nom"` (éventuellement suivi de ` <numéro>`,
+// conservé). Regex confd : ^"(.*)"( <\+?\d+>)?$ ; null refusé en PUT.
+const cidName = (v) => (String(v || '').match(/^"(.*)"/) || [])[1] ?? '';
+const callerName = {
+  id: 'caller_id', label: 'Nom présenté', grp: 'Identité', single: true, ...userField('caller_id'),
+  form: () => '<label>Nom présenté <input id="m-v" maxlength="150"></label><p class="muted small">Nom affiché lors des appels (par défaut prénom et nom).</p>',
+  prefill: (v) => ({ 'm-v': cidName(v) }),
+  parse: () => {
+    const n = $v('m-v').trim().replace(/"/g, '');
+    if (!n) throw new Error('Nom présenté : obligatoire.');
+    return { target: (cur) => `"${n}"${String(cur || '').replace(/^"(.*)"/, '')}`, desc: `Nom présenté : ${n}` };
+  },
+  text: (v) => cidName(v) || v || '—',
+};
+const enabledSetting = {
+  id: 'enabled', label: 'Utilisateur actif', grp: 'Identité', ...userField('enabled'),
+  form: () => onOff('Utilisateur actif'),
+  prefill: (v) => ({ 'm-v': v === false ? '0' : '1' }),
+  parse: () => { const v = $v('m-v') === '1'; return { target: () => v, desc: `Utilisateur ${v ? 'actif' : 'désactivé'}` }; },
+  read: (u) => u.enabled !== false,
+  text: (v) => (v ? 'oui' : 'non'),
+};
+
 export const SETTINGS = [
+  textField('firstname', 'Prénom', { required: true }),
+  textField('lastname', 'Nom'),
+  textField('email', 'E-mail (annuaire)', { re: /^[^@\s]+@[^@\s]+\.[^@\s]+$/, max: 254, hint: 'Courriel public, visible dans les annuaires. Doit être unique sur tout le serveur (tous les clients).' }),
+  textField('mobile_phone_number', 'Mobile', { re: /^\+?[0-9*#]+$/, max: 80, check: (u, v) => (!v && u.mobile_fallback_enabled ? 'le renvoi vers le mobile est activé : impossible de vider le numéro' : '') }),
+  textField('description', 'Description', { max: 1000 }),
+  callerName,
+  enabledSetting,
   service('dnd', 'Ne pas déranger'),
   service('incallfilter', 'Filtrage des appels'),
   forward('busy', 'occupé'),
