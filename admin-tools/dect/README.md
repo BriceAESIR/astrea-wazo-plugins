@@ -50,7 +50,7 @@ Plugin Yealink : **v87** (le v86 n'a aucun modèle DECT).
 - Synchroniser : `GET /devices/{id}/synchronize` (confd ne le fait pas seul).
 
 ## À vérifier en réel (première installation)
-- `GET /lines` renvoie bien `device_id` et `position` (sinon : lecture seule).
+- ✅ Lecture validée le 13/10/2026 chez un client (3 bases W75DM, plugin v87, 23 comptes) : `GET /lines` renvoie bien `device_id` et `position`.
 - `PUT /lines/{id}` accepte l'objet relu par `GET` (changement de position).
 - Droits du token du portail sur `confd.lines.*.devices.*` et `confd.devices.*.synchronize`.
 - Multicellule : seule la base maître (DM) apparaît-elle dans les appareils ?
