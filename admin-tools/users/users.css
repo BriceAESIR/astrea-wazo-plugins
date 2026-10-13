@@ -71,3 +71,8 @@ label.inline.batch input { margin-top: 2px; flex: none; }
   #main.no-detail, #main:not(.no-detail) { grid-template-columns: 1fr; }
   .tablewrap { max-height: none; }
 }
+
+/* Appartenance (groupes, droits) */
+.memb label.inline { display: flex; margin: 4px 0; }
+.diff.memb select { height: 28px; font-size: .8125rem; }
+.diff.memb td { vertical-align: middle; padding-top: 4px; padding-bottom: 4px; }

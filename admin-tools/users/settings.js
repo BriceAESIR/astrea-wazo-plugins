@@ -1,6 +1,7 @@
 // User Manager — réglages modifiables en masse (lots 2a et 2b). Chaque réglage :
 //  read(u)            valeur actuelle, lue sur un utilisateur (GET /users/{uuid})
-//  form(ctx, cur, u)  champs du dialogue (ids m-*) ; cur/u seulement sur la fiche ;
+//  form(ctx, cur, u, users) champs du dialogue (ids m-*) ; cur/u : fiche ; users :
+//                     cibles de l'assistant ;
 //                     parse(ctx) → { target(cur), desc }
 //                     (lève une Error si la saisie est invalide)
 //  text(v, ctx)       valeur lisible (aperçu, sauvegarde)
@@ -17,7 +18,7 @@
 //                     rechargement à redéclencher à la fin ('user')
 // Routes et sémantique vérifiées dans le code de wazo-confd (13/10/2026),
 // voir docs/USER-MANAGER.md. Écritures non encore testées en réel.
-import { S, api, esc, fullName } from '../common/core.js?v=0.30.3';
+import { S, api, esc, fullName } from '../common/core.js?v=0.30.4';
 
 // Comparaison indépendante de l'ordre des clés (objets relus vs construits).
 const canon = (v) => (Array.isArray(v) ? v.map(canon) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, canon(v[k])])) : v ?? null);
@@ -71,9 +72,45 @@ const number = (field, label, min, max, unit = '') => ({
   },
   text: (v) => (v == null ? '—' : `${v}${unit ? ` ${unit}` : ''}`),
 });
-// Ajout / retrait d'un élément dans une liste (groupes, droits d'appel).
-const addRemove = (label, items) => `<label>Action <select id="m-mode"><option value="add">Ajouter</option><option value="remove">Retirer</option></select></label>
-  <label>${esc(label)} <select id="m-v">${options(items)}</select></label>`;
+// Appartenance (groupes, droits d'appel) : tous les éléments du tenant avec
+// l'état actuel des utilisateurs ciblés (demande de Brice : « afficher ce qui
+// est en place »). Un utilisateur : cases à cocher (cochée = membre). Plusieurs :
+// nombre de membres et, par élément, Inchangé / Ajouter / Retirer. Champs
+// m-it-<index> pour que l'assistant garde la saisie (Précédent / Suivant).
+const membership = (items, read, label, sortIds) => ({
+  showsCurrent: true, // le formulaire affiche lui-même l'état actuel
+  prefill: () => ({}),
+  form: (c, cur, u, users) => {
+    const list = items(c), targets = users || (u ? [u] : []);
+    if (targets.length <= 1) {
+      const mine = new Set((cur ?? (targets[0] ? read(targets[0]) : [])).map(String));
+      return `<div class="memb">${list.map(([id, name], i) => `<label class="inline"><input type="checkbox" id="m-it-${i}"${mine.has(String(id)) ? ' checked' : ''}> ${esc(name)}</label>`).join('')}</div>
+        <p class="muted small">Coché = membre (état actuel). Cocher pour ajouter, décocher pour retirer.</p>`;
+    }
+    return `<table class="diff memb"><tr><th>${esc(label)}</th><th>Membres actuels</th><th>Action</th></tr>${list.map(([id, name], i) => {
+      const n = targets.filter((t) => read(t).map(String).includes(String(id))).length;
+      return `<tr><td>${esc(name)}</td><td class="muted">${n} / ${targets.length}</td><td><select id="m-it-${i}"><option value="">Inchangé</option><option value="add">Ajouter</option><option value="remove">Retirer</option></select></td></tr>`;
+    }).join('')}</table>`;
+  },
+  parse: (c) => {
+    const list = items(c);
+    const els = list.map((_, i) => document.getElementById(`m-it-${i}`)).filter(Boolean);
+    const known = new Set(list.map(([id]) => String(id)));
+    const nameOf = (id) => list.find(([x]) => String(x) === String(id))?.[1] || id;
+    if (els[0]?.type === 'checkbox') {
+      const on = list.filter((_, i) => document.getElementById(`m-it-${i}`)?.checked).map(([id]) => id);
+      // Éléments inconnus de la liste (autre tenant…) : conservés tels quels.
+      return { target: (cur) => sortIds([...(cur || []).filter((x) => !known.has(String(x))), ...on]), desc: `${label} : ${on.map(nameOf).join(', ') || 'aucun'}` };
+    }
+    const add = list.filter((_, i) => document.getElementById(`m-it-${i}`)?.value === 'add').map(([id]) => id);
+    const rem = list.filter((_, i) => document.getElementById(`m-it-${i}`)?.value === 'remove').map(([id]) => String(id));
+    if (!add.length && !rem.length) throw new Error('Choisissez au moins une action (Ajouter ou Retirer).');
+    return {
+      target: (cur) => sortIds([...new Set([...(cur || []).filter((x) => !rem.includes(String(x))), ...add])]),
+      desc: [add.length ? `ajouter : ${add.map(nameOf).join(', ')}` : '', rem.length ? `retirer : ${rem.map(nameOf).join(', ')}` : ''].filter(Boolean).join(' ; ').replace(/^./, (x) => `${label} — ${x}`),
+    };
+  },
+});
 
 // ---------------------------------------------------------------------------
 // Lot 2b
@@ -405,13 +442,7 @@ const ALL_SETTINGS = [
     // relue juste avant l'écriture. Un utilisateur sans ligne ne peut pas
     // être membre d'un groupe (refus de confd).
     id: 'groups', label: 'Groupes d\'appel', grp: 'Groupes et droits', heavy: true, reload: 'user', available: (c) => c.groups.size > 0,
-    form: (c) => addRemove('Groupe', [...c.groups.values()].map((g) => [g.uuid, g.label || g.name]).sort((a, b) => a[1].localeCompare(b[1], 'fr'))),
-    parse: (c) => {
-      const g = $v('m-v'), add = $v('m-mode') === 'add';
-      if (!g) throw new Error('Aucun groupe disponible.');
-      const name = c.groups.get(g)?.label || g;
-      return { target: (cur) => (add ? [...new Set([...(cur || []), g])].sort() : (cur || []).filter((x) => x !== g)), desc: `${add ? 'Ajouter au' : 'Retirer du'} groupe ${name}` };
-    },
+    ...membership((c) => [...c.groups.values()].map((g) => [g.uuid, g.label || g.name]).sort((a, b) => a[1].localeCompare(b[1], 'fr')), (u) => sortedIds(u.groups, 'uuid'), 'Groupes d\'appel', (a) => [...a].sort()),
     read: (u) => sortedIds(u.groups, 'uuid'),
     text: (v, c) => (v?.length ? v.map((x) => c.groups.get(x)?.label || x).join(', ') : '—'),
     check: (u, v) => (v?.length && !(u.lines || []).length ? 'aucune ligne : ne peut pas être membre d\'un groupe' : ''),
@@ -420,12 +451,7 @@ const ALL_SETTINGS = [
   {
     // Association idempotente, une route par droit (pas de remplacement).
     id: 'call_permissions', label: 'Droits d\'appel', grp: 'Groupes et droits', available: (c) => c.perms.size > 0,
-    form: (c) => addRemove('Droit d\'appel', [...c.perms.values()].map((p) => [p.id, p.name]).sort((a, b) => a[1].localeCompare(b[1], 'fr'))),
-    parse: (c) => {
-      const id = Number($v('m-v')), add = $v('m-mode') === 'add';
-      if (!id) throw new Error('Aucun droit d\'appel disponible.');
-      return { target: (cur) => (add ? [...new Set([...(cur || []), id])].sort((a, b) => a - b) : (cur || []).filter((x) => x !== id)), desc: `${add ? 'Ajouter' : 'Retirer'} le droit ${c.perms.get(id)?.name || id}` };
-    },
+    ...membership((c) => [...c.perms.values()].map((p) => [p.id, p.name]).sort((a, b) => a[1].localeCompare(b[1], 'fr')), (u) => sortedIds(u.call_permissions, 'id').sort((a, b) => a - b), 'Droits d\'appel', (a) => [...a].map(Number).sort((x, y) => x - y)),
     read: (u) => sortedIds(u.call_permissions, 'id').sort((a, b) => a - b),
     text: (v, c) => (v?.length ? v.map((x) => c.perms.get(x)?.name || `#${x}`).join(', ') : '—'),
     write: async (u, v, cur) => {

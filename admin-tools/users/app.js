@@ -12,8 +12,8 @@
 //    queue_label, voicemail_name, ivr_name… ajoutés par confd.
 // Supposé, à vérifier en réel : le token du portail peut lire /moh,
 // /voicemails, /callpermissions, /schedules (sinon libellés techniques).
-import { S, $, esc, toast, api, listAll, connect, fullName, setReadonly, showCompat, loaded, loadFailed, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.30.3';
-import { SETTINGS, settingById, same, LANG, subLabel, authApi } from './settings.js?v=0.30.3';
+import { S, $, esc, toast, api, listAll, connect, fullName, setReadonly, showCompat, loaded, loadFailed, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.30.4';
+import { SETTINGS, settingById, same, LANG, subLabel, authApi } from './settings.js?v=0.30.4';
 
 const A = { auth: new Map(), authErr: '', users: [], byId: new Map(), moh: new Map(), groups: new Map(), vms: new Map(), perms: new Map(), scheds: new Map(), queues: new Map(), sbs: new Map(), contexts: [], callerOpts: [], callerOptsErr: '', lr: null, picked: new Set(), sort: { col: 'name', dir: 1 }, sel: null, scope: null, cols: null };
 
@@ -452,7 +452,7 @@ function openMass() {
   const list = () => W.ids.map(settingById);
   const saveVals = () => {
     const s = list()[W.step - 1];
-    if (s && $('m-form')) W.vals[s.id] = Object.fromEntries([...$('m-form').querySelectorAll('input[id], select[id]')].map((e) => [e.id, e.value]));
+    if (s && $('m-form')) W.vals[s.id] = Object.fromEntries([...$('m-form').querySelectorAll('input[id], select[id]')].map((e) => [e.id, e.type === 'checkbox' || e.type === 'radio' ? e.checked : e.value]));
   };
   const preview = (s) => { try { $('m-prev').innerHTML = planHtml(s, plan(s, s.parse(ctx()).target, users)); } catch (e) { $('m-prev').innerHTML = `<p class="error small">${esc(e.message)}</p>`; } };
   const back = '<div class="btnrow"><button type="button" id="m-back">← Précédent</button><button type="button" id="m-skip">Passer ce réglage</button></div>';
@@ -466,8 +466,16 @@ function openMass() {
       $('modal-body').innerHTML = `${head('Réglages à modifier')}<div class="wizsets">${grps.map((g) => `<div class="wgrp"><div class="grp" data-grp="${esc(g)}" title="Cocher / décocher tout le groupe">${esc(g)}</div>${MASS.filter((s) => s.grp === g).map((s) => (s.available && !s.available(ctx()) ? `<label class="inline off" title="Rien à proposer dans ce tenant"><input type="checkbox" disabled> ${esc(s.label)} <span class="muted small">(aucun dans ce tenant)</span></label>` : `<label class="inline"><input type="checkbox" data-set="${s.id}" data-g="${esc(s.grp)}"${W.ids.includes(s.id) ? ' checked' : ''}> ${esc(s.label)}</label>`)).join('')}</div>`).join('')}</div>`;
     } else if (W.step <= n) {
       const s = list()[W.step - 1];
-      $('modal-body').innerHTML = `${head(s.label)}<div id="m-form">${s.form(ctx())}</div><div id="m-prev" class="mprev"></div>${back}`;
-      for (const [id, v] of Object.entries(W.vals[s.id] || {})) { const e = document.getElementById(id); if (e) e.value = v; }
+      // Valeur commune à toutes les cibles : formulaire prérempli avec elle
+      // (comme la fiche) ; sinon mention « valeurs différentes ».
+      const curs = users.map((x) => s.read(x));
+      const common = curs.every((v) => same(v, curs[0]));
+      $('modal-body').innerHTML = `${head(s.label)}${common || s.showsCurrent ? '' : '<p class="muted small">Valeurs actuelles différentes selon les utilisateurs (voir l\'aperçu).</p>'}<div id="m-form">${s.form(ctx(), undefined, undefined, users)}</div><div id="m-prev" class="mprev"></div>${back}`;
+      if (!W.vals[s.id] && common) {
+        const vals = s.prefill ? s.prefill(curs[0], users[0]) : { 'm-v': curs[0] ?? '' };
+        for (const [k, v] of Object.entries(vals)) { const e = document.getElementById(k); if (e && v != null) e.value = String(v); }
+      }
+      for (const [id, v] of Object.entries(W.vals[s.id] || {})) { const e = document.getElementById(id); if (!e) continue; if (typeof v === 'boolean') e.checked = v; else e.value = v; }
       s.wire?.();
       $('m-form').oninput = () => preview(s);
       $('m-form').onchange = () => preview(s);
