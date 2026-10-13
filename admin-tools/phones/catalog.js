@@ -1,3 +1,7 @@
+// À CHAQUE AJOUT / MODIFICATION D'OPTION : mettre à jour le tableau du catalogue
+// dans docs/PHONE-MANAGER.md (et docs/AJOUTER-UNE-MARQUE.md si nouveau type de
+// champ ou nouvelle règle) dans le même commit.
+//
 // Catalogue des options Phone Manager (Yealink). Chaque option coché sur un
 // appareil produit des paramètres Yealink « clé = valeur » (option provd
 // astrea_params), écrits en fin de configuration par le bloc Astrea v5.
