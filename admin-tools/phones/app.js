@@ -12,8 +12,8 @@
 //  - confd régénère la config provd, mais ne synchronise pas l'appareil.
 // Supposé, à vérifier en réel : GET /lines renvoie device_id et position ;
 // un PUT /lines/{id} avec l'objet relu par GET est accepté.
-import { S, $, esc, toast, api, listAll, confirmModal, connect, fullName, canWrite, setReadonly, showCompat, loaded, loadFailed, provd, provdDevice, updateProvdOptions, downloadJson, calldGet } from '../common/core.js?v=0.22.1';
-import { CATALOG, randomPassword, checkField } from './catalog.js?v=0.22.1';
+import { S, $, esc, toast, api, listAll, confirmModal, connect, fullName, canWrite, setReadonly, showCompat, loaded, loadFailed, provd, provdDevice, updateProvdOptions, downloadJson, calldGet } from '../common/core.js?v=0.22.2';
+import { CATALOG, randomPassword, checkField } from './catalog.js?v=0.22.2';
 
 // Comptes SIP par modèle (_NB_SIP_ACCOUNTS / plugin-info des plugins provd).
 const DECT_MAX = {
@@ -486,7 +486,15 @@ async function deviceTemplate(d) {
   return cfg ? { id, label: cfg.label || cfg.raw_config?.label || id, raw: cfg.raw_config || {} } : { id, label: id, raw: null };
 }
 const NOT_RESET = new Set(['vlan', 'adminpw']);
-const kindOf = (d) => (!d ? null : isDect(d) ? 'dect' : /yealink/i.test(`${d.vendor} ${d.plugin}`) && d.model ? 'phone' : null);
+// Préfixes MAC Yealink (OUI) relevés sur les parcs : la MAC donne la marque,
+// pas le modèle (le même préfixe sert aux postes et aux bases DECT). Liste
+// non exhaustive, à compléter.
+const YEALINK_OUI = /^(00:15:65|80:5e:0c|80:5e:c0|24:9a:d8|44:db:d2|c4:fc:22)/i;
+const isYealink = (d) => /yealink/i.test(`${d.vendor} ${d.plugin}`) || YEALINK_OUI.test(d.mac || '');
+// Modèle inconnu (appareil déclaré par sa MAC, jamais connecté) : traité comme
+// un poste, sans les options propres à certains modèles.
+const kindOf = (d) => (!d ? null : isDect(d) ? 'dect' : isYealink(d) ? 'phone' : null);
+const modelLabel = (d) => d.model || 'modèle inconnu';
 // Appareils nommés par leur MAC (la description est un texte libre, souvent
 // long) ; la description reste au survol et dans la recherche.
 const devName = (d) => d.mac || d.description || `Appareil ${d.id}`;
@@ -526,7 +534,7 @@ function renderDevList() {
     const li = document.createElement('li');
     li.className = C.sel === d.id ? 'sel' : '';
     if (d.description && devName(d) !== d.description) li.title = d.description;
-    li.innerHTML = `<span>${stDot(d)}${esc(devName(d))}${devSub(d) ? `<br><span class="muted small">${esc(devSub(d))}</span>` : ''}</span><span class="sub">${esc(d.model || '?')}${kindOf(d) === 'dect' ? ' · DECT' : ''}</span>`;
+    li.innerHTML = `<span>${stDot(d)}${esc(devName(d))}${devSub(d) ? `<br><span class="muted small">${esc(devSub(d))}</span>` : ''}</span><span class="sub">${esc(modelLabel(d))}${kindOf(d) === 'dect' ? ' · DECT' : ''}</span>`;
     li.onclick = () => guardCfg(() => selectDevice(d.id));
     ul.appendChild(li);
   }
@@ -674,7 +682,8 @@ function openBulk() {
     <label>Action <select id="m-mode"><option value="set">Appliquer ces options avec ces valeurs (les autres options de chaque appareil sont conservées)</option><option value="reset">Retirer ces options (retour au modèle de la stack / valeur par défaut)</option></select></label>
     <label>Filtrer <input id="m-q" placeholder="Nom, modèle, utilisateur…"></label>
     <div class="btnrow"><button id="m-all">Tout cocher</button><button id="m-none">Tout décocher</button><span id="m-n" class="muted small" style="align-self:center"></span></div>
-    <ul id="m-devs" class="pick">${targets.map((x) => `<li><label class="inline"><input type="checkbox" data-dev="${esc(x.id)}"> ${esc(devName(x))} <span class="muted small">${esc(x.model || '')}${devUsers(x).length ? ' · ' + esc(devUsers(x).join(', ')) : ''}</span></label></li>`).join('') || '<li class="off">Aucun autre appareil de ce type.</li>'}</ul>
+    <label class="inline"><input type="checkbox" id="m-withusers" checked> Seulement les appareils avec un utilisateur</label>
+    <ul id="m-devs" class="pick">${targets.map((x) => `<li data-users="${devUsers(x).length}"><label class="inline"><input type="checkbox" data-dev="${esc(x.id)}"> ${esc(devName(x))} <span class="muted small">${esc(modelLabel(x))}${devUsers(x).length ? ' · ' + esc(devUsers(x).join(', ')) : ''}</span>${devUsers(x).length ? '' : ' <span class="tag">sans ligne</span>'}</label></li>`).join('') || '<li class="off">Aucun autre appareil de ce type.</li>'}</ul>
     <label class="inline"><input type="checkbox" id="m-sync"> Synchroniser les appareils (${chosen.some((o) => o.reboot) ? 'ils redémarreront' : 'redémarrage possible'})</label>
     <p class="muted small">Les options non disponibles sur un modèle sont ignorées pour cet appareil. Une sauvegarde des options actuelles est téléchargée avant d'écrire.</p>`, async () => {
     const ids = [...document.querySelectorAll('#m-devs input[data-dev]:checked')].map((x) => x.dataset.dev);
@@ -686,7 +695,18 @@ function openBulk() {
   $('m-devs').onchange = count;
   $('m-all').onclick = () => { document.querySelectorAll('#m-devs li:not([hidden]) input[data-dev]').forEach((x) => (x.checked = true)); count(); };
   $('m-none').onclick = () => { document.querySelectorAll('#m-devs input[data-dev]').forEach((x) => (x.checked = false)); count(); };
-  $('m-q').oninput = () => { const q = $('m-q').value.trim().toLowerCase(); document.querySelectorAll('#m-devs li').forEach((li) => { li.hidden = !!q && !li.textContent.toLowerCase().includes(q); }); };
+  // Filtres : texte + « avec un utilisateur » (un appareil masqué est décoché).
+  const filter = () => {
+    const q = $('m-q').value.trim().toLowerCase(), withUsers = $('m-withusers').checked;
+    document.querySelectorAll('#m-devs li[data-users]').forEach((li) => {
+      li.hidden = (!!q && !li.textContent.toLowerCase().includes(q)) || (withUsers && li.dataset.users === '0');
+      if (li.hidden) li.querySelector('input').checked = false;
+    });
+    count();
+  };
+  $('m-q').oninput = filter;
+  $('m-withusers').onchange = filter;
+  filter();
   count();
 }
 async function bulkApply(ids, chosen, mode, sync) {
