@@ -12,8 +12,8 @@
 //    queue_label, voicemail_name, ivr_name… ajoutés par confd.
 // Supposé, à vérifier en réel : le token du portail peut lire /moh,
 // /voicemails, /callpermissions, /schedules (sinon libellés techniques).
-import { S, $, esc, toast, api, listAll, connect, fullName, setReadonly, showCompat, loaded, loadFailed, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.27.5';
-import { SETTINGS, settingById, same, LANG, subLabel } from './settings.js?v=0.27.5';
+import { S, $, esc, toast, api, listAll, connect, fullName, setReadonly, showCompat, loaded, loadFailed, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.28.0';
+import { SETTINGS, settingById, same, LANG, subLabel } from './settings.js?v=0.28.0';
 
 const A = { auth: new Map(), authErr: '', users: [], byId: new Map(), moh: new Map(), groups: new Map(), vms: new Map(), perms: new Map(), scheds: new Map(), queues: new Map(), sbs: new Map(), contexts: [], callerOpts: [], callerOptsErr: '', lr: null, picked: new Set(), sort: { col: 'name', dir: 1 }, sel: null, scope: null, cols: null };
 
@@ -105,7 +105,8 @@ const ALL_COLS = [
   { id: 'fb_noans', label: 'Défaut non répondu', grp: 'Renvois par défaut (admin)', def: true, get: (u) => fb(u, 'noanswer') },
   { id: 'ring', label: 'Sonnerie (s)', grp: 'Sonnerie', def: true, get: (u) => ({ t: u.ring_seconds ?? '—', k: String(u.ring_seconds ?? '').padStart(6, '0') }) },
   { id: 'simul', label: 'Appels simult.', grp: 'Sonnerie', def: true, get: (u) => ({ t: u.simultaneous_calls ?? '—', k: String(u.simultaneous_calls ?? '').padStart(3, '0') }) },
-  { id: 'callerid', label: 'Numéro présenté', grp: 'Identité d\'appel', def: true, get: (u) => txt(callerId(u.outgoing_caller_id)) },
+  { id: 'cidint', label: 'Identifiant de l\'appelant (interne)', tip: 'Nom affiché sur les postes des collègues lors des appels internes (caller_id).', grp: 'Identité', get: (u) => txt((String(u.caller_id || '').match(/^"(.*)"/) || [])[1] || u.caller_id || '') },
+  { id: 'callerid', label: 'Identification de l\'appelant sortant', tip: 'Numéro présenté aux appels externes (outgoing_caller_id).', grp: 'Identité d\'appel', def: true, get: (u) => txt(callerId(u.outgoing_caller_id)) },
   { id: 'mobile', label: 'Mobile', grp: 'Identité d\'appel', odd: false, get: (u) => txt(u.mobile_phone_number || '') },
   { id: 'vm', label: 'Boîte vocale associée', tip: 'Boîte vocale associée à l\'utilisateur (numéro et nom). Les boîtes se configurent dans Messageries vocales.', grp: 'Boîte vocale', def: true, odd: false, get: vm },
   { id: 'vm_email', label: 'E-mail (réglage de la boîte)', tip: 'E-mail renseigné dans la boîte vocale associée (page Messageries vocales) : adresse où partent les messages vocaux. Différent de l\'e-mail de l\'annuaire.', grp: 'Boîte vocale', odd: false, get: (u) => txt(A.vms.get(u.voicemail?.id)?.email || '') },
@@ -118,14 +119,15 @@ const ALL_COLS = [
 ];
 // Même rangement que le catalogue (settings.js, LAYOUT) ; Compte en lecture seule.
 const COL_LAYOUT = [
-  ['Utilisateur', ['name', 'exten', 'email', 'mobile', 'sub', 'lang', 'tz']],
+  ['Utilisateur', ['name', 'exten', 'email', 'mobile', 'cidint', 'sub', 'lang']],
   ['Compte (applications)', ['apps', 'login']],
   ['Services voix', ['dnd', 'incallfilter', 'ring', 'simul', 'moh']],
   ['Renvois d\'appel (utilisateur)', ['fwd_busy', 'fwd_unc', 'fwd_noans']],
   ['Renvois par défaut (admin)', ['fb_busy', 'fb_cong', 'fb_fail', 'fb_noans']],
   ['Appels sortants', ['callerid', 'perms']],
   ['Boîte vocale', ['vm', 'vm_email']],
-  ['Groupes et horaire', ['groups', 'sched']],
+  ['Groupes', ['groups']],
+  ['Horaires', ['sched', 'tz']],
 ];
 const COLS = COL_LAYOUT.flatMap(([grp, ids]) => ids.map((id) => ({ ...ALL_COLS.find((c) => c.id === id), grp })));
 // v4 (0.27.3, colonne Accès applications) : nouvelles colonnes par défaut, l'ancien choix est ignoré.
@@ -306,7 +308,7 @@ function renderDetail() {
   $('d-body').innerHTML = grps.map((g) => sec(g, (g === 'Utilisateur' ? row('Numéro interne', exten(u)) : '')
       + SETTINGS.filter((s) => s.grp === g && (!s.showIf || s.showIf(u))).map((s) => row(s.label, s.text(s.read(u), c), s.id)).join('')
       + (g === 'Boîte vocale' && vm ? row('E-mail (réglage de la boîte)', vm.email) : ''))
-      + (g === 'Utilisateur' ? sec('Compte (applications) — lecture seule', authRows(u, row)) : '')).join('')
+      + (g === 'Utilisateur' ? sec('Compte (applications)', authRows(u, row)) + (A.auth.get(u.uuid) ? '<div class="btnrow"><button id="d-pw">Changer le mot de passe…</button></div>' : '') : '')).join('')
     + '<p class="muted small">Les réglages de la boîte vocale se modifient dans Messageries vocales ; le compte de connexion dans l\'onglet « Compte » du portail.</p>';
 }
 function authRows(u, row) {
@@ -316,6 +318,42 @@ function authRows(u, row) {
   const mails = (a.emails || []).map((m) => `${m.address}${m.confirmed ? '' : ' (non confirmé)'}`).join(', ');
   return row('Accès applications', a.enabled === false ? 'non' : u.subscription_type === 0 ? 'interrupteur ouvert, mais connexion refusée par la licence Voix' : 'oui')
     + row('Identifiant', a.username) + row('Méthode', a.authentication_method === 'default' ? 'défaut de l\'organisation' : a.authentication_method) + row('Adresses courriels', mails);
+}
+// Mot de passe des applications (wazo-auth, lu dans le code le 13/10/2026) :
+// PUT /users/{uuid}/password exige l'ancien ; la réinitialisation
+// POST /users/password/reset?user_uuid=… (ACL auth.users.password.reset.{uuid}.create)
+// pose le nouveau sans l'ancien, ferme les sessions ouvertes de l'utilisateur
+// et refuse un compte à authentification externe (SAML, LDAP).
+// Mot de passe illisible : pas de sauvegarde ni de restauration possibles.
+const randomPassword = () => {
+  const cs = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+  const b = new Uint32Array(14);
+  crypto.getRandomValues(b);
+  return [...b].map((x) => cs[x % cs.length]).join('');
+};
+function openPassword(u) {
+  const a = u && A.auth.get(u.uuid);
+  if (!a || !canWrite()) return;
+  confirmModal(`<h3>Mot de passe des applications</h3><p class="muted small">${esc(fullName(u))} · identifiant ${esc(a.username || '—')}</p>
+    <label>Nouveau mot de passe <input id="m-pw" autocomplete="new-password" spellcheck="false"></label>
+    <div class="btnrow"><button type="button" id="m-pwgen">Générer</button></div>
+    <div class="warn">Les sessions ouvertes de l'utilisateur dans les applications sont fermées. L'ancien mot de passe n'est pas lisible : pas de restauration possible. Notez le nouveau avant de valider.</div>`, async () => {
+    const pw = $('m-pw').value;
+    if (pw.length < 8) { toast('8 caractères au minimum.', 5000); return false; }
+    try {
+      const headers = { 'X-Auth-Token': S.token, 'Content-Type': 'application/json', Accept: 'application/json' };
+      if (S.tenant) headers['Wazo-Tenant'] = S.tenant;
+      const r = await fetch(`${S.base}/api/auth/0.1/users/password/reset?user_uuid=${encodeURIComponent(u.uuid)}`, { method: 'POST', headers, body: JSON.stringify({ password: pw }) });
+      if (!r.ok) {
+        let m = '';
+        try { m = JSON.stringify(await r.json()).slice(0, 200); } catch { /* */ }
+        throw new Error(r.status === 401 || r.status === 403 ? `droit refusé (${r.status}) : le token du portail ne peut pas réinitialiser ce mot de passe` : `erreur ${r.status} ${m}`);
+      }
+      toast('Mot de passe changé.', 5000);
+      $('massres').innerHTML = `<div class="massres"><strong>${esc(fullName(u))}</strong> : mot de passe des applications changé.<button class="icon" data-close title="Fermer">×</button></div>`;
+    } catch (e) { toast(`Mot de passe non changé : ${e.message}`, 9000); return false; }
+  }, 'Changer');
+  $('m-pwgen').onclick = () => { $('m-pw').value = randomPassword(); };
 }
 // Modification d'un réglage pour l'utilisateur de la fiche : formulaire
 // prérempli, aperçu, puis même moteur que la masse (relecture, sauvegarde
@@ -677,7 +715,11 @@ $('g-body').onclick = (e) => {
   render();
 };
 $('d-close').onclick = () => { A.sel = null; render(); };
-$('d-body').onclick = (e) => { const b = e.target.closest('button[data-edit]'); if (b) openEdit(b.dataset.edit); };
+$('d-body').onclick = (e) => {
+  if (e.target.id === 'd-pw') return openPassword(A.byId.get(A.sel));
+  const b = e.target.closest('button[data-edit]');
+  if (b) openEdit(b.dataset.edit);
+};
 $('reload').onclick = async () => { try { await reload(); toast('Rechargé'); } catch (e) { toast(e.message, 8000); } };
 // Fermeture de la page pendant une opération : le live reload pourrait rester coupé.
 window.addEventListener('beforeunload', (e) => { if (A.running) { e.preventDefault(); e.returnValue = ''; } });

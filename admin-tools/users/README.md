@@ -53,14 +53,15 @@ Cadrage, sources et décisions : `docs/USER-MANAGER.md` (dépôt de dev).
 - Clic sur une ligne : la fiche s'ouvre à droite, avec chaque réglage et un
   bouton ✎ (formulaire prérempli, aperçu avant / après).
 - En plus des réglages de la masse : prénom, nom, e-mail (annuaire), mobile,
-  description, nom présenté (champs propres à chaque utilisateur, pas
+  description, identifiant de l'appelant interne (champs propres à chaque utilisateur, pas
   modifiables en masse).
 - Chaque modification est ajoutée à l'historique du navigateur (« Restaurer… »),
   sans téléchargement de fichier.
 - « Utilisateur actif » n'a pas d'effet visible dans Wazo : il n'apparaît que
   pour un utilisateur déjà désactivé, pour le réactiver.
-- Pas de partie Authentification (identifiant, mot de passe, méthode) : elle
-  se gère dans le portail.
+- Compte des applications : accès, identifiant, méthode et adresses en lecture
+  seule ; bouton « Changer le mot de passe… » (sans l'ancien, sessions
+  fermées, pas de restauration possible).
 
 Le CSV (export, création) arrive ensuite.
 ## Droits utilisés

@@ -14,7 +14,7 @@
 //                     rechargement à redéclencher à la fin ('user')
 // Routes et sémantique vérifiées dans le code de wazo-confd (13/10/2026),
 // voir docs/USER-MANAGER.md. Écritures non encore testées en réel.
-import { api, esc, fullName } from '../common/core.js?v=0.27.5';
+import { api, esc, fullName } from '../common/core.js?v=0.28.0';
 
 // Comparaison indépendante de l'ordre des clés (objets relus vs construits).
 const canon = (v) => (Array.isArray(v) ? v.map(canon) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, canon(v[k])])) : v ?? null);
@@ -152,9 +152,9 @@ const SDA = (u) => (u.incalls || []).flatMap((i) => i.extensions || []).map((e) 
 const cidFmt = (number, name) => { const n = String(name || '').replace(/"/g, '').trim(); return n ? `"${n}" <${number}>` : String(number); };
 const CID_TYPE = { main: 'numéro principal', shared: 'numéro partagé' };
 const callerIdSetting = {
-  id: 'outgoing_caller_id', label: 'Numéro présenté', grp: 'Identité d\'appel', ...userField('outgoing_caller_id'),
+  id: 'outgoing_caller_id', label: 'Identification de l\'appelant sortant', grp: 'Appels sortants', ...userField('outgoing_caller_id'),
   read: (u) => (!u.outgoing_caller_id || u.outgoing_caller_id === 'default' ? 'default' : u.outgoing_caller_id),
-  form: (c) => `<label>Numéro présenté <select id="m-v">${options([['default', 'Par défaut'], ['anonymous', 'Anonyme'],
+  form: (c) => `<label>Numéro présenté aux appels externes <select id="m-v">${options([['default', 'Par défaut'], ['anonymous', 'Anonyme'],
     ...c.callerOpts.map((o) => [cidFmt(o.number, o.caller_id_name), `${o.number}${o.caller_id_name ? ` « ${o.caller_id_name} »` : ''} (${CID_TYPE[o.type] || o.type})`]),
     ['@sda', 'Sa SDA (numéro entrant associé à chaque utilisateur)'], ['@free', 'Autre numéro…']])}</select></label>
     <div data-cid="@free"><label>Numéro <input id="m-fn" inputmode="tel" placeholder="0145000000"></label><label>Nom affiché (facultatif) <input id="m-fname"></label></div>
@@ -226,17 +226,17 @@ const textField = (field, label, { required = false, re = null, max = 128, hint 
   text: (v) => v || '—',
   ...(check ? { check } : {}),
 });
-// Nom présenté : caller_id `"Nom"` (éventuellement suivi de ` <numéro>`,
+// Identifiant de l'appelant (interne, d'après Brice) : caller_id `"Nom"` (éventuellement suivi de ` <numéro>`,
 // conservé). Regex confd : ^"(.*)"( <\+?\d+>)?$ ; null refusé en PUT.
 const cidName = (v) => (String(v || '').match(/^"(.*)"/) || [])[1] ?? '';
 const callerName = {
-  id: 'caller_id', label: 'Nom présenté', grp: 'Identité', single: true, ...userField('caller_id'),
-  form: () => '<label>Nom présenté <input id="m-v" maxlength="150"></label><p class="muted small">Nom affiché lors des appels (par défaut prénom et nom).</p>',
+  id: 'caller_id', label: 'Identifiant de l\'appelant (interne)', grp: 'Identité', single: true, ...userField('caller_id'),
+  form: () => '<label>Nom affiché <input id="m-v" maxlength="150"></label><p class="muted small">Nom affiché sur les postes des collègues lors des appels internes (par défaut prénom et nom). Les appels externes utilisent l\'identification de l\'appelant sortant.</p>',
   prefill: (v) => ({ 'm-v': cidName(v) }),
   parse: () => {
     const n = $v('m-v').trim().replace(/"/g, '');
-    if (!n) throw new Error('Nom présenté : obligatoire.');
-    return { target: (cur) => `"${n}"${String(cur || '').replace(/^"(.*)"/, '')}`, desc: `Nom présenté : ${n}` };
+    if (!n) throw new Error('Identifiant de l\'appelant : obligatoire.');
+    return { target: (cur) => `"${n}"${String(cur || '').replace(/^"(.*)"/, '')}`, desc: `Identifiant de l'appelant (interne) : ${n}` };
   },
   text: (v) => cidName(v) || v || '—',
 };
@@ -348,13 +348,14 @@ const ALL_SETTINGS = [
 // Rangement commun aux colonnes de l'audit (app.js), à l'assistant et à la
 // fiche, calqué sur les onglets de la fiche utilisateur du portail.
 const LAYOUT = [
-  ['Utilisateur', ['firstname', 'lastname', 'email', 'mobile_phone_number', 'description', 'enabled', 'subscription_type', 'language', 'timezone']],
+  ['Utilisateur', ['firstname', 'lastname', 'email', 'mobile_phone_number', 'description', 'caller_id', 'enabled', 'subscription_type', 'language']],
   ['Services voix', ['dnd', 'incallfilter', 'ring_seconds', 'simultaneous_calls', 'music_on_hold']],
   ['Renvois d\'appel (utilisateur)', ['fwd_busy', 'fwd_unconditional', 'fwd_noanswer']],
   ['Renvois par défaut (admin)', ['fb_busy', 'fb_congestion', 'fb_fail', 'fb_noanswer']],
-  ['Appels sortants', ['caller_id', 'outgoing_caller_id', 'call_permissions']],
+  ['Appels sortants', ['outgoing_caller_id', 'call_permissions']],
   ['Boîte vocale', ['voicemail']],
-  ['Groupes et horaire', ['groups', 'schedule']],
+  ['Groupes', ['groups']],
+  ['Horaires', ['schedule', 'timezone']],
 ];
 export const SETTINGS = LAYOUT.flatMap(([grp, ids]) => ids.map((id) => {
   const s = ALL_SETTINGS.find((x) => x.id === id);
