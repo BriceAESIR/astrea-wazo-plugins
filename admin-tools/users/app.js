@@ -12,10 +12,10 @@
 //    queue_label, voicemail_name, ivr_name… ajoutés par confd.
 // Supposé, à vérifier en réel : le token du portail peut lire /moh,
 // /voicemails, /callpermissions, /schedules (sinon libellés techniques).
-import { S, $, esc, toast, api, listAll, connect, fullName, setReadonly, showCompat, loaded, loadFailed, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.27.2';
-import { SETTINGS, settingById, same, LANG, subLabel } from './settings.js?v=0.27.2';
+import { S, $, esc, toast, api, listAll, connect, fullName, setReadonly, showCompat, loaded, loadFailed, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.27.3';
+import { SETTINGS, settingById, same, LANG, subLabel } from './settings.js?v=0.27.3';
 
-const A = { users: [], byId: new Map(), moh: new Map(), groups: new Map(), vms: new Map(), perms: new Map(), scheds: new Map(), queues: new Map(), sbs: new Map(), contexts: [], callerOpts: [], callerOptsErr: '', lr: null, picked: new Set(), sort: { col: 'name', dir: 1 }, sel: null, scope: null, cols: null };
+const A = { auth: new Map(), authErr: '', users: [], byId: new Map(), moh: new Map(), groups: new Map(), vms: new Map(), perms: new Map(), scheds: new Map(), queues: new Map(), sbs: new Map(), contexts: [], callerOpts: [], callerOptsErr: '', lr: null, picked: new Set(), sort: { col: 'name', dir: 1 }, sel: null, scope: null, cols: null };
 
 // ---------------------------------------------------------------------------
 // Libellés
@@ -78,6 +78,16 @@ const COLS = [
   { id: 'name', label: 'Utilisateur', grp: 'Identité', fixed: true, odd: false, get: (u) => txt(fullName(u)) },
   { id: 'exten', label: 'Numéro', grp: 'Identité', def: true, odd: false, get: (u) => { const e = exten(u); return { t: e || '—', k: e.padStart(12, '0'), c: e ? '' : 'none' }; } },
   { id: 'email', label: 'E-mail (annuaire)', tip: 'Courriel public de la fiche (Renseignements personnels), affiché dans les annuaires. Différent des adresses de connexion (Authentification) et de l\'e-mail de la boîte vocale.', grp: 'Identité', odd: false, get: (u) => txt(u.email) },
+  // Accès aux applications = compte wazo-auth activé ; alerte si licence Voix
+  // (0) avec accès ouvert (cas de Tom, 13/10/2026).
+  { id: 'apps', label: 'Accès applications', tip: 'Onglet « Compte » du portail (« Autorisé à utiliser des applications »), lu dans wazo-auth. En rouge : licence Voix avec accès ouvert.', grp: 'Identité', def: true, get: (u) => {
+    if (A.authErr) return { t: '?', k: '?', c: 'none' };
+    const a = A.auth.get(u.uuid);
+    if (!a) return { t: 'Pas de compte', k: '0', c: 'none' };
+    if (a.enabled === false) return { t: 'Non', k: '0', c: 'none' };
+    return u.subscription_type === 0 ? { t: 'Oui (licence Voix !)', k: '1', c: 'alert' } : { t: 'Oui', k: '1', c: 'on' };
+  } },
+  { id: 'login', label: 'Identifiant', tip: 'Nom d\'utilisateur de connexion aux applications (wazo-auth).', grp: 'Identité', odd: false, get: (u) => txt(A.auth.get(u.uuid)?.username || '') },
   // Licence = subscription_type (0-10) ; libellés relevés en réel (settings.js, SUBS).
   { id: 'sub', label: 'Licence', tip: 'Type de souscription du portail (subscription_type : 0 Voix, 1 Communication unifiée, 3 Relation client).', grp: 'Identité', def: true, get: (u) => ({ t: subLabel(u.subscription_type), k: String(u.subscription_type ?? '') }) },
   { id: 'dnd', label: 'Ne pas déranger', grp: 'Services', def: true, get: (u) => yes(u.services?.dnd?.enabled) },
@@ -105,8 +115,8 @@ const COLS = [
   { id: 'perms', label: 'Droits d\'appel', grp: 'Groupes et droits', get: (u) => names(u.call_permissions, (c) => c.name) },
   { id: 'sched', label: 'Horaire', grp: 'Groupes et droits', get: (u) => names(u.schedules, (s) => s.name || `#${s.id}`) },
 ];
-// v3 (0.25.2, colonne Licence) : nouvelles colonnes par défaut, l'ancien choix est ignoré.
-const COLS_KEY = 'astrea-users-cols-v3';
+// v4 (0.27.3, colonne Accès applications) : nouvelles colonnes par défaut, l'ancien choix est ignoré.
+const COLS_KEY = 'astrea-users-cols-v4';
 function loadCols() {
   try { const c = JSON.parse(localStorage.getItem(COLS_KEY)); if (Array.isArray(c)) return new Set(c); } catch { /* stockage indisponible */ }
   return new Set(COLS.filter((c) => c.def).map((c) => c.id));
@@ -143,6 +153,24 @@ async function loadUsers() {
 async function lookup(path, what, warns) {
   try { return await listAll(path); } catch (e) { warns?.push(`${what} indisponibles (${e.status || ''} ${path}) : valeurs techniques affichées.`); console.warn('[astrea]', path, e); return []; }
 }
+// Comptes de connexion (wazo-auth, onglet « Compte » du portail), lecture
+// seule : GET /api/auth/0.1/users (ACL auth.users.read), tenant courant,
+// même uuid que l'utilisateur confd. Licence et accès aux applications sont
+// indépendants : passer en Voix ne touche pas au compte (vérifié dans le code).
+async function loadAuth() {
+  A.auth = new Map(); A.authErr = '';
+  try {
+    for (let off = 0; ; off += 500) {
+      const headers = { 'X-Auth-Token': S.token, Accept: 'application/json' };
+      if (S.tenant) headers['Wazo-Tenant'] = S.tenant;
+      const r = await fetch(`${S.base}/api/auth/0.1/users?limit=500&offset=${off}`, { headers });
+      if (!r.ok) throw new Error(`comptes de connexion → ${r.status}`);
+      const items = (await r.json())?.items || [];
+      for (const x of items) A.auth.set(x.uuid, x);
+      if (items.length < 500) return;
+    }
+  } catch (e) { A.authErr = e.message; console.warn('[astrea] wazo-auth', e); }
+}
 // Numéros présentables du tenant (principal, partagés) : lus sur un
 // utilisateur, identiques pour tous ; les « associated » (SDA) sont propres à
 // chacun et proposés autrement. Route absente des anciennes versions : sans gravité.
@@ -160,7 +188,7 @@ async function reload() {
   const [users, moh, groups, vms, perms, scheds, queues, sbs, contexts] = await Promise.all([
     loadUsers(), lookup('/moh', 'Libellés des musiques d\'attente', warns), lookup('/groups', 'Libellés des groupes', warns), lookup('/voicemails', 'Détails des messageries', warns),
     lookup('/callpermissions', 'Droits d\'appel', warns), lookup('/schedules', 'Horaires', warns),
-    lookup('/queues', 'Files d\'attente', null), lookup('/switchboards', 'Standards', null), lookup('/contexts', 'Contextes', null), checkLiveReload(),
+    lookup('/queues', 'Files d\'attente', null), lookup('/switchboards', 'Standards', null), lookup('/contexts', 'Contextes', null), checkLiveReload(), loadAuth(),
   ]);
   A.queues = new Map(queues.map((q) => [q.id, q]));
   A.sbs = new Map(sbs.map((s) => [s.uuid, s]));
@@ -176,6 +204,7 @@ async function reload() {
   A.scheds = new Map(scheds.map((s) => [s.id, s]));
   for (const id of [...A.picked]) if (!A.byId.has(id)) A.picked.delete(id);
   renderLiveReload();
+  if (A.authErr) warns.push(`Comptes de connexion indisponibles (${A.authErr}) : colonnes « Accès applications » et « Identifiant » vides.`);
   $('lookwarn').innerHTML = warns.map((w) => `<div class="warn">${esc(w)}</div>`).join('');
   const cur = $('f-group').value;
   $('f-group').innerHTML = '<option value="">Tous les utilisateurs</option>' + [...A.groups.values()]
@@ -263,7 +292,16 @@ function renderDetail() {
   $('d-body').innerHTML = sec('Ligne', row('Numéro interne', exten(u)))
     + grps.map((g) => sec(g, SETTINGS.filter((s) => s.grp === g && (!s.showIf || s.showIf(u))).map((s) => row(s.label, s.text(s.read(u), c), s.id)).join('')
       + (g === 'Boîte vocale' && vm ? row('E-mail (réglage de la boîte)', vm.email) : ''))).join('')
-    + '<p class="muted small">Les réglages de la boîte vocale se modifient dans Messageries vocales.</p>';
+    + sec('Compte (applications) — lecture seule', authRows(u, row))
+    + '<p class="muted small">Les réglages de la boîte vocale se modifient dans Messageries vocales ; le compte de connexion dans l\'onglet « Compte » du portail.</p>';
+}
+function authRows(u, row) {
+  if (A.authErr) return row('Compte', `indisponible (${A.authErr})`);
+  const a = A.auth.get(u.uuid);
+  if (!a) return row('Compte', 'aucun (pas d\'accès aux applications)');
+  const mails = (a.emails || []).map((m) => `${m.address}${m.confirmed ? '' : ' (non confirmé)'}`).join(', ');
+  return row('Accès applications', a.enabled === false ? 'non' : u.subscription_type === 0 ? 'oui — incohérent avec la licence Voix' : 'oui')
+    + row('Identifiant', a.username) + row('Méthode', a.authentication_method === 'default' ? 'défaut de l\'organisation' : a.authentication_method) + row('Adresses courriels', mails);
 }
 // Modification d'un réglage pour l'utilisateur de la fiche : formulaire
 // prérempli, aperçu, puis même moteur que la masse (relecture, sauvegarde

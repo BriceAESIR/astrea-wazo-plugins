@@ -14,7 +14,7 @@
 //                     rechargement à redéclencher à la fin ('user')
 // Routes et sémantique vérifiées dans le code de wazo-confd (13/10/2026),
 // voir docs/USER-MANAGER.md. Écritures non encore testées en réel.
-import { api, esc, fullName } from '../common/core.js?v=0.27.2';
+import { api, esc, fullName } from '../common/core.js?v=0.27.3';
 
 // Comparaison indépendante de l'ordre des clés (objets relus vs construits).
 const canon = (v) => (Array.isArray(v) ? v.map(canon) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, canon(v[k])])) : v ?? null);
