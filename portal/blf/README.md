@@ -1,7 +1,9 @@
-# Plugin Portal « Touches des postes »
+# Plugin Portal « ASTREA - BLF Manager »
+
+**Installation pas à pas : [INSTALLATION.md](INSTALLATION.md).**
 
 Onglet **Touches** dans la fiche utilisateur du portail Wazo, et vue globale
-**Touches des postes**. L'appli lit et écrit directement les touches des postes
+**ASTREA - BLF Manager**. L'appli lit et écrit directement les touches des postes
 du serveur ouvert dans le portail, avec le token que fournit le portail.
 
 - tuiles par position, toutes marques de postes confondues. Profils
