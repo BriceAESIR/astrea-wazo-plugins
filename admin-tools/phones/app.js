@@ -12,8 +12,8 @@
 //  - confd régénère la config provd, mais ne synchronise pas l'appareil.
 // Supposé, à vérifier en réel : GET /lines renvoie device_id et position ;
 // un PUT /lines/{id} avec l'objet relu par GET est accepté.
-import { S, $, esc, toast, api, listAll, confirmModal, connect, fullName, canWrite, setReadonly, showCompat, loaded, loadFailed, provd, provdDevice, updateProvdOptions, downloadJson } from '../common/core.js?v=0.20.2';
-import { CATALOG, randomPassword, checkField } from './catalog.js?v=0.20.2';
+import { S, $, esc, toast, api, listAll, confirmModal, connect, fullName, canWrite, setReadonly, showCompat, loaded, loadFailed, provd, provdDevice, updateProvdOptions, downloadJson } from '../common/core.js?v=0.20.3';
+import { CATALOG, randomPassword, checkField } from './catalog.js?v=0.20.3';
 
 // Comptes SIP par modèle (_NB_SIP_ACCOUNTS / plugin-info des plugins provd).
 const DECT_MAX = {
@@ -442,7 +442,9 @@ async function deviceTemplate(d) {
 }
 const NOT_RESET = new Set(['vlan', 'adminpw']);
 const kindOf = (d) => (!d ? null : isDect(d) ? 'dect' : /yealink/i.test(`${d.vendor} ${d.plugin}`) && d.model ? 'phone' : null);
-const devName = (d) => d.description || d.mac || `Appareil ${d.id}`;
+// Postes : nommés par la MAC (la description est souvent un texte libre) ;
+// bases DECT : par leur description (« DM1-B Bernerie »), sinon la MAC.
+const devName = (d) => (kindOf(d) === 'dect' ? d.description || d.mac : d.mac || d.description) || `Appareil ${d.id}`;
 const devUsers = (d) => [...new Set(D.lines.filter((l) => l.device_id === d.id).flatMap((l) => lineUsers(l).map(fullName)))];
 const cfgDevices = () => D.devices.filter(kindOf).sort((a, b) => devName(a).localeCompare(devName(b), 'fr'));
 const optsFor = (d) => CATALOG.filter((o) => o.kinds.includes(kindOf(d)) && (!o.models || o.models.test(String(d.model || '').toUpperCase())));
@@ -471,6 +473,7 @@ function renderDevList() {
     if (q && !`${devName(d)} ${d.mac || ''} ${d.model || ''} ${users.join(' ')}`.toLowerCase().includes(q)) continue;
     const li = document.createElement('li');
     li.className = C.sel === d.id ? 'sel' : '';
+    if (d.description && devName(d) !== d.description) li.title = d.description;
     li.innerHTML = `<span>${esc(devName(d))}${users.length ? `<br><span class="muted small">${esc(users.slice(0, 2).join(', '))}${users.length > 2 ? '…' : ''}</span>` : ''}</span><span class="sub">${esc(d.model || '?')}${kindOf(d) === 'dect' ? ' · DECT' : ''}</span>`;
     li.onclick = () => guardCfg(() => selectDevice(d.id));
     ul.appendChild(li);
