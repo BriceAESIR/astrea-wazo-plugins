@@ -12,8 +12,8 @@
 //    queue_label, voicemail_name, ivr_name… ajoutés par confd.
 // Supposé, à vérifier en réel : le token du portail peut lire /moh,
 // /voicemails, /callpermissions, /schedules (sinon libellés techniques).
-import { S, $, esc, toast, api, listAll, connect, fullName, setReadonly, showCompat, loaded, loadFailed, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.30.2';
-import { SETTINGS, settingById, same, LANG, subLabel, authApi } from './settings.js?v=0.30.2';
+import { S, $, esc, toast, api, listAll, connect, fullName, setReadonly, showCompat, loaded, loadFailed, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.30.3';
+import { SETTINGS, settingById, same, LANG, subLabel, authApi } from './settings.js?v=0.30.3';
 
 const A = { auth: new Map(), authErr: '', users: [], byId: new Map(), moh: new Map(), groups: new Map(), vms: new Map(), perms: new Map(), scheds: new Map(), queues: new Map(), sbs: new Map(), contexts: [], callerOpts: [], callerOptsErr: '', lr: null, picked: new Set(), sort: { col: 'name', dir: 1 }, sel: null, scope: null, cols: null };
 
@@ -312,7 +312,7 @@ function renderDetail() {
       if (!u._auth) return row('Compte', 'aucun (pas d\'accès aux applications)');
     }
     return (g === 'Utilisateur' ? row('Numéro interne', exten(u)) : '')
-      + SETTINGS.filter((s) => s.grp === g && (!s.showIf || s.showIf(u))).map((s) => row(s.label, s.text(s.read(u), c), s.id)).join('')
+      + SETTINGS.filter((s) => s.grp === g && (!s.showIf || s.showIf(u))).map((s) => row(s.label, s.text(s.read(u), c), !s.available || s.available(c) ? s.id : null)).join('')
       + (g === 'Compte (applications)' && u.subscription_type === 0 && u._auth.enabled !== false ? row('Note', 'connexion refusée par la licence Voix, même accès autorisé') : '')
       + (g === 'Boîte vocale' && vm ? row('E-mail (réglage de la boîte)', vm.email) : '');
   };
@@ -455,7 +455,7 @@ function openMass() {
     if (s && $('m-form')) W.vals[s.id] = Object.fromEntries([...$('m-form').querySelectorAll('input[id], select[id]')].map((e) => [e.id, e.value]));
   };
   const preview = (s) => { try { $('m-prev').innerHTML = planHtml(s, plan(s, s.parse(ctx()).target, users)); } catch (e) { $('m-prev').innerHTML = `<p class="error small">${esc(e.message)}</p>`; } };
-  const back = '<div class="btnrow"><button type="button" id="m-back">← Précédent</button></div>';
+  const back = '<div class="btnrow"><button type="button" id="m-back">← Précédent</button><button type="button" id="m-skip">Passer ce réglage</button></div>';
   const render = () => {
     const n = W.ids.length;
     const head = (t) => `<h3>${esc(t)}</h3><p class="muted small">${users.length} utilisateur(s) sélectionné(s)${W.step ? ` · étape ${W.step + 1} sur ${n + 2}` : ''}</p>`;
@@ -463,7 +463,7 @@ function openMass() {
     if (W.step === 0) {
       const MASS = SETTINGS.filter((s) => !s.single); // champs propres à chacun : fiche seulement
       const grps = [...new Set(MASS.map((s) => s.grp))];
-      $('modal-body').innerHTML = `${head('Réglages à modifier')}<div class="wizsets">${grps.map((g) => `<div class="wgrp"><div class="grp" data-grp="${esc(g)}" title="Cocher / décocher tout le groupe">${esc(g)}</div>${MASS.filter((s) => s.grp === g).map((s) => `<label class="inline"><input type="checkbox" data-set="${s.id}" data-g="${esc(s.grp)}"${W.ids.includes(s.id) ? ' checked' : ''}> ${esc(s.label)}</label>`).join('')}</div>`).join('')}</div>`;
+      $('modal-body').innerHTML = `${head('Réglages à modifier')}<div class="wizsets">${grps.map((g) => `<div class="wgrp"><div class="grp" data-grp="${esc(g)}" title="Cocher / décocher tout le groupe">${esc(g)}</div>${MASS.filter((s) => s.grp === g).map((s) => (s.available && !s.available(ctx()) ? `<label class="inline off" title="Rien à proposer dans ce tenant"><input type="checkbox" disabled> ${esc(s.label)} <span class="muted small">(aucun dans ce tenant)</span></label>` : `<label class="inline"><input type="checkbox" data-set="${s.id}" data-g="${esc(s.grp)}"${W.ids.includes(s.id) ? ' checked' : ''}> ${esc(s.label)}</label>`)).join('')}</div>`).join('')}</div>`;
     } else if (W.step <= n) {
       const s = list()[W.step - 1];
       $('modal-body').innerHTML = `${head(s.label)}<div id="m-form">${s.form(ctx())}</div><div id="m-prev" class="mprev"></div>${back}`;
@@ -481,6 +481,16 @@ function openMass() {
     $('modal-body').querySelectorAll('.wizsets .grp[data-grp]').forEach((g) => (g.onclick = () => toggleGroup($('modal-body'), g.dataset.grp)));
     $('modal-ok').textContent = ok;
     if ($('m-back')) $('m-back').onclick = () => { saveVals(); W.step--; render(); };
+    // Passer : retire le réglage de l'opération (étape impossible ou changement d'avis).
+    if ($('m-skip') && W.step > W.ids.length) $('m-skip').hidden = true; // récapitulatif
+    if ($('m-skip')) $('m-skip').onclick = () => {
+      const s = list()[W.step - 1];
+      if (!s) return;
+      W.ids = W.ids.filter((id) => id !== s.id);
+      delete W.specs[s.id];
+      if (!W.ids.length) { W.step = 0; toast('Plus aucun réglage : choisissez-en au moins un.'); }
+      render();
+    };
   };
   confirmModal('', async () => {
     if (W.step === 0) {

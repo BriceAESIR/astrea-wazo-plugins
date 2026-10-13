@@ -36,6 +36,7 @@
 .wizsets { columns: 2 220px; column-gap: 24px; }
 .wizsets .grp { break-after: avoid; margin: 10px 0 2px; font-size: .6875rem; color: var(--muted); text-transform: uppercase; letter-spacing: .08333em; }
 .wizsets label.inline { display: flex; margin: 4px 0; }
+.wizsets label.inline.off { opacity: .55; cursor: default; }
 .wizsets .wgrp { break-inside: avoid; padding-bottom: 4px; } /* un groupe n'est jamais coupé entre deux colonnes */
 .cols .grp[data-grp], .wizsets .grp[data-grp] { cursor: pointer; user-select: none; }
 .cols .grp[data-grp]:hover, .wizsets .grp[data-grp]:hover { color: var(--accent); }

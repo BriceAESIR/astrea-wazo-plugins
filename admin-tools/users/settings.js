@@ -11,12 +11,13 @@
 //  single             true = fiche seulement (champ propre à chaque utilisateur)
 //  showIf(u)          fiche : réglage affiché seulement si vrai pour cet utilisateur
 //  auth               true = compte de connexion wazo-auth (u._auth, relu avant écriture)
+//  available(ctx)     faux = rien à proposer dans ce tenant (assistant : grisé ; fiche : pas de ✎)
 //  heavy              true = l'écriture recharge Asterisk (écritures espacées, ou
 //                     regroupées en coupant le live reload) ; reload = type de
 //                     rechargement à redéclencher à la fin ('user')
 // Routes et sémantique vérifiées dans le code de wazo-confd (13/10/2026),
 // voir docs/USER-MANAGER.md. Écritures non encore testées en réel.
-import { S, api, esc, fullName } from '../common/core.js?v=0.30.2';
+import { S, api, esc, fullName } from '../common/core.js?v=0.30.3';
 
 // Comparaison indépendante de l'ordre des clés (objets relus vs construits).
 const canon = (v) => (Array.isArray(v) ? v.map(canon) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, canon(v[k])])) : v ?? null);
@@ -403,7 +404,7 @@ const ALL_SETTINGS = [
     // PUT /users/{uuid}/groups remplace TOUTE la liste : on part de la liste
     // relue juste avant l'écriture. Un utilisateur sans ligne ne peut pas
     // être membre d'un groupe (refus de confd).
-    id: 'groups', label: 'Groupes d\'appel', grp: 'Groupes et droits', heavy: true, reload: 'user',
+    id: 'groups', label: 'Groupes d\'appel', grp: 'Groupes et droits', heavy: true, reload: 'user', available: (c) => c.groups.size > 0,
     form: (c) => addRemove('Groupe', [...c.groups.values()].map((g) => [g.uuid, g.label || g.name]).sort((a, b) => a[1].localeCompare(b[1], 'fr'))),
     parse: (c) => {
       const g = $v('m-v'), add = $v('m-mode') === 'add';
@@ -418,7 +419,7 @@ const ALL_SETTINGS = [
   },
   {
     // Association idempotente, une route par droit (pas de remplacement).
-    id: 'call_permissions', label: 'Droits d\'appel', grp: 'Groupes et droits',
+    id: 'call_permissions', label: 'Droits d\'appel', grp: 'Groupes et droits', available: (c) => c.perms.size > 0,
     form: (c) => addRemove('Droit d\'appel', [...c.perms.values()].map((p) => [p.id, p.name]).sort((a, b) => a[1].localeCompare(b[1], 'fr'))),
     parse: (c) => {
       const id = Number($v('m-v')), add = $v('m-mode') === 'add';
