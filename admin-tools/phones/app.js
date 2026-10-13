@@ -12,8 +12,8 @@
 //  - confd régénère la config provd, mais ne synchronise pas l'appareil.
 // Supposé, à vérifier en réel : GET /lines renvoie device_id et position ;
 // un PUT /lines/{id} avec l'objet relu par GET est accepté.
-import { S, $, esc, toast, api, listAll, confirmModal, connect, fullName, canWrite, setReadonly, showCompat, loaded, loadFailed, provd, provdDevice, updateProvdOptions, downloadJson } from '../common/core.js?v=0.20.3';
-import { CATALOG, randomPassword, checkField } from './catalog.js?v=0.20.3';
+import { S, $, esc, toast, api, listAll, confirmModal, connect, fullName, canWrite, setReadonly, showCompat, loaded, loadFailed, provd, provdDevice, updateProvdOptions, downloadJson } from '../common/core.js?v=0.20.4';
+import { CATALOG, randomPassword, checkField } from './catalog.js?v=0.20.4';
 
 // Comptes SIP par modèle (_NB_SIP_ACCOUNTS / plugin-info des plugins provd).
 const DECT_MAX = {
@@ -73,7 +73,7 @@ function selfCheck(devices, lines) {
 // Modèle
 // ---------------------------------------------------------------------------
 const bases = () => D.devices.filter(isDect).sort((a, b) => baseName(a).localeCompare(baseName(b), 'fr'));
-const baseName = (d) => d.description || d.mac || `Appareil ${d.id}`;
+const baseName = (d) => d.mac || d.description || `Appareil ${d.id}`; // MAC (description au survol)
 // État affiché = état Wazo + déplacements en attente.
 const eff = (l) => D.plan.get(l.id) || { dev: l.device_id, pos: l.position };
 const posOf = (l) => eff(l).pos;
@@ -136,13 +136,14 @@ function renderList() {
   const ul = $('baselist');
   ul.innerHTML = '';
   for (const d of bs) {
-    const hay = `${baseName(d)} ${d.model} ${d.mac || ''} ${d.ip || ''}`.toLowerCase();
+    const hay = `${baseName(d)} ${d.description || ''} ${d.model} ${d.mac || ''} ${d.ip || ''}`.toLowerCase();
     if (q && !hay.includes(q)) continue;
     const n = linesOf(d.id).length, max = maxOf(d);
     const al = alertsOf(d);
     const li = document.createElement('li');
     li.className = D.sel === d.id ? 'sel' : '';
     li.dataset.dev = d.id; // cible de dépôt (déplacer un compte vers cette base)
+    if (d.description) li.title = d.description;
     li.innerHTML = `<span>${esc(baseName(d))}${al.length ? `<span class="dot${al.some((a) => a.level === 'bad') ? ' bad' : ''}" title="${esc(al.map((a) => a.text).join('\n'))}"></span>` : ''}</span><span class="sub">${esc(d.model)} · <span class="occ${n >= max ? ' full' : ''}">${n}/${max}</span></span>`;
     li.onclick = () => { D.sel = d.id; render(); };
     ul.appendChild(li);
@@ -442,9 +443,9 @@ async function deviceTemplate(d) {
 }
 const NOT_RESET = new Set(['vlan', 'adminpw']);
 const kindOf = (d) => (!d ? null : isDect(d) ? 'dect' : /yealink/i.test(`${d.vendor} ${d.plugin}`) && d.model ? 'phone' : null);
-// Postes : nommés par la MAC (la description est souvent un texte libre) ;
-// bases DECT : par leur description (« DM1-B Bernerie »), sinon la MAC.
-const devName = (d) => (kindOf(d) === 'dect' ? d.description || d.mac : d.mac || d.description) || `Appareil ${d.id}`;
+// Appareils nommés par leur MAC (la description est un texte libre, souvent
+// long) ; la description reste au survol et dans la recherche.
+const devName = (d) => d.mac || d.description || `Appareil ${d.id}`;
 const devUsers = (d) => [...new Set(D.lines.filter((l) => l.device_id === d.id).flatMap((l) => lineUsers(l).map(fullName)))];
 const cfgDevices = () => D.devices.filter(kindOf).sort((a, b) => devName(a).localeCompare(devName(b), 'fr'));
 const optsFor = (d) => CATALOG.filter((o) => o.kinds.includes(kindOf(d)) && (!o.models || o.models.test(String(d.model || '').toUpperCase())));
