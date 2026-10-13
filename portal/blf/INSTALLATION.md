@@ -26,8 +26,8 @@ le réglage, mais le téléphone garde une seule touche ligne.
    ```
 3. Valider, puis activer le plugin (pour tous les administrateurs ou seulement
    certains).
-4. Ouvrir une stack client : le menu **ASTREA - BLF Manager** apparaît sous
-   **Gestion des utilisateurs**.
+4. Ouvrir une stack client : un menu **Astrea Admin Tools** apparaît dans la
+   colonne de gauche, avec le sous-menu **BLF Manager**.
 
 ### Vérifier
 - La liste des utilisateurs à poste de bureau s'affiche à gauche.
