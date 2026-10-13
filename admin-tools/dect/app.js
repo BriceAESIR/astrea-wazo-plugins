@@ -12,7 +12,7 @@
 //  - confd régénère la config provd, mais ne synchronise pas l'appareil.
 // Supposé, à vérifier en réel : GET /lines renvoie device_id et position ;
 // un PUT /lines/{id} avec l'objet relu par GET est accepté.
-import { S, $, esc, toast, api, listAll, confirmModal, connect, fullName, canWrite, setReadonly, showCompat, loaded, loadFailed } from '../common/core.js?v=0.18.1';
+import { S, $, esc, toast, api, listAll, confirmModal, connect, fullName, canWrite, setReadonly, showCompat, loaded, loadFailed } from '../common/core.js?v=0.19.0';
 
 // Comptes SIP par modèle (_NB_SIP_ACCOUNTS / plugin-info des plugins provd).
 const DECT_MAX = {
@@ -26,7 +26,8 @@ const DECT_KEYS = new Map(Object.keys(DECT_MAX).map((k) => [norm(k), k]));
 const dectModel = (d) => (d ? DECT_KEYS.get(norm(d.model)) || null : null);
 const maxOf = (d) => DECT_MAX[dectModel(d)] || 0;
 const isDect = (d) => !!dectModel(d);
-const D = { devices: [], lines: [], users: [], byLineUsers: new Map(), sel: null, scope: null };
+// plan : déplacements en attente (glisser-déposer), id de ligne → { dev, pos }.
+const D = { devices: [], lines: [], users: [], byLineUsers: new Map(), sel: null, scope: null, plan: new Map() };
 
 // ---------------------------------------------------------------------------
 // Chargement
@@ -35,7 +36,7 @@ async function boot() {
   $('conn').textContent = 'Chargement…';
   document.body.classList.remove('idle');
   const scope = `${S.base}|${S.tenant}`;
-  if (D.scope !== scope) D.sel = null;
+  if (D.scope !== scope) { D.sel = null; D.plan.clear(); }
   D.scope = scope;
   try {
     await reload();
@@ -69,15 +70,18 @@ function selfCheck(devices, lines) {
 // Modèle
 // ---------------------------------------------------------------------------
 const bases = () => D.devices.filter(isDect).sort((a, b) => baseName(a).localeCompare(baseName(b), 'fr'));
-const baseName = (d) => d.description || d.ip || d.mac || `Appareil ${d.id}`;
-const linesOf = (devId) => D.lines.filter((l) => l.device_id === devId).sort((a, b) => (a.position ?? 1e9) - (b.position ?? 1e9));
+const baseName = (d) => d.description || d.mac || `Appareil ${d.id}`;
+// État affiché = état Wazo + déplacements en attente.
+const eff = (l) => D.plan.get(l.id) || { dev: l.device_id, pos: l.position };
+const posOf = (l) => eff(l).pos;
+const linesOf = (devId) => D.lines.filter((l) => eff(l).dev === devId).sort((a, b) => (posOf(a) ?? 1e9) - (posOf(b) ?? 1e9));
 const lineUsers = (l) => D.byLineUsers.get(l.id) || l.users || [];
 const lineNumber = (l) => (l.extensions || [])[0]?.exten || '';
 const lineLabel = (l) => `${(l.protocol || (l.endpoint_sip ? 'sip' : '')).toUpperCase()} ${l.name || l.endpoint_sip?.name || l.endpoint_sip?.username || `#${l.id}`}`.trim();
 const devById = (id) => D.devices.find((d) => d.id === id);
 const devLabel = (d) => (d ? `${[d.vendor, d.model].filter(Boolean).join(' ') || 'appareil'} ${d.description || d.mac || d.ip || ''}`.trim() : '');
 function usedPositions(devId, exceptLineId) {
-  return new Set(linesOf(devId).filter((l) => l.id !== exceptLineId && l.position).map((l) => l.position));
+  return new Set(linesOf(devId).filter((l) => l.id !== exceptLineId && posOf(l)).map(posOf));
 }
 function freePositions(dev, exceptLineId) {
   const used = usedPositions(dev.id, exceptLineId);
@@ -96,12 +100,12 @@ function alertsOf(dev) {
   const ls = linesOf(dev.id);
   const out = [];
   const count = new Map();
-  for (const l of ls) if (l.position) count.set(l.position, (count.get(l.position) || 0) + 1);
+  for (const l of ls) if (posOf(l)) count.set(posOf(l), (count.get(posOf(l)) || 0) + 1);
   const dups = [...count].filter(([, n]) => n > 1).map(([p]) => p);
   if (dups.length) out.push({ level: 'bad', text: `Plusieurs lignes au compte ${dups.join(', ')} : une seule est réellement provisionnée.` });
-  const over = ls.filter((l) => l.position > max).map((l) => l.position);
+  const over = ls.filter((l) => posOf(l) > max).map(posOf);
   if (over.length) out.push({ level: 'bad', text: `Compte(s) ${over.join(', ')} au-delà du maximum du ${dev.model} (${max}) : non provisionnés.` });
-  if (ls.some((l) => !l.position)) out.push({ level: 'warn', text: 'Ligne sans position.' });
+  if (ls.some((l) => !posOf(l))) out.push({ level: 'warn', text: 'Ligne sans position.' });
   const orphan = ls.filter((l) => !lineUsers(l).length);
   if (orphan.length) out.push({ level: 'warn', text: `${orphan.length} ligne(s) sans utilisateur.` });
   if (ls.length >= max) out.push({ level: 'warn', text: `Base pleine (${ls.length}/${max}).` });
@@ -131,6 +135,7 @@ function renderList() {
     const al = alertsOf(d);
     const li = document.createElement('li');
     li.className = D.sel === d.id ? 'sel' : '';
+    li.dataset.dev = d.id; // cible de dépôt (déplacer un compte vers cette base)
     li.innerHTML = `<span>${esc(baseName(d))}${al.length ? `<span class="dot${al.some((a) => a.level === 'bad') ? ' bad' : ''}" title="${esc(al.map((a) => a.text).join('\n'))}"></span>` : ''}</span><span class="sub">${esc(d.model)} · <span class="occ${n >= max ? ' full' : ''}">${n}/${max}</span></span>`;
     li.onclick = () => { D.sel = d.id; render(); };
     ul.appendChild(li);
@@ -159,21 +164,97 @@ function renderBase() {
   const max = maxOf(d);
   const ls = linesOf(d.id);
   $('b-name').textContent = `${[d.vendor, d.model].filter(Boolean).join(' ')} · ${baseName(d)}`;
-  $('b-tech').textContent = [d.mac && `MAC ${d.mac}`, d.ip && `IP ${d.ip}`, d.version && `firmware ${d.version}`, d.plugin && `plugin ${d.plugin}`, d.status && `état ${d.status}`].filter(Boolean).join(' · ');
+  $('b-tech').textContent = [d.mac && `MAC ${d.mac}`, d.ip && `IP publique de la base ${d.ip}`, d.version && `firmware ${d.version}`, d.plugin && `plugin ${d.plugin}`, d.status && `état ${d.status}`].filter(Boolean).join(' · ');
   $('b-warn').innerHTML = alertsOf(d).map((a) => `<div class="warn">${a.level === 'bad' ? `<span class="error">${esc(a.text)}</span>` : esc(a.text)}</div>`).join('');
   $('b-title').textContent = `Comptes · ${ls.length}/${max}`;
-  const count = new Map();
-  for (const l of ls) count.set(l.position, (count.get(l.position) || 0) + 1);
-  $('b-rows').innerHTML = ls.map((l) => {
+  // Une ligne par compte (1..max) : les comptes libres sont des cibles de
+  // glisser-déposer. Grandes bases (W80/W90) : jusqu'au dernier compte
+  // utilisé + 10, puis une ligne « comptes libres suivants ».
+  const lastUsed = Math.max(0, ...ls.map(posOf).filter((p) => p && p <= max));
+  const shown = max <= 40 ? max : Math.min(max, lastUsed + 10);
+  const rowOf = (l, dup) => {
     const us = lineUsers(l);
-    return `<tr${count.get(l.position) > 1 || l.position > max ? ' class="dup"' : ''}><td>${l.position ?? '—'}</td><td>${esc(us.map(fullName).join(', ')) || '<span class="muted">sans utilisateur</span>'}</td><td>${esc(lineNumber(l))}</td><td class="muted small">${esc(lineLabel(l))}</td>
-      <td><button data-act="move" data-line="${l.id}">Déplacer</button> <button data-act="remove" data-line="${l.id}" class="danger">Retirer</button></td></tr>`;
-  }).join('') || '<tr><td colspan="5" class="muted">Aucune ligne sur cette base.</td></tr>';
+    const moved = D.plan.has(l.id);
+    const was = moved ? `<div class="muted small">avant : ${l.device_id === d.id ? '' : `${esc(baseName(devById(l.device_id)) || 'aucune base')}, `}compte ${l.position ?? '?'}</div>` : '';
+    return `<tr draggable="true" data-line="${l.id}" data-pos="${posOf(l) ?? ''}" class="${dup ? 'dup' : ''}${moved ? ' changed' : ''}"><td>${posOf(l) ?? '—'}</td><td>${esc(us.map(fullName).join(', ')) || '<span class="muted">sans utilisateur</span>'}${was}</td><td>${esc(lineNumber(l))}</td><td class="muted small">${esc(lineLabel(l))}</td>
+      <td><button data-act="remove" data-line="${l.id}" class="danger">Retirer</button></td></tr>`;
+  };
+  const rows = [];
+  for (let p = 1; p <= shown; p++) {
+    const here = ls.filter((l) => posOf(l) === p);
+    if (!here.length) rows.push(`<tr class="free" data-pos="${p}"><td>${p}</td><td colspan="4" class="muted">libre</td></tr>`);
+    else here.forEach((l) => rows.push(rowOf(l, here.length > 1)));
+  }
+  if (shown < max) rows.push(`<tr class="free" data-pos="${shown + 1}"><td>${shown + 1}–${max}</td><td colspan="4" class="muted">comptes libres suivants</td></tr>`);
+  for (const l of ls.filter((x) => !posOf(x) || posOf(x) > max)) rows.push(rowOf(l, true)); // sans position / hors maximum
+  $('b-rows').innerHTML = rows.join('');
   const free = freePositions(d);
-  $('b-free').textContent = free.length ? `Comptes libres : ${ranges(free)}` : 'Aucun compte libre.';
+  $('b-free').textContent = free.length ? `Comptes libres : ${ranges(free)}. Glissez un compte sur un autre pour échanger, sur un compte libre ou sur une base de la liste pour le déplacer.` : 'Aucun compte libre.';
   $('b-assign').disabled = !free.length;
+  renderPlanBar();
 }
+// Barre « modifications en attente » (tous les déplacements, toutes bases).
+function renderPlanBar() {
+  const n = pendingChanges().length;
+  $('b-plan').hidden = !n;
+  $('b-save').textContent = `Enregistrer (${n})`;
+  $('b-pending').textContent = `${n} déplacement(s) en attente, non écrit(s) dans Wazo.`;
+}
+const pendingChanges = () => [...D.plan].map(([id, to]) => ({ line: D.lines.find((l) => l.id === id), to }))
+  .filter((c) => c.line && (c.to.dev !== c.line.device_id || c.to.pos !== c.line.position));
 
+// ---------------------------------------------------------------------------
+// Glisser-déposer : sur un compte libre = déplacer ; sur un compte occupé =
+// échanger ; sur une base de la liste = premier compte libre de cette base.
+// ---------------------------------------------------------------------------
+let dragLine = null;
+function planMove(line, dev, pos) {
+  const orig = { dev: line.device_id, pos: line.position };
+  if (orig.dev === dev && orig.pos === pos) D.plan.delete(line.id); else D.plan.set(line.id, { dev, pos });
+}
+function dropOnPos(pos) {
+  const line = D.lines.find((l) => l.id === dragLine);
+  const d = devById(D.sel);
+  if (!line || !d || !pos) return;
+  const from = eff(line);
+  if (from.dev === d.id && from.pos === pos) return;
+  if (pos > maxOf(d)) { toast(`Le ${d.model} n'a que ${maxOf(d)} comptes.`); return; }
+  const other = linesOf(d.id).find((l) => l.id !== line.id && posOf(l) === pos);
+  if (other) {
+    if (from.dev !== d.id) { toast('Échange possible seulement sur la même base : déposez sur un compte libre.'); return; }
+    planMove(other, d.id, from.pos);
+  }
+  planMove(line, d.id, pos);
+  render();
+}
+function dropOnBase(devId) {
+  const line = D.lines.find((l) => l.id === dragLine);
+  const b = devById(devId);
+  if (!line || !b || eff(line).dev === devId) return;
+  const free = freePositions(b);
+  if (!free.length) { toast(`${baseName(b)} est pleine.`); return; }
+  planMove(line, devId, free[0]);
+  toast(`${lineUsers(line).map(fullName).join(', ') || 'Ligne'} → ${baseName(b)}, compte ${free[0]} (à enregistrer)`);
+  render();
+}
+function wireDragDrop() {
+  const rows = $('b-rows'), list = $('baselist');
+  const clear = () => document.querySelectorAll('.dragging, .dropover').forEach((x) => x.classList.remove('dragging', 'dropover'));
+  rows.addEventListener('dragstart', (e) => {
+    const tr = e.target.closest('tr[data-line]');
+    if (!tr) return;
+    dragLine = Number(tr.dataset.line);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', String(dragLine));
+    requestAnimationFrame(() => tr.classList.add('dragging'));
+  });
+  const over = (e, el) => { if (dragLine == null || !el) return; e.preventDefault(); e.dataTransfer.dropEffect = 'move'; document.querySelectorAll('.dropover').forEach((x) => x !== el && x.classList.remove('dropover')); el.classList.add('dropover'); };
+  rows.addEventListener('dragover', (e) => over(e, e.target.closest('tr[data-pos]')));
+  list.addEventListener('dragover', (e) => over(e, e.target.closest('li[data-dev]')));
+  rows.addEventListener('drop', (e) => { const tr = e.target.closest('tr[data-pos]'); if (dragLine == null || !tr) return; e.preventDefault(); dropOnPos(Number(tr.dataset.pos)); dragLine = null; clear(); });
+  list.addEventListener('drop', (e) => { const li = e.target.closest('li[data-dev]'); if (dragLine == null || !li) return; e.preventDefault(); dropOnBase(li.dataset.dev); dragLine = null; clear(); });
+  document.addEventListener('dragend', () => { dragLine = null; clear(); });
+}
 // ---------------------------------------------------------------------------
 // Écritures
 // ---------------------------------------------------------------------------
@@ -218,7 +299,7 @@ async function run(label, fn) {
 
 // Affecter : choisir un utilisateur et l'une de ses lignes, puis un compte libre.
 function openAssign() {
-  if (!canWrite()) return;
+  if (!canWrite() || hasPending()) return;
   const d = devById(D.sel);
   const free = freePositions(d);
   let pick = null;
@@ -264,33 +345,8 @@ function openAssign() {
   draw();
   $('m-q').focus();
 }
-// Déplacer : vers une autre base (ou un autre compte de la même base).
-function openMove(lineId) {
-  if (!canWrite()) return;
-  const line = D.lines.find((l) => l.id === lineId);
-  const d = devById(line.device_id);
-  const targets = bases();
-  confirmModal(`<h3>Déplacer ${esc(lineUsers(line).map(fullName).join(', ') || lineLabel(line))}</h3>
-    <p class="muted small">Actuellement : ${esc(baseName(d))}, compte ${line.position ?? '?'}.</p>
-    <label>Base <select id="m-dev">${targets.map((b) => `<option value="${b.id}"${b.id === d.id ? ' selected' : ''}>${esc(baseName(b))} · ${esc(b.model)} (${linesOf(b.id).length}/${maxOf(b)})</option>`).join('')}</select></label>
-    <label>Compte (position) <select id="m-pos"></select></label>${syncBox()}`, async () => {
-    const dev = $('m-dev').value, pos = Number($('m-pos').value);
-    if (!pos) { toast('Aucun compte libre sur cette base.'); return false; }
-    const sync = $('m-sync').checked;
-    await run(`Ligne déplacée au compte ${pos}`, async () => {
-      const old = await placeLine(lineId, dev, pos);
-      if (sync) await syncDevices([dev, old]);
-    });
-  }, 'Déplacer');
-  const fill = () => {
-    const b = devById($('m-dev').value);
-    $('m-pos').innerHTML = freePositions(b, lineId).filter((p) => !(b.id === d.id && p === line.position)).map((p) => `<option value="${p}">${p}</option>`).join('');
-  };
-  $('m-dev').onchange = fill;
-  fill();
-}
 function openRemove(lineId) {
-  if (!canWrite()) return;
+  if (!canWrite() || hasPending()) return;
   const line = D.lines.find((l) => l.id === lineId);
   const d = devById(line.device_id);
   confirmModal(`<h3>Retirer de la base</h3><p>${esc(lineUsers(line).map(fullName).join(', ') || 'Ligne sans utilisateur')} ${esc(lineNumber(line))} (compte ${line.position ?? '?'}) ne sera plus provisionnée sur ${esc(baseName(d))}. La ligne et l'utilisateur restent dans Wazo.</p>${syncBox()}`, async () => {
@@ -302,6 +358,56 @@ function openRemove(lineId) {
   }, 'Retirer');
 }
 
+// Déplacements en attente : une action immédiate (affecter, retirer) attend
+// qu'ils soient enregistrés ou annulés.
+function hasPending() {
+  if (!pendingChanges().length) return false;
+  toast('Des déplacements sont en attente : enregistrez-les ou annulez-les d\'abord.', 5000);
+  return true;
+}
+const who = (l) => `${lineUsers(l).map(fullName).join(', ') || 'Ligne sans utilisateur'} ${lineNumber(l)}`.trim();
+// Enregistre tous les déplacements : contrôle final (pas de doublon, maximum
+// du modèle), relecture des lignes (rien n'a bougé entre-temps), puis :
+// dissociation des lignes qui changent de base, positions, réassociation.
+function savePlan() {
+  if (!canWrite()) return;
+  const changes = pendingChanges();
+  if (!changes.length) { D.plan.clear(); render(); return; }
+  const devs = [...new Set(changes.flatMap((c) => [c.line.device_id, c.to.dev]).filter(Boolean))];
+  for (const id of devs) {
+    const b = devById(id);
+    const seen = new Set();
+    for (const l of linesOf(id)) {
+      const p = posOf(l);
+      if (p > maxOf(b)) { toast(`${baseName(b)} : compte ${p} au-delà du maximum (${maxOf(b)}).`, 6000); return; }
+      if (p && seen.has(p) && changes.some((c) => c.to.dev === id && c.to.pos === p)) { toast(`${baseName(b)} : deux lignes au compte ${p}.`, 6000); return; }
+      seen.add(p);
+    }
+  }
+  const place = (dev, pos) => (dev ? `${esc(baseName(devById(dev)) || '?')} · compte ${pos ?? '?'}` : 'aucune base');
+  confirmModal(`<h3>Enregistrer ${changes.length} déplacement(s)</h3>
+    <table class="diff"><tr><th>Ligne</th><th>Avant</th><th>Après</th></tr>${changes.map((c) => `<tr><td>${esc(who(c.line))}</td><td>${place(c.line.device_id, c.line.position)}</td><td><strong>${place(c.to.dev, c.to.pos)}</strong></td></tr>`).join('')}</table>
+    <p class="muted small">Chaque base concernée reçoit sa nouvelle configuration ; le combiné qui utilisait un compte doit être réaffecté sur la page web de la base si le compte change.</p>${syncBox()}`, async () => {
+    const sync = $('m-sync').checked;
+    D.plan.clear(); // l'état réel est relu après l'écriture, réussie ou non
+    await run(`${changes.length} déplacement(s) enregistré(s)`, async () => {
+      const fresh = await listAll('/lines');
+      const moving = new Set(changes.map((c) => c.line.id));
+      for (const c of changes) {
+        const f = fresh.find((l) => l.id === c.line.id);
+        if (!f || f.device_id !== c.line.device_id || f.position !== c.line.position) throw new Error(`${who(c.line)} a été modifiée entre-temps : rien n'a été écrit, refaites le déplacement.`);
+        if (fresh.some((l) => !moving.has(l.id) && l.device_id === c.to.dev && l.position === c.to.pos)) throw new Error(`Compte ${c.to.pos} de ${baseName(devById(c.to.dev))} pris entre-temps : rien n'a été écrit.`);
+      }
+      const cross = changes.filter((c) => c.to.dev !== c.line.device_id);
+      try {
+        for (const c of cross) if (c.line.device_id) await api('DELETE', `/lines/${c.line.id}/devices/${c.line.device_id}`);
+        for (const c of changes) await setPosition(c.line.id, c.to.pos);
+        for (const c of cross) await api('PUT', `/lines/${c.line.id}/devices/${c.to.dev}`);
+      } catch (e) { e.message += ' — écriture interrompue : l\'état réel est rechargé, vérifiez les bases concernées.'; throw e; }
+      if (sync) await syncDevices(devs);
+    });
+  }, 'Enregistrer');
+}
 // ---------------------------------------------------------------------------
 // Démarrage
 // ---------------------------------------------------------------------------
@@ -312,7 +418,10 @@ $('b-sync').onclick = () => { if (canWrite()) syncDevices([D.sel]).then(() => to
 $('b-rows').onclick = (e) => {
   const b = e.target.closest('button[data-act]');
   if (!b) return;
-  if (b.dataset.act === 'move') openMove(Number(b.dataset.line));
   if (b.dataset.act === 'remove') openRemove(Number(b.dataset.line));
 };
+$('b-save').onclick = savePlan;
+$('b-revert').onclick = () => { D.plan.clear(); render(); };
+window.addEventListener('beforeunload', (e) => { if (pendingChanges().length) { e.preventDefault(); e.returnValue = ''; } });
+wireDragDrop();
 connect(boot);

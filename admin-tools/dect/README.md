@@ -20,7 +20,7 @@ de la base (base maître en multicellule).
   - *Affecter un utilisateur* : choisir une de ses lignes et un compte libre ;
     si la ligne est sur un autre appareil, elle en est retirée (Wazo associe
     une ligne à un seul appareil) ;
-  - *Déplacer* : vers une autre base ou un autre compte ;
+  - **Glisser-déposer** : un compte déposé sur un compte libre y est déplacé, sur un compte occupé de la même base les deux sont échangés, sur une base de la liste il prend son premier compte libre. Les déplacements s'accumulent (barre orange), récapitulatif avant/après, puis *Enregistrer* (contrôle des doublons et du maximum, relecture des lignes juste avant d'écrire) ;
   - *Retirer* : la ligne n'est plus provisionnée sur la base (elle reste dans
     Wazo) ;
   - *Synchroniser la base*.
@@ -45,8 +45,9 @@ Plugin Yealink : **v87** (le v86 n'a aucun modèle DECT).
 - Position : `PUT /lines/{id}` avec l'objet complet relu (confd ne vérifie pas
   l'unicité de la position à ce moment-là : le module la vérifie, sur des
   données relues juste avant l'écriture).
-- Déplacer = dissocier, changer la position, associer ; en cas d'échec, la
-  ligne est remise sur son appareil d'origine.
+- Déplacer (glisser-déposer) : dissociation des lignes qui changent de base,
+  puis positions (`PUT /lines/{id}`), puis réassociation. Échanges sur une même
+  base : positions seulement. Testé contre `tests/mock-dect.ps1`, pas encore en réel.
 - Synchroniser : `GET /devices/{id}/synchronize` (confd ne le fait pas seul).
 
 ## À vérifier en réel (première installation)

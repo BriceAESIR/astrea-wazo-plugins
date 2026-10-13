@@ -7,6 +7,15 @@
 #b-rows td:last-child { text-align: right; white-space: nowrap; }
 #b-rows tr.dup td { background: color-mix(in srgb, var(--danger) 8%, var(--panel)); }
 #b-rows button { padding: 2px 10px; min-width: 0; }
+/* Glisser-déposer des comptes */
+#b-rows tr[draggable="true"] { cursor: grab; }
+#b-rows tr.free td { color: var(--muted); }
+#b-rows tr.free td:last-child { text-align: left; }
+#b-rows tr.dragging { opacity: .35; }
+#b-rows tr.dropover td, #baselist li.dropover { outline: 2px dashed var(--accent); outline-offset: -2px; background: color-mix(in srgb, var(--accent) 10%, var(--panel)); }
+#b-rows tr.changed td:first-child { color: var(--warn); font-weight: 600; }
+#b-rows tr.changed td:first-child::after { content: " •"; }
+.planbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 16px; padding: 8px 12px; border-left: 4px solid var(--warn); background: color-mix(in srgb, var(--warn) 10%, var(--panel)); font-size: .875rem; }
 #found { margin: 8px 0; }
 #found .hit { padding: 6px 0; border-bottom: 1px solid var(--line); cursor: pointer; }
 #found .hit:hover { background: var(--hover); }

@@ -7,8 +7,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Mulish:wght@300..800&display=swap">
-<link rel="stylesheet" href="../common/style.css?v=0.18.1">
-<link rel="stylesheet" href="./dect.css?v=0.18.1">
+<link rel="stylesheet" href="../common/style.css?v=0.19.0">
+<link rel="stylesheet" href="./dect.css?v=0.19.0">
 <script>if (window.parent !== window) document.documentElement.classList.add('framed');</script>
 </head>
 <body>
@@ -54,6 +54,12 @@
           </div>
         </div>
         <div id="b-warn"></div>
+        <div id="b-plan" class="planbar" hidden>
+          <span id="b-pending"></span>
+          <span class="spacer"></span>
+          <button id="b-revert">Annuler les déplacements</button>
+          <button id="b-save" class="primary">Enregistrer</button>
+        </div>
         <div class="page">
           <h4 id="b-title">Comptes</h4>
           <table class="diff"><thead><tr><th>Compte</th><th>Utilisateur</th><th>Numéro</th><th>Ligne</th><th></th></tr></thead><tbody id="b-rows"></tbody></table>
@@ -68,6 +74,6 @@
     <div class="btnrow right"><button id="modal-cancel">Annuler</button><button id="modal-ok" class="primary">Confirmer</button></div></div></div>
   <div id="toast" class="toast" hidden></div>
 </div>
-<script type="module" src="./app.js?v=0.18.1"></script>
+<script type="module" src="./app.js?v=0.19.0"></script>
 </body>
 </html>
