@@ -39,4 +39,6 @@
 .days label.inline { margin: 0; gap: 4px; }
 .pwrow { display: flex; gap: 8px; align-items: center; }
 .pwrow input { font-family: ui-monospace, Consolas, monospace; }
-#devlist li .muted.small { font-size: .6875rem; }
+#devlist li .muted.small { font-size: .6875rem; }.fields.off { opacity: .6; }
+.fields.off > span.muted { align-self: center; margin-top: 8px; }
+.offval { margin: 6px 0 0; }

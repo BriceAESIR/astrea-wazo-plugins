@@ -12,8 +12,8 @@
 //  - confd régénère la config provd, mais ne synchronise pas l'appareil.
 // Supposé, à vérifier en réel : GET /lines renvoie device_id et position ;
 // un PUT /lines/{id} avec l'objet relu par GET est accepté.
-import { S, $, esc, toast, api, listAll, confirmModal, connect, fullName, canWrite, setReadonly, showCompat, loaded, loadFailed, provdDevice, updateProvdOptions, downloadJson } from '../common/core.js?v=0.20.0';
-import { CATALOG, randomPassword, checkField } from './catalog.js?v=0.20.0';
+import { S, $, esc, toast, api, listAll, confirmModal, connect, fullName, canWrite, setReadonly, showCompat, loaded, loadFailed, provdDevice, updateProvdOptions, downloadJson } from '../common/core.js?v=0.20.1';
+import { CATALOG, randomPassword, checkField } from './catalog.js?v=0.20.1';
 
 // Comptes SIP par modèle (_NB_SIP_ACCOUNTS / plugin-info des plugins provd).
 const DECT_MAX = {
@@ -433,7 +433,8 @@ const devName = (d) => d.description || d.mac || `Appareil ${d.id}`;
 const devUsers = (d) => [...new Set(D.lines.filter((l) => l.device_id === d.id).flatMap((l) => lineUsers(l).map(fullName)))];
 const cfgDevices = () => D.devices.filter(kindOf).sort((a, b) => devName(a).localeCompare(devName(b), 'fr'));
 const optsFor = (d) => CATALOG.filter((o) => o.kinds.includes(kindOf(d)) && (!o.models || o.models.test(String(d.model || '').toUpperCase())));
-const defaults = (o) => Object.fromEntries(o.fields.map((f) => [f.key, f.type === 'password' ? randomPassword() : f.def]));
+// Valeurs de départ quand on coche : défaut Yealink s'il est connu, sinon valeur proposée.
+const defaults = (o) => Object.fromEntries(o.fields.map((f) => [f.key, f.type === 'password' ? randomPassword() : f.ydef ?? f.def]));
 const stable = (x) => (x && typeof x === 'object' && !Array.isArray(x) ? `{${Object.keys(x).sort().map((k) => `${JSON.stringify(k)}:${stable(x[k])}`).join(',')}}` : JSON.stringify(x));
 function buildParams(settings) {
   const out = {};
@@ -481,9 +482,9 @@ function guardCfg(fn) {
   if (!cfgDirty()) return fn();
   confirmModal('<p>Des options ne sont pas enregistrées sur cet appareil. Les abandonner ?</p>', fn, 'Abandonner');
 }
-function fieldHtml(o, f, val) {
-  const id = `f-${o.id}-${f.key}`;
-  const attrs = `id="${id}" data-opt="${o.id}" data-key="${f.key}"`;
+function fieldHtml(o, f, val, off = false) {
+  const id = off ? '' : `f-${o.id}-${f.key}`;
+  const attrs = off ? 'disabled' : `id="${id}" data-opt="${o.id}" data-key="${f.key}"`;
   if (f.type === 'select') return `<label>${esc(f.label)} <select ${attrs}>${f.options.map(([v, l]) => `<option value="${esc(v)}"${String(val) === v ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select></label>`;
   if (f.type === 'days') return `<div class="days"><span class="muted small">${esc(f.label)}</span>${f.options.map(([v, l]) => `<label class="inline"><input type="checkbox" data-opt="${o.id}" data-key="${f.key}" data-day="${v}"${String(val).includes(v) ? ' checked' : ''}> ${esc(l)}</label>`).join('')}</div>`;
   if (f.type === 'password') return `<label>${esc(f.label)} <span class="pwrow"><input ${attrs} value="${esc(val)}" maxlength="32" autocomplete="off" spellcheck="false"><button data-gen="${o.id}" data-key="${f.key}">Générer</button></span></label>`;
@@ -508,11 +509,16 @@ function renderCfg() {
     return `<div class="page opt${on ? ' on' : ''}${changed ? ' changed' : ''}">
       <div class="opthead"><label class="inline"><input type="checkbox" data-toggle="${o.id}"${on ? ' checked' : ''}> <strong>${esc(o.label)}</strong></label>${o.reboot ? '<span class="tag">redémarre l\'appareil</span>' : ''}${s?.__reset ? '<span class="tag">retour à la valeur par défaut à l\'enregistrement</span>' : ''}</div>
       <details><summary class="muted small">Aide</summary><p class="muted small">${esc(o.help)}</p></details>
-      ${on ? `<div class="fields">${o.fields.map((f) => fieldHtml(o, f, s[f.key] ?? f.def)).join('')}</div>` : ''}
+      ${on ? `<div class="fields">${o.fields.map((f) => fieldHtml(o, f, s[f.key] ?? f.def)).join('')}</div>` : offHtml(o)}
     </div>`;
   }).join('') || '<p class="muted">Aucune option pour ce modèle.</p>';
   $('c-save').disabled = !cfgDirty();
   $('c-bulk').disabled = !Object.values(C.edit).some(isOn) && !Object.values(C.edit).some((s) => s?.__reset);
+}
+// Option décochée : ce qui s'applique quand Astrea n'écrit rien (grisé).
+function offHtml(o) {
+  if (o.offText) return `<p class="muted small offval">Décoché : ${esc(o.offText)}</p>`;
+  return `<div class="fields off">${o.fields.map((f) => (f.ydef !== undefined ? fieldHtml(o, f, f.ydef, true) : `<label>${esc(f.label)} <span class="muted small">${esc(f.ydefText || 'défaut Yealink')}</span></label>`)).join('')}<span class="muted small">Valeur par défaut Yealink (rien n'est écrit)</span></div>`;
 }
 function readField(el) {
   const o = C.edit[el.dataset.opt];
