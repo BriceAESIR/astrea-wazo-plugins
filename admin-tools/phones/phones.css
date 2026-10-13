@@ -49,3 +49,7 @@ button.linkbtn { border: 0; padding: 0 4px; min-width: 0; text-transform: none; 
 .st.on { background: var(--ok); border-color: var(--ok); }
 .st.call { background: var(--accent); border-color: var(--accent); }
 .st.off { background: var(--danger); border-color: var(--danger); }
+/* Liste des bases : pastille + MAC sur une ligne, colonne de droite compacte */
+#baselist li > span:first-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+#baselist li > .sub { flex-shrink: 0; }
+#baselist .occ { min-width: 0; }
