@@ -7,8 +7,16 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Mulish:wght@300..800&display=swap">
-<link rel="stylesheet" href="../common/style.css?v=0.29.1">
+<link rel="stylesheet" href="../common/style.css?v=0.30.0">
 <script>if (window.parent !== window) document.documentElement.classList.add('framed');</script>
+<style>
+/* Aide des types de touches (propre à BLF Manager). */
+.typerow { display: flex; align-items: flex-end; gap: 8px; }
+.typerow label { flex: 1; min-width: 0; }
+.helpbtn { flex: none; width: 32px; height: 32px; padding: 0; border-radius: 50%; font-weight: 700; margin-bottom: 8px; }
+.helpbtn[aria-expanded="true"] { background: var(--accent); color: var(--accent-ink); }
+.helpbox { margin: 0 0 12px; padding: 8px 12px; border-left: 3px solid var(--accent); background: var(--selected); line-height: 1.45; }
+</style>
 </head>
 <body>
 <div id="app">
@@ -160,18 +168,16 @@
 
     <aside id="detail" hidden>
       <h3 id="dt-title"></h3>
-      <label>Type
-        <select id="dt-type">
-          <option value="user">Collègue (BLF)</option>
-          <option value="custom">Numéro</option>
-          <option value="group">Groupe</option>
-          <option value="queue">File d'attente</option>
-          <option value="conference">Conférence</option>
-        </select>
-      </label>
+      <div class="typerow">
+        <label>Type
+          <select id="dt-type"><option value="user">Collègue (BLF)</option></select>
+        </label>
+        <button id="dt-helpbtn" class="helpbtn" title="Que fait ce type de touche ?" aria-expanded="false" aria-controls="dt-help">?</button>
+      </div>
+      <p id="dt-help" class="helpbox small" hidden></p>
       <div id="dt-valuewrap"></div>
       <label>Libellé <input id="dt-label"></label>
-      <label class="inline"><input type="checkbox" id="dt-blf"> Supervision (BLF)</label>
+      <label class="inline" id="dt-blfwrap"><input type="checkbox" id="dt-blf"> Supervision (BLF)</label>
       <div class="btnrow">
         <button id="dt-left" title="Déplacer vers la gauche">◀</button>
         <button id="dt-right" title="Déplacer vers la droite">▶</button>
@@ -189,6 +195,6 @@
     <div class="btnrow right"><button id="modal-cancel">Annuler</button><button id="modal-ok" class="primary">Confirmer</button></div></div></div>
   <div id="toast" class="toast" hidden></div>
 </div>
-<script type="module" src="./app.js?v=0.29.1"></script>
+<script type="module" src="./app.js?v=0.30.0"></script>
 </body>
 </html>

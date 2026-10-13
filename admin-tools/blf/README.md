@@ -84,6 +84,47 @@ du serveur ouvert dans le portail, avec le token que fournit le portail.
 - Resynchronisation de tous ses postes.
 - Testé contre `tests/mock-dect.ps1` (T46S + T54W), pas encore en réel.
 
+## Types de touches (0.30)
+
+Les 15 types de destination de Wazo sont proposés, avec un bouton **?** qui
+explique chacun. Source (lue le 14/10/2026) : wazo-confd
+`plugins/func_key/schema.py` (paramètres et valeurs) et
+`plugins/device/funckey.py` (ce qui est écrit sur le poste). Table `KEY_TYPES`
+dans `app.js`.
+
+| Type (menu) | confd | Paramètres | Supervision (vérifié dans confd) |
+|---|---|---|---|
+| Collègue (BLF) | `user` | utilisateur | oui |
+| Numéro | `custom` | numéro (`[A-Z0-9+*]`) | oui |
+| Groupe d'appel | `group` | groupe | **ignorée** (numérotation rapide) |
+| Membre d'un groupe | `groupmember` | groupe + bascule / entrer / sortir | oui |
+| File d'attente | `queue` | file | **ignorée** |
+| Agent | `agent` | agent + bascule / connexion / déconnexion | oui · **refusé dans les modèles partagés** |
+| Conférence | `conference` | conférence | oui |
+| Paging (annonce) | `paging` | paging | **ignorée** |
+| Parking | `parking` | parking | **ignorée** (touche « park » du poste) |
+| Place de parking | `park_position` | parking + place | oui |
+| Renvoi | `forward` | inconditionnel / occupation / non-réponse + numéro facultatif | oui |
+| Service | `service` | 11 services | seulement NPD, messagerie, enregistrement, filtrage entrant |
+| Transfert | `transfer` | aveugle / supervisé | oui |
+| Filtrage patron-secrétaire | `bsfilter` | membre secrétaire (`/callfilters`, `member_id`) | oui · **refusé dans les modèles partagés** |
+| Enregistrement en ligne | `onlinerec` | aucun | **ignorée** |
+
+- La case Supervision est grisée quand Wazo l'ignore ; elle est cochée d'office
+  pour les types à état (membre de groupe, agent, place de parking, renvoi,
+  service, filtrage).
+- Libellé automatique court (« NPD », « Agent 1001 », « Place 705 »,
+  « Renvoi 0612… ») ; un libellé saisi à la main est gardé.
+- Agent et Filtrage ne sont pas proposés dans l'éditeur de modèles partagés
+  (`exclude_destination` de confd).
+- **Supposé, à tester en réel** : état réel des voyants (renvoi, agent, membre
+  de groupe, conférence, place de parking), comportement d'un renvoi sans
+  numéro, lecture des membres via `GET /callfilters` (relu filtre par filtre
+  si la liste ne les détaille pas), droits du token sur `/agents`, `/pagings`,
+  `/parkinglots`, `/callfilters`.
+- Testé contre `tests/mock-dect.ps1` (charge utile du `PUT /funckeys` conforme
+  au schéma confd).
+
 ## Sécurité : auto-contrôle et sauvegardes
 
 - **Auto-contrôle au démarrage** : forme des réponses confd (utilisateurs avec

@@ -83,8 +83,86 @@ const DEST_PARAMS = {
   parking: ['parking_lot_id'], bsfilter: ['filter_member_id'],
   agent: ['agent_id', 'action'], onlinerec: [],
 };
-const NAMED = { group: ['/groups', 'group_id'], queue: ['/queues', 'queue_id'], conference: ['/conferences', 'conference_id'] };
-const TYPE_LABEL = { user: 'Collègue', custom: 'Numéro', group: 'Groupe', queue: 'File', conference: 'Conférence' };
+// Listes lues sur la stack pour choisir une destination (clé = S.named[clé]).
+const LISTS = {
+  group: { url: '/groups', what: 'groupes', name: (x) => x.label || x.name },
+  queue: { url: '/queues', what: 'files', name: (x) => x.label || x.name },
+  conference: { url: '/conferences', what: 'conférences', name: (x) => x.name },
+  paging: { url: '/pagings', what: 'pagings', name: (x) => `${x.name || 'Paging'}${x.number ? ' (' + x.number + ')' : ''}` },
+  parking: { url: '/parkinglots', what: 'parkings', name: (x) => x.name || 'Parking', opt: (x) => `${x.name || 'Parking'}${x.slots_start ? ` (places ${x.slots_start}–${x.slots_end})` : ''}` },
+  agent: { url: '/agents', what: 'agents', name: (x) => `${x.number}${x.firstname || x.lastname ? ' · ' + `${x.firstname || ''} ${x.lastname || ''}`.trim() : ''}` },
+  // Membres « secrétaire » des filtres : seuls les surrogates exposent un
+  // member_id (schéma confd call_filter) ; id = member_id.
+  bsfilter: { load: loadFilterMembers, what: 'filtres patron-secrétaire', name: (x) => x.name },
+};
+// [valeur confd, libellé du menu, libellé court proposé pour la touche]
+const SERVICES = [
+  ['enablednd', 'Ne pas déranger', 'NPD'], ['enablevm', 'Messagerie vocale (activer / désactiver)', 'Messagerie'],
+  ['vmusermsg', 'Consulter sa messagerie', 'Messages'], ['vmuserpurge', 'Vider sa messagerie', 'Vider msg'],
+  ['fwdundoall', 'Annuler tous les renvois', 'Sans renvoi'], ['pickup', "Interception d'appel", 'Intercept.'],
+  ['callrecord', 'Enregistrement des appels (activer / désactiver)', 'Enreg.'], ['incallfilter', 'Filtrage des appels entrants', 'Filtrage'],
+  ['directoryaccess', 'Annuaire', 'Annuaire'], ['phonestatus', 'État du poste (services actifs)', 'État'], ['recsnd', 'Enregistrer un son', 'Enreg. son'],
+];
+// Services pour lesquels Wazo garde la supervision (PROGFUNCKEYS de confd).
+const SERVICE_SUP = new Set(['callrecord', 'incallfilter', 'enablednd', 'enablevm']);
+const ACTIONS_TOGGLE = (j, l) => [['toggle', 'Bascule (alterne)'], ['join', j], ['leave', l]];
+// Les 15 types de touches de Wazo, dans l'ordre du menu. Sources (lues le
+// 14/10/2026) : wazo-confd plugins/func_key/schema.py (paramètres, valeurs) et
+// plugins/device/funckey.py (ce qui est écrit sur le poste).
+// sup : true = supervision prise en compte, false = ignorée par Wazo (toujours
+// numérotation rapide ou touche parking), 'service' = selon le service.
+// noTpl : refusé par Wazo dans les modèles de touches partagés (exclude_destination).
+const KEY_TYPES = {
+  user: { label: 'Collègue (BLF)', short: 'Collègue', sup: true, help:
+    "Appelle le collègue sur sa ligne principale. Avec la supervision, le voyant montre son état (libre, sonne, en ligne) ; l'interception de l'appel qui sonne dépend du poste (supposé). Vérifié : Wazo écrit une touche BLF vers l'extension de la ligne principale." },
+  custom: { label: 'Numéro', short: 'Numéro', sup: true,
+    fields: [{ p: 'exten', kind: 'exten', label: 'Numéro' }], help:
+    "Compose le numéro saisi, interne ou externe (chiffres, * et + seulement, règle de Wazo). La supervision n'a de sens que pour une extension interne surveillable, sinon le voyant reste éteint." },
+  group: { label: "Groupe d'appel", short: 'Groupe', sup: false,
+    fields: [{ p: 'group_id', list: 'group', label: 'Groupe' }], help:
+    "Appelle le groupe d'appel (son numéro). Pas de supervision : Wazo écrit toujours une numérotation rapide (vérifié). Pour entrer ou sortir du groupe, utiliser « Membre d'un groupe »." },
+  groupmember: { supDef: true, label: "Membre d'un groupe", short: 'Membre groupe', sup: true,
+    fields: [{ p: 'group_id', list: 'group', label: 'Groupe' }, { p: 'action', label: 'Action', opts: ACTIONS_TOGGLE('Entrer dans le groupe', 'Sortir du groupe') }], help:
+    "Fait entrer ou sortir du groupe choisi l'utilisateur du poste (bascule = alterne entre les deux). Vérifié : Wazo code l'utilisateur, l'action et le groupe dans la touche. Voyant allumé quand il est membre : supposé, à tester." },
+  queue: { label: "File d'attente", short: 'File', sup: false,
+    fields: [{ p: 'queue_id', list: 'queue', label: 'File' }], help:
+    "Appelle la file d'attente (son numéro). Pas de supervision : numérotation rapide (vérifié). Pour se connecter à une file en tant qu'agent, utiliser le type « Agent »." },
+  agent: { supDef: true, label: 'Agent', short: 'Agent', sup: true, noTpl: true,
+    fields: [{ p: 'agent_id', list: 'agent', label: 'Agent' }, { p: 'action', label: 'Action', opts: [['toggle', 'Bascule (alterne)'], ['login', 'Connexion'], ['logout', 'Déconnexion']] }], help:
+    "Connecte ou déconnecte l'agent choisi depuis ce poste (bascule = alterne). Refusé par Wazo dans les modèles de touches partagés (vérifié) : seulement sur les touches d'un utilisateur. Voyant allumé quand l'agent est connecté : supposé, à tester." },
+  conference: { label: 'Conférence', short: 'Conférence', sup: true,
+    fields: [{ p: 'conference_id', list: 'conference', label: 'Conférence' }], help:
+    "Rejoint la salle de conférence. Avec la supervision, le voyant indiquerait que la salle est occupée (supposé, à tester)." },
+  paging: { label: 'Paging (annonce)', short: 'Paging', sup: false,
+    fields: [{ p: 'paging_id', list: 'paging', label: 'Paging' }], help:
+    "Diffuse une annonce sur les haut-parleurs des postes du groupe de paging. Pas de supervision : numérotation rapide (vérifié)." },
+  parking: { label: 'Parking', short: 'Parking', sup: false,
+    fields: [{ p: 'parking_lot_id', list: 'parking', label: 'Parking' }], help:
+    "Gare l'appel en cours dans le parking choisi ; Wazo annonce la place attribuée. Vérifié : Wazo écrit une touche de type « parking » (pas de supervision). Pour surveiller une place précise, utiliser « Place de parking »." },
+  park_position: { supDef: true, label: 'Place de parking', short: 'Place parking', sup: true,
+    fields: [{ p: 'parking_lot_id', list: 'parking', label: 'Parking' }, { p: 'position', kind: 'int', label: 'Place' }], help:
+    "Touche dédiée à une place du parking : avec la supervision, le voyant s'allume quand un appel y est garé, et un appui le récupère (supposé, à tester). Vérifié : Wazo écrit seulement le numéro de place dans la touche." },
+  forward: { supDef: true, label: 'Renvoi', short: 'Renvoi', sup: true,
+    fields: [{ p: 'forward', label: 'Renvoi', opts: [['unconditional', 'Inconditionnel'], ['busy', 'Sur occupation'], ['noanswer', 'Sur non-réponse']] }, { p: 'exten', kind: 'exten', label: 'Numéro (facultatif)', optional: true }], help:
+    "Active ou désactive un renvoi de l'utilisateur du poste. Avec un numéro, la touche renvoie vers ce numéro ; sans numéro, le poste demanderait la destination ou reprendrait la dernière (supposé). Voyant allumé quand le renvoi est actif : supposé, à tester." },
+  service: { supDef: true, label: 'Service', short: 'Service', sup: 'service',
+    fields: [{ p: 'service', label: 'Service', opts: SERVICES }], help:
+    "Fonction de Wazo pour l'utilisateur du poste : ne pas déranger, messagerie, interception, enregistrement… Vérifié : la supervision n'est gardée que pour Ne pas déranger, Messagerie vocale, Enregistrement des appels et Filtrage des appels entrants ; les autres services sont écrits en numérotation rapide." },
+  transfer: { label: 'Transfert', short: 'Transfert', sup: true,
+    fields: [{ p: 'transfer', label: 'Transfert', opts: [['blind', 'Aveugle (sans annonce)'], ['attended', 'Supervisé (on parle d\'abord au destinataire)']] }], help:
+    "Transfère l'appel en cours par le code de transfert de Wazo (vérifié) ; le poste demande ensuite le numéro (supposé). Aveugle : l'appel part directement. Supervisé : on parle d'abord au destinataire. Les postes Yealink ont déjà une touche Transfert native." },
+  bsfilter: { supDef: true, label: 'Filtrage patron-secrétaire', short: 'Filtrage', sup: true, noTpl: true,
+    fields: [{ p: 'filter_member_id', list: 'bsfilter', label: 'Filtre · secrétaire' }], help:
+    "Active ou désactive le filtrage patron-secrétaire pour le membre choisi (liste : secrétaires des filtres). Refusé par Wazo dans les modèles de touches partagés (vérifié). Voyant allumé quand le filtrage est actif : supposé, à tester." },
+  onlinerec: { label: 'Enregistrement en ligne', short: 'Enregistrement', sup: false, fields: [], help:
+    "Démarre ou arrête l'enregistrement de l'appel en cours. Pas de supervision : numérotation rapide (vérifié). L'enregistrement doit être autorisé pour l'utilisateur (supposé)." },
+};
+// Liste utilisée par un type pour un paramètre donné (ex. park_position → parking).
+const listOf = (type) => (KEY_TYPES[type]?.fields || []).filter((f) => f.list).map((f) => f.list);
+function supOf(d) {
+  const s = KEY_TYPES[d?.type]?.sup;
+  return s === 'service' ? SERVICE_SUP.has(d.service) : !!s;
+}
 const LK_TOKEN = /\s*\bblf-linekeys=(\d+)\b/;
 // Ancien jeton d'étiquette (avant 0.17) : seulement détecté pour être retiré.
 const LBL_TOKEN = /\s*\bblf-label=(\S*)/;
@@ -720,8 +798,17 @@ function destText(k) {
   const d = k.destination;
   if (d.type === 'user') { const t = S.byId.get(d.user_id); return t ? `${fullName(t)} · ${userExten(t)}` : 'utilisateur supprimé'; }
   if (d.type === 'custom') return `Numéro ${d.exten}`;
-  if (NAMED[d.type]) { const it = (S.named[d.type] || []).find((x) => x.id === d[NAMED[d.type][1]]); return `${TYPE_LABEL[d.type]} ${it ? it.label || it.name : '#' + d[NAMED[d.type][1]]}`; }
-  return d.type;
+  const t = KEY_TYPES[d.type];
+  if (!t) return d.type;
+  const parts = (t.fields || []).map((f) => fieldText(f, d[f.p])).filter(Boolean);
+  return [t.short, ...parts].join(' · ');
+}
+// Texte lisible d'un paramètre de destination (nom dans la liste, libellé d'option…).
+function fieldText(f, v) {
+  if (v === undefined || v === null || v === '') return '';
+  if (f.list) { const it = (S.named[f.list] || []).find((x) => x.id === v); return it ? LISTS[f.list].name(it) : `#${v}`; }
+  if (f.opts) { const o = f.opts.find(([x]) => x === v); return o ? o[1].replace(/ \(.*\)$/, '') : String(v); }
+  return f.p === 'position' ? `place ${v}` : String(v);
 }
 function capacityInfo() {
   const c = S.cur;
@@ -1031,7 +1118,7 @@ function tileEl(p) {
   if (k) {
     const vacant = k.destination.type === 'user' && !S.byId.has(k.destination.user_id);
     el.className = `tile key${vacant ? ' vacant' : ''}`;
-    el.innerHTML += `<div class="lbl">${esc(k.label || '(sans libellé)')}</div><div class="dst">${k.blf ? '● ' : ''}${esc(destText(k))}</div>`;
+    el.innerHTML += `<div class="lbl">${esc(k.label || '(sans libellé)')}</div><div class="dst">${k.blf && supOf(k.destination) ? '● ' : ''}${esc(destText(k))}</div>`;
   } else if (inh) {
     el.className = 'tile inherited';
     el.innerHTML += `<div class="lbl">${esc(inh.label || '')}</div><div class="dst">héritée · ${esc(destText(inh))}</div>`;
@@ -1109,8 +1196,22 @@ function autoLabel(k) {
   const d = k.destination;
   if (d.type === 'user') return keyLabelOf(S.byId.get(d.user_id));
   if (d.type === 'custom') return d.exten || '';
-  if (NAMED[d.type]) { const it = (S.named[d.type] || []).find((x) => x.id === d[NAMED[d.type][1]]); return it ? it.label || it.name : ''; }
-  return '';
+  const t = KEY_TYPES[d.type];
+  if (!t) return '';
+  // Libellé court, lisible sur l'écran du poste.
+  const named = (l, id) => { const it = (S.named[l] || []).find((x) => x.id === id); return it ? LISTS[l].name(it) : ''; };
+  switch (d.type) {
+    case 'groupmember': return named('group', d.group_id);
+    case 'agent': { const a = (S.named.agent || []).find((x) => x.id === d.agent_id); return a ? `Agent ${a.number}` : 'Agent'; }
+    case 'park_position': return d.position ? `Place ${d.position}` : '';
+    case 'forward': { const fw = { busy: 'Renv. occ.', noanswer: 'Renv. NR' }; return (fw[d.forward] || 'Renvoi') + (d.exten ? ' ' + d.exten : ''); }
+    case 'service': return SERVICES.find(([v]) => v === d.service)?.[2] || '';
+    case 'transfer': return d.transfer === 'attended' ? 'Transf. sup.' : 'Transfert';
+    case 'bsfilter': return 'Filtrage';
+    case 'onlinerec': return 'Enregistrer';
+  }
+  const f = (t.fields || []).find((x) => x.list);
+  return f ? named(f.list, d[f.p]) : '';
 }
 // Libellé « automatique » (donc remplaçable) : vide, égal à l'étiquette
 // attendue, ou — pour un collègue — égal à son nom complet (ancien défaut).
@@ -1119,9 +1220,26 @@ function isAutoLabel(k) {
   if (k.label === autoLabel(k)) return true;
   return k.destination.type === 'user' && k.label === fullName(S.byId.get(k.destination.user_id));
 }
+// Charge les listes nécessaires au type (une seule fois par session).
 async function ensureNamed(type) {
-  if (!NAMED[type] || S.named[type]) return;
-  try { S.named[type] = await listAll(NAMED[type][0]); } catch (e) { S.named[type] = []; toast(`Lecture des ${TYPE_LABEL[type].toLowerCase()}s impossible : ${e.message}`, 5000); }
+  await Promise.all(listOf(type).map(async (l) => {
+    if (S.named[l]) return;
+    const L = LISTS[l];
+    try { S.named[l] = L.load ? await L.load() : await listAll(L.url); } catch (e) { S.named[l] = []; toast(`Lecture des ${L.what} impossible : ${e.message}`, 5000); }
+  }));
+}
+// Membres des filtres patron-secrétaire : la liste /callfilters ne détaille
+// peut-être pas les membres (non vérifié) → relecture de chaque filtre au besoin.
+async function loadFilterMembers() {
+  const out = [];
+  for (const f of await listAll('/callfilters')) {
+    const full = f.surrogates ? f : await api('GET', `/callfilters/${f.id}`);
+    for (const s of full.surrogates?.users || []) {
+      if (s.member_id == null) continue;
+      out.push({ id: s.member_id, name: `${full.name} · ${`${s.firstname || ''} ${s.lastname || ''}`.trim() || 'secrétaire'}` });
+    }
+  }
+  return out;
 }
 function setKey(p, k) {
   const c = S.cur;
@@ -1137,12 +1255,13 @@ function renderDetail() {
   const k = c.slots[p - 1];
   $('dt-title').textContent = `Touche ${p}`;
   const type = k?.destination.type || $('dt-type').dataset.pending || 'user';
-  $('dt-type').value = TYPE_LABEL[type] ? type : 'custom';
-  $('dt-type').disabled = !!k && !TYPE_LABEL[type];
+  fillTypeSelect();
+  $('dt-type').value = KEY_TYPES[type] ? type : 'custom';
+  $('dt-type').disabled = !!k && !KEY_TYPES[type];
   $('dt-label').value = k?.label || '';
   $('dt-label').disabled = !k;
-  $('dt-blf').checked = !!k?.blf;
-  $('dt-blf').disabled = !k;
+  renderHelp(type);
+  renderSup(k);
   for (const id of ['dt-left', 'dt-right', 'dt-clear', 'dt-delete']) $(id).disabled = !k && id !== 'dt-delete';
   $('dt-left').disabled = p - 1 < 1 || !!lineAt(p - 1);
   renderValueField(type, k);
@@ -1150,7 +1269,8 @@ function renderDetail() {
 function renderValueField(type, k) {
   const c = S.cur, p = S.sel, wrap = $('dt-valuewrap');
   wrap.innerHTML = '';
-  if (k && !TYPE_LABEL[type]) { wrap.innerHTML = `<p class="muted small">Type « ${esc(type)} » : modifiable dans l'interface Wazo.</p>`; return; }
+  if (k && !KEY_TYPES[type]) { wrap.innerHTML = `<p class="muted small">Type « ${esc(type)} » : modifiable dans l'interface Wazo.</p>`; return; }
+  if (c.tpl && KEY_TYPES[type]?.noTpl) { wrap.innerHTML = '<p class="warn small">Type refusé par Wazo dans un modèle de touches partagé : à poser sur les touches d\'un utilisateur.</p>'; return; }
   if (type === 'user') {
     const cur = k?.destination.type === 'user' ? S.byId.get(k.destination.user_id) : null;
     wrap.innerHTML = `<label>Collègue <input id="dt-user" placeholder="Nom, identifiant ou extension" value="${esc(cur ? fullName(cur) : '')}"></label><ul id="dt-sugg" class="suggest" hidden></ul>`;
@@ -1183,24 +1303,81 @@ function renderValueField(type, k) {
       renderEditor();
     };
   } else {
-    const [, param] = NAMED[type];
+    // Types génériques : un champ par paramètre confd ; la touche n'est écrite
+    // que quand tous les paramètres obligatoires sont remplis.
+    const t = KEY_TYPES[type];
+    const cur = k?.destination.type === type ? k.destination : {};
     wrap.innerHTML = '<p class="muted small">Chargement…</p>';
     ensureNamed(type).then(() => {
       if (S.sel !== p) return;
-      const items = S.named[type] || [];
-      const curId = k?.destination.type === type ? k.destination[param] : '';
-      wrap.innerHTML = `<label>${TYPE_LABEL[type]} <select id="dt-named"><option value="">—</option>${items.map((it) => `<option value="${it.id}" ${it.id === curId ? 'selected' : ''}>${esc(it.label || it.name)}</option>`).join('')}</select></label>`;
-      $('dt-named').onchange = () => {
-        const id = Number($('dt-named').value);
-        if (!id) return;
-        const old = c.slots[p - 1];
-        const keepLabel = old && !isAutoLabel(old);
-        const it = items.find((x) => x.id === id);
-        setKey(p, { blf: false, label: keepLabel ? old.label : it.label || it.name, destination: { type, [param]: id } });
-        renderEditor();
-      };
+      wrap.innerHTML = t.fields.map((f, i) => {
+        const v = cur[f.p];
+        if (f.list) {
+          const items = S.named[f.list] || [];
+          if (!items.length) return `<p class="warn small">Aucun élément « ${esc(LISTS[f.list].what)} » sur cette stack.</p>`;
+          return `<label>${esc(f.label)} <select data-i="${i}"><option value="">—</option>${items.map((it) => `<option value="${it.id}" ${it.id === v ? 'selected' : ''}>${esc((LISTS[f.list].opt || LISTS[f.list].name)(it))}</option>`).join('')}</select></label>`;
+        }
+        if (f.opts) return `<label>${esc(f.label)} <select data-i="${i}">${k ? '' : '<option value="">—</option>'}${f.opts.map(([x, l]) => `<option value="${x}" ${x === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>`;
+        return `<label>${esc(f.label)} <input data-i="${i}" ${f.kind === 'int' ? 'type="number" min="1"' : 'inputmode="tel"'} value="${esc(v ?? '')}"></label>`;
+      }).join('') + `<p id="dt-parkhint" class="muted small">${parkHint(type, cur)}</p>`;
+      if (!t.fields.length) {
+        wrap.innerHTML = '<p class="muted small">Rien à choisir pour ce type.</p>';
+        if (!k || k.destination.type !== type) commitGeneric(p, type, {});
+        return;
+      }
+      wrap.querySelectorAll('[data-i]').forEach((el) => { el.onchange = () => {
+        const vals = {};
+        let missing = false;
+        for (const e of wrap.querySelectorAll('[data-i]')) {
+          const f = t.fields[Number(e.dataset.i)];
+          const raw = e.value.trim();
+          if (!raw) { if (!f.optional) missing = true; continue; }
+          if (f.kind === 'exten' && !/^[A-Z0-9+*]+$/.test(raw)) { toast(`${f.label} : chiffres, * et + seulement.`); return; }
+          vals[f.p] = f.list || f.kind === 'int' ? Number(raw) : raw;
+        }
+        $('dt-parkhint').innerHTML = parkHint(type, vals);
+        if (!missing) commitGeneric(p, type, vals);
+      }; });
     });
   }
+}
+function commitGeneric(p, type, vals) {
+  const c = S.cur;
+  const old = c.slots[p - 1];
+  const keepLabel = old && !isAutoLabel(old);
+  const destination = { type, ...vals };
+  // Supervision : gardée si la touche était déjà de ce type et supervisable,
+  // sinon cochée d'office pour les types à état (supDef).
+  const keep = old?.destination.type === type && supOf(old.destination);
+  const nk = { blf: (keep ? old.blf : !!KEY_TYPES[type].supDef) && supOf(destination), label: null, destination };
+  nk.label = keepLabel ? old.label : autoLabel(nk) || null;
+  setKey(p, nk);
+  renderEditor();
+}
+// Places du parking choisi (bornes lues sur /parkinglots).
+function parkHint(type, cur) {
+  if (type !== 'park_position') return '';
+  const lot = (S.named.parking || []).find((x) => x.id === cur.parking_lot_id);
+  return lot?.slots_start ? `Places de ce parking : ${esc(lot.slots_start)} à ${esc(lot.slots_end)}.` : '';
+}
+// Menu des types : les 15 types Wazo (sans agent / filtrage dans un modèle partagé).
+function fillTypeSelect() {
+  const sel = $('dt-type'), tpl = !!S.cur?.tpl;
+  const want = Object.entries(KEY_TYPES).filter(([, t]) => !(tpl && t.noTpl)).map(([v]) => v).join();
+  if (sel.dataset.built === want) return;
+  sel.dataset.built = want;
+  sel.innerHTML = want.split(',').map((v) => `<option value="${v}">${esc(KEY_TYPES[v].label)}</option>`).join('');
+}
+function renderHelp(type) {
+  const t = KEY_TYPES[type];
+  $('dt-help').innerHTML = t ? `<b>${esc(t.label)}</b> — ${esc(t.help)}` : `Type « ${esc(type)} » inconnu de cette version.`;
+}
+// Supervision : désactivée (et décochée) quand Wazo l'ignore pour ce type.
+function renderSup(k) {
+  const ok = k ? supOf(k.destination) : true;
+  $('dt-blf').checked = !!k?.blf && ok;
+  $('dt-blf').disabled = !k || !ok;
+  $('dt-blfwrap').title = k && !ok ? 'Wazo ignore la supervision pour ce type de touche (numérotation rapide).' : '';
 }
 
 function wireDetail() {
@@ -1208,12 +1385,14 @@ function wireDetail() {
     const t = $('dt-type').value;
     const k = S.cur.slots[S.sel - 1];
     $('dt-type').dataset.pending = t;
+    renderHelp(t);
     if (k && k.destination.type !== t) {
       // on garde la touche actuelle tant qu'une nouvelle valeur n'est pas choisie
       renderValueField(t, null);
     } else renderValueField(t, k);
   };
   $('dt-label').oninput = () => { const k = S.cur.slots[S.sel - 1]; if (k) { k.label = $('dt-label').value || null; refreshTileOnly(); } };
+  $('dt-helpbtn').onclick = () => { const h = $('dt-help'); h.hidden = !h.hidden; $('dt-helpbtn').setAttribute('aria-expanded', String(!h.hidden)); };
   $('dt-blf').onchange = () => { const k = S.cur.slots[S.sel - 1]; if (k) { k.blf = $('dt-blf').checked; renderEditor(); } };
   $('dt-clear').onclick = () => { setKey(S.sel, null); renderEditor(); };
   $('dt-delete').onclick = () => shiftInBlock(S.sel, -1);
@@ -1810,7 +1989,7 @@ async function applyDeploy() {
 // Format : { app, version, created, base, tenant, reason, entries: [{ uuid,
 // name, userfield, keys }] } — keys = touches propres (hors héritées).
 const BK_STORE = 'astrea-blf-last-backup';
-const APP_VERSION = '0.29.1';
+const APP_VERSION = '0.30.0';
 function makeBackup(reason, entries) {
   const bk = { app: 'astrea-blf', version: APP_VERSION, created: new Date().toISOString(), base: S.base, tenant: S.tenant, reason, entries };
   const json = JSON.stringify(bk, null, 1);
