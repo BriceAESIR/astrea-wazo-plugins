@@ -1,4 +1,4 @@
-# Installer « ASTREA - BLF Manager »
+# Installer « Astrea Admin Tools » (module BLF Manager)
 
 Tutoriel d'installation sur une stack Wazo Entreprise et son portail.
 Deux parties indépendantes :
@@ -17,12 +17,13 @@ le réglage, mais le téléphone garde une seule touche ligne.
 
 ### Prérequis
 - Un compte administrateur du portail E-UC qui peut installer des plugins.
+- Ancienne version installée (« ASTREA - BLF Manager », adresse `.../portal/blf/manifest.json`) : la désinstaller d'abord, cette adresse n'existe plus. Les touches des postes ne sont pas touchées.
 
 ### Étapes
 1. Ouvrir le portail Wazo, menu **Plugins > Portal**, puis **Install**.
 2. Coller l'URL du manifest :
    ```
-   https://briceaesir.github.io/astrea-wazo-plugins/portal/blf/manifest.json
+   https://briceaesir.github.io/astrea-wazo-plugins/admin-tools/manifest.json
    ```
 3. Valider, puis activer le plugin (pour tous les administrateurs ou seulement
    certains).
@@ -62,7 +63,7 @@ touches ligne sur le téléphone.
    curl -fsSLO https://briceaesir.github.io/astrea-wazo-plugins/provd/astrea-provd-linekeys.sh
    ```
 2. Vérifier son empreinte (doit être identique à celle indiquée dans
-   [provd/README.md](../../provd/README.md)) :
+   [provd/README.md](../provd/README.md)) :
    ```bash
    sha256sum astrea-provd-linekeys.sh
    ```
@@ -107,7 +108,7 @@ n'ajoute jamais de doublon.
 ---
 
 ## Désinstaller
-1. Portail : **Plugins > Portal**, désinstaller « ASTREA - BLF Manager ».
+1. Portail : **Plugins > Portal**, désinstaller « Astrea Admin Tools ».
    Les touches BLF restent dans Wazo (ce sont des touches Wazo standard).
 2. Serveur, si le script a été passé :
    ```bash

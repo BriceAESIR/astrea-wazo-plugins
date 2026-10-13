@@ -1,0 +1,39 @@
+{
+  "manifestVersion": "0.1",
+  "version": "0.16.0",
+  "id": "astrea-admin-tools",
+  "packageName": "io.github.briceaesir.astrea.admintools",
+  "productType": "portal",
+  "name": {
+    "short": "Astrea Admin Tools",
+    "full": "Astrea Admin Tools for Wazo"
+  },
+  "description": {
+    "short": "Outils d'administration Astrea pour Wazo : touches des postes (BLF Manager) et futurs modules",
+    "full": "Boite a outils d'administration pour les stacks Wazo, regroupee dans le menu Astrea Admin Tools du portail. Module BLF Manager : touches de fonction (supervision BLF, numerotation rapide, groupes, files, conferences) poste par poste ou en masse, etiquettes de touches, et pour les postes Yealink capacite selon le modele, modules d'extension et touches ligne multiples."
+  },
+  "icons": {
+    "color": "./icon.svg",
+    "outline": "./icon.svg"
+  },
+  "developer": {
+    "name": "Astrea"
+  },
+  "staticTabs": [
+    {
+      "entityId": "astrea-blf-user",
+      "context": ["pbx.users"],
+      "name": "Touches",
+      "contentUrl": "./blf/index.html?view=user&v=0.16.0"
+    },
+    {
+      "entityId": "astrea-blf-overview",
+      "context": ["pbxMenu"],
+      "parent": "Astrea Admin Tools",
+      "parentIcon": "./menu.svg",
+      "name": "BLF Manager",
+      "icon": "Dialpad",
+      "contentUrl": "./blf/index.html?view=overview&v=0.16.0"
+    }
+  ]
+}

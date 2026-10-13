@@ -1,9 +1,9 @@
-# Plugin Portal « ASTREA - BLF Manager »
+# Module BLF Manager (Astrea Admin Tools)
 
-**Installation pas à pas : [INSTALLATION.md](INSTALLATION.md).**
+**Installation pas à pas : [../INSTALLATION.md](../INSTALLATION.md).**
 
-Onglet **Touches** dans la fiche utilisateur du portail Wazo, et vue globale
-**ASTREA - BLF Manager**. L'appli lit et écrit directement les touches des postes
+Onglet **Touches** dans la fiche utilisateur du portail Wazo, et sous-menu
+**Astrea Admin Tools > BLF Manager**. L'appli lit et écrit directement les touches des postes
 du serveur ouvert dans le portail, avec le token que fournit le portail.
 
 - tuiles par position, toutes marques de postes confondues. Profils
@@ -35,7 +35,7 @@ du serveur ouvert dans le portail, avec le token que fournit le portail.
   poste, c'est la fonction native Yealink (`features.auto_linekeys.enable`,
   `account.1.number_of_linekey`) posée par quelques lignes ajoutées au **`base.tpl` personnalisé** de chaque
   plugin provd (`var/templates/base.tpl`, tous modèles ; voir
-  `../provd-templates/`). Validé sur T46S le 12/10/2026. L'ancien jeton
+  le script [../../provd/](../../provd/README.md)). Validé sur T46S le 12/10/2026. L'ancien jeton
   `blf-linekeys=N` du userfield est lu en repli puis retiré à l'enregistrement ;
 - l'utilisateur lui-même n'est jamais proposé comme cible ; une touche vers
   un utilisateur supprimé apparaît en rouge pointillé ;
@@ -87,15 +87,11 @@ du serveur ouvert dans le portail, avec le token que fournit le portail.
   page physique dédiée, aucune touche prise. Au-delà de 5 pages, Wazo numérote
   encore des positions que le poste n'affiche pas (signalé).
 
-## Déploiement (doc Wazo : developers.wazo.io/docs/plugins/ui/deploy)
+## Fichiers
 
-1. Copier ce dossier sur un serveur web **public en HTTPS**, avec l'en-tête
-   CORS sur `manifest.json` (voir `nginx.conf.example`).
-2. Portail E-UC → **Plugins > Portal** → **Install** → URL du `manifest.json`.
-3. Activer pour tous ou seulement pour certains administrateurs.
-
-Aucune dépendance externe : le SDK officiel `@wazo/euc-plugins-sdk` 1.1.1 est
-embarqué dans `vendor/` (licence MIT).
+`index.html` et `app.js` du module ; le style et le SDK officiel
+`@wazo/euc-plugins-sdk` 1.1.1 (licence MIT) sont partagés dans `../common/`.
+Aucune dépendance externe.
 
 ## Test hors portail
 
@@ -113,15 +109,5 @@ page ; confd l'accepte par défaut.
   utilisateurs. Si l'onglet n'ouvre pas le bon utilisateur, fais une copie
   du contenu de `extra` depuis la console du navigateur
   (`__blfSdk.getContext().app.extra`, dans le cadre du plugin) : je saurai alors où le chercher.
-- **Menu** : le contexte `pbxMenu` et l'icône `Dialpad` sont repris de la doc.
-  Il faudra peut-être les ajuster selon l'endroit où le lien apparaît.
 - **Droits** : le token du portail doit pouvoir modifier les touches et le
-  `userfield` des utilisateurs.
-
-## Cohabitation avec le fichier YAML du stack plugin
-
-Chaque utilisateur est géré **soit** par le portail, **soit** par
-`/etc/wazo-blf-sync/config.yml`, jamais par les deux. En mode miroir, le YAML
-écraserait toutes les 15 min ce qui a été fait dans le portail. Le plus
-simple : laisser le YAML vide et ne s'en servir que pour les imports en
-masse ponctuels.
+  `userfield` des utilisateurs, et lire/écrire les postes dans provd.

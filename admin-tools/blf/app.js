@@ -4,7 +4,7 @@
 // l'option `astrea_linekeys` du poste dans provd, traduite par un template
 // personnalisé par modèle (fonction native Yealink auto_linekeys). Aucun
 // composant serveur.
-import { App } from './vendor/euc-plugins-sdk/app.js';
+import { App } from '../common/vendor/euc-plugins-sdk/app.js';
 
 // ---------------------------------------------------------------------------
 // Profils constructeur
@@ -1670,7 +1670,7 @@ async function applyDeploy() {
 // Format : { app, version, created, base, tenant, reason, entries: [{ uuid,
 // name, userfield, keys }] } — keys = touches propres (hors héritées).
 const BK_STORE = 'astrea-blf-last-backup';
-const APP_VERSION = '0.15.2';
+const APP_VERSION = '0.16.0';
 function makeBackup(reason, entries) {
   const bk = { app: 'astrea-blf', version: APP_VERSION, created: new Date().toISOString(), base: S.base, tenant: S.tenant, reason, entries };
   const json = JSON.stringify(bk, null, 1);
@@ -1727,7 +1727,7 @@ function restoreBackup(bk) {
         if ((u.userfield || '') !== (e.userfield || '')) { await api('PUT', `/users/${e.uuid}`, { userfield: e.userfield || null }); u.userfield = e.userfield; }
         // Touches ligne (option provd), si la sauvegarde les contient.
         const dev = userDevice(u);
-        // Étiquettes : seulement si la sauvegarde les contient (versions ≥ 0.15.2).
+        // Étiquettes : seulement si la sauvegarde les contient (versions ≥ 0.15.1).
         const wanted = e.linemap || (e.linekeys ? { 1: e.linekeys } : null);
         if (wanted && dev && vendorOf(dev)?.multiLine) {
           forgetDevice(dev);
