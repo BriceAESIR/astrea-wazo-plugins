@@ -12,7 +12,7 @@
 //    queue_label, voicemail_name, ivr_name… ajoutés par confd.
 // Supposé, à vérifier en réel : le token du portail peut lire /moh,
 // /voicemails, /callpermissions, /schedules (sinon libellés techniques).
-import { S, $, esc, toast, api, listAll, connect, fullName, setReadonly, showCompat, loaded, loadFailed } from '../common/core.js?v=0.23.0';
+import { S, $, esc, toast, api, listAll, connect, fullName, setReadonly, showCompat, loaded, loadFailed } from '../common/core.js?v=0.23.1';
 
 const A = { users: [], byId: new Map(), moh: new Map(), groups: new Map(), vms: new Map(), sort: { col: 'name', dir: 1 }, sel: null, scope: null, cols: null };
 
@@ -23,7 +23,9 @@ const exten = (u) => { for (const l of u.lines || []) for (const e of l.extensio
 const groupLabel = (g) => A.groups.get(g.uuid)?.label || g.label || g.name || `#${g.id}`;
 const mohLabel = (name) => (!name ? '' : name === 'default' ? 'Par défaut' : A.moh.get(name) || name);
 const LANG = { fr_FR: 'Français', fr_CA: 'Français (CA)', en_US: 'Anglais', de_DE: 'Allemand', es_ES: 'Espagnol', it_IT: 'Italien', nl_NL: 'Néerlandais' };
-const HANGUP = { busy: 'occupé', congestion: 'encombré', normal: 'normal' };
+// outgoing_caller_id : jetons « default » / « anonymous » acceptés par confd.
+const callerId = (v) => (!v ? '' : v === 'default' ? 'Par défaut' : v === 'anonymous' ? 'Anonyme' : v);
+const HANGUP ={ busy: 'occupé', congestion: 'encombré', normal: 'normal' };
 // Destination confd (débordements) → texte lisible.
 function destText(d) {
   if (!d || !d.type || d.type === 'none') return '';
@@ -34,7 +36,8 @@ function destText(d) {
     case 'voicemail': return `Messagerie ${d.voicemail_name || `#${d.voicemail_id}`}`;
     case 'ivr': return `SVI ${d.ivr_name || `#${d.ivr_id}`}`;
     case 'conference': return `Conférence ${d.conference_name || `#${d.conference_id}`}`;
-    case 'extension': return `Numéro ${d.exten}${d.context ? ` @${d.context}` : ''}`;
+    // Contexte omis : nom technique (ctx-…) illisible, vu en réel le 13/10/2026.
+    case 'extension': return `Numéro ${d.exten}`;
     case 'outcall': return `Sortant ${d.exten || ''}`;
     case 'sound': return `Son ${d.filename || ''}`;
     case 'switchboard': return `Standard ${d.switchboard_name || ''}`;
@@ -85,7 +88,7 @@ const COLS = [
   { id: 'fb_busy', label: 'Débord. occupé', grp: 'Sonnerie et débordement', get: (u) => fb(u, 'busy') },
   { id: 'fb_cong', label: 'Débord. encombré', grp: 'Sonnerie et débordement', get: (u) => fb(u, 'congestion') },
   { id: 'fb_fail', label: 'Débord. injoignable', grp: 'Sonnerie et débordement', get: (u) => fb(u, 'fail') },
-  { id: 'callerid', label: 'Numéro présenté', grp: 'Identité d\'appel', def: true, get: (u) => txt(u.outgoing_caller_id || '') },
+  { id: 'callerid', label: 'Numéro présenté', grp: 'Identité d\'appel', def: true, get: (u) => txt(callerId(u.outgoing_caller_id)) },
   { id: 'mobile', label: 'Mobile', grp: 'Identité d\'appel', odd: false, get: (u) => txt(u.mobile_phone_number || '') },
   { id: 'vm', label: 'Messagerie', grp: 'Messagerie', def: true, odd: false, get: vm },
   { id: 'vm_email', label: 'E-mail messagerie', grp: 'Messagerie', odd: false, get: (u) => txt(A.vms.get(u.voicemail?.id)?.email || '') },
@@ -220,7 +223,7 @@ function renderDetail() {
   const f = (k) => { const x = u.forwards?.[k]; return x?.enabled ? `activé → ${x.destination || '?'}` : `désactivé${x?.destination ? ` (${x.destination})` : ''}`; };
   const v = A.vms.get(u.voicemail?.id);
   $('d-body').innerHTML = [
-    sec('Identité', row('Numéro', exten(u)) + row('E-mail', u.email) + row('Actif', u.enabled === false ? 'non' : 'oui') + row('Mobile', u.mobile_phone_number) + row('Numéro présenté', u.outgoing_caller_id) + row('Nom présenté', u.caller_id)),
+    sec('Identité', row('Numéro', exten(u)) + row('E-mail', u.email) + row('Actif', u.enabled === false ? 'non' : 'oui') + row('Mobile', u.mobile_phone_number) + row('Numéro présenté', callerId(u.outgoing_caller_id)) + row('Nom présenté', u.caller_id)),
     sec('Services', row('Ne pas déranger', u.services?.dnd?.enabled ? 'activé' : 'désactivé') + row('Filtrage', u.services?.incallfilter?.enabled ? 'activé' : 'désactivé')),
     sec('Renvois', row('Immédiat', f('unconditional')) + row('Sur occupation', f('busy')) + row('Sur non-réponse', f('noanswer'))),
     sec('Sonnerie et débordement', row('Sonnerie', u.ring_seconds != null ? `${u.ring_seconds} s` : '') + row('Appels simultanés', u.simultaneous_calls)
