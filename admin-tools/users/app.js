@@ -1,5 +1,5 @@
 // User Manager (Astrea Admin Tools) — audit des réglages des utilisateurs
-// (lot 1) et modification en masse (lot 2a, réglages dans settings.js). Cadrage : astrea-wazo-dev/docs/USER-MANAGER.md.
+// (lot 1) et modification en masse (lots 2a/2b, réglages dans settings.js). Cadrage : astrea-wazo-dev/docs/USER-MANAGER.md.
 // Vérifié dans le code de wazo-confd (master, 13/10/2026) :
 //  - GET /users (vue complète, UserSchema) renvoie forwards {busy, noanswer,
 //    unconditional: {enabled, destination}}, services {dnd, incallfilter:
@@ -12,10 +12,10 @@
 //    queue_label, voicemail_name, ivr_name… ajoutés par confd.
 // Supposé, à vérifier en réel : le token du portail peut lire /moh,
 // /voicemails, /callpermissions, /schedules (sinon libellés techniques).
-import { S, $, esc, toast, api, listAll, connect, fullName, setReadonly, showCompat, loaded, loadFailed, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.24.0';
-import { SETTINGS, settingById, same, LANG } from './settings.js?v=0.24.0';
+import { S, $, esc, toast, api, listAll, connect, fullName, setReadonly, showCompat, loaded, loadFailed, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.25.0';
+import { SETTINGS, settingById, same, LANG } from './settings.js?v=0.25.0';
 
-const A = { users: [], byId: new Map(), moh: new Map(), groups: new Map(), vms: new Map(), perms: new Map(), scheds: new Map(), picked: new Set(), sort: { col: 'name', dir: 1 }, sel: null, scope: null, cols: null };
+const A = { users: [], byId: new Map(), moh: new Map(), groups: new Map(), vms: new Map(), perms: new Map(), scheds: new Map(), queues: new Map(), sbs: new Map(), contexts: [], callerOpts: [], callerOptsErr: '', lr: null, picked: new Set(), sort: { col: 'name', dir: 1 }, sel: null, scope: null, cols: null };
 
 // ---------------------------------------------------------------------------
 // Libellés
@@ -30,17 +30,19 @@ const HANGUP ={ busy: 'occupé', congestion: 'encombré', normal: 'normal' };
 function destText(d) {
   if (!d || !d.type || d.type === 'none') return '';
   switch (d.type) {
+    // Libellés ajoutés par confd à la lecture, sinon listes chargées (destinations
+    // construites par la masse, sans libellés).
     case 'user': { const n = [d.user_firstname, d.user_lastname].filter(Boolean).join(' ') || fullName(A.byId.get(d.user_id)) || `#${d.user_id}`; return `Utilisateur ${n}`; }
-    case 'group': return `Groupe ${d.group_label || d.group_name || `#${d.group_id}`}`;
-    case 'queue': return `File ${d.queue_label || `#${d.queue_id}`}`;
-    case 'voicemail': return `Messagerie ${d.voicemail_name || `#${d.voicemail_id}`}`;
+    case 'group': { const g = [...A.groups.values()].find((x) => x.id === d.group_id); return `Groupe ${d.group_label || g?.label || d.group_name || g?.name || `#${d.group_id}`}`; }
+    case 'queue': return `File ${d.queue_label || A.queues.get(d.queue_id)?.label || `#${d.queue_id}`}`;
+    case 'voicemail': return `Messagerie ${d.voicemail_name || A.vms.get(d.voicemail_id)?.name || `#${d.voicemail_id}`}`;
     case 'ivr': return `SVI ${d.ivr_name || `#${d.ivr_id}`}`;
     case 'conference': return `Conférence ${d.conference_name || `#${d.conference_id}`}`;
     // Contexte omis : nom technique (ctx-…) illisible, vu en réel le 13/10/2026.
     case 'extension': return `Numéro ${d.exten}`;
     case 'outcall': return `Sortant ${d.exten || ''}`;
     case 'sound': return `Son ${d.filename || ''}`;
-    case 'switchboard': return `POPC ${d.switchboard_name || ''}`; // nom du portail pour un standard
+    case 'switchboard': return `POPC ${d.switchboard_name || A.sbs.get(d.switchboard_uuid)?.name || ''}`; // nom du portail pour un standard
     case 'hangup': return `Raccrocher (${HANGUP[d.cause] || d.cause || ''})`;
     case 'application': return `Application ${d.application_name || d.application || ''}`;
     case 'custom': return `Commande ${d.command || ''}`;
@@ -138,14 +140,31 @@ async function loadUsers() {
 }
 // Listes de libellés : une erreur (droit manquant…) n'empêche pas l'audit.
 async function lookup(path, what, warns) {
-  try { return await listAll(path); } catch (e) { warns.push(`${what} indisponibles (${e.status || ''} ${path}) : valeurs techniques affichées.`); console.warn('[astrea]', path, e); return []; }
+  try { return await listAll(path); } catch (e) { warns?.push(`${what} indisponibles (${e.status || ''} ${path}) : valeurs techniques affichées.`); console.warn('[astrea]', path, e); return []; }
+}
+// Numéros présentables du tenant (principal, partagés) : lus sur un
+// utilisateur, identiques pour tous ; les « associated » (SDA) sont propres à
+// chacun et proposés autrement. Route absente des anciennes versions : sans gravité.
+async function loadCallerOpts(users) {
+  A.callerOpts = []; A.callerOptsErr = '';
+  const u = users[0];
+  if (!u) return;
+  try {
+    const r = await api('GET', `/users/${u.uuid}/callerids/outgoing`);
+    A.callerOpts = (r?.items || []).filter((o) => o.number && (o.type === 'main' || o.type === 'shared'));
+  } catch (e) { A.callerOptsErr = e.status ? `erreur ${e.status}` : e.message; }
 }
 async function reload() {
   const warns = [];
-  const [users, moh, groups, vms, perms, scheds] = await Promise.all([
+  const [users, moh, groups, vms, perms, scheds, queues, sbs, contexts] = await Promise.all([
     loadUsers(), lookup('/moh', 'Libellés des musiques d\'attente', warns), lookup('/groups', 'Libellés des groupes', warns), lookup('/voicemails', 'Détails des messageries', warns),
     lookup('/callpermissions', 'Droits d\'appel', warns), lookup('/schedules', 'Horaires', warns),
+    lookup('/queues', 'Files d\'attente', null), lookup('/switchboards', 'Standards', null), lookup('/contexts', 'Contextes', null), checkLiveReload(),
   ]);
+  A.queues = new Map(queues.map((q) => [q.id, q]));
+  A.sbs = new Map(sbs.map((s) => [s.uuid, s]));
+  A.contexts = contexts.filter((c) => c.type !== 'incall' && c.type !== 'outcall').sort((a, b) => (a.label || a.name).localeCompare(b.label || b.name, 'fr'));
+  await loadCallerOpts(users);
   selfCheck(users);
   A.users = users.sort((a, b) => fullName(a).localeCompare(fullName(b), 'fr'));
   A.byId = new Map(users.map((u) => [u.id, u]));
@@ -154,7 +173,9 @@ async function reload() {
   A.vms = new Map(vms.map((v) => [v.id, v]));
   A.perms = new Map(perms.map((p) => [p.id, p]));
   A.scheds = new Map(scheds.map((s) => [s.id, s]));
+  for (const u of users) u._vm = u.voicemail ? A.vms.get(u.voicemail.id) || null : null; // aperçu des options de messagerie
   for (const id of [...A.picked]) if (!A.byId.has(id)) A.picked.delete(id);
+  renderLiveReload();
   $('lookwarn').innerHTML = warns.map((w) => `<div class="warn">${esc(w)}</div>`).join('');
   const cur = $('f-group').value;
   $('f-group').innerHTML = '<option value="">Tous les utilisateurs</option>' + [...A.groups.values()]
@@ -252,95 +273,229 @@ function renderDetail() {
 }
 
 // ---------------------------------------------------------------------------
-// Modification en masse (lot 2a)
-// Aperçu calculé sur les données de l'audit ; à l'exécution, chaque
-// utilisateur est relu (GET /users/{uuid}) et la valeur cible recalculée sur
-// cette lecture. Sauvegarde (valeurs relues) téléchargée AVANT la première
-// écriture, copie dans le navigateur pour la restauration.
+// Modification en masse (lots 2a / 2b)
+// Assistant : 1) réglages à modifier, 2) une étape par réglage (valeur +
+// aperçu), 3) récapitulatif puis « Appliquer ». À l'exécution, chaque
+// utilisateur est relu (GET /users/{uuid}, + sa messagerie si besoin) et les
+// valeurs cibles recalculées sur cette lecture. Sauvegarde (valeurs relues)
+// téléchargée AVANT la première écriture, copie dans le navigateur.
 // ---------------------------------------------------------------------------
-const ctx = () => ({ moh: A.moh, groups: A.groups, perms: A.perms, scheds: A.scheds });
+const ctx = () => ({ moh: A.moh, groups: A.groups, perms: A.perms, scheds: A.scheds, queues: A.queues, sbs: A.sbs, contexts: A.contexts, users: A.users, callerOpts: A.callerOpts, callerOptsErr: A.callerOptsErr, destText });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const LAST_BACKUP = 'astrea-users-last-backup';
 // Classe les utilisateurs : à modifier / déjà à la valeur / impossible.
+// target(cur, u) === undefined : rien à faire pour cet utilisateur.
 function plan(s, target, users) {
   const out = { change: [], same: [], bad: [] };
   for (const u of users) {
     const cur = s.read(u), next = target(cur, u);
-    if (same(cur, next)) { out.same.push(u); continue; }
+    if (next === undefined || same(cur, next)) { out.same.push(u); continue; }
     const err = s.check?.(u, next);
     if (err) out.bad.push({ u, err }); else out.change.push({ u, cur, next });
   }
   return out;
 }
+const counts = (p) => `<strong>${p.change.length}</strong> à modifier · ${p.same.length} déjà à cette valeur${p.bad.length ? ` · <span class="error">${p.bad.length} impossible(s)</span>` : ''}`;
 function planHtml(s, p) {
   const c = ctx();
-  return `<p class="small"><strong>${p.change.length}</strong> à modifier · ${p.same.length} déjà à cette valeur${p.bad.length ? ` · <span class="error">${p.bad.length} impossible(s)</span>` : ''}</p>
+  return `<p class="small">${counts(p)}</p>
     ${p.change.length ? `<table class="diff"><tr><th>Utilisateur</th><th>Avant</th><th>Après</th></tr>${p.change.slice(0, 300).map((x) => `<tr><td>${esc(fullName(x.u))}</td><td class="muted">${esc(s.text(x.cur, c))}</td><td><strong>${esc(s.text(x.next, c))}</strong></td></tr>`).join('')}</table>` : ''}
-    ${p.bad.map((x) => `<div class="warn">${esc(fullName(x.u))} : ${esc(x.err)}</div>`).join('')}
-    ${s.heavy && p.change.length ? `<div class="warn">Chaque modification recharge la configuration d'Asterisk et régénère celle des postes de l'utilisateur : ${p.change.length} écriture(s), espacées.</div>` : ''}`;
+    ${p.bad.map((x) => `<div class="warn">${esc(fullName(x.u))} : ${esc(x.err)}</div>`).join('')}`;
+}
+// steps : [{ s, desc, p }] → récapitulatif de toutes les modifications.
+function recapHtml(steps) {
+  const c = ctx();
+  const rows = steps.flatMap(({ s, p }, i) => p.change.map((x) => ({ i, s, x })))
+    .sort((a, b) => fullName(a.x.u).localeCompare(fullName(b.x.u), 'fr') || a.i - b.i);
+  const heavy = steps.reduce((n, { s, p }) => n + (s.heavy ? p.change.length : 0), 0);
+  return `${steps.map(({ desc, p }) => `<div class="small"><strong>${esc(desc)}</strong> — ${counts(p)}</div>${p.bad.map((x) => `<div class="warn">${esc(fullName(x.u))} : ${esc(x.err)}</div>`).join('')}`).join('')}
+    ${rows.length ? `<table class="diff"><tr><th>Utilisateur</th><th>Réglage</th><th>Avant</th><th>Après</th></tr>${rows.slice(0, 500).map((r) => `<tr><td>${esc(fullName(r.x.u))}</td><td>${esc(r.s.label)}</td><td class="muted">${esc(r.s.text(r.x.cur, c))}</td><td><strong>${esc(r.s.text(r.x.next, c))}</strong></td></tr>`).join('')}</table>` : ''}
+    ${heavyHtml(heavy)}`;
+}
+function heavyHtml(n) {
+  if (n < 2) return '';
+  if (A.lr?.ok && A.lr.enabled) return `<label class="inline batch"><input type="checkbox" id="m-batch" checked> Regrouper les rechargements : ${n} écritures rechargent Asterisk ; le live reload est coupé pendant les écritures puis réactivé, avec un seul rechargement à la fin. Réglage commun à tout le serveur, réactivé même en cas d'erreur.</label>`;
+  if (A.lr?.ok) return '<div class="warn">Le live reload est déjà désactivé sur ce serveur : ces écritures ne rechargeront pas Asterisk tant qu\'il n\'est pas réactivé (bandeau rouge).</div>';
+  return `<div class="warn">${n} écritures rechargent chacune Asterisk : elles seront espacées. Regroupement indisponible (${esc(A.lr?.err || 'état du live reload inconnu')}).</div>`;
 }
 function openMass() {
   if (!canWrite() || !A.picked.size) return;
   const users = [...A.picked].map((id) => A.byId.get(id)).filter(Boolean);
-  const grps = [...new Set(SETTINGS.map((s) => s.grp))];
-  confirmModal(`<h3>Modifier ${users.length} utilisateur(s)</h3>
-    <label>Réglage <select id="m-set">${grps.map((g) => `<optgroup label="${esc(g)}">${SETTINGS.filter((s) => s.grp === g).map((s) => `<option value="${s.id}">${esc(s.label)}</option>`).join('')}</optgroup>`).join('')}</select></label>
-    <div id="m-form"></div><div id="m-prev" class="mprev"></div>
-    <p class="muted small">Une sauvegarde des valeurs actuelles est téléchargée avant d'écrire (bouton « Restaurer » pour revenir en arrière).</p>`, async () => {
-    const s = settingById($('m-set').value);
-    let spec;
-    try { spec = s.parse(ctx()); } catch (e) { toast(e.message, 6000); return false; }
-    if (!plan(s, spec.target, users).change.length) { toast('Rien à modifier : les utilisateurs sélectionnés ont déjà cette valeur.', 6000); return false; }
-    await runMass(s, spec.desc, users, spec.target);
-  }, 'Appliquer');
-  const upd = () => {
-    const s = settingById($('m-set').value);
-    try { $('m-prev').innerHTML = planHtml(s, plan(s, s.parse(ctx()).target, users)); } catch (e) { $('m-prev').innerHTML = `<p class="error small">${esc(e.message)}</p>`; }
+  const W = { step: 0, ids: [], specs: {}, vals: {}, steps: [] };
+  const list = () => W.ids.map(settingById);
+  const saveVals = () => {
+    const s = list()[W.step - 1];
+    if (s && $('m-form')) W.vals[s.id] = Object.fromEntries([...$('m-form').querySelectorAll('input[id], select[id]')].map((e) => [e.id, e.value]));
   };
-  const setForm = () => { const s = settingById($('m-set').value); $('m-form').innerHTML = s.form(ctx()); s.wire?.(); upd(); };
-  $('m-set').onchange = setForm;
-  $('m-form').oninput = upd;
-  $('m-form').onchange = upd;
-  setForm();
-}
-// target(cur, u) → valeur à écrire. Lecture de tous, sauvegarde, puis écritures.
-async function runMass(s, desc, users, target) {
-  const todo = [], failed = [];
-  let unchanged = 0, ok = 0;
-  for (const [i, u0] of users.entries()) {
-    toast(`Lecture ${i + 1}/${users.length}…`, 60000);
-    try {
-      const u = await api('GET', `/users/${u0.uuid}`);
-      const cur = s.read(u), next = target(cur, u);
-      if (next === undefined || same(cur, next)) { unchanged++; continue; }
-      const err = s.check?.(u, next);
-      if (err) failed.push([fullName(u), err]); else todo.push({ u, cur, next });
-    } catch (e) { failed.push([fullName(u0), e.message]); }
-  }
-  if (todo.length) {
-    const backup = { app: 'astrea-users', kind: 'backup', created: new Date().toISOString(), base: S.base, tenant: S.tenant, setting: s.id, desc,
-      users: todo.map((x) => ({ id: x.u.id, uuid: x.u.uuid, name: fullName(x.u), before: x.cur, after: x.next })) };
-    downloadJson(`astrea-users-sauvegarde-${s.id}-${backup.created.replace(/[:.]/g, '-')}.json`, backup);
-    try { localStorage.setItem(LAST_BACKUP, JSON.stringify(backup)); } catch { /* stockage indisponible : le fichier suffit */ }
-    for (const [i, x] of todo.entries()) {
-      toast(`Écriture ${i + 1}/${todo.length}…`, 60000);
-      try { await s.write(x.u, x.next, x.cur); ok++; } catch (e) { failed.push([fullName(x.u), e.message]); console.error('[astrea]', fullName(x.u), e); }
-      if (s.heavy && i < todo.length - 1) await sleep(400);
+  const preview = (s) => { try { $('m-prev').innerHTML = planHtml(s, plan(s, s.parse(ctx()).target, users)); } catch (e) { $('m-prev').innerHTML = `<p class="error small">${esc(e.message)}</p>`; } };
+  const back = '<div class="btnrow"><button type="button" id="m-back">← Précédent</button></div>';
+  const render = () => {
+    const n = W.ids.length;
+    const head = (t) => `<h3>${esc(t)}</h3><p class="muted small">${users.length} utilisateur(s) sélectionné(s)${W.step ? ` · étape ${W.step + 1} sur ${n + 2}` : ''}</p>`;
+    let ok = 'Suivant';
+    if (W.step === 0) {
+      const grps = [...new Set(SETTINGS.map((s) => s.grp))];
+      $('modal-body').innerHTML = `${head('Réglages à modifier')}<div class="wizsets">${grps.map((g) => `<div class="grp">${esc(g)}</div>${SETTINGS.filter((s) => s.grp === g).map((s) => `<label class="inline"><input type="checkbox" data-set="${s.id}"${W.ids.includes(s.id) ? ' checked' : ''}> ${esc(s.label)}</label>`).join('')}`).join('')}</div>`;
+    } else if (W.step <= n) {
+      const s = list()[W.step - 1];
+      $('modal-body').innerHTML = `${head(s.label)}<div id="m-form">${s.form(ctx())}</div><div id="m-prev" class="mprev"></div>${back}`;
+      for (const [id, v] of Object.entries(W.vals[s.id] || {})) { const e = document.getElementById(id); if (e) e.value = v; }
+      s.wire?.();
+      $('m-form').oninput = () => preview(s);
+      $('m-form').onchange = () => preview(s);
+      preview(s);
+    } else {
+      W.steps = list().map((s) => ({ s, desc: W.specs[s.id].desc, p: plan(s, W.specs[s.id].target, users) }));
+      $('modal-body').innerHTML = `${head('Récapitulatif')}<div class="mprev tall">${recapHtml(W.steps)}</div>
+        <p class="muted small">Chaque utilisateur est relu juste avant l'écriture. Une sauvegarde des valeurs actuelles est téléchargée avant la première écriture (« Restaurer… » pour revenir en arrière).</p>${back}`;
+      ok = 'Appliquer';
     }
-  }
-  $('massres').innerHTML = `<div class="massres${failed.length ? ' bad' : ''}"><strong>${esc(desc)}</strong> : ${ok} modifié(s), ${unchanged} déjà à la valeur${failed.length ? `, ${failed.length} en erreur` : ''}.${todo.length ? ' Sauvegarde téléchargée.' : ''}
-    ${failed.map(([n, m]) => `<div class="small">${esc(n)} : ${esc(m)}</div>`).join('')}<button class="icon" data-close title="Fermer">×</button></div>`;
-  toast(`${ok} utilisateur(s) modifié(s)${failed.length ? `, ${failed.length} en erreur` : ''}.`, 6000);
+    $('modal-ok').textContent = ok;
+    if ($('m-back')) $('m-back').onclick = () => { saveVals(); W.step--; render(); };
+  };
+  confirmModal('', async () => {
+    if (W.step === 0) {
+      const ids = [...document.querySelectorAll('#modal-body input[data-set]:checked')].map((x) => x.dataset.set);
+      if (!ids.length) { toast('Cochez au moins un réglage.'); return false; }
+      W.ids = SETTINGS.filter((s) => ids.includes(s.id)).map((s) => s.id);
+      W.step = 1; render(); return false;
+    }
+    if (W.step <= W.ids.length) {
+      const s = list()[W.step - 1];
+      saveVals();
+      try { W.specs[s.id] = s.parse(ctx()); } catch (e) { toast(e.message, 6000); return false; }
+      W.step++; render(); return false;
+    }
+    if (!W.steps.some((x) => x.p.change.length)) { toast('Rien à modifier : les utilisateurs sélectionnés ont déjà ces valeurs.', 6000); return false; }
+    const desc = W.steps.length > 1 ? W.steps.map((x) => x.s.label).join(', ') : W.steps[0].desc;
+    await runMass(W.steps.map(({ s, desc: d }) => ({ s, desc: d, target: W.specs[s.id].target })), users, desc, { batch: $('m-batch')?.checked === true });
+  }, 'Suivant');
+  render();
+}
+// items : [{ s, desc, target(cur, u) }]. Lecture de tous, sauvegarde, puis écritures.
+async function runMass(items, users, desc, { batch = false } = {}) {
+  const todo = [], failed = [], skipped = [];
+  let unchanged = 0, ok = 0, lrNote = '';
+  const needVm = items.some((it) => it.s.vm);
+  A.running = true;
+  try {
+    for (const [i, u0] of users.entries()) {
+      toast(`Lecture ${i + 1}/${users.length}…`, 60000);
+      try {
+        const u = await api('GET', `/users/${u0.uuid}`);
+        u._vm = needVm && u.voicemail ? await api('GET', `/voicemails/${u.voicemail.id}`) : null;
+        for (const it of items) {
+          const cur = it.s.read(u), next = it.target(cur, u);
+          if (next === undefined || same(cur, next)) { unchanged++; continue; }
+          const err = it.s.check?.(u, next);
+          if (err) skipped.push([fullName(u), it.s.label, err]); else todo.push({ u, it, cur, next });
+        }
+      } catch (e) { failed.push([fullName(u0), 'lecture', e.message]); }
+    }
+    if (todo.length) {
+      const created = new Date().toISOString();
+      const backup = { app: 'astrea-users', kind: 'backup', v: 2, created, base: S.base, tenant: S.tenant, desc,
+        items: items.map((it) => ({ setting: it.s.id, desc: it.desc, users: todo.filter((x) => x.it === it).map((x) => ({ id: x.u.id, uuid: x.u.uuid, name: fullName(x.u), before: x.cur, after: x.next })) })).filter((x) => x.users.length) };
+      downloadJson(`astrea-users-sauvegarde-${created.replace(/[:.]/g, '-')}.json`, backup);
+      try { localStorage.setItem(LAST_BACKUP, JSON.stringify(backup)); } catch { /* stockage indisponible : le fichier suffit */ }
+      let lrOff = false;
+      if (batch && todo.filter((x) => x.it.s.heavy).length > 1) {
+        try {
+          const st = await liveReload('GET');
+          if (st?.enabled) { await liveReload('PUT', { enabled: false }); lrOff = true; markLr(true); } else lrNote = 'live reload déjà désactivé : laissé tel quel';
+        } catch (e) { lrNote = `regroupement impossible (${e.message}) : écritures espacées`; }
+      }
+      try {
+        for (const [i, x] of todo.entries()) {
+          toast(`Écriture ${i + 1}/${todo.length}…`, 60000);
+          try { await x.it.s.write(x.u, x.next, x.cur); ok++; x.done = true; } catch (e) { failed.push([fullName(x.u), x.it.s.label, e.message]); console.error('[astrea]', fullName(x.u), x.it.s.id, e); }
+          if (x.it.s.heavy && !lrOff && i < todo.length - 1) await sleep(400);
+        }
+      } finally {
+        if (lrOff) lrNote = await restoreLiveReload(todo.filter((x) => x.done && x.it.s.heavy));
+      }
+    }
+  } finally { A.running = false; }
+  $('massres').innerHTML = `<div class="massres${failed.length ? ' bad' : ''}"><strong>${esc(desc)}</strong> : ${ok} modification(s) écrite(s), ${unchanged} déjà à la valeur${skipped.length ? `, ${skipped.length} ignorée(s) (impossible)` : ''}${failed.length ? `, ${failed.length} en erreur` : ''}.${todo.length ? ' Sauvegarde téléchargée.' : ''}
+    ${lrNote ? `<div class="small">${esc(lrNote)}.</div>` : ''}
+    ${failed.map(([n, s, m]) => `<div class="small error">${esc(n)} · ${esc(s)} : ${esc(m)}</div>`).join('')}
+    ${skipped.length ? `<details class="small"><summary>Ignorées (${skipped.length})</summary>${skipped.map(([n, s, m]) => `<div>${esc(n)} · ${esc(s)} : ${esc(m)}</div>`).join('')}</details>` : ''}<button class="icon" data-close title="Fermer">×</button></div>`;
+  toast(`${ok} modification(s) écrite(s)${failed.length ? `, ${failed.length} en erreur` : ''}.`, 6000);
   try { await reload(); } catch (e) { toast(e.message, 8000); }
 }
+
+// ---------------------------------------------------------------------------
+// Live reload (vérifié dans le code de confd, 13/10/2026) :
+//  - GET/PUT /configuration/live_reload {enabled}, ACL
+//    confd.configuration.live_reload.read|update, tenant principal exigé
+//    (required_master_tenant) : appel SANS en-tête Wazo-Tenant ;
+//  - désactivé, confd n'envoie plus aucune commande de rechargement à
+//    Asterisk (sysconfd) ; les données et la config des postes sont écrites ;
+//  - le réactiver ne recharge rien : une écriture neutre (même valeur)
+//    déclenche ensuite les rechargements de son type.
+// Réglage COMMUN À TOUT LE SERVEUR (tous les tenants).
+// À vérifier en réel : droit du token du portail, tenant principal.
+// ---------------------------------------------------------------------------
+const LR_MARK = 'astrea-users-lr-off';
+async function liveReload(method, body) {
+  if (S.readonly && method !== 'GET') throw new Error(`Lecture seule : ${S.readonly}`);
+  const headers = { 'X-Auth-Token': S.token, Accept: 'application/json' };
+  if (body) headers['Content-Type'] = 'application/json';
+  const r = await fetch(`${S.base}/api/confd/1.1/configuration/live_reload`, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  if (!r.ok) throw new Error(`live reload ${method} → ${r.status}`);
+  return r.status === 204 ? null : r.json();
+}
+async function checkLiveReload() {
+  try { A.lr = { ok: true, enabled: (await liveReload('GET'))?.enabled !== false }; } catch (e) { A.lr = { ok: false, err: e.message }; }
+}
+function markLr(on) { try { if (on) localStorage.setItem(LR_MARK, `${S.base}|${new Date().toISOString()}`); else localStorage.removeItem(LR_MARK); } catch { /* */ } }
+// Réactive (3 essais), puis déclenche le rechargement final.
+async function restoreLiveReload(done) {
+  let err = '';
+  for (let i = 0; i < 3; i++) {
+    try { await liveReload('PUT', { enabled: true }); err = ''; break; } catch (e) { err = e.message; await sleep(1000); }
+  }
+  if (err) { A.lr = { ok: true, enabled: false }; renderLiveReload(); return `ÉCHEC de la réactivation du live reload (${err}) : utilisez le bouton du bandeau rouge`; }
+  markLr(false);
+  A.lr = { ok: true, enabled: true };
+  renderLiveReload();
+  return `rechargements regroupés : live reload coupé pendant les écritures puis réactivé${await triggerReload(done)}`;
+}
+async function triggerReload(done) {
+  const out = [];
+  try {
+    const xu = done.find((x) => x.it.s.reload === 'user');
+    if (xu) { const u = await api('GET', `/users/${xu.u.uuid}`); await api('PUT', `/users/${u.uuid}`, { ring_seconds: u.ring_seconds }); out.push('Asterisk'); }
+    const xv = done.find((x) => x.it.s.reload === 'voicemail');
+    if (xv) { const v = await api('GET', `/voicemails/${xv.u._vm.id}`); await api('PUT', `/voicemails/${v.id}`, { ask_password: v.ask_password === true }); out.push('messageries'); }
+    return out.length ? `, rechargement final déclenché (${out.join(', ')})` : '';
+  } catch (e) { return `, mais le rechargement final a échoué (${e.message}) : bouton « Réactiver et recharger » si besoin`; }
+}
+function renderLiveReload() {
+  if (!(A.lr?.ok && !A.lr.enabled)) { $('lrwarn').innerHTML = ''; return; }
+  let mine = false;
+  try { mine = (localStorage.getItem(LR_MARK) || '').startsWith(`${S.base}|`); } catch { /* */ }
+  $('lrwarn').innerHTML = `<div class="compat blocking"><strong>Live reload désactivé sur ce serveur.</strong> Les modifications (portail compris, tous les clients) ne rechargent plus Asterisk.${mine ? ' Il a été coupé par User Manager (opération interrompue ?).' : ''}
+    <div class="btnrow"><button id="lr-fix" class="danger">Réactiver et recharger</button></div></div>`;
+  $('lr-fix').onclick = async () => {
+    if (!canWrite()) return;
+    const u = A.users.find((x) => (x.lines || []).length) || A.users[0];
+    const note = await restoreLiveReload(u ? [{ u, it: { s: { reload: 'user' } } }] : []);
+    toast(note, 8000);
+  };
+}
+
 // Restauration : remet les valeurs « before » d'une sauvegarde (fichier ou
 // dernière sauvegarde du navigateur). Même serveur et même tenant exigés.
+// Format v2 : items[{ setting, desc, users }] ; v1 (0.24.0) : setting + users.
+const backupItems = (b) => (Array.isArray(b?.items) ? b.items : b?.setting ? [{ setting: b.setting, desc: b.desc, users: b.users }] : null);
 function openRestore() {
   if (!canWrite()) return;
   let last = null;
   try { last = JSON.parse(localStorage.getItem(LAST_BACKUP)); } catch { /* */ }
+  const nUsers = (b) => new Set((backupItems(b) || []).flatMap((it) => (it.users || []).map((x) => x.uuid))).size;
   confirmModal(`<h3>Restaurer une sauvegarde</h3>
-    ${last ? `<label class="inline"><input type="radio" name="m-src" value="last" checked> Dernière sauvegarde de ce navigateur : ${esc(last.desc)} (${last.users?.length || 0} utilisateur(s), ${esc(new Date(last.created).toLocaleString('fr-FR'))})</label>` : ''}
+    ${last ? `<label class="inline"><input type="radio" name="m-src" value="last" checked> Dernière sauvegarde de ce navigateur : ${esc(last.desc)} (${nUsers(last)} utilisateur(s), ${esc(new Date(last.created).toLocaleString('fr-FR'))})</label>` : ''}
     <label class="inline"><input type="radio" name="m-src" value="file"${last ? '' : ' checked'}> Fichier de sauvegarde (astrea-users-sauvegarde-….json)</label>
     <input type="file" id="m-file" accept=".json,application/json">`, async () => {
     let b;
@@ -348,24 +503,32 @@ function openRestore() {
       const src = document.querySelector('input[name="m-src"]:checked')?.value;
       if (src === 'last') b = last;
       else { const f = $('m-file').files[0]; if (!f) throw new Error('Choisissez un fichier.'); b = JSON.parse(await f.text()); }
-      if (b?.app !== 'astrea-users' || b.kind !== 'backup' || !Array.isArray(b.users)) throw new Error('Ce fichier n\'est pas une sauvegarde User Manager.');
-      if (!settingById(b.setting)) throw new Error(`Réglage inconnu dans la sauvegarde : ${b.setting}.`);
+      const items = backupItems(b);
+      if (b?.app !== 'astrea-users' || b.kind !== 'backup' || !items) throw new Error('Ce fichier n\'est pas une sauvegarde User Manager.');
+      const unknown = items.filter((it) => !settingById(it.setting)).map((it) => it.setting);
+      if (unknown.length) throw new Error(`Réglage inconnu dans la sauvegarde : ${unknown.join(', ')}.`);
       if (b.base !== S.base || (b.tenant || null) !== (S.tenant || null)) throw new Error('Cette sauvegarde vient d\'un autre serveur ou d\'un autre tenant.');
     } catch (e) { toast(e.message, 7000); return false; }
     setTimeout(() => confirmRestore(b), 0); // le dialogue se ferme d'abord
   }, 'Suivant');
 }
 function confirmRestore(b) {
-  const s = settingById(b.setting);
-  const before = new Map(b.users.map((x) => [x.uuid, x.before]));
-  const users = A.users.filter((u) => before.has(u.uuid));
-  const missing = b.users.length - users.length;
-  const target = (cur, u) => before.get(u.uuid);
+  const all = new Set();
+  const steps = backupItems(b).map((it) => {
+    const s = settingById(it.setting);
+    const before = new Map(it.users.map((x) => [x.uuid, x.before]));
+    before.forEach((_, k) => all.add(k));
+    const target = (cur, u) => (before.has(u.uuid) ? before.get(u.uuid) : undefined);
+    return { s, desc: it.desc || s.label, target };
+  });
+  const users = A.users.filter((u) => all.has(u.uuid));
+  const missing = all.size - users.length;
+  const withPlan = steps.map((x) => ({ ...x, p: plan(x.s, x.target, users) }));
   confirmModal(`<h3>Restaurer : ${esc(b.desc)}</h3>
     <p class="muted small">Sauvegarde du ${esc(new Date(b.created).toLocaleString('fr-FR'))}. Les valeurs d'avant la modification sont réécrites ; une nouvelle sauvegarde est téléchargée avant.</p>
     ${missing ? `<div class="warn">${missing} utilisateur(s) de la sauvegarde n'existent plus.</div>` : ''}
-    <div class="mprev">${planHtml(s, plan(s, target, users))}</div>`, async () => {
-    await runMass(s, `Restauration (${b.desc})`, users, target);
+    <div class="mprev tall">${recapHtml(withPlan)}</div>`, async () => {
+    await runMass(steps, users, `Restauration (${b.desc})`, { batch: $('m-batch')?.checked === true });
   }, 'Restaurer');
 }
 
@@ -414,4 +577,6 @@ $('g-body').onclick = (e) => {
 };
 $('d-close').onclick = () => { A.sel = null; render(); };
 $('reload').onclick = async () => { try { await reload(); toast('Rechargé'); } catch (e) { toast(e.message, 8000); } };
+// Fermeture de la page pendant une opération : le live reload pourrait rester coupé.
+window.addEventListener('beforeunload', (e) => { if (A.running) { e.preventDefault(); e.returnValue = ''; } });
 connect(boot);

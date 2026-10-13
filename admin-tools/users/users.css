@@ -31,6 +31,14 @@
 /* Modification en masse */
 .mprev { max-height: 320px; overflow: auto; margin-top: 8px; }
 .mprev .diff td, .mprev .diff th { padding: 6px 10px; }
+.mprev.tall { max-height: 52vh; }
+.mprev > .small { margin: 6px 0; }
+.wizsets { columns: 2 220px; column-gap: 24px; }
+.wizsets .grp { break-after: avoid; margin: 10px 0 2px; font-size: .6875rem; color: var(--muted); text-transform: uppercase; letter-spacing: .08333em; }
+.wizsets label.inline { display: flex; margin: 4px 0; }
+label.inline.batch { align-items: flex-start; margin: 12px 0 4px; font-size: .8125rem; line-height: 1.4; }
+label.inline.batch input { margin-top: 2px; flex: none; }
+#lrwarn .btnrow { margin: 8px 0 0; }
 #m-form label.inline, .modal-box label.inline { margin: 6px 0; }
 .massres { position: relative; margin: 0 0 16px; padding: 10px 40px 10px 16px; border-left: 4px solid var(--ok); border-radius: var(--radius); background: color-mix(in srgb, var(--ok) 10%, var(--panel)); font-size: .8125rem; line-height: 1.5; }
 .massres.bad { border-left-color: var(--danger); background: color-mix(in srgb, var(--danger) 8%, var(--panel)); }

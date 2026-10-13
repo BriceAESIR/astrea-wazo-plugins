@@ -20,28 +20,37 @@ Cadrage, sources et décisions : `docs/USER-MANAGER.md` (dépôt de dev).
 ## Modification en masse
 - Cocher des utilisateurs dans le tableau (la case de l'en-tête coche les
   lignes affichées : combiner avec les filtres), puis « Modifier la
-  sélection ». Choisir le réglage et la valeur : l'aperçu montre avant / après
-  pour chaque utilisateur, ceux déjà à la bonne valeur et ceux pour qui c'est
-  impossible (ex. groupe pour un utilisateur sans ligne).
+  sélection ». Assistant :
+  1. cocher les réglages à modifier ;
+  2. une étape par réglage : valeur et aperçu avant / après (déjà à la bonne
+     valeur, impossible pour tel utilisateur) ; « Précédent » / « Suivant » ;
+  3. récapitulatif de toutes les modifications, puis « Appliquer ».
 - Réglages (`settings.js`) : ne pas déranger, filtrage, renvois d'appel
-  (occupé, inconditionnel, pas de réponse), durée de sonnerie, appels
-  simultanés, musique d'attente, langue, fuseau, groupes, droits d'appel,
-  horaire.
+  (occupé, inconditionnel, pas de réponse), renvois par défaut (si occupé,
+  congestion, échec, non répondu : aucune, sa messagerie, utilisateur,
+  groupe, file, standard, numéro, raccrocher), numéro présenté (par défaut,
+  anonyme, numéros du tenant, sa SDA, autre), options de messagerie, durée
+  de sonnerie, appels simultanés, musique d'attente, langue, fuseau, groupes,
+  droits d'appel, horaire.
 - À l'exécution, chaque utilisateur est relu ; rien n'est écrit s'il a déjà la
   valeur. Une **sauvegarde** JSON des valeurs précédentes est téléchargée avant
   la première écriture (et gardée dans le navigateur). « Restaurer… » la
   réapplique, avec aperçu.
-- Les réglages de l'utilisateur lui-même (sonnerie, musique, langue…) et les
-  groupes rechargent la configuration d'Asterisk et des postes à chaque
-  écriture : elles sont espacées.
+- **Rechargements** : certains réglages rechargent Asterisk à chaque écriture
+  (sonnerie, musique, langue, fuseau, numéro présenté, groupes, messagerie).
+  Avec plusieurs écritures, l'option « Regrouper les rechargements » coupe le
+  live reload du serveur pendant les écritures, le réactive (même en cas
+  d'erreur) et déclenche un seul rechargement. Le live reload est commun à
+  tout le serveur : s'il est trouvé coupé au chargement, un bandeau rouge
+  propose de le réactiver. Sans ce droit, les écritures sont espacées.
 
-La fiche utilisateur modifiable et les renvois par défaut arrivent ensuite.
-
+La fiche utilisateur modifiable et le CSV arrivent ensuite.
 ## Droits utilisés
 Lecture : `confd.users.read`, plus, pour les libellés, `confd.moh.read`,
 `confd.groups.read`, `confd.voicemails.read`, `confd.callpermissions.read`
 et `confd.schedules.read`. Écriture : `confd.users.{id}.update`,
 `…services.*`, `…forwards.*`, `…groups.update`, `…callpermissions.*`,
-`…schedules.*` (non vérifiés en réel pour le token du portail). Si l'un d'eux est refusé,
+`…schedules.*`, `…fallbacks.update`, `confd.voicemails.{id}.update`,
+`confd.configuration.live_reload.read|update` (non vérifiés en réel pour le token du portail). Si l'un d'eux est refusé,
 l'audit fonctionne quand même et affiche les valeurs techniques, avec un
 avertissement.
