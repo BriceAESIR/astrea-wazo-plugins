@@ -106,11 +106,13 @@ dans `app.js`.
 | Place de parking | `park_position` | parking + place | oui |
 | Renvoi | `forward` | inconditionnel / occupation / non-réponse + numéro facultatif | oui |
 | Service | `service` | 11 services | seulement NPD, messagerie, enregistrement, filtrage entrant |
-| Transfert | `transfer` | aveugle / supervisé | oui |
+| Transfert | `transfer` | aveugle / supervisé | non proposée (confd garde le drapeau, mais aucun état à surveiller : supposé) |
 | Filtrage patron-secrétaire | `bsfilter` | membre secrétaire (`/callfilters`, `member_id`) | oui · **refusé dans les modèles partagés** |
 | Enregistrement en ligne | `onlinerec` | aucun | **ignorée** |
 
-- La case Supervision est grisée quand Wazo l'ignore ; elle est cochée d'office
+- La case Supervision est **masquée** (« Pas de supervision pour ce type de
+  touche ») quand le type n'en a pas, dès qu'il est choisi dans le menu
+  (0.30.1 : avant, elle gardait l'état de l'ancien type) ; elle est cochée d'office
   pour les types à état (membre de groupe, agent, place de parking, renvoi,
   service, filtrage).
 - Libellé automatique court (« NPD », « Agent 1001 », « Place 705 »,

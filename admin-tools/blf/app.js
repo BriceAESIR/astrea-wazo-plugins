@@ -148,9 +148,11 @@ const KEY_TYPES = {
   service: { supDef: true, label: 'Service', short: 'Service', sup: 'service',
     fields: [{ p: 'service', label: 'Service', opts: SERVICES }], help:
     "Fonction de Wazo pour l'utilisateur du poste : ne pas déranger, messagerie, interception, enregistrement… Vérifié : la supervision n'est gardée que pour Ne pas déranger, Messagerie vocale, Enregistrement des appels et Filtrage des appels entrants ; les autres services sont écrits en numérotation rapide." },
-  transfer: { label: 'Transfert', short: 'Transfert', sup: true,
+  // confd garde le drapeau BLF, mais un code de transfert n'a pas d'état à
+  // surveiller (supposé) : pas de supervision proposée.
+  transfer: { label: 'Transfert', short: 'Transfert', sup: false,
     fields: [{ p: 'transfer', label: 'Transfert', opts: [['blind', 'Aveugle (sans annonce)'], ['attended', 'Supervisé (on parle d\'abord au destinataire)']] }], help:
-    "Transfère l'appel en cours par le code de transfert de Wazo (vérifié) ; le poste demande ensuite le numéro (supposé). Aveugle : l'appel part directement. Supervisé : on parle d'abord au destinataire. Les postes Yealink ont déjà une touche Transfert native." },
+    "Transfère l'appel en cours par le code de transfert de Wazo (vérifié) ; le poste demande ensuite le numéro (supposé). Aveugle : l'appel part directement. Supervisé : on parle d'abord au destinataire. Pas de supervision : rien à surveiller. Les postes Yealink ont déjà une touche Transfert native." },
   bsfilter: { supDef: true, label: 'Filtrage patron-secrétaire', short: 'Filtrage', sup: true, noTpl: true,
     fields: [{ p: 'filter_member_id', list: 'bsfilter', label: 'Filtre · secrétaire' }], help:
     "Active ou désactive le filtrage patron-secrétaire pour le membre choisi (liste : secrétaires des filtres). Refusé par Wazo dans les modèles de touches partagés (vérifié). Voyant allumé quand le filtrage est actif : supposé, à tester." },
@@ -1261,7 +1263,7 @@ function renderDetail() {
   $('dt-label').value = k?.label || '';
   $('dt-label').disabled = !k;
   renderHelp(type);
-  renderSup(k);
+  renderSup(type, k);
   for (const id of ['dt-left', 'dt-right', 'dt-clear', 'dt-delete']) $(id).disabled = !k && id !== 'dt-delete';
   $('dt-left').disabled = p - 1 < 1 || !!lineAt(p - 1);
   renderValueField(type, k);
@@ -1321,8 +1323,11 @@ function renderValueField(type, k) {
         return `<label>${esc(f.label)} <input data-i="${i}" ${f.kind === 'int' ? 'type="number" min="1"' : 'inputmode="tel"'} value="${esc(v ?? '')}"></label>`;
       }).join('') + `<p id="dt-parkhint" class="muted small">${parkHint(type, cur)}</p>`;
       if (!t.fields.length) {
-        wrap.innerHTML = '<p class="muted small">Rien à choisir pour ce type.</p>';
-        if (!k || k.destination.type !== type) commitGeneric(p, type, {});
+        // Rien à choisir : bouton explicite, pour ne pas remplacer la touche
+        // existante au simple passage dans le menu.
+        if (k?.destination.type === type) { wrap.innerHTML = '<p class="muted small">Rien à choisir pour ce type.</p>'; return; }
+        wrap.innerHTML = `<p class="muted small">Rien à choisir pour ce type.</p><button id="dt-apply">${k ? 'Remplacer la touche' : 'Créer la touche'}</button>`;
+        $('dt-apply').onclick = () => commitGeneric(p, type, {});
         return;
       }
       wrap.querySelectorAll('[data-i]').forEach((el) => { el.onchange = () => {
@@ -1372,12 +1377,18 @@ function renderHelp(type) {
   const t = KEY_TYPES[type];
   $('dt-help').innerHTML = t ? `<b>${esc(t.label)}</b> — ${esc(t.help)}` : `Type « ${esc(type)} » inconnu de cette version.`;
 }
-// Supervision : désactivée (et décochée) quand Wazo l'ignore pour ce type.
-function renderSup(k) {
-  const ok = k ? supOf(k.destination) : true;
-  $('dt-blf').checked = !!k?.blf && ok;
-  $('dt-blf').disabled = !k || !ok;
-  $('dt-blfwrap').title = k && !ok ? 'Wazo ignore la supervision pour ce type de touche (numérotation rapide).' : '';
+// Supervision, selon le type affiché (y compris un type en cours de choix,
+// pas encore appliqué à la touche) : case masquée quand le type n'en a pas,
+// grisée tant que la touche n'est pas définie.
+function renderSup(type, k) {
+  const t = KEY_TYPES[type];
+  const same = k?.destination.type === type;
+  const none = !t ? false : t.sup === false || (t.sup === 'service' && same && !supOf(k.destination));
+  $('dt-blfwrap').hidden = none;
+  $('dt-nosup').hidden = !none;
+  $('dt-nosup').textContent = t?.sup === 'service' ? 'Pas de supervision pour ce service.' : 'Pas de supervision pour ce type de touche.';
+  $('dt-blf').checked = !none && same && !!k.blf;
+  $('dt-blf').disabled = none || !same;
 }
 
 function wireDetail() {
@@ -1386,6 +1397,7 @@ function wireDetail() {
     const k = S.cur.slots[S.sel - 1];
     $('dt-type').dataset.pending = t;
     renderHelp(t);
+    renderSup(t, k);
     if (k && k.destination.type !== t) {
       // on garde la touche actuelle tant qu'une nouvelle valeur n'est pas choisie
       renderValueField(t, null);
@@ -1989,7 +2001,7 @@ async function applyDeploy() {
 // Format : { app, version, created, base, tenant, reason, entries: [{ uuid,
 // name, userfield, keys }] } — keys = touches propres (hors héritées).
 const BK_STORE = 'astrea-blf-last-backup';
-const APP_VERSION = '0.30.0';
+const APP_VERSION = '0.30.1';
 function makeBackup(reason, entries) {
   const bk = { app: 'astrea-blf', version: APP_VERSION, created: new Date().toISOString(), base: S.base, tenant: S.tenant, reason, entries };
   const json = JSON.stringify(bk, null, 1);
