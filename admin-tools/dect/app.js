@@ -12,7 +12,7 @@
 //  - confd régénère la config provd, mais ne synchronise pas l'appareil.
 // Supposé, à vérifier en réel : GET /lines renvoie device_id et position ;
 // un PUT /lines/{id} avec l'objet relu par GET est accepté.
-import { S, $, esc, toast, api, listAll, confirmModal, connect, fullName, canWrite, setReadonly, showCompat, loaded, loadFailed } from '../common/core.js?v=0.19.0';
+import { S, $, esc, toast, api, listAll, confirmModal, connect, fullName, canWrite, setReadonly, showCompat, loaded, loadFailed } from '../common/core.js?v=0.19.1';
 
 // Comptes SIP par modèle (_NB_SIP_ACCOUNTS / plugin-info des plugins provd).
 const DECT_MAX = {
@@ -349,7 +349,7 @@ function openRemove(lineId) {
   if (!canWrite() || hasPending()) return;
   const line = D.lines.find((l) => l.id === lineId);
   const d = devById(line.device_id);
-  confirmModal(`<h3>Retirer de la base</h3><p>${esc(lineUsers(line).map(fullName).join(', ') || 'Ligne sans utilisateur')} ${esc(lineNumber(line))} (compte ${line.position ?? '?'}) ne sera plus provisionnée sur ${esc(baseName(d))}. La ligne et l'utilisateur restent dans Wazo.</p>${syncBox()}`, async () => {
+  confirmModal(`<h3>Retirer de la base</h3><p>${esc(lineUsers(line).map(fullName).join(', ') || 'Ligne sans utilisateur')} ${esc(lineNumber(line))} (compte ${line.position ?? '?'}) ne sera plus provisionnée sur ${esc(baseName(d))}. La ligne et l'utilisateur restent dans Wazo. Sur la base, le compte est désactivé et ses identifiants effacés.</p>${linesOf(d.id).length === 1 ? lastLineWarn(d) : ''}${syncBox()}`, async () => {
     const sync = $('m-sync').checked;
     await run('Ligne retirée de la base', async () => {
       await api('DELETE', `/lines/${lineId}/devices/${d.id}`);
@@ -365,6 +365,8 @@ function hasPending() {
   toast('Des déplacements sont en attente : enregistrez-les ou annulez-les d\'abord.', 5000);
   return true;
 }
+// Dernière ligne retirée d'une base : confd remet l'appareil en autoprov.
+const lastLineWarn = (d) => `<div class="warn"><span class="error">C'est la dernière ligne de ${esc(baseName(d))} : Wazo remet alors la base en mode autoprovisionnement (configuration d'attente, plus aucun compte).</span></div>`;
 const who = (l) => `${lineUsers(l).map(fullName).join(', ') || 'Ligne sans utilisateur'} ${lineNumber(l)}`.trim();
 // Enregistre tous les déplacements : contrôle final (pas de doublon, maximum
 // du modèle), relecture des lignes (rien n'a bougé entre-temps), puis :
@@ -387,7 +389,7 @@ function savePlan() {
   const place = (dev, pos) => (dev ? `${esc(baseName(devById(dev)) || '?')} · compte ${pos ?? '?'}` : 'aucune base');
   confirmModal(`<h3>Enregistrer ${changes.length} déplacement(s)</h3>
     <table class="diff"><tr><th>Ligne</th><th>Avant</th><th>Après</th></tr>${changes.map((c) => `<tr><td>${esc(who(c.line))}</td><td>${place(c.line.device_id, c.line.position)}</td><td><strong>${place(c.to.dev, c.to.pos)}</strong></td></tr>`).join('')}</table>
-    <p class="muted small">Chaque base concernée reçoit sa nouvelle configuration ; le combiné qui utilisait un compte doit être réaffecté sur la page web de la base si le compte change.</p>${syncBox()}`, async () => {
+    ${devs.filter((id) => !linesOf(id).length).map((id) => lastLineWarn(devById(id))).join('')}<p class="muted small">Chaque base concernée reçoit sa nouvelle configuration ; le combiné qui utilisait un compte doit être réaffecté sur la page web de la base si le compte change.</p>${syncBox()}`, async () => {
     const sync = $('m-sync').checked;
     D.plan.clear(); // l'état réel est relu après l'écriture, réussie ou non
     await run(`${changes.length} déplacement(s) enregistré(s)`, async () => {
