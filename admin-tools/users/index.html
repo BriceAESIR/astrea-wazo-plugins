@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>User Manager · Astrea Admin Tools</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Mulish:wght@300..800&display=swap">
+<link rel="stylesheet" href="../common/style.css?v=0.23.0">
+<link rel="stylesheet" href="./users.css?v=0.23.0">
+<script>if (window.parent !== window) document.documentElement.classList.add('framed');</script>
+</head>
+<body>
+<div id="app">
+  <header class="topbar">
+    <div class="brand">User Manager</div>
+    <div id="conn" class="conn muted">Connexion…</div>
+  </header>
+
+  <!-- Connexion hors portail (tests) -->
+  <section id="standalone" class="card narrow" hidden>
+    <h2>Connexion directe</h2>
+    <p class="muted">Page ouverte hors du portail Wazo : connectez-vous à un serveur pour tester.</p>
+    <label>Serveur <input id="sa-host" placeholder="https://wazo.client.fr"></label>
+    <label>Identifiant <input id="sa-user" autocomplete="username"></label>
+    <label>Mot de passe <input id="sa-pass" type="password" autocomplete="current-password"></label>
+    <p class="muted small">ou</p>
+    <label>Token existant <input id="sa-token"></label>
+    <button id="sa-go" class="primary">Se connecter</button>
+    <p id="sa-err" class="error"></p>
+  </section>
+
+  <main id="main" class="no-detail" hidden>
+    <aside id="sidebar">
+      <nav class="sidenav">
+        <button data-view="audit" class="active">Audit des utilisateurs</button>
+      </nav>
+      <input id="q" type="search" placeholder="Nom, numéro, e-mail…">
+      <label>Groupe <select id="f-group"><option value="">Tous les utilisateurs</option></select></label>
+      <label class="inline"><input type="checkbox" id="f-odd" checked> Surligner les écarts</label>
+      <label class="inline"><input type="checkbox" id="f-oddonly"> Seulement les lignes avec un écart</label>
+      <div id="count" class="muted small"></div>
+      <h4 class="side-title">Colonnes</h4>
+      <div id="cols" class="cols"></div>
+      <div class="btnrow"><button id="cols-default">Colonnes par défaut</button></div>
+    </aside>
+
+    <section id="workbench">
+      <div id="compat" class="compat" role="alert" hidden></div>
+      <div id="audit">
+        <div class="phonehead">
+          <div>
+            <h2>Audit des utilisateurs</h2>
+            <div class="muted small">Lecture seule. Cliquez sur une ligne pour le détail ; sur un en-tête pour trier. Écart = valeur différente de la plus fréquente de la colonne (parmi les lignes affichées).</div>
+          </div>
+          <div class="btnrow"><button id="reload">Recharger</button></div>
+        </div>
+        <div id="lookwarn"></div>
+        <div class="tablewrap"><table id="grid" class="grid-users"><thead id="g-head"></thead><tbody id="g-body"></tbody></table></div>
+      </div>
+    </section>
+
+    <aside id="detail" hidden>
+      <div class="detailhead"><h3 id="d-name"></h3><button id="d-close" class="icon" title="Fermer">×</button></div>
+      <div id="d-body"></div>
+    </aside>
+  </main>
+
+  <div id="modal" class="modal" hidden><div class="modal-box"><div id="modal-body"></div>
+    <div class="btnrow right"><button id="modal-cancel">Annuler</button><button id="modal-ok" class="primary">Confirmer</button></div></div></div>
+  <div id="toast" class="toast" hidden></div>
+</div>
+<script type="module" src="./app.js?v=0.23.0"></script>
+</body>
+</html>
