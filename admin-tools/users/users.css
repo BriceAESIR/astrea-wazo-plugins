@@ -46,6 +46,11 @@ label.inline.batch input { margin-top: 2px; flex: none; }
 .massres.bad { border-left-color: var(--danger); background: color-mix(in srgb, var(--danger) 8%, var(--panel)); }
 .massres button.icon { position: absolute; right: 6px; top: 6px; }
 
+/* Adresses courriels du compte (formulaire) */
+.mailrow { display: flex; align-items: center; gap: 10px; margin: 6px 0; }
+.mailrow input[data-mail] { flex: 1; min-width: 180px; }
+.mailrow label.inline { margin: 0; font-size: .8125rem; white-space: nowrap; }
+
 /* Panneau de détail */
 #detail { padding-top: 8px; }
 .detailhead { display: flex; align-items: center; gap: 8px; }

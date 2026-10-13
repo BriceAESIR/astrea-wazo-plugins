@@ -59,9 +59,10 @@ Cadrage, sources et décisions : `docs/USER-MANAGER.md` (dépôt de dev).
   sans téléchargement de fichier.
 - « Utilisateur actif » n'a pas d'effet visible dans Wazo : il n'apparaît que
   pour un utilisateur déjà désactivé, pour le réactiver.
-- Compte des applications : accès, identifiant, méthode et adresses en lecture
-  seule ; bouton « Changer le mot de passe… » (sans l'ancien, sessions
-  fermées, pas de restauration possible).
+- Compte des applications (wazo-auth) : accès aux applications et méthode
+  (aussi en masse), identifiant, adresses courriels (ajout, suppression,
+  principale, confirmée) ; bouton « Changer le mot de passe… » (sans l'ancien,
+  sessions fermées, pas de restauration possible).
 
 Le CSV (export, création) arrive ensuite.
 ## Droits utilisés

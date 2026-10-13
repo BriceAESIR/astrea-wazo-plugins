@@ -1,6 +1,7 @@
 // User Manager — réglages modifiables en masse (lots 2a et 2b). Chaque réglage :
 //  read(u)            valeur actuelle, lue sur un utilisateur (GET /users/{uuid})
-//  form(ctx)          champs du dialogue (ids m-*), parse(ctx) → { target(cur), desc }
+//  form(ctx, cur, u)  champs du dialogue (ids m-*) ; cur/u seulement sur la fiche ;
+//                     parse(ctx) → { target(cur), desc }
 //                     (lève une Error si la saisie est invalide)
 //  text(v, ctx)       valeur lisible (aperçu, sauvegarde)
 //  check(u, v)        message si l'écriture est impossible pour cet utilisateur
@@ -9,12 +10,13 @@
 //                     la fiche met v dans #m-v s'il existe
 //  single             true = fiche seulement (champ propre à chaque utilisateur)
 //  showIf(u)          fiche : réglage affiché seulement si vrai pour cet utilisateur
+//  auth               true = compte de connexion wazo-auth (u._auth, relu avant écriture)
 //  heavy              true = l'écriture recharge Asterisk (écritures espacées, ou
 //                     regroupées en coupant le live reload) ; reload = type de
 //                     rechargement à redéclencher à la fin ('user')
 // Routes et sémantique vérifiées dans le code de wazo-confd (13/10/2026),
 // voir docs/USER-MANAGER.md. Écritures non encore testées en réel.
-import { api, esc, fullName } from '../common/core.js?v=0.28.0';
+import { S, api, esc, fullName } from '../common/core.js?v=0.29.0';
 
 // Comparaison indépendante de l'ordre des clés (objets relus vs construits).
 const canon = (v) => (Array.isArray(v) ? v.map(canon) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, canon(v[k])])) : v ?? null);
@@ -254,7 +256,105 @@ const enabledSetting = {
   text: (v) => (v ? 'oui' : 'non'),
 };
 
+// ---------------------------------------------------------------------------
+// Compte des applications (wazo-auth, onglet « Compte » du portail), lu dans
+// le code le 13/10/2026 :
+//  - PUT /api/auth/0.1/users/{uuid} (ACL auth.users.{uuid}.update) n'est PAS
+//    partiel : username, firstname, lastname, purpose, authentication_method,
+//    enabled reprennent leur défaut s'ils manquent → relire puis tout renvoyer ;
+//  - authentication_method validée contre les fournisseurs d'identité
+//    configurés (default, native, saml, ldap) ;
+//  - PUT /api/auth/0.1/admin/users/{uuid}/emails (ACL
+//    auth.admin.users.{uuid}.emails.update) remplace TOUTE la liste
+//    {address, main, confirmed} : une seule principale, pas de doublon.
+// « Autorisé à utiliser des applications » = enabled : supposé, à vérifier.
+// ---------------------------------------------------------------------------
+export async function authApi(method, path, body) {
+  if (S.readonly && method !== 'GET') throw new Error(`Lecture seule : ${S.readonly}`);
+  const headers = { 'X-Auth-Token': S.token, Accept: 'application/json' };
+  if (S.tenant) headers['Wazo-Tenant'] = S.tenant;
+  if (body !== undefined) headers['Content-Type'] = 'application/json';
+  const r = await fetch(`${S.base}/api/auth/0.1${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+  if (!r.ok) {
+    let m = `${method} auth${path} → ${r.status}`;
+    try { m += ' ' + JSON.stringify(await r.json()).slice(0, 300); } catch { /* */ }
+    const e = new Error(m); e.status = r.status; throw e;
+  }
+  return r.status === 204 ? null : r.json();
+}
+async function authPut(u, patch) {
+  const a = await authApi('GET', `/users/${u.uuid}`);
+  const body = { username: a.username, firstname: a.firstname, lastname: a.lastname, purpose: a.purpose, authentication_method: a.authentication_method, enabled: a.enabled, ...patch };
+  await authApi('PUT', `/users/${u.uuid}`, body);
+  u._auth = { ...a, ...patch };
+}
+const noAccount = (u) => (!u._auth ? 'pas de compte de connexion' : '');
+const AUTH_METHODS = { default: 'Défaut de l\'organisation', native: 'Authentification native', saml: 'SAML', ldap: 'LDAP' };
+const authEnabled = {
+  id: 'auth_enabled', label: 'Accès aux applications', auth: true,
+  form: () => onOff('Autorisé à utiliser des applications'),
+  prefill: (v) => ({ 'm-v': v ? '1' : '0' }),
+  parse: () => { const v = $v('m-v') === '1'; return { target: () => v, desc: `Accès aux applications : ${v ? 'autorisé' : 'coupé'}` }; },
+  read: (u) => (u._auth ? u._auth.enabled !== false : null),
+  text: (v) => (v == null ? 'pas de compte' : v ? 'oui' : 'non'),
+  check: noAccount,
+  write: (u, v) => authPut(u, { enabled: v }),
+};
+const authUsername = {
+  id: 'auth_username', label: 'Identifiant', auth: true, single: true,
+  form: () => '<label>Identifiant de connexion <input id="m-v" maxlength="256" spellcheck="false"></label><p class="muted small">Doit être unique sur le serveur.</p>',
+  prefill: (v) => ({ 'm-v': v ?? '' }),
+  parse: () => { const v = $v('m-v').trim(); if (!v) throw new Error('Identifiant obligatoire.'); return { target: () => v, desc: `Identifiant : ${v}` }; },
+  read: (u) => u._auth?.username ?? null,
+  text: (v) => v || '—',
+  check: noAccount,
+  write: (u, v) => authPut(u, { username: v }),
+};
+const authMethod = {
+  id: 'auth_method', label: 'Méthode d\'authentification', auth: true,
+  form: () => `<label>Méthode <select id="m-v">${options(Object.entries(AUTH_METHODS))}</select></label><p class="muted small">Refusée par le serveur si le fournisseur (SAML, LDAP) n'est pas configuré.</p>`,
+  parse: () => { const v = $v('m-v'); return { target: () => v, desc: `Méthode : ${AUTH_METHODS[v]}` }; },
+  read: (u) => u._auth?.authentication_method ?? null,
+  text: (v) => AUTH_METHODS[v] || v || '—',
+  check: noAccount,
+  write: (u, v) => authPut(u, { authentication_method: v }),
+};
+// Adresses : liste triée {address, main, confirmed} ; formulaire en lignes.
+const mailList = (arr) => (arr || []).map((m) => ({ address: String(m.address || '').trim(), main: m.main === true, confirmed: m.confirmed === true })).sort((a, b) => a.address.localeCompare(b.address));
+const mailRow = (m = {}) => `<div class="mailrow"><input data-mail value="${esc(m.address || '')}" placeholder="adresse@domaine.fr" spellcheck="false">
+  <label class="inline"><input type="radio" name="m-main"${m.main ? ' checked' : ''}> principale</label>
+  <label class="inline"><input type="checkbox" data-conf${m.confirmed ? ' checked' : ''}> confirmée</label>
+  <button type="button" class="icon" data-del title="Supprimer">×</button></div>`;
+const authEmails = {
+  id: 'auth_emails', label: 'Adresses courriels', auth: true, single: true,
+  form: (c, cur) => `<div id="m-mails">${(cur || []).map(mailRow).join('')}</div><div class="btnrow"><button type="button" id="m-addmail">Ajouter une adresse</button></div>
+    <p class="muted small">Adresses du compte de connexion (mot de passe oublié…). Une seule principale ; « confirmée » évite l'e-mail de confirmation.</p>`,
+  prefill: () => ({}),
+  wire: () => {
+    const box = document.getElementById('m-mails');
+    const changed = () => box.dispatchEvent(new Event('change', { bubbles: true }));
+    document.getElementById('m-addmail').onclick = () => { box.insertAdjacentHTML('beforeend', mailRow({ main: !box.children.length })); changed(); };
+    box.onclick = (e) => { if (e.target.closest('[data-del]')) { e.target.closest('.mailrow').remove(); changed(); } };
+  },
+  parse: () => {
+    const rows = [...document.querySelectorAll('#m-mails .mailrow')].map((r) => ({ address: r.querySelector('[data-mail]').value.trim(), main: r.querySelector('input[type=radio]').checked, confirmed: r.querySelector('[data-conf]').checked })).filter((m) => m.address);
+    for (const m of rows) if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(m.address)) throw new Error(`Adresse invalide : ${m.address}`);
+    if (new Set(rows.map((m) => m.address.toLowerCase())).size !== rows.length) throw new Error('La même adresse apparaît deux fois.');
+    if (rows.length && !rows.some((m) => m.main)) rows[0].main = true;
+    const v = mailList(rows);
+    return { target: () => v, desc: `Adresses courriels : ${v.map((m) => m.address).join(', ') || 'aucune'}` };
+  },
+  read: (u) => (u._auth ? mailList(u._auth.emails) : null),
+  text: (v) => (v == null ? '—' : v.map((m) => `${m.address}${m.main ? ' (principale)' : ''}${m.confirmed ? '' : ' (non confirmée)'}`).join(', ') || 'aucune'),
+  check: noAccount,
+  write: async (u, v) => {
+    await authApi('PUT', `/admin/users/${u.uuid}/emails`, { emails: v });
+    u._auth = { ...(u._auth || {}), emails: v };
+  },
+};
+
 const ALL_SETTINGS = [
+  authEnabled, authUsername, authMethod, authEmails,
   textField('firstname', 'Prénom', { required: true }),
   textField('lastname', 'Nom'),
   textField('email', 'E-mail (annuaire)', { re: /^[^@\s]+@[^@\s]+\.[^@\s]+$/, max: 254, hint: 'Courriel public, visible dans les annuaires. Doit être unique sur tout le serveur (tous les clients).' }),
@@ -349,6 +449,7 @@ const ALL_SETTINGS = [
 // fiche, calqué sur les onglets de la fiche utilisateur du portail.
 const LAYOUT = [
   ['Utilisateur', ['firstname', 'lastname', 'email', 'mobile_phone_number', 'description', 'caller_id', 'enabled', 'subscription_type', 'language']],
+  ['Compte (applications)', ['auth_enabled', 'auth_username', 'auth_method', 'auth_emails']],
   ['Services voix', ['dnd', 'incallfilter', 'ring_seconds', 'simultaneous_calls', 'music_on_hold']],
   ['Renvois d\'appel (utilisateur)', ['fwd_busy', 'fwd_unconditional', 'fwd_noanswer']],
   ['Renvois par défaut (admin)', ['fb_busy', 'fb_congestion', 'fb_fail', 'fb_noanswer']],

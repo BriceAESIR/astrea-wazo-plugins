@@ -12,8 +12,8 @@
 //    queue_label, voicemail_name, ivr_name… ajoutés par confd.
 // Supposé, à vérifier en réel : le token du portail peut lire /moh,
 // /voicemails, /callpermissions, /schedules (sinon libellés techniques).
-import { S, $, esc, toast, api, listAll, connect, fullName, setReadonly, showCompat, loaded, loadFailed, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.28.0';
-import { SETTINGS, settingById, same, LANG, subLabel } from './settings.js?v=0.28.0';
+import { S, $, esc, toast, api, listAll, connect, fullName, setReadonly, showCompat, loaded, loadFailed, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.29.0';
+import { SETTINGS, settingById, same, LANG, subLabel, authApi } from './settings.js?v=0.29.0';
 
 const A = { auth: new Map(), authErr: '', users: [], byId: new Map(), moh: new Map(), groups: new Map(), vms: new Map(), perms: new Map(), scheds: new Map(), queues: new Map(), sbs: new Map(), contexts: [], callerOpts: [], callerOptsErr: '', lr: null, picked: new Set(), sort: { col: 'name', dir: 1 }, sel: null, scope: null, cols: null };
 
@@ -218,6 +218,7 @@ async function reload() {
   A.vms = new Map(vms.map((v) => [v.id, v]));
   A.perms = new Map(perms.map((p) => [p.id, p]));
   A.scheds = new Map(scheds.map((s) => [s.id, s]));
+  for (const u of users) u._auth = A.auth.get(u.uuid) || null; // compte de connexion (aperçu, fiche)
   for (const id of [...A.picked]) if (!A.byId.has(id)) A.picked.delete(id);
   renderLiveReload();
   if (A.authErr) warns.push(`Comptes de connexion indisponibles (${A.authErr}) : colonnes « Accès applications » et « Identifiant » vides.`);
@@ -305,21 +306,20 @@ function renderDetail() {
   const sec = (title, body) => `<section class="dsec"><h4>${esc(title)}</h4><dl>${body}</dl></section>`;
   const grps = [...new Set(SETTINGS.map((s) => s.grp))];
   const vm = A.vms.get(u.voicemail?.id);
-  $('d-body').innerHTML = grps.map((g) => sec(g, (g === 'Utilisateur' ? row('Numéro interne', exten(u)) : '')
+  const body = (g) => {
+    if (g === 'Compte (applications)') {
+      if (A.authErr) return row('Compte', `indisponible (${A.authErr})`);
+      if (!u._auth) return row('Compte', 'aucun (pas d\'accès aux applications)');
+    }
+    return (g === 'Utilisateur' ? row('Numéro interne', exten(u)) : '')
       + SETTINGS.filter((s) => s.grp === g && (!s.showIf || s.showIf(u))).map((s) => row(s.label, s.text(s.read(u), c), s.id)).join('')
-      + (g === 'Boîte vocale' && vm ? row('E-mail (réglage de la boîte)', vm.email) : ''))
-      + (g === 'Utilisateur' ? sec('Compte (applications)', authRows(u, row)) + (A.auth.get(u.uuid) ? '<div class="btnrow"><button id="d-pw">Changer le mot de passe…</button></div>' : '') : '')).join('')
-    + '<p class="muted small">Les réglages de la boîte vocale se modifient dans Messageries vocales ; le compte de connexion dans l\'onglet « Compte » du portail.</p>';
-}
-function authRows(u, row) {
-  if (A.authErr) return row('Compte', `indisponible (${A.authErr})`);
-  const a = A.auth.get(u.uuid);
-  if (!a) return row('Compte', 'aucun (pas d\'accès aux applications)');
-  const mails = (a.emails || []).map((m) => `${m.address}${m.confirmed ? '' : ' (non confirmé)'}`).join(', ');
-  return row('Accès applications', a.enabled === false ? 'non' : u.subscription_type === 0 ? 'interrupteur ouvert, mais connexion refusée par la licence Voix' : 'oui')
-    + row('Identifiant', a.username) + row('Méthode', a.authentication_method === 'default' ? 'défaut de l\'organisation' : a.authentication_method) + row('Adresses courriels', mails);
-}
-// Mot de passe des applications (wazo-auth, lu dans le code le 13/10/2026) :
+      + (g === 'Compte (applications)' && u.subscription_type === 0 && u._auth.enabled !== false ? row('Note', 'connexion refusée par la licence Voix, même accès autorisé') : '')
+      + (g === 'Boîte vocale' && vm ? row('E-mail (réglage de la boîte)', vm.email) : '');
+  };
+  $('d-body').innerHTML = grps.map((g) => sec(g, body(g))
+      + (g === 'Compte (applications)' && u._auth ? '<div class="btnrow"><button id="d-pw">Changer le mot de passe…</button></div>' : '')).join('')
+    + '<p class="muted small">Les réglages de la boîte vocale se modifient dans Messageries vocales.</p>';
+}// Mot de passe des applications (wazo-auth, lu dans le code le 13/10/2026) :
 // PUT /users/{uuid}/password exige l'ancien ; la réinitialisation
 // POST /users/password/reset?user_uuid=… (ACL auth.users.password.reset.{uuid}.create)
 // pose le nouveau sans l'ancien, ferme les sessions ouvertes de l'utilisateur
@@ -362,7 +362,7 @@ function openEdit(id) {
   const u = A.byId.get(A.sel), s = settingById(id);
   if (!u || !s || !canWrite()) return;
   const cur = s.read(u);
-  confirmModal(`<h3>${esc(s.label)}</h3><p class="muted small">${esc(fullName(u))}</p><div id="m-form">${s.form(ctx())}</div><div id="m-prev" class="mprev"></div>`, async () => {
+  confirmModal(`<h3>${esc(s.label)}</h3><p class="muted small">${esc(fullName(u))}</p><div id="m-form">${s.form(ctx(), cur, u)}</div><div id="m-prev" class="mprev"></div>`, async () => {
     let spec;
     try { spec = s.parse(ctx()); } catch (e) { toast(e.message, 6000); return false; }
     if (!plan(s, spec.target, [u]).change.length) { toast('Valeur inchangée ou impossible : rien à écrire.', 5000); return false; }
@@ -505,12 +505,15 @@ function openMass() {
 async function runMass(items, users, desc, { batch = false, download = true } = {}) {
   const todo = [], failed = [], skipped = [];
   let unchanged = 0, ok = 0, lrNote = '';
+  const needAuth = items.some((it) => it.s.auth);
   A.running = true;
   try {
     for (const [i, u0] of users.entries()) {
       toast(`Lecture ${i + 1}/${users.length}…`, 60000);
       try {
         const u = await api('GET', `/users/${u0.uuid}`);
+        // Compte de connexion relu aussi si un réglage wazo-auth est concerné.
+        if (needAuth) { try { u._auth = await authApi('GET', `/users/${u.uuid}`); } catch (e) { if (e.status !== 404) throw e; u._auth = null; } }
         for (const it of items) {
           const cur = it.s.read(u), next = it.target(cur, u);
           if (next === undefined || same(cur, next)) { unchanged++; continue; }
