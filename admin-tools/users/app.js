@@ -12,8 +12,8 @@
 //    queue_label, voicemail_name, ivr_name… ajoutés par confd.
 // Supposé, à vérifier en réel : le token du portail peut lire /moh,
 // /voicemails, /callpermissions, /schedules (sinon libellés techniques).
-import { S, $, esc, toast, api, listAll, connect, fullName, setReadonly, showCompat, loaded, loadFailed, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.27.4';
-import { SETTINGS, settingById, same, LANG, subLabel } from './settings.js?v=0.27.4';
+import { S, $, esc, toast, api, listAll, connect, fullName, setReadonly, showCompat, loaded, loadFailed, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.27.5';
+import { SETTINGS, settingById, same, LANG, subLabel } from './settings.js?v=0.27.5';
 
 const A = { auth: new Map(), authErr: '', users: [], byId: new Map(), moh: new Map(), groups: new Map(), vms: new Map(), perms: new Map(), scheds: new Map(), queues: new Map(), sbs: new Map(), contexts: [], callerOpts: [], callerOptsErr: '', lr: null, picked: new Set(), sort: { col: 'name', dir: 1 }, sel: null, scope: null, cols: null };
 
@@ -74,7 +74,7 @@ function vm(u) {
   return { t: v ? `${v.number}${v.name ? ` (${v.name})` : ''}` : u.voicemail.name || `#${u.voicemail.id}`, k: '1' };
 }
 const names = (arr, f) => { const t = (arr || []).map(f).sort((a, b) => a.localeCompare(b, 'fr')).join(', '); return t ? { t, k: t } : { t: '—', k: '', c: 'none' }; };
-const COLS = [
+const ALL_COLS = [
   { id: 'name', label: 'Utilisateur', grp: 'Identité', fixed: true, odd: false, get: (u) => txt(fullName(u)) },
   { id: 'exten', label: 'Numéro', grp: 'Identité', def: true, odd: false, get: (u) => { const e = exten(u); return { t: e || '—', k: e.padStart(12, '0'), c: e ? '' : 'none' }; } },
   { id: 'email', label: 'E-mail (annuaire)', tip: 'Courriel public de la fiche (Renseignements personnels), affiché dans les annuaires. Différent des adresses de connexion (Authentification) et de l\'e-mail de la boîte vocale.', grp: 'Identité', odd: false, get: (u) => txt(u.email) },
@@ -116,7 +116,20 @@ const COLS = [
   { id: 'perms', label: 'Droits d\'appel', grp: 'Groupes et droits', get: (u) => names(u.call_permissions, (c) => c.name) },
   { id: 'sched', label: 'Horaire', grp: 'Groupes et droits', get: (u) => names(u.schedules, (s) => s.name || `#${s.id}`) },
 ];
+// Même rangement que le catalogue (settings.js, LAYOUT) ; Compte en lecture seule.
+const COL_LAYOUT = [
+  ['Utilisateur', ['name', 'exten', 'email', 'mobile', 'sub', 'lang', 'tz']],
+  ['Compte (applications)', ['apps', 'login']],
+  ['Services voix', ['dnd', 'incallfilter', 'ring', 'simul', 'moh']],
+  ['Renvois d\'appel (utilisateur)', ['fwd_busy', 'fwd_unc', 'fwd_noans']],
+  ['Renvois par défaut (admin)', ['fb_busy', 'fb_cong', 'fb_fail', 'fb_noans']],
+  ['Appels sortants', ['callerid', 'perms']],
+  ['Boîte vocale', ['vm', 'vm_email']],
+  ['Groupes et horaire', ['groups', 'sched']],
+];
+const COLS = COL_LAYOUT.flatMap(([grp, ids]) => ids.map((id) => ({ ...ALL_COLS.find((c) => c.id === id), grp })));
 // v4 (0.27.3, colonne Accès applications) : nouvelles colonnes par défaut, l'ancien choix est ignoré.
+// (0.27.5 : rangement des groupes changé, mêmes identifiants : choix conservé.)
 const COLS_KEY = 'astrea-users-cols-v4';
 function loadCols() {
   try { const c = JSON.parse(localStorage.getItem(COLS_KEY)); if (Array.isArray(c)) return new Set(c); } catch { /* stockage indisponible */ }
@@ -290,10 +303,10 @@ function renderDetail() {
   const sec = (title, body) => `<section class="dsec"><h4>${esc(title)}</h4><dl>${body}</dl></section>`;
   const grps = [...new Set(SETTINGS.map((s) => s.grp))];
   const vm = A.vms.get(u.voicemail?.id);
-  $('d-body').innerHTML = sec('Ligne', row('Numéro interne', exten(u)))
-    + grps.map((g) => sec(g, SETTINGS.filter((s) => s.grp === g && (!s.showIf || s.showIf(u))).map((s) => row(s.label, s.text(s.read(u), c), s.id)).join('')
-      + (g === 'Boîte vocale' && vm ? row('E-mail (réglage de la boîte)', vm.email) : ''))).join('')
-    + sec('Compte (applications) — lecture seule', authRows(u, row))
+  $('d-body').innerHTML = grps.map((g) => sec(g, (g === 'Utilisateur' ? row('Numéro interne', exten(u)) : '')
+      + SETTINGS.filter((s) => s.grp === g && (!s.showIf || s.showIf(u))).map((s) => row(s.label, s.text(s.read(u), c), s.id)).join('')
+      + (g === 'Boîte vocale' && vm ? row('E-mail (réglage de la boîte)', vm.email) : ''))
+      + (g === 'Utilisateur' ? sec('Compte (applications) — lecture seule', authRows(u, row)) : '')).join('')
     + '<p class="muted small">Les réglages de la boîte vocale se modifient dans Messageries vocales ; le compte de connexion dans l\'onglet « Compte » du portail.</p>';
 }
 function authRows(u, row) {

@@ -14,7 +14,7 @@
 //                     rechargement à redéclencher à la fin ('user')
 // Routes et sémantique vérifiées dans le code de wazo-confd (13/10/2026),
 // voir docs/USER-MANAGER.md. Écritures non encore testées en réel.
-import { api, esc, fullName } from '../common/core.js?v=0.27.4';
+import { api, esc, fullName } from '../common/core.js?v=0.27.5';
 
 // Comparaison indépendante de l'ordre des clés (objets relus vs construits).
 const canon = (v) => (Array.isArray(v) ? v.map(canon) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, canon(v[k])])) : v ?? null);
@@ -254,7 +254,7 @@ const enabledSetting = {
   text: (v) => (v ? 'oui' : 'non'),
 };
 
-export const SETTINGS = [
+const ALL_SETTINGS = [
   textField('firstname', 'Prénom', { required: true }),
   textField('lastname', 'Nom'),
   textField('email', 'E-mail (annuaire)', { re: /^[^@\s]+@[^@\s]+\.[^@\s]+$/, max: 254, hint: 'Courriel public, visible dans les annuaires. Doit être unique sur tout le serveur (tous les clients).' }),
@@ -345,4 +345,21 @@ export const SETTINGS = [
     },
   },
 ];
+// Rangement commun aux colonnes de l'audit (app.js), à l'assistant et à la
+// fiche, calqué sur les onglets de la fiche utilisateur du portail.
+const LAYOUT = [
+  ['Utilisateur', ['firstname', 'lastname', 'email', 'mobile_phone_number', 'description', 'enabled', 'subscription_type', 'language', 'timezone']],
+  ['Services voix', ['dnd', 'incallfilter', 'ring_seconds', 'simultaneous_calls', 'music_on_hold']],
+  ['Renvois d\'appel (utilisateur)', ['fwd_busy', 'fwd_unconditional', 'fwd_noanswer']],
+  ['Renvois par défaut (admin)', ['fb_busy', 'fb_congestion', 'fb_fail', 'fb_noanswer']],
+  ['Appels sortants', ['caller_id', 'outgoing_caller_id', 'call_permissions']],
+  ['Boîte vocale', ['voicemail']],
+  ['Groupes et horaire', ['groups', 'schedule']],
+];
+export const SETTINGS = LAYOUT.flatMap(([grp, ids]) => ids.map((id) => {
+  const s = ALL_SETTINGS.find((x) => x.id === id);
+  if (!s) console.error('[astrea] réglage inconnu dans LAYOUT', id);
+  return s && { ...s, grp };
+})).filter(Boolean);
+if (SETTINGS.length !== ALL_SETTINGS.length) console.error('[astrea] réglage absent de LAYOUT', ALL_SETTINGS.filter((s) => !SETTINGS.some((x) => x.id === s.id)).map((s) => s.id));
 export const settingById = (id) => SETTINGS.find((s) => s.id === id);
