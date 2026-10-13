@@ -12,8 +12,8 @@
 //    queue_label, voicemail_name, ivr_name… ajoutés par confd.
 // Supposé, à vérifier en réel : le token du portail peut lire /moh,
 // /voicemails, /callpermissions, /schedules (sinon libellés techniques).
-import { S, $, esc, toast, api, listAll, connect, fullName, setReadonly, showCompat, loaded, loadFailed, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.27.1';
-import { SETTINGS, settingById, same, LANG, subLabel } from './settings.js?v=0.27.1';
+import { S, $, esc, toast, api, listAll, connect, fullName, setReadonly, showCompat, loaded, loadFailed, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.27.2';
+import { SETTINGS, settingById, same, LANG, subLabel } from './settings.js?v=0.27.2';
 
 const A = { users: [], byId: new Map(), moh: new Map(), groups: new Map(), vms: new Map(), perms: new Map(), scheds: new Map(), queues: new Map(), sbs: new Map(), contexts: [], callerOpts: [], callerOptsErr: '', lr: null, picked: new Set(), sort: { col: 'name', dir: 1 }, sel: null, scope: null, cols: null };
 
@@ -80,7 +80,6 @@ const COLS = [
   { id: 'email', label: 'E-mail (annuaire)', tip: 'Courriel public de la fiche (Renseignements personnels), affiché dans les annuaires. Différent des adresses de connexion (Authentification) et de l\'e-mail de la boîte vocale.', grp: 'Identité', odd: false, get: (u) => txt(u.email) },
   // Licence = subscription_type (0-10) ; libellés relevés en réel (settings.js, SUBS).
   { id: 'sub', label: 'Licence', tip: 'Type de souscription du portail (subscription_type : 0 Voix, 1 Communication unifiée, 3 Relation client).', grp: 'Identité', def: true, get: (u) => ({ t: subLabel(u.subscription_type), k: String(u.subscription_type ?? '') }) },
-  { id: 'enabled', label: 'Actif', grp: 'Identité', get: (u) => (u.enabled === false ? { t: 'Non', k: '0', c: 'alert' } : { t: 'Oui', k: '1', c: 'none' }) },
   { id: 'dnd', label: 'Ne pas déranger', grp: 'Services', def: true, get: (u) => yes(u.services?.dnd?.enabled) },
   { id: 'incallfilter', label: 'Filtrage', grp: 'Services', get: (u) => yes(u.services?.incallfilter?.enabled) },
   // Libellés du portail (fiche utilisateur › Renvois, relevés le 13/10/2026) :
@@ -262,7 +261,7 @@ function renderDetail() {
   const grps = [...new Set(SETTINGS.map((s) => s.grp))];
   const vm = A.vms.get(u.voicemail?.id);
   $('d-body').innerHTML = sec('Ligne', row('Numéro interne', exten(u)))
-    + grps.map((g) => sec(g, SETTINGS.filter((s) => s.grp === g).map((s) => row(s.label, s.text(s.read(u), c), s.id)).join('')
+    + grps.map((g) => sec(g, SETTINGS.filter((s) => s.grp === g && (!s.showIf || s.showIf(u))).map((s) => row(s.label, s.text(s.read(u), c), s.id)).join('')
       + (g === 'Boîte vocale' && vm ? row('E-mail (réglage de la boîte)', vm.email) : ''))).join('')
     + '<p class="muted small">Les réglages de la boîte vocale se modifient dans Messageries vocales.</p>';
 }
@@ -298,7 +297,23 @@ function openEdit(id) {
 // ---------------------------------------------------------------------------
 const ctx = () => ({ vms: A.vms, moh: A.moh, groups: A.groups, perms: A.perms, scheds: A.scheds, queues: A.queues, sbs: A.sbs, contexts: A.contexts, users: A.users, callerOpts: A.callerOpts, callerOptsErr: A.callerOptsErr, destText });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const LAST_BACKUP = 'astrea-users-last-backup';
+// Historique des sauvegardes dans le navigateur (localStorage du site, propre
+// à ce poste) : les 20 dernières opérations, la plus récente d'abord.
+// L'ancienne clé (une seule sauvegarde, 0.24-0.27) est reprise.
+const BACKUPS = 'astrea-users-backups', OLD_BACKUP = 'astrea-users-last-backup', MAX_BACKUPS = 20;
+function loadBackups() {
+  let list = [];
+  try { list = JSON.parse(localStorage.getItem(BACKUPS)) || []; } catch { /* */ }
+  try { const old = JSON.parse(localStorage.getItem(OLD_BACKUP)); if (old && !list.some((b) => b.created === old.created)) list.push(old); } catch { /* */ }
+  return list.filter((b) => b?.created).sort((a, b) => b.created.localeCompare(a.created));
+}
+function pushBackup(b) {
+  try {
+    const list = [b, ...loadBackups()].slice(0, MAX_BACKUPS);
+    localStorage.setItem(BACKUPS, JSON.stringify(list));
+    localStorage.removeItem(OLD_BACKUP);
+  } catch { /* stockage plein ou indisponible : le fichier téléchargé reste */ }
+}
 // Classe les utilisateurs : à modifier / déjà à la valeur / impossible.
 // target(cur, u) === undefined : rien à faire pour cet utilisateur.
 function plan(s, target, users) {
@@ -419,7 +434,7 @@ async function runMass(items, users, desc, { batch = false, download = true } = 
       const backup = { app: 'astrea-users', kind: 'backup', v: 2, created, base: S.base, tenant: S.tenant, desc,
         items: items.map((it) => ({ setting: it.s.id, desc: it.desc, users: todo.filter((x) => x.it === it).map((x) => ({ id: x.u.id, uuid: x.u.uuid, name: fullName(x.u), before: x.cur, after: x.next })) })).filter((x) => x.users.length) };
       if (download) downloadJson(`astrea-users-sauvegarde-${created.replace(/[:.]/g, '-')}.json`, backup);
-      try { localStorage.setItem(LAST_BACKUP, JSON.stringify(backup)); } catch { /* stockage indisponible : le fichier suffit */ }
+      pushBackup(backup);
       let lrOff = false;
       if (batch && todo.filter((x) => x.it.s.heavy).length > 1) {
         try {
@@ -511,17 +526,18 @@ function renderLiveReload() {
 const backupItems = (b) => (Array.isArray(b?.items) ? b.items : b?.setting ? [{ setting: b.setting, desc: b.desc, users: b.users }] : null);
 function openRestore() {
   if (!canWrite()) return;
-  let last = null;
-  try { last = JSON.parse(localStorage.getItem(LAST_BACKUP)); } catch { /* */ }
+  const all = loadBackups();
+  const mine = all.filter((b) => b.base === S.base && (b.tenant || null) === (S.tenant || null));
   const nUsers = (b) => new Set((backupItems(b) || []).flatMap((it) => (it.users || []).map((x) => x.uuid))).size;
   confirmModal(`<h3>Restaurer une sauvegarde</h3>
-    ${last ? `<label class="inline"><input type="radio" name="m-src" value="last" checked> Dernière sauvegarde de ce navigateur : ${esc(last.desc)} (${nUsers(last)} utilisateur(s), ${esc(new Date(last.created).toLocaleString('fr-FR'))})</label>` : ''}
-    <label class="inline"><input type="radio" name="m-src" value="file"${last ? '' : ' checked'}> Fichier de sauvegarde (astrea-users-sauvegarde-….json)</label>
+    <p class="muted small">Sauvegardes gardées dans ce navigateur (20 dernières opérations, ce serveur et ce tenant${all.length > mine.length ? ` ; ${all.length - mine.length} autre(s) pour d'autres serveurs ou tenants` : ''}). Restaurer remet les valeurs d'avant cette opération.</p>
+    <div class="mprev">${mine.map((b, i) => `<label class="inline"><input type="radio" name="m-src" value="${i}"${i ? '' : ' checked'}> ${esc(new Date(b.created).toLocaleString('fr-FR'))} — ${esc(b.desc)} (${nUsers(b)} utilisateur(s))</label>`).join('') || '<p class="muted small">Aucune sauvegarde dans ce navigateur pour ce tenant.</p>'}</div>
+    <label class="inline"><input type="radio" name="m-src" value="file"${mine.length ? '' : ' checked'}> Fichier de sauvegarde téléchargé (astrea-users-sauvegarde-….json)</label>
     <input type="file" id="m-file" accept=".json,application/json">`, async () => {
     let b;
     try {
       const src = document.querySelector('input[name="m-src"]:checked')?.value;
-      if (src === 'last') b = last;
+      if (src !== 'file') b = mine[Number(src)];
       else { const f = $('m-file').files[0]; if (!f) throw new Error('Choisissez un fichier.'); b = JSON.parse(await f.text()); }
       const items = backupItems(b);
       if (b?.app !== 'astrea-users' || b.kind !== 'backup' || !items) throw new Error('Ce fichier n\'est pas une sauvegarde User Manager.');
@@ -531,8 +547,7 @@ function openRestore() {
     } catch (e) { toast(e.message, 7000); return false; }
     setTimeout(() => confirmRestore(b), 0); // le dialogue se ferme d'abord
   }, 'Suivant');
-}
-function confirmRestore(b) {
+}function confirmRestore(b) {
   const all = new Set();
   const steps = backupItems(b).map((it) => {
     const s = settingById(it.setting);

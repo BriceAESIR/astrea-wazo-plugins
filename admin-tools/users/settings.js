@@ -8,12 +8,13 @@
 //  prefill(v, u)      valeurs des champs (id → valeur) pour la fiche ; sans prefill,
 //                     la fiche met v dans #m-v s'il existe
 //  single             true = fiche seulement (champ propre à chaque utilisateur)
+//  showIf(u)          fiche : réglage affiché seulement si vrai pour cet utilisateur
 //  heavy              true = l'écriture recharge Asterisk (écritures espacées, ou
 //                     regroupées en coupant le live reload) ; reload = type de
 //                     rechargement à redéclencher à la fin ('user')
 // Routes et sémantique vérifiées dans le code de wazo-confd (13/10/2026),
 // voir docs/USER-MANAGER.md. Écritures non encore testées en réel.
-import { api, esc, fullName } from '../common/core.js?v=0.27.1';
+import { api, esc, fullName } from '../common/core.js?v=0.27.2';
 
 // Comparaison indépendante de l'ordre des clés (objets relus vs construits).
 const canon = (v) => (Array.isArray(v) ? v.map(canon) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, canon(v[k])])) : v ?? null);
@@ -239,8 +240,13 @@ const callerName = {
   },
   text: (v) => cidName(v) || v || '—',
 };
+// user.enabled = colonne `commented` de userfeatures (xivo-dao). La génération
+// de la config Asterisk filtre les lignes et extensions « commented », pas
+// les utilisateurs (asterisk_conf_dao.py, 13/10/2026) ; absent du portail ;
+// essai de Brice : aucun effet visible. Proposé seulement sur la fiche d'un
+// utilisateur déjà désactivé, pour le réactiver (showIf).
 const enabledSetting = {
-  id: 'enabled', label: 'Utilisateur actif', grp: 'Identité', ...userField('enabled'),
+  id: 'enabled', label: 'Utilisateur actif', grp: 'Identité', single: true, showIf: (u) => u.enabled === false, ...userField('enabled'),
   form: () => onOff('Utilisateur actif'),
   prefill: (v) => ({ 'm-v': v === false ? '0' : '1' }),
   parse: () => { const v = $v('m-v') === '1'; return { target: () => v, desc: `Utilisateur ${v ? 'actif' : 'désactivé'}` }; },

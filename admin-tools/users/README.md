@@ -37,8 +37,9 @@ Cadrage, sources et décisions : `docs/USER-MANAGER.md` (dépôt de dev).
   droits d'appel, horaire.
 - À l'exécution, chaque utilisateur est relu ; rien n'est écrit s'il a déjà la
   valeur. Une **sauvegarde** JSON des valeurs précédentes est téléchargée avant
-  la première écriture (et gardée dans le navigateur). « Restaurer… » la
-  réapplique, avec aperçu.
+  la première écriture. Le navigateur garde aussi l'historique des 20
+  dernières opérations (propre à ce poste) : « Restaurer… » les liste et
+  remet les valeurs d'avant l'opération choisie, avec aperçu.
 - **Rechargements** : certains réglages rechargent Asterisk à chaque écriture
   (sonnerie, musique, langue, fuseau, numéro présenté, licence, groupes,
   boîte vocale associée).
@@ -54,8 +55,10 @@ Cadrage, sources et décisions : `docs/USER-MANAGER.md` (dépôt de dev).
 - En plus des réglages de la masse : prénom, nom, e-mail (annuaire), mobile,
   description, nom présenté (champs propres à chaque utilisateur, pas
   modifiables en masse).
-- Chaque modification est sauvegardée dans le navigateur (« Restaurer… »)
+- Chaque modification est ajoutée à l'historique du navigateur (« Restaurer… »),
   sans téléchargement de fichier.
+- « Utilisateur actif » n'a pas d'effet visible dans Wazo : il n'apparaît que
+  pour un utilisateur déjà désactivé, pour le réactiver.
 - Pas de partie Authentification (identifiant, mot de passe, méthode) : elle
   se gère dans le portail.
 
