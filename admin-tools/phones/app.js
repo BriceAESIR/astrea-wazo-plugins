@@ -12,8 +12,8 @@
 //  - confd régénère la config provd, mais ne synchronise pas l'appareil.
 // Supposé, à vérifier en réel : GET /lines renvoie device_id et position ;
 // un PUT /lines/{id} avec l'objet relu par GET est accepté.
-import { S, $, esc, toast, api, listAll, confirmModal, connect, fullName, canWrite, setReadonly, showCompat, loaded, loadFailed, provd, provdDevice, updateProvdOptions, downloadJson, calldGet } from '../common/core.js?v=0.21.1';
-import { CATALOG, randomPassword, checkField } from './catalog.js?v=0.21.1';
+import { S, $, esc, toast, api, listAll, confirmModal, connect, fullName, canWrite, setReadonly, showCompat, loaded, loadFailed, provd, provdDevice, updateProvdOptions, downloadJson, calldGet } from '../common/core.js?v=0.21.2';
+import { CATALOG, randomPassword, checkField } from './catalog.js?v=0.21.2';
 
 // Comptes SIP par modèle (_NB_SIP_ACCOUNTS / plugin-info des plugins provd).
 const DECT_MAX = {
@@ -491,6 +491,13 @@ const kindOf = (d) => (!d ? null : isDect(d) ? 'dect' : /yealink/i.test(`${d.ven
 // long) ; la description reste au survol et dans la recherche.
 const devName = (d) => d.mac || d.description || `Appareil ${d.id}`;
 const devUsers = (d) => [...new Set(D.lines.filter((l) => l.device_id === d.id).flatMap((l) => lineUsers(l).map(fullName)))];
+// Sous-titre dans la liste : téléphone = « Nom · extension » de ses lignes ;
+// base DECT = nombre de comptes (pas de noms).
+function devSub(d) {
+  const ls = D.lines.filter((l) => l.device_id === d.id);
+  if (kindOf(d) === 'dect') return ls.length ? `${ls.length} compte${ls.length > 1 ? 's' : ''}` : '';
+  return ls.map((l) => [lineUsers(l).map(fullName).join(', '), lineNumber(l)].filter(Boolean).join(' · ')).filter(Boolean).join(' / ');
+}
 const cfgDevices = () => D.devices.filter(kindOf).sort((a, b) => devName(a).localeCompare(devName(b), 'fr'));
 const optsFor = (d) => CATALOG.filter((o) => o.kinds.includes(kindOf(d)) && (!o.models || o.models.test(String(d.model || '').toUpperCase())));
 // Valeurs de départ quand on coche : défaut Yealink s'il est connu, sinon valeur proposée.
@@ -519,7 +526,7 @@ function renderDevList() {
     const li = document.createElement('li');
     li.className = C.sel === d.id ? 'sel' : '';
     if (d.description && devName(d) !== d.description) li.title = d.description;
-    li.innerHTML = `<span>${stDot(d)}${esc(devName(d))}${users.length ? `<br><span class="muted small">${esc(users.slice(0, 2).join(', '))}${users.length > 2 ? '…' : ''}</span>` : ''}</span><span class="sub">${esc(d.model || '?')}${kindOf(d) === 'dect' ? ' · DECT' : ''}</span>`;
+    li.innerHTML = `<span>${stDot(d)}${esc(devName(d))}${devSub(d) ? `<br><span class="muted small">${esc(devSub(d))}</span>` : ''}</span><span class="sub">${esc(d.model || '?')}${kindOf(d) === 'dect' ? ' · DECT' : ''}</span>`;
     li.onclick = () => guardCfg(() => selectDevice(d.id));
     ul.appendChild(li);
   }
