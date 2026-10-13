@@ -231,3 +231,19 @@ export function loadFailed(e) {
   toast(e.message, 8000);
   console.error(e);
 }
+
+// ---------------------------------------------------------------------------
+// Aide contextuelle (norme Astrea, skill wazo-plugins) : bouton rond « ? » à
+// côté du titre, qui déplie un encadré .helpbox ; le même texte sert
+// d'infobulle (title) sur les listes, colonnes et cases. Ouverture par
+// délégation sur [data-help-toggle] (BLF Manager garde son propre bouton).
+// ---------------------------------------------------------------------------
+export const helpButton = (boxId, title = 'Aide') => `<button type="button" class="helpbtn" data-help-toggle="${boxId}" aria-expanded="false" aria-controls="${boxId}" title="${esc(title)}">?</button>`;
+export const helpBox = (boxId, text) => `<p id="${boxId}" class="helpbox small" hidden>${esc(text)}</p>`;
+document.addEventListener('click', (e) => {
+  const b = e.target.closest('[data-help-toggle]');
+  const h = b && document.getElementById(b.dataset.helpToggle);
+  if (!h) return;
+  h.hidden = !h.hidden;
+  b.setAttribute('aria-expanded', String(!h.hidden));
+});

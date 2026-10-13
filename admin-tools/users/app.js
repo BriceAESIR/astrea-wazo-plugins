@@ -12,8 +12,8 @@
 //    queue_label, voicemail_name, ivr_name… ajoutés par confd.
 // Supposé, à vérifier en réel : le token du portail peut lire /moh,
 // /voicemails, /callpermissions, /schedules (sinon libellés techniques).
-import { S, $, esc, toast, api, listAll, connect, fullName, setReadonly, showCompat, loaded, loadFailed, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.30.5';
-import { SETTINGS, settingById, same, LANG, subLabel, authApi } from './settings.js?v=0.30.5';
+import { S, $, esc, toast, api, listAll, connect, fullName, setReadonly, showCompat, loaded, loadFailed, canWrite, confirmModal, downloadJson, helpButton, helpBox } from '../common/core.js?v=0.31.0';
+import { SETTINGS, settingById, same, LANG, subLabel, authApi } from './settings.js?v=0.31.0';
 
 const A = { auth: new Map(), authErr: '', users: [], byId: new Map(), moh: new Map(), groups: new Map(), vms: new Map(), perms: new Map(), scheds: new Map(), queues: new Map(), sbs: new Map(), contexts: [], callerOpts: [], callerOptsErr: '', lr: null, picked: new Set(), sort: { col: 'name', dir: 1 }, sel: null, scope: null, cols: null };
 
@@ -76,7 +76,7 @@ function vm(u) {
 const names = (arr, f) => { const t = (arr || []).map(f).sort((a, b) => a.localeCompare(b, 'fr')).join(', '); return t ? { t, k: t } : { t: '—', k: '', c: 'none' }; };
 const ALL_COLS = [
   { id: 'name', label: 'Utilisateur', grp: 'Identité', fixed: true, odd: false, get: (u) => txt(fullName(u)) },
-  { id: 'exten', label: 'Numéro', grp: 'Identité', def: true, odd: false, get: (u) => { const e = exten(u); return { t: e || '—', k: e.padStart(12, '0'), c: e ? '' : 'none' }; } },
+  { id: 'exten', label: 'Numéro', tip: 'Numéro interne (extension) de la première ligne de l\'utilisateur. Se modifie dans Lignes.', grp: 'Identité', def: true, odd: false, get: (u) => { const e = exten(u); return { t: e || '—', k: e.padStart(12, '0'), c: e ? '' : 'none' }; } },
   { id: 'email', label: 'E-mail (annuaire)', tip: 'Courriel public de la fiche (Renseignements personnels), affiché dans les annuaires. Différent des adresses de connexion (Authentification) et de l\'e-mail de la boîte vocale.', grp: 'Identité', odd: false, get: (u) => txt(u.email) },
   // Accès aux applications = compte wazo-auth activé. Licence Voix (0) : les
   // applications refusent la connexion même compte activé (« La souscription
@@ -129,7 +129,9 @@ const COL_LAYOUT = [
   ['Groupes', ['groups']],
   ['Horaires', ['sched', 'tz']],
 ];
-const COLS = COL_LAYOUT.flatMap(([grp, ids]) => ids.map((id) => ({ ...ALL_COLS.find((c) => c.id === id), grp })));
+// Infobulle des colonnes = aide du réglage correspondant (sauf tip propre).
+const COL_SETTING = { email: 'email', mobile: 'mobile_phone_number', cidint: 'caller_id', sub: 'subscription_type', lang: 'language', tz: 'timezone', login: 'auth_username', dnd: 'dnd', incallfilter: 'incallfilter', ring: 'ring_seconds', simul: 'simultaneous_calls', moh: 'music_on_hold', fwd_busy: 'fwd_busy', fwd_unc: 'fwd_unconditional', fwd_noans: 'fwd_noanswer', fb_busy: 'fb_busy', fb_cong: 'fb_congestion', fb_fail: 'fb_fail', fb_noans: 'fb_noanswer', callerid: 'outgoing_caller_id', perms: 'call_permissions', vm: 'voicemail', groups: 'groups', sched: 'schedule' };
+const COLS = COL_LAYOUT.flatMap(([grp, ids]) => ids.map((id) => { const c = ALL_COLS.find((x) => x.id === id); return { ...c, grp, tip: c.tip || settingById(COL_SETTING[id])?.help || '' }; }));
 // v4 (0.27.3, colonne Accès applications) : nouvelles colonnes par défaut, l'ancien choix est ignoré.
 // (0.27.5 : rangement des groupes changé, mêmes identifiants : choix conservé.)
 const COLS_KEY = 'astrea-users-cols-v4';
@@ -302,7 +304,7 @@ function renderDetail() {
   if (!u) return;
   $('d-name').textContent = fullName(u);
   const c = ctx();
-  const row = (k, v, edit) => `<dt>${esc(k)}</dt><dd>${v === '' || v == null || v === '—' ? '<span class="muted">—</span>' : esc(v)}${edit ? ` <button class="icon edit" data-edit="${edit}" title="Modifier">✎</button>` : ''}</dd>`;
+  const row = (k, v, edit, tip) => `<dt${tip ? ` title="${esc(tip)}"` : ''}>${esc(k)}</dt><dd>${v === '' || v == null || v === '—' ? '<span class="muted">—</span>' : esc(v)}${edit ? ` <button class="icon edit" data-edit="${edit}" title="Modifier">✎</button>` : ''}</dd>`;
   const sec = (title, body) => `<section class="dsec"><h4>${esc(title)}</h4><dl>${body}</dl></section>`;
   const grps = [...new Set(SETTINGS.map((s) => s.grp))];
   const vm = A.vms.get(u.voicemail?.id);
@@ -312,7 +314,7 @@ function renderDetail() {
       if (!u._auth) return row('Compte', 'aucun (pas d\'accès aux applications)');
     }
     return (g === 'Utilisateur' ? row('Numéro interne', exten(u)) : '')
-      + SETTINGS.filter((s) => s.grp === g && (!s.showIf || s.showIf(u))).map((s) => row(s.label, s.text(s.read(u), c), !s.available || s.available(c) ? s.id : null)).join('')
+      + SETTINGS.filter((s) => s.grp === g && (!s.showIf || s.showIf(u))).map((s) => row(s.label, s.text(s.read(u), c), !s.available || s.available(c) ? s.id : null, s.help)).join('')
       + (g === 'Compte (applications)' && u.subscription_type === 0 && u._auth.enabled !== false ? row('Note', 'connexion refusée par la licence Voix, même accès autorisé') : '')
       + (g === 'Boîte vocale' && vm ? row('E-mail (réglage de la boîte)', vm.email) : '');
   };
@@ -362,7 +364,7 @@ function openEdit(id) {
   const u = A.byId.get(A.sel), s = settingById(id);
   if (!u || !s || !canWrite()) return;
   const cur = s.read(u);
-  confirmModal(`<h3>${esc(s.label)}</h3><p class="muted small">${esc(fullName(u))}</p><div id="m-form">${s.form(ctx(), cur, u)}</div><div id="m-prev" class="mprev"></div>`, async () => {
+  confirmModal(`<div class="titlerow"><h3>${esc(s.label)}</h3>${s.help ? helpButton('m-help', 'Que fait ce réglage ?') : ''}</div>${s.help ? helpBox('m-help', s.help) : ''}<p class="muted small">${esc(fullName(u))}</p><div id="m-form">${s.form(ctx(), cur, u)}</div><div id="m-prev" class="mprev"></div>`, async () => {
     let spec;
     try { spec = s.parse(ctx()); } catch (e) { toast(e.message, 6000); return false; }
     if (!plan(s, spec.target, [u]).change.length) { toast('Valeur inchangée ou impossible : rien à écrire.', 5000); return false; }
@@ -458,19 +460,19 @@ function openMass() {
   const back = '<div class="btnrow"><button type="button" id="m-back">← Précédent</button><button type="button" id="m-skip">Passer ce réglage</button></div>';
   const render = () => {
     const n = W.ids.length;
-    const head = (t) => `<h3>${esc(t)}</h3><p class="muted small">${users.length} utilisateur(s) sélectionné(s)${W.step ? ` · étape ${W.step + 1} sur ${n + 2}` : ''}</p>`;
+    const head = (t, help) => `<div class="titlerow"><h3>${esc(t)}</h3>${help ? helpButton('m-help', 'Que fait ce réglage ?') : ''}</div>${help ? helpBox('m-help', help) : ''}<p class="muted small">${users.length} utilisateur(s) sélectionné(s)${W.step ? ` · étape ${W.step + 1} sur ${n + 2}` : ''}</p>`;
     let ok = 'Suivant';
     if (W.step === 0) {
       const MASS = SETTINGS.filter((s) => !s.single); // champs propres à chacun : fiche seulement
       const grps = [...new Set(MASS.map((s) => s.grp))];
-      $('modal-body').innerHTML = `${head('Réglages à modifier')}<div class="wizsets">${grps.map((g) => `<div class="wgrp"><div class="grp" data-grp="${esc(g)}" title="Cocher / décocher tout le groupe">${esc(g)}</div>${MASS.filter((s) => s.grp === g).map((s) => (s.available && !s.available(ctx()) ? `<label class="inline off" title="Rien à proposer dans ce tenant"><input type="checkbox" disabled> ${esc(s.label)} <span class="muted small">(aucun dans ce tenant)</span></label>` : `<label class="inline"><input type="checkbox" data-set="${s.id}" data-g="${esc(s.grp)}"${W.ids.includes(s.id) ? ' checked' : ''}> ${esc(s.label)}</label>`)).join('')}</div>`).join('')}</div>`;
+      $('modal-body').innerHTML = `${head('Réglages à modifier')}<div class="wizsets">${grps.map((g) => `<div class="wgrp"><div class="grp" data-grp="${esc(g)}" title="Cocher / décocher tout le groupe">${esc(g)}</div>${MASS.filter((s) => s.grp === g).map((s) => (s.available && !s.available(ctx()) ? `<label class="inline off" title="Rien à proposer dans ce tenant"><input type="checkbox" disabled> ${esc(s.label)} <span class="muted small">(aucun dans ce tenant)</span></label>` : `<label class="inline" title="${esc(s.help || '')}"><input type="checkbox" data-set="${s.id}" data-g="${esc(s.grp)}"${W.ids.includes(s.id) ? ' checked' : ''}> ${esc(s.label)}</label>`)).join('')}</div>`).join('')}</div>`;
     } else if (W.step <= n) {
       const s = list()[W.step - 1];
       // Valeur commune à toutes les cibles : formulaire prérempli avec elle
       // (comme la fiche) ; sinon mention « valeurs différentes ».
       const curs = users.map((x) => s.read(x));
       const common = curs.every((v) => same(v, curs[0]));
-      $('modal-body').innerHTML = `${head(s.label)}${common || s.showsCurrent ? '' : '<p class="muted small">Valeurs actuelles différentes selon les utilisateurs (voir l\'aperçu).</p>'}<div id="m-form">${s.form(ctx(), undefined, undefined, users)}</div><div id="m-prev" class="mprev"></div>${back}`;
+      $('modal-body').innerHTML = `${head(s.label, s.help)}${common || s.showsCurrent ? '' : '<p class="muted small">Valeurs actuelles différentes selon les utilisateurs (voir l\'aperçu).</p>'}<div id="m-form">${s.form(ctx(), undefined, undefined, users)}</div><div id="m-prev" class="mprev"></div>${back}`;
       if (!W.vals[s.id] && common) {
         const vals = s.prefill ? s.prefill(curs[0], users[0]) : { 'm-v': curs[0] ?? '' };
         for (const [k, v] of Object.entries(vals)) { const e = document.getElementById(k); if (e && v != null) e.value = String(v); }

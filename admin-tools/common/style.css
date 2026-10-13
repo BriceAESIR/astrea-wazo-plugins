@@ -270,3 +270,11 @@ body.in-portal.ready #sidebar, body.in-portal.ready #detail { height: 100vh; }
 .devtabs button { border: 0; border-radius: 0; padding: 4px 12px; color: var(--muted); text-transform: none; font-size: .8125rem; }
 .devtabs button + button { border-left: 1px solid var(--line); }
 .devtabs button.active { background: var(--accent); color: var(--accent-ink); }
+
+/* Aide contextuelle (norme Astrea) : bouton « ? » + encadré dépliable.
+   Pas de marge ici : chaque module place le bouton (BLF ajoute la sienne). */
+.helpbtn { flex: none; width: 28px; min-width: 28px; height: 28px; padding: 0; border-radius: 50%; font-weight: 700; text-transform: none; }
+.helpbtn[aria-expanded="true"] { background: var(--accent); color: var(--accent-ink); }
+.helpbox { margin: 0 0 12px; padding: 8px 12px; border-left: 3px solid var(--accent); background: var(--selected); line-height: 1.45; }
+.titlerow { display: flex; align-items: center; gap: 8px; }
+.titlerow h3 { margin: 0; flex: 1; }

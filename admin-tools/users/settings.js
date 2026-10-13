@@ -11,6 +11,7 @@
 //                     la fiche met v dans #m-v s'il existe
 //  single             true = fiche seulement (champ propre à chaque utilisateur)
 //  showIf(u)          fiche : réglage affiché seulement si vrai pour cet utilisateur
+//  help               texte d'aide (table HELP, ajouté au rangement)
 //  auth               true = compte de connexion wazo-auth (u._auth, relu avant écriture)
 //  available(ctx)     faux = rien à proposer dans ce tenant (assistant : grisé ; fiche : pas de ✎)
 //  heavy              true = l'écriture recharge Asterisk (écritures espacées, ou
@@ -18,7 +19,7 @@
 //                     rechargement à redéclencher à la fin ('user')
 // Routes et sémantique vérifiées dans le code de wazo-confd (13/10/2026),
 // voir docs/USER-MANAGER.md. Écritures non encore testées en réel.
-import { S, api, esc, fullName } from '../common/core.js?v=0.30.5';
+import { S, api, esc, fullName } from '../common/core.js?v=0.31.0';
 
 // Comparaison indépendante de l'ordre des clés (objets relus vs construits).
 const canon = (v) => (Array.isArray(v) ? v.map(canon) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, canon(v[k])])) : v ?? null);
@@ -479,6 +480,46 @@ const ALL_SETTINGS = [
     },
   },
 ];
+// Aide de chaque réglage (norme Astrea : bouton « ? » dans le formulaire,
+// infobulle sur les colonnes et les cases de l'assistant). Sources : code
+// Wazo (confd, wazo-auth) et essais réels notés dans docs/USER-MANAGER.md ;
+// « supposé » quand ce n'est pas vérifié.
+const FB_HELP = 'Renvoi par défaut (« appel de secours »), réglable seulement par l\'administrateur. Toujours actif : il s\'applique quand aucun renvoi d\'appel de l\'utilisateur n\'a pris l\'appel.';
+const FWD_HELP = 'Renvoi d\'appel que l\'utilisateur peut aussi gérer lui-même (postes, applications). Activer vers un numéro ; désactiver garde le numéro enregistré pour une prochaine fois.';
+const HELP = {
+  firstname: 'Prénom de l\'utilisateur, affiché dans les annuaires et, par défaut, sur les postes des collègues. Obligatoire.',
+  lastname: 'Nom de famille de l\'utilisateur. Facultatif.',
+  email: 'Courriel public de la fiche (Renseignements personnels), affiché dans les annuaires. Unique sur tout le serveur (tous les clients). Différent des adresses de connexion (Compte) et de l\'e-mail de la boîte vocale.',
+  mobile_phone_number: 'Numéro de mobile de l\'utilisateur, affiché dans les annuaires. Ne peut pas être vidé si le renvoi vers le mobile est activé.',
+  description: 'Texte libre, visible seulement des administrateurs.',
+  caller_id: 'Nom affiché sur le poste des collègues lors d\'un appel interne (par défaut « Prénom Nom »). Sans effet sur les appels externes, qui utilisent l\'identification de l\'appelant sortant.',
+  enabled: 'Ancien indicateur hérité de XiVO, absent du portail et sans effet constaté sur les appels. Proposé seulement pour réactiver un utilisateur désactivé.',
+  subscription_type: 'Type de souscription du portail. Voix : téléphonie seule, les applications Wazo refusent la connexion (vérifié). Communication unifiée : applications Wazo en plus. Relation client : Support Center et POPC en plus. Les quotas (« souscriptions restantes ») sont gérés par le portail, la stack ne bloque pas un dépassement.',
+  language: 'Langue des annonces et messages vocaux joués à l\'utilisateur (messagerie, services).',
+  timezone: 'Fuseau horaire de l\'utilisateur (supposé : horodatages dans les applications et la messagerie). Aucun = fuseau du serveur.',
+  auth_enabled: '« Autorisé à utiliser des applications » (onglet Compte) : le compte peut se connecter aux applications Wazo (web, bureau, mobile). Avec une licence Voix, la connexion est refusée de toute façon.',
+  auth_username: 'Identifiant de connexion aux applications Wazo. Unique sur le serveur.',
+  auth_method: 'Comment le compte s\'authentifie : méthode par défaut de l\'organisation (Paramètres › Mon organisation), mot de passe Wazo (native), SAML ou LDAP (le fournisseur doit être configuré, sinon le serveur refuse).',
+  auth_emails: 'Adresses du compte de connexion. La principale reçoit les e-mails de mot de passe oublié ; une adresse non confirmée reçoit d\'abord un e-mail de confirmation.',
+  dnd: 'Ne pas déranger : les appels ne font plus sonner les postes de l\'utilisateur. Il peut l\'activer lui-même depuis son poste ou les applications.',
+  incallfilter: 'Filtrage des appels entrants (fonction patron / secrétaire) : les appels passent par le filtre configuré dans le portail pour cet utilisateur.',
+  ring_seconds: 'Durée de sonnerie des postes de l\'utilisateur avant le renvoi « pas de réponse » ou le renvoi par défaut « non répondu » (0 à 10800 s, 30 par défaut).',
+  simultaneous_calls: 'Nombre d\'appels que l\'utilisateur peut avoir en même temps, double appel compris ; au-delà, il est considéré comme occupé (1 à 20, 5 par défaut).',
+  music_on_hold: 'Musique entendue par le correspondant quand l\'utilisateur le met en attente. « Par défaut » : musique du tenant.',
+  fwd_busy: `${FWD_HELP} Occupé : quand l'utilisateur est déjà en ligne.`,
+  fwd_unconditional: `${FWD_HELP} Inconditionnel : tous les appels partent vers ce numéro, sans faire sonner les postes.`,
+  fwd_noanswer: `${FWD_HELP} Pas de réponse : après la durée de sonnerie.`,
+  fb_busy: `${FB_HELP} Si occupé : l'utilisateur est en ligne (ou au maximum de ses appels simultanés).`,
+  fb_congestion: `${FB_HELP} Congestion : l'appel ne peut pas être acheminé (ressources saturées).`,
+  fb_fail: `${FB_HELP} Échec : le poste est injoignable (non enregistré, erreur).`,
+  fb_noanswer: `${FB_HELP} Non répondu : personne n'a décroché pendant la durée de sonnerie.`,
+  outgoing_caller_id: 'Numéro présenté aux correspondants externes : par défaut (règle du tenant ou de la ligne), anonyme, un numéro du tenant, la SDA de l\'utilisateur, ou un autre numéro (l\'opérateur peut refuser un numéro qui n\'appartient pas au client).',
+  call_permissions: 'Droits d\'appel : listes de numéros autorisés ou interdits (avec mot de passe éventuel), définies dans le portail. L\'utilisateur est soumis à tous ceux qui lui sont associés.',
+  voicemail: 'Boîte vocale de l\'utilisateur (une boîte peut être partagée). Les réglages de la boîte (code, e-mail, options) se font dans Messageries vocales.',
+  groups: 'Groupes d\'appel dont l\'utilisateur est membre : ses postes sonnent quand le groupe est appelé. Il faut une ligne pour être membre.',
+  schedule: 'Plage horaire de l\'utilisateur : hors plage, ses appels vont vers la destination « fermé » de la plage. Un seul horaire par utilisateur.',
+};
+
 // Rangement commun aux colonnes de l'audit (app.js), à l'assistant et à la
 // fiche, calqué sur les onglets de la fiche utilisateur du portail.
 const LAYOUT = [
@@ -495,7 +536,8 @@ const LAYOUT = [
 export const SETTINGS = LAYOUT.flatMap(([grp, ids]) => ids.map((id) => {
   const s = ALL_SETTINGS.find((x) => x.id === id);
   if (!s) console.error('[astrea] réglage inconnu dans LAYOUT', id);
-  return s && { ...s, grp };
+  if (s && !HELP[id]) console.warn('[astrea] réglage sans aide', id);
+  return s && { ...s, grp, help: HELP[id] || '' };
 })).filter(Boolean);
 if (SETTINGS.length !== ALL_SETTINGS.length) console.error('[astrea] réglage absent de LAYOUT', ALL_SETTINGS.filter((s) => !SETTINGS.some((x) => x.id === s.id)).map((s) => s.id));
 export const settingById = (id) => SETTINGS.find((s) => s.id === id);
