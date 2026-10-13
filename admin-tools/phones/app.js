@@ -12,7 +12,8 @@
 //  - confd régénère la config provd, mais ne synchronise pas l'appareil.
 // Supposé, à vérifier en réel : GET /lines renvoie device_id et position ;
 // un PUT /lines/{id} avec l'objet relu par GET est accepté.
-import { S, $, esc, toast, api, listAll, confirmModal, connect, fullName, canWrite, setReadonly, showCompat, loaded, loadFailed } from '../common/core.js?v=0.19.2';
+import { S, $, esc, toast, api, listAll, confirmModal, connect, fullName, canWrite, setReadonly, showCompat, loaded, loadFailed, provdDevice, updateProvdOptions, downloadJson } from '../common/core.js?v=0.20.0';
+import { CATALOG, randomPassword, checkField } from './catalog.js?v=0.20.0';
 
 // Comptes SIP par modèle (_NB_SIP_ACCOUNTS / plugin-info des plugins provd).
 const DECT_MAX = {
@@ -124,9 +125,10 @@ function alertsOf(dev) {
 // ---------------------------------------------------------------------------
 // Rendu
 // ---------------------------------------------------------------------------
+let VIEW = 'dect'; // 'dect' | 'config'
 function render() {
   renderList();
-  renderBase();
+  if (VIEW === 'config') { renderDevList(); renderCfg(); } else renderBase();
 }
 function renderList() {
   const q = $('search').value.trim().toLowerCase();
@@ -416,6 +418,222 @@ function savePlan() {
     });
   }, 'Enregistrer');
 }
+// ===========================================================================
+// Configuration des appareils (options provd astrea_settings → astrea_params)
+// ===========================================================================
+// astrea_settings = { idOption: { champ: valeur } | { __reset: 1 } } : ce que
+// l'appli affiche ; astrea_params = paramètres Yealink plats, lus par le bloc
+// v5 du template. Option décochée après avoir été appliquée : ses clés sont
+// écrites à %NULL% (valeur vide Yealink, utilisée aussi par Wazo), sauf
+// `keep` (VLAN, mot de passe : le modèle de provisionnement Wazo les réécrit).
+const C = { sel: null, orig: {}, edit: {}, loading: false };
+const NOT_RESET = new Set(['vlan', 'adminpw']);
+const kindOf = (d) => (!d ? null : isDect(d) ? 'dect' : /yealink/i.test(`${d.vendor} ${d.plugin}`) && d.model ? 'phone' : null);
+const devName = (d) => d.description || d.mac || `Appareil ${d.id}`;
+const devUsers = (d) => [...new Set(D.lines.filter((l) => l.device_id === d.id).flatMap((l) => lineUsers(l).map(fullName)))];
+const cfgDevices = () => D.devices.filter(kindOf).sort((a, b) => devName(a).localeCompare(devName(b), 'fr'));
+const optsFor = (d) => CATALOG.filter((o) => o.kinds.includes(kindOf(d)) && (!o.models || o.models.test(String(d.model || '').toUpperCase())));
+const defaults = (o) => Object.fromEntries(o.fields.map((f) => [f.key, f.type === 'password' ? randomPassword() : f.def]));
+const stable = (x) => (x && typeof x === 'object' && !Array.isArray(x) ? `{${Object.keys(x).sort().map((k) => `${JSON.stringify(k)}:${stable(x[k])}`).join(',')}}` : JSON.stringify(x));
+function buildParams(settings) {
+  const out = {};
+  for (const o of CATALOG) {
+    const s = settings?.[o.id];
+    if (!s) continue;
+    if (s.__reset) { if (!NOT_RESET.has(o.id)) for (const k of Object.keys(o.params(defaults(o)))) out[k] = '%NULL%'; }
+    else Object.assign(out, o.params(s));
+  }
+  return out;
+}
+const isOn = (s) => !!s && !s.__reset;
+
+function renderDevList() {
+  const q = $('c-search').value.trim().toLowerCase();
+  const ul = $('devlist');
+  ul.innerHTML = '';
+  const all = cfgDevices();
+  for (const d of all) {
+    const users = devUsers(d);
+    if (q && !`${devName(d)} ${d.mac || ''} ${d.model || ''} ${users.join(' ')}`.toLowerCase().includes(q)) continue;
+    const li = document.createElement('li');
+    li.className = C.sel === d.id ? 'sel' : '';
+    li.innerHTML = `<span>${esc(devName(d))}${users.length ? `<br><span class="muted small">${esc(users.slice(0, 2).join(', '))}${users.length > 2 ? '…' : ''}</span>` : ''}</span><span class="sub">${esc(d.model || '?')}${kindOf(d) === 'dect' ? ' · DECT' : ''}</span>`;
+    li.onclick = () => guardCfg(() => selectDevice(d.id));
+    ul.appendChild(li);
+  }
+  $('c-count').textContent = `${all.length} appareil(s) Yealink`;
+}
+async function selectDevice(id) {
+  C.sel = id; C.loading = true;
+  renderDevList(); renderCfg();
+  try {
+    const pd = await provdDevice(id);
+    if (C.sel !== id) return;
+    const s = pd.options?.astrea_settings;
+    C.orig = s && typeof s === 'object' ? s : {};
+    C.edit = JSON.parse(JSON.stringify(C.orig));
+  } catch (e) { toast(e.message, 8000); C.orig = {}; C.edit = {}; }
+  C.loading = false;
+  renderCfg();
+}
+const cfgDirty = () => stable(C.edit) !== stable(C.orig);
+function guardCfg(fn) {
+  if (!cfgDirty()) return fn();
+  confirmModal('<p>Des options ne sont pas enregistrées sur cet appareil. Les abandonner ?</p>', fn, 'Abandonner');
+}
+function fieldHtml(o, f, val) {
+  const id = `f-${o.id}-${f.key}`;
+  const attrs = `id="${id}" data-opt="${o.id}" data-key="${f.key}"`;
+  if (f.type === 'select') return `<label>${esc(f.label)} <select ${attrs}>${f.options.map(([v, l]) => `<option value="${esc(v)}"${String(val) === v ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select></label>`;
+  if (f.type === 'days') return `<div class="days"><span class="muted small">${esc(f.label)}</span>${f.options.map(([v, l]) => `<label class="inline"><input type="checkbox" data-opt="${o.id}" data-key="${f.key}" data-day="${v}"${String(val).includes(v) ? ' checked' : ''}> ${esc(l)}</label>`).join('')}</div>`;
+  if (f.type === 'password') return `<label>${esc(f.label)} <span class="pwrow"><input ${attrs} value="${esc(val)}" maxlength="32" autocomplete="off" spellcheck="false"><button data-gen="${o.id}" data-key="${f.key}">Générer</button></span></label>`;
+  if (f.type === 'time') return `<label>${esc(f.label)} <input type="time" ${attrs} value="${esc(val)}"></label>`;
+  return `<label>${esc(f.label)} <input type="number" ${attrs} min="${f.min}" max="${f.max}" value="${esc(val)}"></label>`;
+}
+function renderCfg() {
+  const d = devById(C.sel);
+  $('cfg').hidden = !d;
+  $('empty').hidden = !!d;
+  if (!d) { $('empty').textContent = 'Choisissez un appareil.'; return; }
+  $('c-name').textContent = `${[d.vendor, d.model].filter(Boolean).join(' ')} · ${devName(d)}`;
+  $('c-tech').textContent = [d.mac && `MAC ${d.mac}`, d.ip && `IP publique ${kindOf(d) === 'dect' ? 'de la base' : 'de l\'appareil'} ${d.ip}`, d.version && `firmware ${d.version}`, d.plugin && `plugin ${d.plugin}`, devUsers(d).length && `utilisateur(s) : ${devUsers(d).join(', ')}`].filter(Boolean).join(' · ');
+  const warn = [];
+  if (kindOf(d) === 'dect' && /v86\b/.test(d.plugin || '')) warn.push('Plugin v86 : il ne gère pas les bases DECT, les options ne seront pas appliquées.');
+  $('c-warn').innerHTML = warn.map((w) => `<div class="warn">${esc(w)}</div>`).join('');
+  if (C.loading) { $('c-opts').innerHTML = '<p class="muted">Lecture de la configuration…</p>'; $('c-save').disabled = true; return; }
+  $('c-opts').innerHTML = optsFor(d).map((o) => {
+    const s = C.edit[o.id];
+    const on = isOn(s);
+    const changed = stable(s) !== stable(C.orig[o.id]);
+    return `<div class="page opt${on ? ' on' : ''}${changed ? ' changed' : ''}">
+      <div class="opthead"><label class="inline"><input type="checkbox" data-toggle="${o.id}"${on ? ' checked' : ''}> <strong>${esc(o.label)}</strong></label>${o.reboot ? '<span class="tag">redémarre l\'appareil</span>' : ''}${s?.__reset ? '<span class="tag">retour à la valeur par défaut à l\'enregistrement</span>' : ''}</div>
+      <details><summary class="muted small">Aide</summary><p class="muted small">${esc(o.help)}</p></details>
+      ${on ? `<div class="fields">${o.fields.map((f) => fieldHtml(o, f, s[f.key] ?? f.def)).join('')}</div>` : ''}
+    </div>`;
+  }).join('') || '<p class="muted">Aucune option pour ce modèle.</p>';
+  $('c-save').disabled = !cfgDirty();
+  $('c-bulk').disabled = !Object.values(C.edit).some(isOn) && !Object.values(C.edit).some((s) => s?.__reset);
+}
+function readField(el) {
+  const o = C.edit[el.dataset.opt];
+  if (!isOn(o)) return;
+  if (el.dataset.day !== undefined) {
+    const days = [...document.querySelectorAll(`input[data-opt="${el.dataset.opt}"][data-key="${el.dataset.key}"][data-day]`)].filter((x) => x.checked).map((x) => x.dataset.day).sort().join('');
+    o[el.dataset.key] = days;
+  } else o[el.dataset.key] = el.type === 'number' ? (el.value === '' ? '' : Number(el.value)) : el.value;
+  $('c-save').disabled = !cfgDirty();
+}
+function toggleOpt(id, on) {
+  const o = CATALOG.find((x) => x.id === id);
+  if (on) C.edit[id] = isOn(C.orig[id]) ? JSON.parse(JSON.stringify(C.orig[id])) : defaults(o);
+  else if (isOn(C.orig[id]) || C.orig[id]?.__reset) C.edit[id] = { __reset: 1 }; // déjà appliquée : remise à zéro
+  else delete C.edit[id];
+  if (!on && NOT_RESET.has(id) && C.edit[id]?.__reset) delete C.edit[id]; // VLAN / mot de passe : le modèle Wazo reprend la main
+  renderCfg();
+}
+// Contrôle des champs ; renvoie la liste des erreurs.
+function validate(settings, d) {
+  const errs = [];
+  for (const o of optsFor(d)) {
+    const s = settings[o.id];
+    if (!isOn(s)) continue;
+    for (const f of o.fields) { const r = checkField(f, s[f.key]); if (r.err) errs.push(`${o.label} : ${r.err}`); else s[f.key] = r.v; }
+  }
+  return errs;
+}
+const paramLines = (p) => Object.keys(p).sort().map((k) => `${k} = ${p[k]}`);
+function saveCfg() {
+  if (!canWrite()) return;
+  const d = devById(C.sel);
+  const next = JSON.parse(JSON.stringify(C.edit));
+  const errs = validate(next, d);
+  if (errs.length) { toast(errs.join(' · '), 8000); return; }
+  const before = buildParams(C.orig), after = buildParams(next);
+  const keys = [...new Set([...Object.keys(before), ...Object.keys(after)])].sort().filter((k) => before[k] !== after[k]);
+  const reboot = CATALOG.some((o) => o.reboot && stable(next[o.id]) !== stable(C.orig[o.id]));
+  confirmModal(`<h3>Enregistrer ${esc(devName(d))}</h3>
+    ${keys.length ? `<table class="diff"><tr><th>Paramètre Yealink</th><th>Avant</th><th>Après</th></tr>${keys.map((k) => `<tr><td><code>${esc(k)}</code></td><td class="muted">${esc(before[k] ?? '—')}</td><td><strong>${esc(after[k] ?? '(n\'est plus écrit)')}</strong></td></tr>`).join('')}</table>` : '<p class="muted">Aucun paramètre modifié.</p>'}
+    ${reboot ? '<div class="warn">VLAN ou mot de passe modifié : l\'appareil redémarrera en appliquant sa configuration.</div>' : ''}
+    <label class="inline"><input type="checkbox" id="m-sync"${reboot ? '' : ' checked'}> Synchroniser l'appareil maintenant (sinon : au prochain redémarrage ou provisionnement planifié)</label>`, async () => {
+    const sync = $('m-sync').checked;
+    try {
+      await updateProvdOptions(d.id, (opts) => applySettings(opts, next));
+      if (sync) await api('GET', `/devices/${d.id}/synchronize`);
+      toast('Configuration enregistrée');
+    } catch (e) { toast(e.message, 9000); }
+    await selectDevice(d.id);
+  }, 'Enregistrer');
+}
+// Écrit astrea_settings / astrea_params dans les options provd (retirés si vides).
+function applySettings(opts, settings) {
+  const s = Object.fromEntries(Object.entries(settings).filter(([, v]) => v));
+  const p = buildParams(s);
+  if (Object.keys(s).length) opts.astrea_settings = s; else delete opts.astrea_settings;
+  if (Object.keys(p).length) opts.astrea_params = p; else delete opts.astrea_params;
+}
+// Appliquer les options cochées (ou les retirer) sur d'autres appareils.
+function openBulk() {
+  if (!canWrite() || cfgDirty()) { if (cfgDirty()) toast('Enregistrez ou annulez d\'abord les modifications de cet appareil.', 5000); return; }
+  const d = devById(C.sel);
+  const chosen = optsFor(d).filter((o) => isOn(C.edit[o.id]));
+  if (!chosen.length) { toast('Cochez d\'abord les options à appliquer sur cet appareil.'); return; }
+  const kind = kindOf(d);
+  const targets = cfgDevices().filter((x) => kindOf(x) === kind && x.id !== d.id);
+  confirmModal(`<h3>Appliquer à d'autres appareils</h3>
+    <p>Options : ${chosen.map((o) => `<strong>${esc(o.label)}</strong>`).join(', ')}${chosen.some((o) => o.id === 'adminpw') ? ' <span class="muted small">(un mot de passe différent est généré pour chaque appareil)</span>' : ''}.</p>
+    <label>Action <select id="m-mode"><option value="set">Appliquer ces options avec ces valeurs (les autres options de chaque appareil sont conservées)</option><option value="reset">Retirer ces options (retour au modèle de la stack / valeur par défaut)</option></select></label>
+    <label>Filtrer <input id="m-q" placeholder="Nom, modèle, utilisateur…"></label>
+    <div class="btnrow"><button id="m-all">Tout cocher</button><button id="m-none">Tout décocher</button><span id="m-n" class="muted small" style="align-self:center"></span></div>
+    <ul id="m-devs" class="pick">${targets.map((x) => `<li><label class="inline"><input type="checkbox" data-dev="${esc(x.id)}"> ${esc(devName(x))} <span class="muted small">${esc(x.model || '')}${devUsers(x).length ? ' · ' + esc(devUsers(x).join(', ')) : ''}</span></label></li>`).join('') || '<li class="off">Aucun autre appareil de ce type.</li>'}</ul>
+    <label class="inline"><input type="checkbox" id="m-sync"> Synchroniser les appareils (${chosen.some((o) => o.reboot) ? 'ils redémarreront' : 'redémarrage possible'})</label>
+    <p class="muted small">Les options non disponibles sur un modèle sont ignorées pour cet appareil. Une sauvegarde des options actuelles est téléchargée avant d'écrire.</p>`, async () => {
+    const ids = [...document.querySelectorAll('#m-devs input[data-dev]:checked')].map((x) => x.dataset.dev);
+    if (!ids.length) { toast('Cochez au moins un appareil.'); return false; }
+    const mode = $('m-mode').value, sync = $('m-sync').checked;
+    await bulkApply(ids, chosen, mode, sync);
+  }, 'Appliquer');
+  const count = () => { $('m-n').textContent = `${document.querySelectorAll('#m-devs input[data-dev]:checked').length} sélectionné(s)`; };
+  $('m-devs').onchange = count;
+  $('m-all').onclick = () => { document.querySelectorAll('#m-devs li:not([hidden]) input[data-dev]').forEach((x) => (x.checked = true)); count(); };
+  $('m-none').onclick = () => { document.querySelectorAll('#m-devs input[data-dev]').forEach((x) => (x.checked = false)); count(); };
+  $('m-q').oninput = () => { const q = $('m-q').value.trim().toLowerCase(); document.querySelectorAll('#m-devs li').forEach((li) => { li.hidden = !!q && !li.textContent.toLowerCase().includes(q); }); };
+  count();
+}
+async function bulkApply(ids, chosen, mode, sync) {
+  const backup = [];
+  let ok = 0, ko = 0;
+  for (const [i, id] of ids.entries()) {
+    toast(`Appareil ${i + 1}/${ids.length}…`, 60000);
+    const dev = devById(id);
+    try {
+      await updateProvdOptions(id, (opts) => {
+        backup.push({ id, mac: dev?.mac, model: dev?.model, astrea_settings: opts.astrea_settings ?? null, astrea_params: opts.astrea_params ?? null });
+        const s = { ...(opts.astrea_settings || {}) };
+        for (const o of chosen) {
+          if (!optsFor(dev).includes(o)) continue;
+          if (mode === 'set') s[o.id] = o.id === 'adminpw' ? { pwd: randomPassword() } : JSON.parse(JSON.stringify(C.edit[o.id]));
+          else if (NOT_RESET.has(o.id)) delete s[o.id];
+          else s[o.id] = { __reset: 1 };
+        }
+        applySettings(opts, s);
+      });
+      if (sync) await api('GET', `/devices/${id}/synchronize`);
+      ok++;
+    } catch (e) { ko++; console.error(devName(dev || { id }), e); }
+  }
+  downloadJson(`astrea-phones-sauvegarde-${new Date().toISOString().replace(/[:.]/g, '-')}.json`, { app: 'astrea-phones', created: new Date().toISOString(), base: S.base, tenant: S.tenant, devices: backup });
+  toast(`${ok} appareil(s) mis à jour${ko ? `, ${ko} en erreur (console)` : ''}. Sauvegarde des options précédentes téléchargée.`, 9000);
+}
+
+// Bascule Bases DECT / Configuration.
+function setView(v) {
+  VIEW = v;
+  document.querySelectorAll('[data-view]').forEach((b) => b.classList.toggle('active', b.dataset.view === v));
+  $('side-dect').hidden = v !== 'dect';
+  $('side-config').hidden = v !== 'config';
+  if (v === 'dect') { $('cfg').hidden = true; renderBase(); }
+  else { $('base').hidden = true; $('empty').hidden = !!C.sel; if (!C.sel) $('empty').textContent = 'Choisissez un appareil.'; renderDevList(); renderCfg(); }
+}
 // ---------------------------------------------------------------------------
 // Démarrage
 // ---------------------------------------------------------------------------
@@ -428,8 +646,30 @@ $('b-rows').onclick = (e) => {
   if (!b) return;
   if (b.dataset.act === 'remove') openRemove(Number(b.dataset.line));
 };
-$('b-save').onclick = savePlan;
+document.querySelectorAll('[data-view]').forEach((b) => (b.onclick = () => {
+  const go = () => setView(b.dataset.view);
+  if (b.dataset.view === 'config' && pendingChanges().length) { toast('Des déplacements DECT sont en attente : enregistrez-les ou annulez-les d\'abord.', 5000); return; }
+  if (b.dataset.view === 'dect') guardCfg(go); else go();
+}));
+$('c-search').oninput = renderDevList;
+$('c-opts').addEventListener('change', (e) => {
+  const t = e.target;
+  if (t.dataset.toggle) return toggleOpt(t.dataset.toggle, t.checked);
+  if (t.dataset.opt) readField(t);
+});
+$('c-opts').addEventListener('input', (e) => { if (e.target.dataset.opt && !e.target.dataset.day && e.target.tagName === 'INPUT') readField(e.target); });
+$('c-opts').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-gen]');
+  if (!b) return;
+  e.preventDefault();
+  const inp = $(`f-${b.dataset.gen}-${b.dataset.key}`);
+  inp.value = randomPassword();
+  readField(inp);
+});
+$('c-save').onclick = saveCfg;
+$('c-revert').onclick = () => { C.edit = JSON.parse(JSON.stringify(C.orig)); renderCfg(); };
+$('c-bulk').onclick = openBulk;$('b-save').onclick = savePlan;
 $('b-revert').onclick = () => { D.plan.clear(); render(); };
-window.addEventListener('beforeunload', (e) => { if (pendingChanges().length) { e.preventDefault(); e.returnValue = ''; } });
+window.addEventListener('beforeunload', (e) => { if (pendingChanges().length || cfgDirty()) { e.preventDefault(); e.returnValue = ''; } });
 wireDragDrop();
 connect(boot);

@@ -6,10 +6,10 @@ Deux parties indépendantes :
 | Partie | Pour quoi | Où | Obligatoire |
 |---|---|---|---|
 | 1. Plugin Portal | Touches BLF, pages, modules, étiquettes, déploiement en masse | Portail Wazo (navigateur) | Oui |
-| 2. Script provd | Plusieurs **touches ligne** par poste et leurs étiquettes (Yealink) | Serveur de la stack (SSH, root) | Seulement pour les touches ligne |
+| 2. Script provd | **Touches ligne** multiples et leurs étiquettes (BLF Manager), **configuration des appareils** (Phone Manager) — Yealink | Serveur de la stack (SSH, root) | Pour ces deux fonctions |
 
-Sans la partie 2, tout fonctionne sauf les touches ligne : l'appli enregistre
-le réglage, mais le téléphone garde une seule touche ligne.
+Sans la partie 2, tout fonctionne sauf les touches ligne et les options de
+configuration : l'appli enregistre le réglage, mais l'appareil ne le reçoit pas.
 
 ---
 
@@ -45,7 +45,7 @@ Si l'ancienne version reste affichée : outils de développement du navigateur
 
 ---
 
-## Partie 2 — Touches ligne : script provd (10 minutes par stack)
+## Partie 2 — Script provd : touches ligne et configuration (10 minutes par stack)
 
 Le script ajoute un bloc « Astrea » au modèle de configuration personnalisé
 (`var/templates/base.tpl`) de chaque plugin provd Yealink installé. C'est la
@@ -60,22 +60,22 @@ touches ligne sur le téléphone.
 ### Étapes
 1. Télécharger le script sur le serveur :
    ```bash
-   curl -fsSLO https://briceaesir.github.io/astrea-wazo-plugins/provd/astrea-provd-linekeys.sh
+   curl -fsSLO https://briceaesir.github.io/astrea-wazo-plugins/provd/astrea-provd.sh
    ```
 2. Vérifier son empreinte (doit être identique à celle indiquée dans
    [provd/README.md](../provd/README.md)) :
    ```bash
-   sha256sum astrea-provd-linekeys.sh
+   sha256sum astrea-provd.sh
    ```
 3. Simulation, rien n'est écrit :
    ```bash
-   sudo bash astrea-provd-linekeys.sh --dry-run
+   sudo bash astrea-provd.sh --dry-run
    ```
    Pour chaque plugin, le script dit ce qu'il ferait et montre les lignes
    ajoutées.
 4. Installation :
    ```bash
-   sudo bash astrea-provd-linekeys.sh
+   sudo bash astrea-provd.sh
    ```
    Une sauvegarde `base.tpl.astrea-AAAAMMJJ-HHMMSS` est faite à côté de chaque
    fichier modifié.
@@ -112,7 +112,7 @@ n'ajoute jamais de doublon.
    Les touches BLF restent dans Wazo (ce sont des touches Wazo standard).
 2. Serveur, si le script a été passé :
    ```bash
-   sudo bash astrea-provd-linekeys.sh --remove
+   sudo bash astrea-provd.sh --remove
    ```
    puis resynchroniser les postes concernés. Ils reviennent à une touche ligne.
    Les réglages `astrea_linekeys` / `astrea_linelabels` restés sur les postes

@@ -34,6 +34,55 @@ export async function api(method, path, body) {
   const txt = await r.text();
   return txt ? JSON.parse(txt) : null;
 }
+// ---------------------------------------------------------------------------
+// API provd (options libres des appareils, validé en réel avec BLF Manager)
+// ---------------------------------------------------------------------------
+const PROVD_TYPE = 'application/vnd.proformatique.provd+json';
+export async function provd(method, path, body) {
+  if (S.readonly && method !== 'GET') throw new ApiError(0, `Lecture seule : ${S.readonly}`);
+  const headers = { 'X-Auth-Token': S.token, Accept: PROVD_TYPE };
+  if (S.tenant) headers['Wazo-Tenant'] = S.tenant;
+  if (body !== undefined) headers['Content-Type'] = PROVD_TYPE;
+  const r = await fetch(`${S.base}/api/provd/0.2${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+  if (r.status === 401) { refreshFromPortal(); throw new ApiError(401, 'Session expirée : rechargez la page du portail.'); }
+  if (!r.ok) {
+    let msg = `provd ${method} ${path} → ${r.status}`;
+    try { msg += ' ' + (await r.text()).slice(0, 300); } catch { /* */ }
+    throw new ApiError(r.status, msg);
+  }
+  const txt = r.status === 204 ? '' : await r.text();
+  return txt ? JSON.parse(txt) : null;
+}
+// Document provd d'un appareil (id provd = id du device confd).
+export async function provdDevice(id) {
+  const d = (await provd('GET', `/dev_mgr/devices/${id}`))?.device;
+  if (!d) throw new Error(`appareil ${id} introuvable dans provd`);
+  return d;
+}
+// Modifie les options provd d'un appareil (relues juste avant), puis régénère
+// son fichier. `mutate(options)` modifie l'objet ; rien n'est écrit s'il est
+// inchangé. Renvoie true si quelque chose a été écrit.
+export async function updateProvdOptions(id, mutate) {
+  const d = await provdDevice(id);
+  const before = JSON.stringify(d.options || {});
+  const options = JSON.parse(before);
+  mutate(options);
+  if (JSON.stringify(options) === before) return false;
+  d.options = options;
+  await provd('PUT', `/dev_mgr/devices/${id}`, { device: d });
+  await provd('POST', '/dev_mgr/reconfigure', { id });
+  return true;
+}
+// Télécharge un fichier JSON (sauvegarde avant écriture en masse).
+export function downloadJson(name, data) {
+  try {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 1)], { type: 'application/json' }));
+    a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+  } catch (e) { console.warn('téléchargement', e); }
+}
 export const listAll = async (path) => (await api('GET', `${path}${path.includes('?') ? '&' : '?'}recurse=true&limit=10000`))?.items || [];
 
 // ---------------------------------------------------------------------------

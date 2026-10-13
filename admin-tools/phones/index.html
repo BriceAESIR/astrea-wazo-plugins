@@ -3,18 +3,18 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>DECT Manager · Astrea Admin Tools</title>
+<title>Phone Manager · Astrea Admin Tools</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Mulish:wght@300..800&display=swap">
-<link rel="stylesheet" href="../common/style.css?v=0.19.2">
-<link rel="stylesheet" href="./dect.css?v=0.19.2">
+<link rel="stylesheet" href="../common/style.css?v=0.20.0">
+<link rel="stylesheet" href="./phones.css?v=0.20.0">
 <script>if (window.parent !== window) document.documentElement.classList.add('framed');</script>
 </head>
 <body>
 <div id="app">
   <header class="topbar">
-    <div class="brand">DECT Manager</div>
+    <div class="brand">Phone Manager</div>
     <div id="conn" class="conn muted">Connexion…</div>
   </header>
 
@@ -33,10 +33,21 @@
 
   <main id="main" class="no-detail" hidden>
     <aside id="sidebar">
-      <input id="search" type="search" placeholder="Utilisateur, numéro, base…">
-      <div id="count" class="muted small"></div>
-      <ul id="baselist" class="list"></ul>
-      <div id="found" hidden></div>
+      <nav class="sidenav">
+        <button data-view="dect" class="active">Bases DECT</button>
+        <button data-view="config">Configuration des appareils</button>
+      </nav>
+      <div id="side-dect">
+        <input id="search" type="search" placeholder="Utilisateur, numéro, base…">
+        <div id="count" class="muted small"></div>
+        <ul id="baselist" class="list"></ul>
+        <div id="found" hidden></div>
+      </div>
+      <div id="side-config" hidden>
+        <input id="c-search" type="search" placeholder="Nom, MAC, modèle, utilisateur…">
+        <div id="c-count" class="muted small"></div>
+        <ul id="devlist" class="list"></ul>
+      </div>
     </aside>
 
     <section id="workbench">
@@ -67,6 +78,26 @@
         </div>
         <p class="muted small">Les combinés (inscription, noms, compte de chaque combiné) se gèrent sur la page web de la base (base maître en multicellule). Ici : quelles lignes Wazo sont provisionnées sur la base, et à quel compte (position).</p>
       </div>
+
+      <div id="cfg" hidden>
+        <div class="phonehead">
+          <div>
+            <h2 id="c-name"></h2>
+            <div id="c-tech" class="muted small"></div>
+          </div>
+          <div class="btnrow">
+            <button id="c-bulk">Appliquer à d'autres appareils…</button>
+          </div>
+        </div>
+        <div id="c-warn"></div>
+        <p class="muted small">Options cochées = écrites dans la configuration de l'appareil (bloc Astrea v5 du template provd, à installer une fois par stack avec <code>astrea-provd.sh</code>). Elles l'emportent sur le modèle de provisionnement de la stack ; décochées, c'est lui qui s'applique.</p>
+        <div id="c-opts"></div>
+        <div class="actions">
+          <span class="spacer"></span>
+          <button id="c-revert">Annuler les modifications</button>
+          <button id="c-save" class="primary" disabled>Enregistrer</button>
+        </div>
+      </div>
     </section>
   </main>
 
@@ -74,6 +105,6 @@
     <div class="btnrow right"><button id="modal-cancel">Annuler</button><button id="modal-ok" class="primary">Confirmer</button></div></div></div>
   <div id="toast" class="toast" hidden></div>
 </div>
-<script type="module" src="./app.js?v=0.19.2"></script>
+<script type="module" src="./app.js?v=0.20.0"></script>
 </body>
 </html>

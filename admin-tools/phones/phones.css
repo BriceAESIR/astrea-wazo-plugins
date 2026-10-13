@@ -1,4 +1,4 @@
-/* DECT Manager : compléments à ../common/style.css */
+/* Phone Manager : compléments à ../common/style.css */
 .list .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--warn); margin-left: 6px; vertical-align: middle; }
 .list .dot.bad { background: var(--danger); }
 .occ { display: inline-block; min-width: 56px; text-align: right; font-variant-numeric: tabular-nums; }
@@ -24,3 +24,19 @@
 .pick li:hover { background: var(--hover); }
 .pick li.sel { background: var(--selected); }
 .pick li.off { opacity: .5; cursor: default; }
+/* Configuration des appareils */
+.opt { padding: 12px 16px; }
+.opt.on { border-color: color-mix(in srgb, var(--accent) 40%, var(--line)); }
+.opt.changed { border-left: 4px solid var(--warn); }
+.opthead { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.opthead label.inline { margin: 0; }
+.tag { font-size: .6875rem; padding: 1px 8px; border-radius: 10px; background: color-mix(in srgb, var(--warn) 14%, var(--panel)); color: color-mix(in srgb, var(--warn) 60%, var(--ink)); }
+.opt details { margin: 4px 0 0; }
+.opt details summary { cursor: pointer; }
+.fields { display: flex; flex-wrap: wrap; gap: 4px 24px; align-items: flex-end; }
+.fields > label { min-width: 160px; margin: 8px 0 0; }
+.days { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
+.days label.inline { margin: 0; gap: 4px; }
+.pwrow { display: flex; gap: 8px; align-items: center; }
+.pwrow input { font-family: ui-monospace, Consolas, monospace; }
+#devlist li .muted.small { font-size: .6875rem; }

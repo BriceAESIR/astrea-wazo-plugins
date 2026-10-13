@@ -1,11 +1,37 @@
-# Module DECT Manager (Astrea Admin Tools)
+# Module Phone Manager (Astrea Admin Tools)
 
-Sous-menu **Astrea Admin Tools > DECT Manager**. Vue d'ensemble des bases DECT
-d'une stack et des lignes Wazo qui y sont provisionnées. Les combinés
-(inscription, noms, compte de chaque combiné) restent gérés sur la page web
-de la base (base maître en multicellule).
+Sous-menu **Astrea Admin Tools > Phone Manager** (ex-DECT Manager), deux vues :
 
-## Ce que fait le module
+- **Bases DECT** : vue d'ensemble des bases DECT et des lignes Wazo qui y sont
+  provisionnées (détail ci-dessous). Les combinés (inscription, noms, compte de
+  chaque combiné) restent gérés sur la page web de la base (base maître en
+  multicellule).
+- **Configuration des appareils** (Yealink, postes et bases DECT) : options du
+  catalogue `catalog.js` cochées par appareil ou appliquées en masse.
+
+## Configuration des appareils
+- Options (fiche d'aide dans l'appli : description, valeurs, défaut Yealink) :
+  VLAN WAN + priorité, mot de passe admin propre à l'appareil, provisionnement
+  planifié (hebdomadaire / répété), économiseur d'écran, AEC, VAD, CNG, TNS,
+  Acoustic Shield, volumes d'émission, périphérique de sonnerie. Une base DECT
+  ne se voit proposer que les options qui la concernent.
+- Stockage : options provd de l'appareil `astrea_settings` (ce que l'appli
+  affiche) et `astrea_params` (paramètres Yealink plats) ; écriture par
+  `PUT /dev_mgr/devices/{id}` relu juste avant, puis `reconfigure`.
+- Application sur l'appareil : bloc Astrea v5 du template provd
+  (`base.tpl` / `base-dect.tpl`), installé par `provd/astrea-provd.sh`. Les
+  paramètres sont écrits en dernier et l'emportent sur le modèle de
+  provisionnement de la stack.
+- Option décochée après application : ses clés sont écrites à `%NULL%` (valeur
+  vide Yealink ; retour à la valeur par défaut supposé), sauf VLAN et mot de
+  passe, que le modèle de la stack réécrit.
+- En masse : mêmes options et valeurs sur une sélection d'appareils du même
+  type (mot de passe : un différent par appareil), ou retrait de ces options ;
+  sauvegarde JSON des options précédentes téléchargée.
+- Testé contre `tests/mock-dect.ps1` (enregistrement, décochage, masse), pas
+  encore sur une vraie stack.
+
+## Bases DECT : ce que fait la vue
 - **Liste des bases** (modèles DECT reconnus par les plugins provd) avec
   l'occupation `comptes utilisés / max` et une pastille d'alerte.
 - **Fiche d'une base** : modèle, MAC, IP, firmware, plugin provd, état de
