@@ -12,7 +12,7 @@
 //  - confd régénère la config provd, mais ne synchronise pas l'appareil.
 // Supposé, à vérifier en réel : GET /lines renvoie device_id et position ;
 // un PUT /lines/{id} avec l'objet relu par GET est accepté.
-import { S, $, esc, toast, api, listAll, confirmModal, connect, fullName, canWrite, setReadonly, showCompat, loaded, loadFailed } from '../common/core.js?v=0.18.0';
+import { S, $, esc, toast, api, listAll, confirmModal, connect, fullName, canWrite, setReadonly, showCompat, loaded, loadFailed } from '../common/core.js?v=0.18.1';
 
 // Comptes SIP par modèle (_NB_SIP_ACCOUNTS / plugin-info des plugins provd).
 const DECT_MAX = {
@@ -20,7 +20,12 @@ const DECT_MAX = {
   'N610 IP PRO': 8, 'N670 IP PRO': 20, 'N770 IP PRO': 100, 'N870 IP PRO': 250, 'N870E IP PRO': 250,
   'N720 IP PRO': 100, 'N720 DM PRO': 100, 'N510 IP PRO': 6,
 };
-const isDect = (d) => !!d && d.model in DECT_MAX;
+// Modèle normalisé (majuscules, espaces, préfixe de marque retiré) → clé de DECT_MAX.
+const norm = (s) => String(s || '').toUpperCase().replace(/^(YEALINK|GIGASET)\s+/, '').replace(/\s+/g, ' ').trim();
+const DECT_KEYS = new Map(Object.keys(DECT_MAX).map((k) => [norm(k), k]));
+const dectModel = (d) => (d ? DECT_KEYS.get(norm(d.model)) || null : null);
+const maxOf = (d) => DECT_MAX[dectModel(d)] || 0;
+const isDect = (d) => !!dectModel(d);
 const D = { devices: [], lines: [], users: [], byLineUsers: new Map(), sel: null, scope: null };
 
 // ---------------------------------------------------------------------------
@@ -77,7 +82,7 @@ function usedPositions(devId, exceptLineId) {
 function freePositions(dev, exceptLineId) {
   const used = usedPositions(dev.id, exceptLineId);
   const out = [];
-  for (let p = 1; p <= DECT_MAX[dev.model]; p++) if (!used.has(p)) out.push(p);
+  for (let p = 1; p <= maxOf(dev); p++) if (!used.has(p)) out.push(p);
   return out;
 }
 const ranges = (ps) => {
@@ -87,7 +92,7 @@ const ranges = (ps) => {
 };
 // Alertes d'une base : [{ level: 'bad' | 'warn', text }]
 function alertsOf(dev) {
-  const max = DECT_MAX[dev.model];
+  const max = maxOf(dev);
   const ls = linesOf(dev.id);
   const out = [];
   const count = new Map();
@@ -103,7 +108,7 @@ function alertsOf(dev) {
   if (/yealink/i.test(`${dev.vendor} ${dev.plugin}`) && /v86\b/.test(dev.plugin || '')) out.push({ level: 'bad', text: `Plugin provd ${dev.plugin} : il ne gère pas les bases DECT (utiliser wazo-yealink-v87).` });
   if (!dev.plugin) out.push({ level: 'warn', text: 'Aucun plugin provd associé.' });
   if (dev.status && dev.status !== 'configured') out.push({ level: 'warn', text: `État de provisionnement : ${dev.status}.` });
-  if (!ls.length && /^W(75|80|90)B$/.test(dev.model)) out.push({ level: 'warn', text: 'Aucun compte : base secondaire d\'un multicellule ? (seule la base maître porte les comptes).' });
+  if (!ls.length && /^W(75|80|90)B$/.test(dectModel(dev))) out.push({ level: 'warn', text: 'Aucun compte : base secondaire d\'un multicellule ? (seule la base maître porte les comptes).' });
   return out;
 }
 
@@ -122,7 +127,7 @@ function renderList() {
   for (const d of bs) {
     const hay = `${baseName(d)} ${d.model} ${d.mac || ''} ${d.ip || ''}`.toLowerCase();
     if (q && !hay.includes(q)) continue;
-    const n = linesOf(d.id).length, max = DECT_MAX[d.model];
+    const n = linesOf(d.id).length, max = maxOf(d);
     const al = alertsOf(d);
     const li = document.createElement('li');
     li.className = D.sel === d.id ? 'sel' : '';
@@ -141,8 +146,17 @@ function renderBase() {
   const d = devById(D.sel);
   $('empty').hidden = !!d;
   $('base').hidden = !d;
-  if (!d) return;
-  const max = DECT_MAX[d.model];
+  if (!d) {
+    // Aucune base reconnue : montrer ce que la stack contient (diagnostic).
+    if (!bases().length) {
+      const models = new Map();
+      for (const x of D.devices) { const k = `${x.vendor || '?'} ${x.model || '(modèle inconnu)'}`; models.set(k, (models.get(k) || 0) + 1); }
+      $('empty').innerHTML = `<p>Aucune base DECT reconnue sur cette stack.</p><p class="muted small">Appareils trouvés (${D.devices.length}) : ${esc([...models].map(([k, n]) => `${k} ×${n}`).join(', ') || 'aucun')}.</p><p class="muted small">Modèles reconnus : ${esc(Object.keys(DECT_MAX).join(', '))}. Une base pas encore provisionnée (autoprov, modèle inconnu) n'apparaît pas.</p>`;
+      console.info('[astrea] DECT appareils', D.devices.map((x) => ({ id: x.id, vendor: x.vendor, model: x.model, plugin: x.plugin, status: x.status })));
+    } else $('empty').textContent = 'Choisissez une base DECT.';
+    return;
+  }
+  const max = maxOf(d);
   const ls = linesOf(d.id);
   $('b-name').textContent = `${[d.vendor, d.model].filter(Boolean).join(' ')} · ${baseName(d)}`;
   $('b-tech').textContent = [d.mac && `MAC ${d.mac}`, d.ip && `IP ${d.ip}`, d.version && `firmware ${d.version}`, d.plugin && `plugin ${d.plugin}`, d.status && `état ${d.status}`].filter(Boolean).join(' · ');
@@ -258,7 +272,7 @@ function openMove(lineId) {
   const targets = bases();
   confirmModal(`<h3>Déplacer ${esc(lineUsers(line).map(fullName).join(', ') || lineLabel(line))}</h3>
     <p class="muted small">Actuellement : ${esc(baseName(d))}, compte ${line.position ?? '?'}.</p>
-    <label>Base <select id="m-dev">${targets.map((b) => `<option value="${b.id}"${b.id === d.id ? ' selected' : ''}>${esc(baseName(b))} · ${esc(b.model)} (${linesOf(b.id).length}/${DECT_MAX[b.model]})</option>`).join('')}</select></label>
+    <label>Base <select id="m-dev">${targets.map((b) => `<option value="${b.id}"${b.id === d.id ? ' selected' : ''}>${esc(baseName(b))} · ${esc(b.model)} (${linesOf(b.id).length}/${maxOf(b)})</option>`).join('')}</select></label>
     <label>Compte (position) <select id="m-pos"></select></label>${syncBox()}`, async () => {
     const dev = $('m-dev').value, pos = Number($('m-pos').value);
     if (!pos) { toast('Aucun compte libre sur cette base.'); return false; }
