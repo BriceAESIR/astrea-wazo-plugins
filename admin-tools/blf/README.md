@@ -75,6 +75,15 @@ du serveur ouvert dans le portail, avec le token que fournit le portail.
   `blf-linekeys=` sont signalés (bandeau orange) et retirés par *Nettoyer les
   userfield* (onglet Étiquettes), et filtrés à la restauration d'une sauvegarde.
 
+## Utilisateur à plusieurs postes (0.22)
+
+- Vérifié dans confd : les touches de fonction appartiennent à l'utilisateur et sont envoyées sur chaque poste où il est titulaire de la ligne de plus petite position → mêmes touches, mêmes positions sur tous ses postes. Pas de jeu de touches par poste possible.
+- Sélecteur de poste dans l'éditeur (modèle · MAC) : même jeu de touches, aperçu et capacité du poste choisi.
+- Touches ligne (compte 1 : nombre et étiquette) appliquées à tous les postes de l'utilisateur ; postes désalignés signalés, alignés à l'enregistrement (bouton Enregistrer actif). Déploiement en masse : idem.
+- Avertissement si des touches dépassent la capacité d'un autre poste de l'utilisateur.
+- Resynchronisation de tous ses postes.
+- Testé contre `tests/mock-dect.ps1` (T46S + T54W), pas encore en réel.
+
 ## Sécurité : auto-contrôle et sauvegardes
 
 - **Auto-contrôle au démarrage** : forme des réponses confd (utilisateurs avec

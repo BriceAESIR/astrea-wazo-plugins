@@ -477,6 +477,24 @@ function userDevice(u) {
   const devs = (u.lines || []).map((l) => l.device_id && S.devices.get(l.device_id)).filter(Boolean);
   return devs.find(hasKeys) || devs[0] || null;
 }
+// Tous les postes à touches de l'utilisateur (une ligne par poste). Vérifié
+// dans confd : les touches de fonction sont celles de l'utilisateur, envoyées
+// sur chaque poste où il est titulaire de la ligne de plus petite position,
+// donc les mêmes touches aux mêmes positions sur tous ses postes.
+function userDevices(u) {
+  const out = [];
+  for (const l of u.lines || []) { const d = l.device_id && S.devices.get(l.device_id); if (d && hasKeys(d) && !out.includes(d)) out.push(d); }
+  if (!out.length) { const d = userDevice(u); if (d) out.push(d); }
+  return out;
+}
+// Capacité totale d'un poste (touches + modules au maximum), null si inconnue.
+function devCapacity(d) {
+  const prof = vendorOf(d), lk = prof?.linekeys[d?.model];
+  if (lk == null) return null;
+  const [per, maxMods] = EXP[prof.exp(d.model)] || [0, 0];
+  return lk + per * maxMods;
+}
+const devLabel = (d) => `${d.model || 'poste'} · ${d.mac || d.id}`;
 // Poste partagé (plusieurs comptes SIP sur un même téléphone). Vérifié dans
 // le code confd/plugin Yealink : la `position` d'une ligne sur le poste = son
 // numéro de compte (account.N) ; la ligne N a sa touche ligne en position N
@@ -551,9 +569,13 @@ function shiftLineClashes(slots, orig, lineKeys) {
   return clash.length;
 }
 let selectSeq = 0;
-async function selectUser(u) {
+async function selectUser(u, devIdx = 0) {
   const seq = ++selectSeq; // clics rapides : seule la dernière demande s'applique
-  const dev = userDevice(u);
+  const devs = userDevices(u);
+  if (devIdx >= devs.length) devIdx = 0;
+  const dev = devs[devIdx] || null;
+  // Touches ligne actuelles de chaque poste (pour les aligner à l'enregistrement).
+  await Promise.all(devs.filter((d) => vendorOf(d)?.multiLine).map((d) => deviceLineMap(d.id).catch(() => null)));
   const model = dev?.model || null;
   const prof = vendorOf(dev);
   const lk = prof?.linekeys[model] ?? null;
@@ -581,7 +603,7 @@ async function selectUser(u) {
   const lineMap = dev && provdLinesCache.has(dev.id) ? provdLinesCache.get(dev.id) : { 1: lineKeys };
   const otherCounts = shared ? Object.fromEntries(shared.others.map((l) => [l.pos, lineMap[String(l.pos)] || 1])) : {};
   const lineLabels = dev && provdLabelsCache.has(dev.id) ? { ...provdLabelsCache.get(dev.id) } : {};
-  S.cur = { user: u, dev, prof, model, lk, exp, orig, inherited, lineKeys, origLineKeys: lineKeys, slots, clash, shared, otherCounts, origOtherCounts: { ...otherCounts }, lineLabels, origLineLabels: { ...lineLabels }, extraModules: 0, extraPages: 0, pagesLeft: 0 };
+  S.cur = { user: u, devs, devIdx, dev, prof, model, lk, exp, orig, inherited, lineKeys, origLineKeys: lineKeys, slots, clash, shared, otherCounts, origOtherCounts: { ...otherCounts }, lineLabels, origLineLabels: { ...lineLabels }, extraModules: 0, extraPages: 0, pagesLeft: 0 };
   renderUserList();
   renderEditor();
 }
@@ -593,6 +615,23 @@ function isDirty() {
     || JSON.stringify(c.otherCounts || {}) !== JSON.stringify(c.origOtherCounts || {})
     || JSON.stringify(cleanLabels(c.lineLabels)) !== JSON.stringify(cleanLabels(c.origLineLabels))
     || (!!c.tpl && (c.tpl.name.trim() !== c.tpl.origName || !c.tpl.id));
+}
+// Autres postes de l'utilisateur dont les touches ligne (compte 1 : nombre,
+// étiquette) diffèrent du poste affiché : alignés à l'enregistrement.
+function otherDevs() {
+  const c = S.cur;
+  return (c?.devs || []).filter((d) => d !== c.dev && vendorOf(d)?.multiLine).map((d) => ({
+    d, count: provdLinesCache.get(d.id)?.['1'] ?? 1, label: provdLabelsCache.get(d.id)?.['1'] || '',
+  }));
+}
+// Tous les postes (y compris celui affiché) comparés à la valeur de référence :
+// nombre du premier poste, ou celui qu'on vient de régler.
+function misaligned() {
+  const c = S.cur;
+  if (!c || (c.devs || []).length < 2) return [];
+  const want = cleanLabels(c.lineLabels)['1'] || '';
+  return c.devs.filter((d) => vendorOf(d)?.multiLine).map((d) => ({ d, count: provdLinesCache.get(d.id)?.['1'] ?? 1, label: provdLabelsCache.get(d.id)?.['1'] || '' }))
+    .filter((o) => o.count !== c.lineKeys || (o.d !== c.dev && o.label !== want));
 }
 function normMap(m) { const o = {}; for (const p of Object.keys(m).map(Number).sort((a, b) => a - b)) o[p] = cleanKey(m[p]); return o; }
 // Quelle ligne occupe la touche p ? (null = touche libre pour une fonction)
@@ -717,6 +756,10 @@ function renderEditor() {
   $('ed-device').textContent = c.dev
     ? `${[c.dev.vendor, c.dev.model].filter(Boolean).join(' ') || 'modèle inconnu'} · ${c.dev.mac || ''}${c.lk ? ` · ${c.lk} touches` : ''}${c.exp ? ` · module ${c.exp}` : ''}`
     : 'Aucun poste associé (les touches restent enregistrées sur l\'utilisateur)';
+  // Plusieurs postes : sélecteur (mêmes touches, rendu propre à chaque modèle).
+  const multiDev = !isTpl && (c.devs || []).length > 1;
+  $('ed-devs').hidden = !multiDev;
+  $('ed-devs').innerHTML = multiDev ? c.devs.map((d, i) => `<button data-devidx="${i}" class="${i === c.devIdx ? 'active' : ''}" title="${esc(d.description || '')}">${esc(devLabel(d))}</button>`).join('') : '';
   $('lk-val').textContent = c.lineKeys;
   // Touches ligne multiples : seulement pour les profils qui les gèrent (et
   // toujours pour un modèle) ; « − » reste actif pour revenir à 1.
@@ -757,6 +800,19 @@ function renderEditor() {
     const masked = op.filter((x) => c.slots[x - 1]);
     if (masked.length) warns.push(`<span class="error">Touche(s) de fonction en position ${masked.join(', ')} : elles prennent la place d'une ligne d'un autre compte sur le téléphone. Déplacez-les.</span>`);
   }
+  if (multiDev) {
+    const others = c.devs.filter((d) => d !== c.dev);
+    warns.push(`Cet utilisateur a ${c.devs.length} postes : ${c.devs.map((d) => esc(devLabel(d))).join(', ')}. Ce sont les <strong>mêmes touches aux mêmes positions</strong> sur chacun (Wazo les rattache à l'utilisateur) ; l'aperçu ci-dessous est celui du ${esc(devLabel(c.dev))}. Les touches ligne s'appliquent à tous ses postes.`);
+    const mis = misaligned();
+    if (mis.length) warns.push(`Touches ligne différentes sur ${mis.map((o) => `${esc(devLabel(o.d))} (${o.count}${o.label ? `, « ${esc(o.label)} »` : ''})`).join(', ')} : alignées sur ${c.lineKeys} à l'enregistrement.`);
+    const used = c.slots.map((k, i) => (k ? i + 1 : 0)).filter(Boolean);
+    for (const d of others) {
+      const capD = devCapacity(d);
+      const over = capD != null ? used.filter((p) => p > capD) : [];
+      if (over.length) warns.push(`<span class="error">Positions ${over.join(', ')} au-delà de la capacité du ${esc(devLabel(d))} (${capD} touches, modules compris) : absentes sur ce poste.</span>`);
+      else if (capD == null) warns.push(`Capacité du ${esc(devLabel(d))} inconnue : vérifiez que les touches y tiennent.`);
+    }
+  }
   if (c.clash) warns.push(`${c.clash} touche(s) étaient placées dans Wazo sur des positions de ligne (masquées par les touches ligne) : elles ont été décalées juste après les lignes. Vérifiez puis enregistrez pour corriger.`);
   $('warnings').innerHTML = warns.map((w) => `<div class="warn">${w}</div>`).join('');
 
@@ -787,7 +843,7 @@ function renderEditor() {
   const overflow = c.slots.map((k, i) => (k ? i + 1 : 0)).filter((p) => p > maxPos || (c.phoneVisible && p > c.phoneVisible && p <= cap.lk));
   if (overflow.length) $('warnings').insertAdjacentHTML('beforeend', `<div class="warn">Positions ${overflow.join(', ')} au-delà de la capacité affichée : elles ne seront pas visibles sur le téléphone.</div>`);
 
-  $('save').disabled = !isDirty();
+  $('save').disabled = !isDirty() && !(!isTpl && misaligned().length);
   renderDetail();
   layout();
 }
@@ -1265,9 +1321,11 @@ function save() {
   const othersChanged = (c.shared?.others || []).filter((o) => (c.otherCounts?.[o.pos] || 1) !== (c.origOtherCounts?.[o.pos] || 1));
   const newLabels = cleanLabels(c.lineLabels), oldLabels = cleanLabels(c.origLineLabels);
   const labelsChanged = JSON.stringify(newLabels) !== JSON.stringify(oldLabels);
-  const lkChanged = c.lineKeys !== c.origLineKeys || othersChanged.length > 0 || labelsChanged;
+  const mis = misaligned();
+  const lkChanged = c.lineKeys !== c.origLineKeys || othersChanged.length > 0 || labelsChanged || mis.length > 0;
+  const otherTargets = otherDevs(); // autres postes : compte 1 aligné
   const html = `<h3>Enregistrer ${esc(fullName(c.user))}</h3>
-    ${lkChanged ? `<p>Touches ligne${c.shared ? ' (compte 1)' : ''} : ${c.origLineKeys} → <strong>${c.lineKeys}</strong>${othersChanged.map((o) => ` ; compte ${o.pos} (${esc(fullName(o.user))}) : ${c.origOtherCounts[o.pos] || 1} → <strong>${c.otherCounts[o.pos]}</strong>`).join('')}${labelsChanged ? ` ; étiquettes : ${Object.keys({ ...oldLabels, ...newLabels }).filter((k) => oldLabels[k] !== newLabels[k]).map((k) => `compte ${k} « ${esc(newLabels[k] || 'numéro')} »`).join(', ')}` : ''}. Option du poste dans provd, appliquée par les lignes Astrea du base.tpl ; le poste est resynchronisé.</p>` : ''}
+    ${lkChanged ? `<p>Touches ligne${c.shared ? ' (compte 1)' : ''} : ${c.lineKeys === c.origLineKeys && mis.length ? `alignement de tous les postes sur <strong>${c.lineKeys}</strong>` : `${c.origLineKeys} → <strong>${c.lineKeys}</strong>`}${othersChanged.map((o) => ` ; compte ${o.pos} (${esc(fullName(o.user))}) : ${c.origOtherCounts[o.pos] || 1} → <strong>${c.otherCounts[o.pos]}</strong>`).join('')}${labelsChanged ? ` ; étiquettes : ${Object.keys({ ...oldLabels, ...newLabels }).filter((k) => oldLabels[k] !== newLabels[k]).map((k) => `compte ${k} « ${esc(newLabels[k] || 'numéro')} »`).join(', ')}` : ''}. Option du poste dans provd, appliquée par les lignes Astrea du base.tpl ; le poste est resynchronisé.${otherTargets.length ? `<br>Appliqué aussi sur : ${otherTargets.map((o) => esc(devLabel(o.d))).join(', ')}.` : ''}</p>` : ''}
     ${rows.length ? `<table class="diff"><tr><th>Pos.</th><th>Avant</th><th>Après</th></tr>${rows.join('')}</table>` : '<p class="muted">Aucune touche de fonction modifiée.</p>'}`;
   confirmModal(html, async () => {
     try {
@@ -1277,14 +1335,21 @@ function save() {
         // Étiquettes : on envoie toutes les clés connues (vide = retour au numéro).
         const labels = Object.fromEntries(Object.keys({ ...oldLabels, ...newLabels }).map((k) => [k, newLabels[k] || '']));
         await applyLineKeys(c.user, c.dev, { 1: c.lineKeys, ...(c.otherCounts || {}) }, labels);
+        // Autres postes de l'utilisateur : même nombre et même étiquette (compte 1).
+        for (const o of otherTargets) {
+          try { await applyLineKeys(c.user, o.d, { 1: c.lineKeys }, { 1: newLabels['1'] || '' }); } catch (e) { toast(`${devLabel(o.d)} : ${e.message}`, 7000); }
+        }
       }
       if (rows.length) { await api('PUT', `/users/${c.user.uuid}/funckeys`, { keys: target }); indexOwner(c.user, target); }
       // Touches ligne : resynchro toujours (sinon rien ne change sur le poste).
+      // Les touches valent pour tous les postes de l'utilisateur : resynchro de chacun.
       if (c.dev && (lkChanged || ($('resync').checked && rows.length))) {
-        try { await api('GET', `/devices/${c.dev.id}/synchronize`); } catch (e) { toast(`Enregistré, mais resynchro impossible : ${e.message}`, 6000); }
+        for (const d of c.devs?.length ? c.devs : [c.dev]) {
+          try { await api('GET', `/devices/${d.id}/synchronize`); } catch (e) { toast(`Enregistré, mais resynchro de ${devLabel(d)} impossible : ${e.message}`, 6000); }
+        }
       }
       toast('Enregistré');
-      await selectUser(c.user);
+      await selectUser(c.user, c.devIdx || 0);
     } catch (e) { toast(e.message, 8000); }
   }, 'Enregistrer');
 }
@@ -1722,10 +1787,18 @@ async function applyDeploy() {
     toast(`Déploiement ${i + 1}/${todo.length}…`, 60000);
     try {
       const dev = userDevice(x.u);
-      if (x.linesChanged) await applyLineKeys(x.u, dev, x.lines); // d'abord : voir save()
+      if (x.linesChanged) {
+        await applyLineKeys(x.u, dev, x.lines); // d'abord : voir save()
+        // Autres postes de l'utilisateur : même nombre de touches ligne.
+        for (const d of userDevices(x.u).filter((d) => d !== dev && vendorOf(d)?.multiLine)) {
+          try { await applyLineKeys(x.u, d, x.lines); } catch (e) { console.warn(fullName(x.u), devLabel(d), e.message); }
+        }
+      }
       if (x.keysChanged) { await api('PUT', `/users/${x.u.uuid}/funckeys`, { keys: x.keys }); indexOwner(x.u, x.keys); }
       ok++;
-      if (dev && (x.linesChanged || $('dp-resync').checked)) { try { await api('GET', `/devices/${dev.id}/synchronize`); } catch { /* resynchro facultative */ } }
+      if (dev && (x.linesChanged || $('dp-resync').checked)) {
+        for (const d of userDevices(x.u)) { try { await api('GET', `/devices/${d.id}/synchronize`); } catch { /* resynchro facultative */ } }
+      }
     } catch (e) { ko++; console.error(fullName(x.u), e); }
   }
   toast(`Déploiement terminé : ${ok} utilisateur${ok > 1 ? 's' : ''} mis à jour${ko ? `, ${ko} en erreur (détail dans la console)` : ''}.`, 8000);
@@ -1737,7 +1810,7 @@ async function applyDeploy() {
 // Format : { app, version, created, base, tenant, reason, entries: [{ uuid,
 // name, userfield, keys }] } — keys = touches propres (hors héritées).
 const BK_STORE = 'astrea-blf-last-backup';
-const APP_VERSION = '0.21.2';
+const APP_VERSION = '0.22.0';
 function makeBackup(reason, entries) {
   const bk = { app: 'astrea-blf', version: APP_VERSION, created: new Date().toISOString(), base: S.base, tenant: S.tenant, reason, entries };
   const json = JSON.stringify(bk, null, 1);
@@ -1889,6 +1962,12 @@ $('lb-rows').oninput = (e) => {
   const u = S.byUuid.get(inp.dataset.uuid);
   inp.closest('tr').classList.toggle('changed', (inp.value.trim() || fullName(u)) !== keyLabelOf(u));
   updateLabelsBtn();
+};
+$('ed-devs').onclick = (e) => {
+  const b = e.target.closest('button[data-devidx]');
+  if (!b || !S.cur || Number(b.dataset.devidx) === S.cur.devIdx) return;
+  const u = S.cur.user, i = Number(b.dataset.devidx);
+  guardUnsaved(() => selectUser(u, i));
 };
 $('lk-minus').onclick = () => changeLineKeys(-1);
 $('lk-others').onclick = (e) => { const b = e.target.closest('button[data-acc]'); if (b && S.cur) changeOtherCount(Number(b.dataset.acc), Number(b.dataset.d)); };

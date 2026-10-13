@@ -264,3 +264,9 @@ body.in-portal.ready #sidebar, body.in-portal.ready #detail { height: 100vh; }
   #sidebar, #detail, body.in-portal.ready #sidebar, body.in-portal.ready #detail { position: static; height: auto; }
   #workbench { padding: 16px; }
 }
+
+/* Sélecteur de poste (utilisateur à plusieurs postes) */
+.devtabs { display: inline-flex; flex-wrap: wrap; margin-top: 8px; border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
+.devtabs button { border: 0; border-radius: 0; padding: 4px 12px; color: var(--muted); text-transform: none; font-size: .8125rem; }
+.devtabs button + button { border-left: 1px solid var(--line); }
+.devtabs button.active { background: var(--accent); color: var(--accent-ink); }
