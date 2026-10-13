@@ -12,8 +12,8 @@
 //    queue_label, voicemail_name, ivr_name… ajoutés par confd.
 // Supposé, à vérifier en réel : le token du portail peut lire /moh,
 // /voicemails, /callpermissions, /schedules (sinon libellés techniques).
-import { S, $, esc, toast, api, listAll, connect, fullName, setReadonly, showCompat, loaded, loadFailed, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.27.3';
-import { SETTINGS, settingById, same, LANG, subLabel } from './settings.js?v=0.27.3';
+import { S, $, esc, toast, api, listAll, connect, fullName, setReadonly, showCompat, loaded, loadFailed, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.27.4';
+import { SETTINGS, settingById, same, LANG, subLabel } from './settings.js?v=0.27.4';
 
 const A = { auth: new Map(), authErr: '', users: [], byId: new Map(), moh: new Map(), groups: new Map(), vms: new Map(), perms: new Map(), scheds: new Map(), queues: new Map(), sbs: new Map(), contexts: [], callerOpts: [], callerOptsErr: '', lr: null, picked: new Set(), sort: { col: 'name', dir: 1 }, sel: null, scope: null, cols: null };
 
@@ -78,14 +78,15 @@ const COLS = [
   { id: 'name', label: 'Utilisateur', grp: 'Identité', fixed: true, odd: false, get: (u) => txt(fullName(u)) },
   { id: 'exten', label: 'Numéro', grp: 'Identité', def: true, odd: false, get: (u) => { const e = exten(u); return { t: e || '—', k: e.padStart(12, '0'), c: e ? '' : 'none' }; } },
   { id: 'email', label: 'E-mail (annuaire)', tip: 'Courriel public de la fiche (Renseignements personnels), affiché dans les annuaires. Différent des adresses de connexion (Authentification) et de l\'e-mail de la boîte vocale.', grp: 'Identité', odd: false, get: (u) => txt(u.email) },
-  // Accès aux applications = compte wazo-auth activé ; alerte si licence Voix
-  // (0) avec accès ouvert (cas de Tom, 13/10/2026).
-  { id: 'apps', label: 'Accès applications', tip: 'Onglet « Compte » du portail (« Autorisé à utiliser des applications »), lu dans wazo-auth. En rouge : licence Voix avec accès ouvert.', grp: 'Identité', def: true, get: (u) => {
+  // Accès aux applications = compte wazo-auth activé. Licence Voix (0) : les
+  // applications refusent la connexion même compte activé (« La souscription
+  // de ce compte n'est pas valide », essai de Brice sur Tom le 13/10/2026).
+  { id: 'apps', label: 'Accès applications', tip: 'Onglet « Compte » du portail (« Autorisé à utiliser des applications »), lu dans wazo-auth. Licence Voix : connexion refusée par les applications, même si l\'interrupteur est ouvert.', grp: 'Identité', def: true, get: (u) => {
     if (A.authErr) return { t: '?', k: '?', c: 'none' };
     const a = A.auth.get(u.uuid);
     if (!a) return { t: 'Pas de compte', k: '0', c: 'none' };
     if (a.enabled === false) return { t: 'Non', k: '0', c: 'none' };
-    return u.subscription_type === 0 ? { t: 'Oui (licence Voix !)', k: '1', c: 'alert' } : { t: 'Oui', k: '1', c: 'on' };
+    return u.subscription_type === 0 ? { t: 'Bloqué (licence Voix)', k: 'v', c: 'none' } : { t: 'Oui', k: '1', c: 'on' };
   } },
   { id: 'login', label: 'Identifiant', tip: 'Nom d\'utilisateur de connexion aux applications (wazo-auth).', grp: 'Identité', odd: false, get: (u) => txt(A.auth.get(u.uuid)?.username || '') },
   // Licence = subscription_type (0-10) ; libellés relevés en réel (settings.js, SUBS).
@@ -300,7 +301,7 @@ function authRows(u, row) {
   const a = A.auth.get(u.uuid);
   if (!a) return row('Compte', 'aucun (pas d\'accès aux applications)');
   const mails = (a.emails || []).map((m) => `${m.address}${m.confirmed ? '' : ' (non confirmé)'}`).join(', ');
-  return row('Accès applications', a.enabled === false ? 'non' : u.subscription_type === 0 ? 'oui — incohérent avec la licence Voix' : 'oui')
+  return row('Accès applications', a.enabled === false ? 'non' : u.subscription_type === 0 ? 'interrupteur ouvert, mais connexion refusée par la licence Voix' : 'oui')
     + row('Identifiant', a.username) + row('Méthode', a.authentication_method === 'default' ? 'défaut de l\'organisation' : a.authentication_method) + row('Adresses courriels', mails);
 }
 // Modification d'un réglage pour l'utilisateur de la fiche : formulaire
