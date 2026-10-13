@@ -12,8 +12,8 @@
 //    queue_label, voicemail_name, ivr_name… ajoutés par confd.
 // Supposé, à vérifier en réel : le token du portail peut lire /moh,
 // /voicemails, /callpermissions, /schedules (sinon libellés techniques).
-import { S, $, esc, toast, api, listAll, connect, fullName, setReadonly, showCompat, loaded, loadFailed, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.29.0';
-import { SETTINGS, settingById, same, LANG, subLabel, authApi } from './settings.js?v=0.29.0';
+import { S, $, esc, toast, api, listAll, connect, fullName, setReadonly, showCompat, loaded, loadFailed, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.29.1';
+import { SETTINGS, settingById, same, LANG, subLabel, authApi } from './settings.js?v=0.29.1';
 
 const A = { auth: new Map(), authErr: '', users: [], byId: new Map(), moh: new Map(), groups: new Map(), vms: new Map(), perms: new Map(), scheds: new Map(), queues: new Map(), sbs: new Map(), contexts: [], callerOpts: [], callerOptsErr: '', lr: null, picked: new Set(), sort: { col: 'name', dir: 1 }, sel: null, scope: null, cols: null };
 
@@ -463,7 +463,7 @@ function openMass() {
     if (W.step === 0) {
       const MASS = SETTINGS.filter((s) => !s.single); // champs propres à chacun : fiche seulement
       const grps = [...new Set(MASS.map((s) => s.grp))];
-      $('modal-body').innerHTML = `${head('Réglages à modifier')}<div class="wizsets">${grps.map((g) => `<div class="grp" data-grp="${esc(g)}" title="Cocher / décocher tout le groupe">${esc(g)}</div>${MASS.filter((s) => s.grp === g).map((s) => `<label class="inline"><input type="checkbox" data-set="${s.id}" data-g="${esc(s.grp)}"${W.ids.includes(s.id) ? ' checked' : ''}> ${esc(s.label)}</label>`).join('')}`).join('')}</div>`;
+      $('modal-body').innerHTML = `${head('Réglages à modifier')}<div class="wizsets">${grps.map((g) => `<div class="wgrp"><div class="grp" data-grp="${esc(g)}" title="Cocher / décocher tout le groupe">${esc(g)}</div>${MASS.filter((s) => s.grp === g).map((s) => `<label class="inline"><input type="checkbox" data-set="${s.id}" data-g="${esc(s.grp)}"${W.ids.includes(s.id) ? ' checked' : ''}> ${esc(s.label)}</label>`).join('')}</div>`).join('')}</div>`;
     } else if (W.step <= n) {
       const s = list()[W.step - 1];
       $('modal-body').innerHTML = `${head(s.label)}<div id="m-form">${s.form(ctx())}</div><div id="m-prev" class="mprev"></div>${back}`;
