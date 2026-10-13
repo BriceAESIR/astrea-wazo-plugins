@@ -110,6 +110,14 @@ dans `app.js`.
 | Filtrage patron-secrétaire | `bsfilter` | membre secrétaire (`/callfilters`, `member_id`) | oui · **refusé dans les modèles partagés** |
 | Enregistrement en ligne | `onlinerec` | aucun | **ignorée** |
 
+- Services (0.30.2) : l'aide « ? » détaille les 11 services, celui de la
+  touche en tête. Lu dans le dialplan (`wazo-asterisk-config`,
+  `dialplan/extensions_lib_features.conf`) : `phonestatus` = **annonce vocale**
+  de l'état des renvois, messagerie, filtrage, enregistrement et NPD, sans rien
+  changer (renommé « Annonce de l'état des services ») ; `recsnd` = enregistrer
+  une annonce dans les enregistrements du locataire (« Enregistrer une
+  annonce ») ; `directoryaccess` : aucun contexte dans le dialplan actuel, sans
+  effet probable (supposé) ; `pickup` : groupe d'interception (supposé).
 - La case Supervision est **masquée** (« Pas de supervision pour ce type de
   touche ») quand le type n'en a pas, dès qu'il est choisi dans le menu
   (0.30.1 : avant, elle gardait l'état de l'ancien type) ; elle est cochée d'office

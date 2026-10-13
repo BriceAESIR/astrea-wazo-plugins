@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Mulish:wght@300..800&display=swap">
-<link rel="stylesheet" href="../common/style.css?v=0.30.1">
+<link rel="stylesheet" href="../common/style.css?v=0.30.2">
 <script>if (window.parent !== window) document.documentElement.classList.add('framed');</script>
 <style>
 /* Aide des types de touches (propre à BLF Manager). */
@@ -16,6 +16,9 @@
 .helpbtn { flex: none; width: 32px; height: 32px; padding: 0; border-radius: 50%; font-weight: 700; margin-bottom: 8px; }
 .helpbtn[aria-expanded="true"] { background: var(--accent); color: var(--accent-ink); }
 .helpbox { margin: 0 0 12px; padding: 8px 12px; border-left: 3px solid var(--accent); background: var(--selected); line-height: 1.45; }
+.svchelp { margin: 8px 0 0; padding-left: 16px; }
+.svchelp li { margin: 4px 0; color: var(--muted); }
+.svchelp li.cur { color: var(--ink); }
 </style>
 </head>
 <body>
@@ -196,6 +199,6 @@
     <div class="btnrow right"><button id="modal-cancel">Annuler</button><button id="modal-ok" class="primary">Confirmer</button></div></div></div>
   <div id="toast" class="toast" hidden></div>
 </div>
-<script type="module" src="./app.js?v=0.30.1"></script>
+<script type="module" src="./app.js?v=0.30.2"></script>
 </body>
 </html>

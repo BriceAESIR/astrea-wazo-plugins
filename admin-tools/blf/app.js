@@ -95,13 +95,21 @@ const LISTS = {
   // member_id (schéma confd call_filter) ; id = member_id.
   bsfilter: { load: loadFilterMembers, what: 'filtres patron-secrétaire', name: (x) => x.name },
 };
-// [valeur confd, libellé du menu, libellé court proposé pour la touche]
+// [valeur confd, libellé du menu, libellé court proposé pour la touche, aide].
+// Aide lue dans le dialplan Wazo (wazo-asterisk-config,
+// dialplan/extensions_lib_features.conf, 14/10/2026) sauf mention « supposé ».
 const SERVICES = [
-  ['enablednd', 'Ne pas déranger', 'NPD'], ['enablevm', 'Messagerie vocale (activer / désactiver)', 'Messagerie'],
-  ['vmusermsg', 'Consulter sa messagerie', 'Messages'], ['vmuserpurge', 'Vider sa messagerie', 'Vider msg'],
-  ['fwdundoall', 'Annuler tous les renvois', 'Sans renvoi'], ['pickup', "Interception d'appel", 'Intercept.'],
-  ['callrecord', 'Enregistrement des appels (activer / désactiver)', 'Enreg.'], ['incallfilter', 'Filtrage des appels entrants', 'Filtrage'],
-  ['directoryaccess', 'Annuaire', 'Annuaire'], ['phonestatus', 'État du poste (services actifs)', 'État'], ['recsnd', 'Enregistrer un son', 'Enreg. son'],
+  ['enablednd', 'Ne pas déranger', 'NPD', 'Active / désactive le ne pas déranger de l\'utilisateur, puis l\'annonce.'],
+  ['enablevm', 'Messagerie vocale (activer / désactiver)', 'Messagerie', 'Active / désactive sa messagerie vocale (les appels non répondus n\'y vont plus), puis l\'annonce.'],
+  ['vmusermsg', 'Consulter sa messagerie', 'Messages', 'Ouvre le menu de sa messagerie vocale pour écouter les messages. Ne change aucun réglage.'],
+  ['vmuserpurge', 'Vider sa messagerie', 'Vider msg', 'Supprime les messages de sa messagerie vocale (code de la messagerie demandé), puis annonce la suppression. Irréversible.'],
+  ['fwdundoall', 'Annuler tous les renvois', 'Sans renvoi', 'Coupe d\'un coup les trois renvois (inconditionnel, occupation, non-réponse), puis l\'annonce.'],
+  ['pickup', "Interception d'appel", 'Intercept.', 'Décroche un appel qui sonne sur un poste de son groupe d\'interception (supposé : réglage des groupes d\'interception de Wazo).'],
+  ['callrecord', 'Enregistrement des appels (activer / désactiver)', 'Enreg.', 'Active / désactive l\'enregistrement automatique de ses appels, puis l\'annonce. Pour enregistrer un seul appel en cours : type « Enregistrement en ligne ».'],
+  ['incallfilter', 'Filtrage des appels entrants', 'Filtrage', 'Active / désactive le filtrage de ses appels entrants (l\'appelant doit s\'annoncer), puis l\'annonce.'],
+  ['phonestatus', 'Annonce de l\'état des services', 'État serv.', 'Annonce par la voix l\'état de ses services : les trois renvois, messagerie, filtrage, enregistrement, ne pas déranger. Ne change rien. Pratique pour un utilisateur qui ne reçoit plus d\'appels.'],
+  ['recsnd', 'Enregistrer une annonce', 'Enreg. ann.', 'Enregistre un message après le bip, le fait réécouter, et le range dans les enregistrements du locataire : pour préparer des annonces depuis un poste.'],
+  ['directoryaccess', 'Annuaire', 'Annuaire', 'Reste de XiVO : aucun traitement trouvé dans le dialplan actuel de Wazo, sans effet probable (supposé). À éviter.'],
 ];
 // Services pour lesquels Wazo garde la supervision (PROGFUNCKEYS de confd).
 const SERVICE_SUP = new Set(['callrecord', 'incallfilter', 'enablednd', 'enablevm']);
@@ -1262,7 +1270,7 @@ function renderDetail() {
   $('dt-type').disabled = !!k && !KEY_TYPES[type];
   $('dt-label').value = k?.label || '';
   $('dt-label').disabled = !k;
-  renderHelp(type);
+  renderHelp(type, k);
   renderSup(type, k);
   for (const id of ['dt-left', 'dt-right', 'dt-clear', 'dt-delete']) $(id).disabled = !k && id !== 'dt-delete';
   $('dt-left').disabled = p - 1 < 1 || !!lineAt(p - 1);
@@ -1373,9 +1381,16 @@ function fillTypeSelect() {
   sel.dataset.built = want;
   sel.innerHTML = want.split(',').map((v) => `<option value="${v}">${esc(KEY_TYPES[v].label)}</option>`).join('');
 }
-function renderHelp(type) {
+function renderHelp(type, k) {
   const t = KEY_TYPES[type];
-  $('dt-help').innerHTML = t ? `<b>${esc(t.label)}</b> — ${esc(t.help)}` : `Type « ${esc(type)} » inconnu de cette version.`;
+  let html = t ? `<b>${esc(t.label)}</b> — ${esc(t.help)}` : `Type « ${esc(type)} » inconnu de cette version.`;
+  // Service : aide de chacun, celui de la touche en tête et en gras.
+  if (type === 'service') {
+    const cur = k?.destination.type === 'service' ? k.destination.service : null;
+    const list = [...SERVICES].sort((a, b) => (b[0] === cur) - (a[0] === cur));
+    html += `<ul class="svchelp">${list.map(([v, l, , h]) => `<li${v === cur ? ' class="cur"' : ''}><b>${esc(l)}</b> : ${esc(h)}</li>`).join('')}</ul>`;
+  }
+  $('dt-help').innerHTML = html;
 }
 // Supervision, selon le type affiché (y compris un type en cours de choix,
 // pas encore appliqué à la touche) : case masquée quand le type n'en a pas,
@@ -1396,7 +1411,7 @@ function wireDetail() {
     const t = $('dt-type').value;
     const k = S.cur.slots[S.sel - 1];
     $('dt-type').dataset.pending = t;
-    renderHelp(t);
+    renderHelp(t, k);
     renderSup(t, k);
     if (k && k.destination.type !== t) {
       // on garde la touche actuelle tant qu'une nouvelle valeur n'est pas choisie
@@ -2001,7 +2016,7 @@ async function applyDeploy() {
 // Format : { app, version, created, base, tenant, reason, entries: [{ uuid,
 // name, userfield, keys }] } — keys = touches propres (hors héritées).
 const BK_STORE = 'astrea-blf-last-backup';
-const APP_VERSION = '0.30.1';
+const APP_VERSION = '0.30.2';
 function makeBackup(reason, entries) {
   const bk = { app: 'astrea-blf', version: APP_VERSION, created: new Date().toISOString(), base: S.base, tenant: S.tenant, reason, entries };
   const json = JSON.stringify(bk, null, 1);
