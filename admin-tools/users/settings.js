@@ -7,11 +7,10 @@
 //  write(u, v, cur)   écriture (seulement si v diffère de cur)
 //  heavy              true = l'écriture recharge Asterisk (écritures espacées, ou
 //                     regroupées en coupant le live reload) ; reload = type de
-//                     rechargement à redéclencher à la fin ('user' | 'voicemail')
-//  vm                 true = a besoin de la messagerie de l'utilisateur (u._vm)
+//                     rechargement à redéclencher à la fin ('user')
 // Routes et sémantique vérifiées dans le code de wazo-confd (13/10/2026),
 // voir docs/USER-MANAGER.md. Écritures non encore testées en réel.
-import { api, esc, fullName } from '../common/core.js?v=0.25.2';
+import { api, esc, fullName } from '../common/core.js?v=0.26.0';
 
 // Comparaison indépendante de l'ordre des clés (objets relus vs construits).
 const canon = (v) => (Array.isArray(v) ? v.map(canon) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, canon(v[k])])) : v ?? null);
@@ -162,28 +161,39 @@ const callerIdSetting = {
   text: (v) => (v === 'default' ? 'Par défaut' : v === 'anonymous' ? 'Anonyme' : v ?? '—'),
   check: (u, v) => (v === null ? 'aucune SDA associée' : ''),
 };
-// Options de la messagerie : PUT /voicemails/{id} partiel ; recharge
-// voicemail + pjsip + sccp. delete_messages=true exige email ET attach_audio
-// dans le même envoi (validation de schéma confd).
-const vmOpt = (field, label) => ({
-  id: `vm_${field}`, label, grp: 'Messagerie', vm: true, heavy: true, reload: 'voicemail',
-  form: () => onOff(label),
-  parse: () => { const v = $v('m-v') === '1'; return { target: () => v, desc: `${label} : ${v ? 'oui' : 'non'}${field === 'delete_messages' && v ? ' (active aussi « joindre le message »)' : ''}` }; },
-  read: (u) => (u._vm ? u._vm[field] === true : null),
-  text: (v) => (v == null ? '—' : v ? 'oui' : 'non'),
-  check: (u, v) => {
-    if (!u._vm) return 'pas de messagerie';
-    if (field === 'delete_messages' && v && !u._vm.email) return 'pas d\'e-mail sur sa messagerie';
-    if (field === 'attach_audio' && !v && u._vm.delete_messages) return 'désactiver d\'abord « supprimer après envoi »';
-    return '';
+// Licence (« Type de souscription » du portail) = subscription_type.
+// Correspondance relevée en réel le 13/10/2026 (Tom, Jerry, Bart) ; 2 non vu.
+export const SUBS = { 0: 'Voix', 1: 'Communication unifiée', 3: 'Relation client' };
+export const subLabel = (v) => (v == null ? '—' : SUBS[v] || `Type ${v}`);
+const licence = {
+  id: 'subscription_type', label: 'Licence', grp: 'Licence', ...userField('subscription_type'),
+  form: (c) => {
+    const n = {};
+    for (const u of c.users) n[u.subscription_type] = (n[u.subscription_type] || 0) + 1;
+    return `<label>Licence <select id="m-v">${options(Object.entries(SUBS))}</select></label>
+      <p class="muted small">Attribuées sur ce tenant : ${Object.entries(n).map(([k, x]) => `${esc(subLabel(Number(k)))} ${x}`).join(' · ')}. Les quotas (« souscriptions restantes ») sont gérés par le portail : la stack ne bloque pas un dépassement, vérifiez-les avant.</p>`;
   },
-  write: async (u, v) => {
-    const body = field === 'delete_messages' && v ? { delete_messages: true, attach_audio: true, email: u._vm.email } : { [field]: v };
-    await api('PUT', `/voicemails/${u._vm.id}`, body);
-    Object.assign(u._vm, body);
+  parse: () => { const v = Number($v('m-v')); return { target: () => v, desc: `Licence : ${subLabel(v)}` }; },
+  text: (v) => subLabel(v),
+};
+// Boîte vocale associée : les boîtes se configurent dans Messageries
+// vocales ; ici seulement l'association (une boîte peut être partagée par
+// plusieurs utilisateurs). confd refuse d'associer si l'utilisateur en a déjà
+// une (dissocier d'abord) ou si la boîte est « globale » (vérifié dans le code).
+const voicemailLink = {
+  id: 'voicemail', label: 'Boîte vocale associée', grp: 'Boîte vocale', heavy: true, reload: 'user',
+  form: (c) => `<label>Action <select id="m-v">${options([['', 'Dissocier (l\'utilisateur n\'a plus de boîte vocale)'],
+    ...[...c.vms.values()].filter((v) => v.accesstype !== 'global').sort((a, b) => String(a.number).localeCompare(String(b.number), 'fr', { numeric: true }))
+      .map((v) => [v.id, `Associer à ${v.number}${v.name ? ` (${v.name})` : ''}`])])}</select></label>
+    <p class="muted small">Les réglages de la boîte (e-mail, code, options) se modifient dans Messageries vocales. Les renvois par défaut qui visaient l'ancienne boîte ne sont pas modifiés (étape « Renvois par défaut » si besoin).</p>`,
+  parse: (c) => { const v = Number($v('m-v')) || null; const b = c.vms.get(v); return { target: () => v, desc: v ? `Boîte vocale : associer à ${b?.number || v}` : 'Boîte vocale : dissocier' }; },
+  read: (u) => u.voicemail?.id ?? null,
+  text: (v, c) => { if (!v) return 'aucune'; const b = c.vms.get(v); return b ? `${b.number}${b.name ? ` (${b.name})` : ''}` : `#${v}`; },
+  write: async (u, v, cur) => {
+    if (cur) await api('DELETE', `/users/${u.uuid}/voicemails`);
+    if (v) await api('PUT', `/users/${u.uuid}/voicemails/${v}`);
   },
-});
-
+};
 export const SETTINGS = [
   service('dnd', 'Ne pas déranger'),
   service('incallfilter', 'Filtrage des appels'),
@@ -195,9 +205,8 @@ export const SETTINGS = [
   fallback('fail', 'échec'),
   fallback('noanswer', 'non répondu'),
   callerIdSetting,
-  vmOpt('attach_audio', 'Joindre le message à l\'e-mail'),
-  vmOpt('delete_messages', 'Supprimer le message après envoi par e-mail'),
-  vmOpt('ask_password', 'Demander le code de la messagerie'),
+  licence,
+  voicemailLink,
   number('ring_seconds', 'Durée de sonnerie', 0, 10800, 's'),
   number('simultaneous_calls', 'Appels simultanés', 1, 20),
   {

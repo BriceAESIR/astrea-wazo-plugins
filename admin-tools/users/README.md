@@ -29,7 +29,10 @@ Cadrage, sources et décisions : `docs/USER-MANAGER.md` (dépôt de dev).
   (occupé, inconditionnel, pas de réponse), renvois par défaut (si occupé,
   congestion, échec, non répondu : aucune, sa messagerie, utilisateur,
   groupe, file, standard, numéro, raccrocher), numéro présenté (par défaut,
-  anonyme, numéros du tenant, sa SDA, autre), options de messagerie, durée
+  anonyme, numéros du tenant, sa SDA, autre), licence (Voix, Communication
+  unifiée, Relation client), boîte vocale associée (associer une boîte
+  existante ou dissocier ; les boîtes se configurent dans Messageries
+  vocales), durée
   de sonnerie, appels simultanés, musique d'attente, langue, fuseau, groupes,
   droits d'appel, horaire.
 - À l'exécution, chaque utilisateur est relu ; rien n'est écrit s'il a déjà la
@@ -37,7 +40,8 @@ Cadrage, sources et décisions : `docs/USER-MANAGER.md` (dépôt de dev).
   la première écriture (et gardée dans le navigateur). « Restaurer… » la
   réapplique, avec aperçu.
 - **Rechargements** : certains réglages rechargent Asterisk à chaque écriture
-  (sonnerie, musique, langue, fuseau, numéro présenté, groupes, messagerie).
+  (sonnerie, musique, langue, fuseau, numéro présenté, licence, groupes,
+  boîte vocale associée).
   Avec plusieurs écritures, l'option « Regrouper les rechargements » coupe le
   live reload du serveur pendant les écritures, le réactive (même en cas
   d'erreur) et déclenche un seul rechargement. Le live reload est commun à

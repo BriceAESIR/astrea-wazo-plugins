@@ -12,8 +12,8 @@
 //    queue_label, voicemail_name, ivr_name… ajoutés par confd.
 // Supposé, à vérifier en réel : le token du portail peut lire /moh,
 // /voicemails, /callpermissions, /schedules (sinon libellés techniques).
-import { S, $, esc, toast, api, listAll, connect, fullName, setReadonly, showCompat, loaded, loadFailed, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.25.2';
-import { SETTINGS, settingById, same, LANG } from './settings.js?v=0.25.2';
+import { S, $, esc, toast, api, listAll, connect, fullName, setReadonly, showCompat, loaded, loadFailed, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.26.0';
+import { SETTINGS, settingById, same, LANG, subLabel } from './settings.js?v=0.26.0';
 
 const A = { users: [], byId: new Map(), moh: new Map(), groups: new Map(), vms: new Map(), perms: new Map(), scheds: new Map(), queues: new Map(), sbs: new Map(), contexts: [], callerOpts: [], callerOptsErr: '', lr: null, picked: new Set(), sort: { col: 'name', dir: 1 }, sel: null, scope: null, cols: null };
 
@@ -78,10 +78,8 @@ const COLS = [
   { id: 'name', label: 'Utilisateur', grp: 'Identité', fixed: true, odd: false, get: (u) => txt(fullName(u)) },
   { id: 'exten', label: 'Numéro', grp: 'Identité', def: true, odd: false, get: (u) => { const e = exten(u); return { t: e || '—', k: e.padStart(12, '0'), c: e ? '' : 'none' }; } },
   { id: 'email', label: 'E-mail (annuaire)', tip: 'Courriel public de la fiche (Renseignements personnels), affiché dans les annuaires. Différent des adresses de connexion (Authentification) et de l\'e-mail de la boîte vocale.', grp: 'Identité', odd: false, get: (u) => txt(u.email) },
-  // Licence = subscription_type (0-10). Libellés du portail (Voix, Communication
-  // unifiée, Relation client) : correspondance non trouvée dans le code de
-  // confd, à confirmer en réel avant de l'afficher / de la modifier en masse.
-  { id: 'sub', label: 'Licence', tip: 'Type de souscription (subscription_type), valeur brute en attendant la correspondance avec les libellés du portail.', grp: 'Identité', def: true, get: (u) => ({ t: u.subscription_type ?? '—', k: String(u.subscription_type ?? '') }) },
+  // Licence = subscription_type (0-10) ; libellés relevés en réel (settings.js, SUBS).
+  { id: 'sub', label: 'Licence', tip: 'Type de souscription du portail (subscription_type : 0 Voix, 1 Communication unifiée, 3 Relation client).', grp: 'Identité', def: true, get: (u) => ({ t: subLabel(u.subscription_type), k: String(u.subscription_type ?? '') }) },
   { id: 'enabled', label: 'Actif', grp: 'Identité', get: (u) => (u.enabled === false ? { t: 'Non', k: '0', c: 'alert' } : { t: 'Oui', k: '1', c: 'none' }) },
   { id: 'dnd', label: 'Ne pas déranger', grp: 'Services', def: true, get: (u) => yes(u.services?.dnd?.enabled) },
   { id: 'incallfilter', label: 'Filtrage', grp: 'Services', get: (u) => yes(u.services?.incallfilter?.enabled) },
@@ -99,8 +97,8 @@ const COLS = [
   { id: 'simul', label: 'Appels simult.', grp: 'Sonnerie', def: true, get: (u) => ({ t: u.simultaneous_calls ?? '—', k: String(u.simultaneous_calls ?? '').padStart(3, '0') }) },
   { id: 'callerid', label: 'Numéro présenté', grp: 'Identité d\'appel', def: true, get: (u) => txt(callerId(u.outgoing_caller_id)) },
   { id: 'mobile', label: 'Mobile', grp: 'Identité d\'appel', odd: false, get: (u) => txt(u.mobile_phone_number || '') },
-  { id: 'vm', label: 'Boîte vocale', tip: 'Numéro et nom de la boîte vocale de l\'utilisateur.', grp: 'Messagerie', def: true, odd: false, get: vm },
-  { id: 'vm_email', label: 'E-mail boîte vocale', tip: 'Adresse à laquelle la boîte vocale envoie les messages (réglage de la messagerie vocale). Différente de l\'e-mail de l\'annuaire.', grp: 'Messagerie', odd: false, get: (u) => txt(A.vms.get(u.voicemail?.id)?.email || '') },
+  { id: 'vm', label: 'Boîte vocale associée', tip: 'Boîte vocale associée à l\'utilisateur (numéro et nom). Les boîtes se configurent dans Messageries vocales.', grp: 'Messagerie', def: true, odd: false, get: vm },
+  { id: 'vm_email', label: 'E-mail (réglage de la boîte)', tip: 'E-mail renseigné dans la boîte vocale associée (page Messageries vocales) : adresse où partent les messages vocaux. Différent de l\'e-mail de l\'annuaire.', grp: 'Messagerie', odd: false, get: (u) => txt(A.vms.get(u.voicemail?.id)?.email || '') },
   { id: 'moh', label: 'Musique d\'attente', grp: 'Divers', def: true, get: (u) => txt(mohLabel(u.music_on_hold)) },
   { id: 'lang', label: 'Langue', grp: 'Divers', def: true, get: (u) => txt(LANG[u.language] || u.language || '') },
   { id: 'tz', label: 'Fuseau', grp: 'Divers', get: (u) => txt(u.timezone || '') },
@@ -177,7 +175,6 @@ async function reload() {
   A.vms = new Map(vms.map((v) => [v.id, v]));
   A.perms = new Map(perms.map((p) => [p.id, p]));
   A.scheds = new Map(scheds.map((s) => [s.id, s]));
-  for (const u of users) u._vm = u.voicemail ? A.vms.get(u.voicemail.id) || null : null; // aperçu des options de messagerie
   for (const id of [...A.picked]) if (!A.byId.has(id)) A.picked.delete(id);
   renderLiveReload();
   $('lookwarn').innerHTML = warns.map((w) => `<div class="warn">${esc(w)}</div>`).join('');
@@ -263,13 +260,13 @@ function renderDetail() {
   const f = (k) => { const x = u.forwards?.[k]; return x?.enabled ? `activé → ${x.destination || '?'}` : `désactivé${x?.destination ? ` (${x.destination})` : ''}`; };
   const v = A.vms.get(u.voicemail?.id);
   $('d-body').innerHTML = [
-    sec('Identité', row('Numéro', exten(u)) + row('E-mail (annuaire)', u.email) + row('Licence', u.subscription_type) + row('Actif', u.enabled === false ? 'non' : 'oui') + row('Mobile', u.mobile_phone_number) + row('Numéro présenté', callerId(u.outgoing_caller_id)) + row('Nom présenté', u.caller_id)),
+    sec('Identité', row('Numéro', exten(u)) + row('E-mail (annuaire)', u.email) + row('Licence', subLabel(u.subscription_type)) + row('Actif', u.enabled === false ? 'non' : 'oui') + row('Mobile', u.mobile_phone_number) + row('Numéro présenté', callerId(u.outgoing_caller_id)) + row('Nom présenté', u.caller_id)),
     sec('Services', row('Ne pas déranger', u.services?.dnd?.enabled ? 'activé' : 'désactivé') + row('Filtrage', u.services?.incallfilter?.enabled ? 'activé' : 'désactivé')),
     sec('Renvois d\'appel (utilisateur)', row('Occupé', f('busy')) + row('Inconditionnel', f('unconditional')) + row('Pas de réponse', f('noanswer'))),
     sec('Renvois par défaut (admin)', row('Si occupé', destText(u.fallbacks?.busy_destination)) + row('Congestion', destText(u.fallbacks?.congestion_destination))
       + row('Échec', destText(u.fallbacks?.fail_destination)) + row('Non répondu', destText(u.fallbacks?.noanswer_destination))),
     sec('Sonnerie', row('Durée', u.ring_seconds != null ? `${u.ring_seconds} s` : '') + row('Appels simultanés', u.simultaneous_calls)),
-    sec('Boîte vocale', u.voicemail ? row('Boîte', v ? `${v.number}@${v.context}` : u.voicemail.name) + row('Nom', v?.name || u.voicemail.name) + row('E-mail boîte vocale', v?.email)
+    sec('Boîte vocale associée (réglages dans Messageries vocales)', u.voicemail ? row('Boîte', v ? `${v.number}@${v.context}` : u.voicemail.name) + row('Nom', v?.name || u.voicemail.name) + row('E-mail', v?.email)
       + row('Joindre l\'audio', v ? (v.attach_audio ? 'oui' : 'non') : '') + row('Supprimer après envoi', v ? (v.delete_messages ? 'oui' : 'non') : '') + row('Demander le code', v ? (v.ask_password ? 'oui' : 'non') : '') : row('Boîte', '')),
     sec('Divers', row('Musique d\'attente', mohLabel(u.music_on_hold)) + row('Langue', LANG[u.language] || u.language) + row('Fuseau', u.timezone)),
     sec('Groupes et droits', row('Groupes', (u.groups || []).map(groupLabel).join(', ')) + row('Droits d\'appel', (u.call_permissions || []).map((c) => c.name).join(', ')) + row('Horaire', (u.schedules || []).map((s) => s.name || `#${s.id}`).join(', '))),
@@ -284,7 +281,7 @@ function renderDetail() {
 // valeurs cibles recalculées sur cette lecture. Sauvegarde (valeurs relues)
 // téléchargée AVANT la première écriture, copie dans le navigateur.
 // ---------------------------------------------------------------------------
-const ctx = () => ({ moh: A.moh, groups: A.groups, perms: A.perms, scheds: A.scheds, queues: A.queues, sbs: A.sbs, contexts: A.contexts, users: A.users, callerOpts: A.callerOpts, callerOptsErr: A.callerOptsErr, destText });
+const ctx = () => ({ vms: A.vms, moh: A.moh, groups: A.groups, perms: A.perms, scheds: A.scheds, queues: A.queues, sbs: A.sbs, contexts: A.contexts, users: A.users, callerOpts: A.callerOpts, callerOptsErr: A.callerOptsErr, destText });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const LAST_BACKUP = 'astrea-users-last-backup';
 // Classe les utilisateurs : à modifier / déjà à la valeur / impossible.
@@ -387,14 +384,12 @@ function openMass() {
 async function runMass(items, users, desc, { batch = false } = {}) {
   const todo = [], failed = [], skipped = [];
   let unchanged = 0, ok = 0, lrNote = '';
-  const needVm = items.some((it) => it.s.vm);
   A.running = true;
   try {
     for (const [i, u0] of users.entries()) {
       toast(`Lecture ${i + 1}/${users.length}…`, 60000);
       try {
         const u = await api('GET', `/users/${u0.uuid}`);
-        u._vm = needVm && u.voicemail ? await api('GET', `/voicemails/${u.voicemail.id}`) : null;
         for (const it of items) {
           const cur = it.s.read(u), next = it.target(cur, u);
           if (next === undefined || same(cur, next)) { unchanged++; continue; }
@@ -477,8 +472,6 @@ async function triggerReload(done) {
   try {
     const xu = done.find((x) => x.it.s.reload === 'user');
     if (xu) { const u = await api('GET', `/users/${xu.u.uuid}`); await api('PUT', `/users/${u.uuid}`, { ring_seconds: u.ring_seconds }); out.push('Asterisk'); }
-    const xv = done.find((x) => x.it.s.reload === 'voicemail');
-    if (xv) { const v = await api('GET', `/voicemails/${xv.u._vm.id}`); await api('PUT', `/voicemails/${v.id}`, { ask_password: v.ask_password === true }); out.push('messageries'); }
     return out.length ? `, rechargement final déclenché (${out.join(', ')})` : '';
   } catch (e) { return `, mais le rechargement final a échoué (${e.message}) : bouton « Réactiver et recharger » si besoin`; }
 }
