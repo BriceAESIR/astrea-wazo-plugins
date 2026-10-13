@@ -86,15 +86,8 @@ const DEST_PARAMS = {
 const NAMED = { group: ['/groups', 'group_id'], queue: ['/queues', 'queue_id'], conference: ['/conferences', 'conference_id'] };
 const TYPE_LABEL = { user: 'Collègue', custom: 'Numéro', group: 'Groupe', queue: 'File', conference: 'Conférence' };
 const LK_TOKEN = /\s*\bblf-linekeys=(\d+)\b/;
-// Étiquette de touche d'un utilisateur (texte des BLF qui le visent chez ses
-// collègues) : jeton « blf-label=<texte encodé URI> » dans son userfield.
+// Ancien jeton d'étiquette (avant 0.17) : seulement détecté pour être retiré.
 const LBL_TOKEN = /\s*\bblf-label=(\S*)/;
-function customKeyLabel(u) {
-  const m = (u?.userfield || '').match(LBL_TOKEN);
-  if (!m) return '';
-  try { return decodeURIComponent(m[1]); } catch { return m[1]; }
-}
-const keyLabelOf = (u) => customKeyLabel(u) || fullName(u);
 
 // ---------------------------------------------------------------------------
 // État
@@ -388,7 +381,7 @@ async function boot() {
     if (isDirty()) toast('Changement de client : modifications non enregistrées abandonnées.', 6000);
     S.cur = null; S.sel = null;
     D.templates = null; D.src = null; D.srcLines = 1; D.picked.clear(); D.plan = [];
-    L.edits.clear(); $('lb-result-wrap').hidden = true;
+    L.edits.clear(); $('lb-result-wrap').hidden = true; resetKeyIndex();
     S.readonly = null; document.body.classList.remove('readonly'); // l'auto-contrôle est refait ci-dessous
     $('editor').hidden = true; $('detail').hidden = true;
     $('dp-preview').innerHTML = ''; $('dp-source').value = '';
@@ -414,7 +407,12 @@ async function boot() {
     document.body.classList.add('ready');
     renderUserList();
     if (!$('deploy').hidden) openDeploy(); // relit modèles et utilisateurs du nouveau tenant
-    if (!$('labelsView').hidden) renderLabels();
+    // Anciens jetons Astrea du userfield : affichés dans les journaux d'appels.
+    const legacy = users.filter(hasLegacyTokens).length;
+    if (legacy) { S.compatWarns.push(`Anciens marqueurs Astrea dans le userfield de ${legacy} utilisateur(s) : ils apparaissent dans les « Mots clés » des journaux d'appels. Nettoyage dans « Étiquettes de touches ».`); showCompat(); }
+    // Libellés des touches (étiquettes) : lus en tâche de fond.
+    resetKeyIndex();
+    if (!$('labelsView').hidden) openLabels(); else loadKeyIndex();
     // Comme contactTab reçoit `contact` dans extra, l'onglet pbx.users reçoit
     // peut-être l'utilisateur affiché : on cherche un uuid connu dans extra.
     const ref = userRefFromExtra() || userRefFrom(location) || userRefFrom({ pathname: document.referrer });
@@ -1255,8 +1253,6 @@ async function applyLineKeys(u, dev, n, labels) {
   await setDeviceLineKeys(dev.id, map, labels);
   await clearLegacyLineKeys(u);
 }
-// blf-label=… : étiquette de touche (vide ou égale au nom = pas de jeton).
-const setUserKeyLabel = (u, label) => setUserToken(u, LBL_TOKEN, label && label !== fullName(u) ? `blf-label=${encodeURIComponent(label)}` : '');
 function save() {
   if (!canWrite()) return;
   const c = S.cur;
@@ -1282,7 +1278,7 @@ function save() {
         const labels = Object.fromEntries(Object.keys({ ...oldLabels, ...newLabels }).map((k) => [k, newLabels[k] || '']));
         await applyLineKeys(c.user, c.dev, { 1: c.lineKeys, ...(c.otherCounts || {}) }, labels);
       }
-      if (rows.length) await api('PUT', `/users/${c.user.uuid}/funckeys`, { keys: target });
+      if (rows.length) { await api('PUT', `/users/${c.user.uuid}/funckeys`, { keys: target }); indexOwner(c.user, target); }
       // Touches ligne : resynchro toujours (sinon rien ne change sur le poste).
       if (c.dev && (lkChanged || ($('resync').checked && rows.length))) {
         try { await api('GET', `/devices/${c.dev.id}/synchronize`); } catch (e) { toast(`Enregistré, mais resynchro impossible : ${e.message}`, 6000); }
@@ -1296,77 +1292,143 @@ function save() {
 // ---------------------------------------------------------------------------
 // Étiquettes de touches (texte des BLF qui visent un utilisateur)
 // ---------------------------------------------------------------------------
-const L = { edits: new Map() }; // uuid → étiquette saisie (pas encore enregistrée)
-function openLabels() {
+// Rien n'est stocké ailleurs que dans les touches : l'étiquette d'un
+// utilisateur est le libellé le plus utilisé sur les touches qui le visent.
+// (Avant la 0.17 : jeton blf-label= dans le userfield, mais call-logd reprend
+// le userfield comme « Mots clés » des journaux d'appels.) L'index est lu en
+// tâche de fond au chargement, puis tenu à jour après chaque écriture.
+const KI = { byTarget: new Map(), loaded: false, loading: null, failed: 0 }; // id cible → [{ owner, pos, label }]
+function indexOwner(owner, keys) {
+  if (!owner) return;
+  for (const [id, list] of KI.byTarget) {
+    const rest = list.filter((e) => e.owner.uuid !== owner.uuid);
+    if (rest.length) KI.byTarget.set(id, rest); else KI.byTarget.delete(id);
+  }
+  for (const [p, k] of Object.entries(keys || {})) {
+    if (!k || k.inherited || k.destination?.type !== 'user') continue;
+    const id = k.destination.user_id;
+    if (!KI.byTarget.has(id)) KI.byTarget.set(id, []);
+    KI.byTarget.get(id).push({ owner, pos: Number(p), label: (k.label || '').trim() });
+  }
+}
+// Exécute fn sur chaque élément, `n` à la fois.
+async function pool(items, n, fn) {
+  let i = 0;
+  await Promise.all(Array.from({ length: Math.min(n, items.length) }, async () => { while (i < items.length) await fn(items[i++]); }));
+}
+function loadKeyIndex(onProgress) {
+  if (KI.loading) return KI.loading;
+  const scope = S.scope;
+  KI.byTarget = new Map(); KI.loaded = false; KI.failed = 0;
+  const owners = S.users.filter(listed);
+  let done = 0;
+  KI.loading = pool(owners, 6, async (u) => {
+    if (S.scope !== scope) return;
+    try { indexOwner(u, (await api('GET', `/users/${u.uuid}/funckeys`))?.keys); } catch { KI.failed++; }
+    onProgress?.(++done, owners.length);
+  }).then(() => { if (S.scope === scope) KI.loaded = true; });
+  return KI.loading;
+}
+function resetKeyIndex() { KI.byTarget = new Map(); KI.loaded = false; KI.loading = null; KI.failed = 0; }
+// Libellés utilisés pour `u` : [[libellé, nombre]], le plus fréquent d'abord
+// (à égalité, un libellé personnalisé passe avant le nom complet).
+function labelsFor(u) {
+  const counts = new Map();
+  for (const e of KI.byTarget.get(u?.id) || []) if (e.label) counts.set(e.label, (counts.get(e.label) || 0) + 1);
+  const full = fullName(u);
+  return [...counts].sort((a, b) => b[1] - a[1] || (a[0] === full) - (b[0] === full) || a[0].localeCompare(b[0], 'fr'));
+}
+const keyLabelOf = (u) => (u ? labelsFor(u)[0]?.[0] || fullName(u) : '');
+
+// Anciens jetons Astrea dans le userfield (blf-label=, blf-linekeys=) :
+// visibles dans les journaux d'appels, à retirer.
+const hasLegacyTokens = (u) => LBL_TOKEN.test(u?.userfield || '') || LK_TOKEN.test(u?.userfield || '');
+async function cleanLegacyTokens() {
+  if (!canWrite()) return;
+  const todo = S.users.filter(hasLegacyTokens);
+  if (!todo.length) return;
+  try { makeBackup(`Avant nettoyage des userfield (${todo.length} utilisateur(s))`, await snapshot(todo)); } catch (e) { toast(`Sauvegarde impossible, rien n'est modifié : ${e.message}`, 8000); return; }
+  let ok = 0;
+  for (const u of todo) {
+    const uf = (u.userfield || '').replace(LBL_TOKEN, '').replace(LK_TOKEN, '').replace(/\s+/g, ' ').trim();
+    try { await api('PUT', `/users/${u.uuid}`, { userfield: uf || null }); u.userfield = uf; ok++; } catch (e) { toast(`${fullName(u)} : ${e.message}`, 6000); }
+  }
+  toast(`${ok} userfield nettoyé(s)`);
+  S.compatWarns = (S.compatWarns || []).filter((w) => !w.startsWith('Anciens marqueurs'));
+  showCompat();
+  renderLabels();
+}
+
+const L = { edits: new Map() }; // uuid → étiquette saisie (pas encore appliquée)
+async function openLabels() {
   $('editor').hidden = true; $('empty').hidden = true; $('detail').hidden = true; $('deploy').hidden = true;
   $('labelsView').hidden = false;
   layout();
+  if (!KI.loaded) {
+    $('lb-rows').innerHTML = '<tr><td colspan="4" class="muted">Lecture des touches des postes…</td></tr>';
+    await loadKeyIndex((d, n) => { if (d % 10 === 0) $('lb-rows').innerHTML = `<tr><td colspan="4" class="muted">Lecture des touches des postes… ${d}/${n}</td></tr>`; });
+  }
   renderLabels();
 }
 function renderLabels() {
+  const legacy = S.users.filter(hasLegacyTokens);
+  $('lb-legacy').hidden = !legacy.length;
+  $('lb-legacy').innerHTML = legacy.length ? `<div class="warn">${legacy.length} utilisateur(s) ont encore d'anciens marqueurs Astrea (<code>blf-label=</code>, <code>blf-linekeys=</code>) dans leur userfield : Wazo les affiche comme « Mots clés » dans les journaux d'appels. Ils ne servent plus.</div><div class="btnrow"><button id="lb-clean">Nettoyer les userfield</button></div>` : '';
+  if (legacy.length) $('lb-clean').onclick = () => confirmModal(`<h3>Nettoyer les userfield</h3><p>Retire <code>blf-label=…</code> et <code>blf-linekeys=…</code> du userfield de ${legacy.length} utilisateur(s). Le reste du champ est conservé. Une sauvegarde est faite avant.</p>`, cleanLegacyTokens, 'Nettoyer');
+  if (!KI.loaded) return;
   const q = $('lb-search').value.trim().toLowerCase();
-  // Toutes les personnes supervisables (y compris DECT / sans poste à touches).
-  $('lb-rows').innerHTML = S.users
+  // Seulement les personnes supervisées par au moins une touche.
+  const rows = S.users.filter((u) => KI.byTarget.has(u.id))
     .filter((u) => !q || `${fullName(u)} ${u.username || ''} ${userExten(u)} ${keyLabelOf(u)}`.toLowerCase().includes(q))
     .map((u) => {
-      const v = L.edits.has(u.uuid) ? L.edits.get(u.uuid) : customKeyLabel(u);
-      const changed = L.edits.has(u.uuid) && L.edits.get(u.uuid) !== customKeyLabel(u);
-      return `<tr${changed ? ' class="changed"' : ''}><td>${esc(fullName(u))}</td><td class="muted">${esc(userExten(u))}</td>
+      const cur = keyLabelOf(u);
+      const used = labelsFor(u);
+      const n = KI.byTarget.get(u.id).length;
+      const v = L.edits.has(u.uuid) ? L.edits.get(u.uuid) : (cur === fullName(u) ? '' : cur);
+      const changed = L.edits.has(u.uuid) && (L.edits.get(u.uuid).trim() || fullName(u)) !== cur;
+      const variants = used.length > 1 ? ` · <span class="error" title="${esc(used.map(([l, c]) => `${l} (${c})`).join(', '))}">${used.length} libellés différents</span>` : '';
+      return `<tr${changed ? ' class="changed"' : ''}><td>${esc(fullName(u))}</td><td class="muted">${esc(userExten(u))}</td><td class="muted">${n}${variants}</td>
         <td><input data-uuid="${u.uuid}" value="${esc(v)}" placeholder="${esc(fullName(u))}" maxlength="64"></td></tr>`;
-    }).join('') || '<tr><td colspan="3" class="muted">Aucun utilisateur.</td></tr>';
+    });
+  $('lb-rows').innerHTML = rows.join('') || '<tr><td colspan="4" class="muted">Aucune touche de supervision sur les postes.</td></tr>';
+  $('lb-count').textContent = `${KI.byTarget.size} utilisateur(s) supervisé(s)${KI.failed ? ` · ${KI.failed} poste(s) illisible(s)` : ''}`;
   updateLabelsBtn();
 }
+// Étiquettes saisies qui changent quelque chose : [[utilisateur, nouvelle étiquette]].
 function pendingLabels() {
-  return [...L.edits].map(([uuid, v]) => [S.byUuid.get(uuid), v.trim()]).filter(([u, v]) => u && v !== customKeyLabel(u) && !(v === fullName(u) && !customKeyLabel(u)));
+  return [...L.edits].map(([uuid, v]) => { const u = S.byUuid.get(uuid); return [u, v.trim() || fullName(u)]; })
+    .filter(([u, v]) => u && (KI.byTarget.get(u.id) || []).some((e) => e.label !== v));
 }
 function updateLabelsBtn() {
   const n = pendingLabels().length;
   $('lb-save').disabled = !n;
-  $('lb-save').textContent = n ? `Enregistrer les étiquettes (${n})` : 'Enregistrer les étiquettes';
+  $('lb-save').textContent = n ? `Appliquer aux touches (${n})` : 'Appliquer aux touches';
 }
-async function saveLabels() {
-  if (!canWrite()) return;
-  const todo = pendingLabels();
-  if (!todo.length) return;
-  try { makeBackup(`Avant modification de ${todo.length} étiquette(s) de touche`, await snapshot(todo.map(([u]) => u))); } catch (e) { toast(`Sauvegarde impossible, rien n'est modifié : ${e.message}`, 8000); return; }
-  const changed = new Set();
-  let ok = 0;
-  for (const [u, v] of todo) {
-    try { await setUserKeyLabel(u, v); ok++; L.edits.delete(u.uuid); changed.add(u.uuid); } catch (e) { toast(e.message, 6000); }
+// Nouvelle étiquette : toutes les touches qui visent la personne (cochées).
+function saveLabels() {
+  const found = [];
+  for (const [t, to] of pendingLabels()) for (const e of KI.byTarget.get(t.id) || []) if (e.label !== to) found.push({ owner: e.owner, target: t, pos: e.pos, from: e.label, to, pre: true });
+  renderLabelPlan(found, 'touche(s) à renommer pour les étiquettes modifiées.');
+}
+// Harmoniser : touches dont le libellé diffère de l'étiquette de la personne.
+// Cochées d'office : libellés vides ou égaux au nom complet ; les libellés
+// personnalisés minoritaires sont proposés décochés.
+function scanLabels() {
+  if (!KI.loaded) return;
+  const found = [];
+  for (const [id, list] of KI.byTarget) {
+    const t = S.byId.get(id);
+    if (!t) continue;
+    const want = keyLabelOf(t);
+    for (const e of list) if (e.label !== want) found.push({ owner: e.owner, target: t, pos: e.pos, from: e.label, to: want, pre: !e.label || e.label === fullName(t) });
   }
-  toast(`${ok} étiquette(s) enregistrée(s). Vérification des touches…`);
-  renderLabels();
-  scanLabels(changed);
+  renderLabelPlan(found, 'touche(s) dont le libellé diffère de l\'étiquette de la personne. Cochées d\'office : libellés vides et noms complets ; les libellés personnalisés sont laissés décochés.');
 }
-
-// Analyse : touches vers un collègue dont le libellé diffère de son étiquette.
-// Cochées d'office : les personnes dont l'étiquette vient de changer, et les
-// libellés automatiques (vides / ancien nom complet). Les autres libellés
-// (courts, volontaires) sont proposés mais décochés.
-async function scanLabels(justChanged = new Set()) {
-  if (!(justChanged instanceof Set)) justChanged = new Set();
+function renderLabelPlan(found, msg) {
   $('lb-result-wrap').hidden = false;
   const out = $('labelsResult');
-  out.innerHTML = '<p class="muted small">Analyse…</p>';
-  const found = [];
-  const owners = S.users.filter(listed);
-  let done = 0;
-  for (const u of owners) {
-    try {
-      const data = await api('GET', `/users/${u.uuid}/funckeys`);
-      for (const [p, k] of Object.entries(data?.keys || {})) {
-        if (k.inherited || k.destination?.type !== 'user') continue;
-        const t = S.byId.get(k.destination.user_id);
-        if (!t) continue;
-        const want = keyLabelOf(t);
-        const from = (k.label || '').trim();
-        if (from !== want) found.push({ owner: u, target: t, pos: Number(p), from, to: want, pre: justChanged.has(t.uuid) || !from || from === fullName(t) });
-      }
-    } catch { /* ignoré */ }
-    if (++done % 10 === 0) out.innerHTML = `<p class="muted small">Analyse… ${done}/${owners.length}</p>`;
-  }
   if (!found.length) { out.innerHTML = '<p class="muted small">Toutes les touches portent l\'étiquette de la personne qu\'elles supervisent.</p>'; return; }
-  out.innerHTML = `<p class="small">${found.length} touche(s) avec une étiquette différente. Cochées d'office : étiquettes que vous venez de modifier et libellés par défaut (nom complet). Les libellés personnalisés sont laissés décochés.</p>
+  out.innerHTML = `<p class="small">${found.length} ${msg}</p>
     <table class="diff"><tr><th></th><th>Poste de</th><th>Touche</th><th>Supervise</th><th>Actuelle → nouvelle</th></tr>
     ${found.map((f, i) => `<tr><td><input type="checkbox" data-i="${i}"${f.pre ? ' checked' : ''}></td><td>${esc(fullName(f.owner))}</td><td>${f.pos}</td><td>${esc(fullName(f.target))}</td><td><span class="muted">${esc(f.from) || '(vide)'}</span> → <strong>${esc(f.to)}</strong></td></tr>`).join('')}</table>
     <div class="btnrow"><button id="lbl-all">Tout cocher</button><button id="lbl-none">Tout décocher</button><span class="spacer"></span><button id="lbl-apply" class="primary">Mettre à jour les touches cochées</button></div>`;
@@ -1382,16 +1444,20 @@ async function scanLabels(justChanged = new Set()) {
     let ok = 0;
     for (const [uuid, list] of byOwner) {
       try {
+        // Relu juste avant : on ne touche qu'aux touches encore identiques à l'analyse.
         const data = await api('GET', `/users/${uuid}/funckeys`);
         const keys = {};
         for (const [p, k] of Object.entries(data?.keys || {})) if (!k.inherited) keys[p] = cleanKey(k);
-        for (const f of list) if (keys[f.pos] && (keys[f.pos].label || '') === f.from) keys[f.pos].label = f.to;
+        for (const f of list) if (keys[f.pos] && (keys[f.pos].label || '').trim() === f.from && keys[f.pos].destination.user_id === f.target.id) keys[f.pos].label = f.to;
         await api('PUT', `/users/${uuid}/funckeys`, { keys });
+        indexOwner(S.byUuid.get(uuid), keys);
         ok += list.length;
       } catch (e) { toast(e.message, 6000); }
     }
+    for (const f of picked) L.edits.delete(f.target.uuid);
     toast(`${ok} touche(s) mise(s) à jour`);
-    scanLabels();
+    $('lb-result-wrap').hidden = true;
+    renderLabels();
   };
 }
 
@@ -1598,6 +1664,7 @@ async function previewDeploy() {
   const users = [...D.picked].map((id) => S.byUuid.get(id)).filter(Boolean);
   const btn = $('dp-go');
   btn.disabled = true;
+  if (!KI.loaded) { btn.textContent = 'Lecture des étiquettes…'; await loadKeyIndex(); } // libellés des touches posées
   D.plan = [];
   const rows = [];
   for (const [i, u] of users.entries()) {
@@ -1656,7 +1723,7 @@ async function applyDeploy() {
     try {
       const dev = userDevice(x.u);
       if (x.linesChanged) await applyLineKeys(x.u, dev, x.lines); // d'abord : voir save()
-      if (x.keysChanged) await api('PUT', `/users/${x.u.uuid}/funckeys`, { keys: x.keys });
+      if (x.keysChanged) { await api('PUT', `/users/${x.u.uuid}/funckeys`, { keys: x.keys }); indexOwner(x.u, x.keys); }
       ok++;
       if (dev && (x.linesChanged || $('dp-resync').checked)) { try { await api('GET', `/devices/${dev.id}/synchronize`); } catch { /* resynchro facultative */ } }
     } catch (e) { ko++; console.error(fullName(x.u), e); }
@@ -1670,7 +1737,7 @@ async function applyDeploy() {
 // Format : { app, version, created, base, tenant, reason, entries: [{ uuid,
 // name, userfield, keys }] } — keys = touches propres (hors héritées).
 const BK_STORE = 'astrea-blf-last-backup';
-const APP_VERSION = '0.16.1';
+const APP_VERSION = '0.17.0';
 function makeBackup(reason, entries) {
   const bk = { app: 'astrea-blf', version: APP_VERSION, created: new Date().toISOString(), base: S.base, tenant: S.tenant, reason, entries };
   const json = JSON.stringify(bk, null, 1);
@@ -1724,7 +1791,10 @@ function restoreBackup(bk) {
       try {
         await api('PUT', `/users/${e.uuid}/funckeys`, { keys: e.keys });
         const u = S.byUuid.get(e.uuid);
-        if ((u.userfield || '') !== (e.userfield || '')) { await api('PUT', `/users/${e.uuid}`, { userfield: e.userfield || null }); u.userfield = e.userfield; }
+        indexOwner(u, e.keys);
+        // Sans les anciens jetons Astrea (sauvegardes d'avant la 0.17).
+        const uf = (e.userfield || '').replace(LBL_TOKEN, '').replace(LK_TOKEN, '').replace(/\s+/g, ' ').trim();
+        if ((u.userfield || '') !== uf) { await api('PUT', `/users/${e.uuid}`, { userfield: uf || null }); u.userfield = uf; }
         // Touches ligne (option provd), si la sauvegarde les contient.
         const dev = userDevice(u);
         // Étiquettes : seulement si la sauvegarde les contient (versions ≥ 0.15.1).
@@ -1816,7 +1886,8 @@ $('lb-rows').oninput = (e) => {
   const inp = e.target.closest('input[data-uuid]');
   if (!inp) return;
   L.edits.set(inp.dataset.uuid, inp.value);
-  inp.closest('tr').classList.toggle('changed', inp.value.trim() !== customKeyLabel(S.byUuid.get(inp.dataset.uuid)));
+  const u = S.byUuid.get(inp.dataset.uuid);
+  inp.closest('tr').classList.toggle('changed', (inp.value.trim() || fullName(u)) !== keyLabelOf(u));
   updateLabelsBtn();
 };
 $('lk-minus').onclick = () => changeLineKeys(-1);

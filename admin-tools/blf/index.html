@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Mulish:wght@300..800&display=swap">
-<link rel="stylesheet" href="../common/style.css?v=0.16.1">
+<link rel="stylesheet" href="../common/style.css?v=0.17.0">
 <script>if (window.parent !== window) document.documentElement.classList.add('framed');</script>
 </head>
 <body>
@@ -41,8 +41,8 @@
       <div id="count" class="muted small"></div>
       <ul id="userlist" class="list"></ul>
       <div id="labelsPane" hidden>
-        <p class="muted small">Chaque utilisateur a une étiquette de touche : c'est le texte affiché sur les touches qui le supervisent chez ses collègues. Vide = son nom complet.</p>
-        <p class="muted small">Elle est enregistrée dans Wazo (champ <code>userfield</code> de l'utilisateur, jeton <code>blf-label=…</code>) et reprise automatiquement dans l'éditeur et le déploiement en masse.</p>
+        <p class="muted small">L'étiquette d'un utilisateur, c'est le texte affiché sur les touches qui le supervisent chez ses collègues. Vide = son nom complet.</p>
+        <p class="muted small">Rien n'est enregistré en dehors des touches : l'outil lit les touches de tous les postes et retient le libellé le plus utilisé pour chaque personne. Il est repris pour les nouvelles touches, dans l'éditeur et le déploiement en masse.</p>
       </div>
       <div id="deployPane" hidden>
         <p class="muted small">Créez ou modifiez un modèle (touches ligne comprises), puis appliquez-le à plusieurs utilisateurs en une fois. Les modèles sont enregistrés dans les « Modèles de touches » de Wazo ; le nombre de touches ligne est noté dans le nom (<code>blf-linekeys=N</code>).</p>
@@ -95,16 +95,17 @@
 
       <div id="labelsView" hidden>
         <h2>Étiquettes de touches</h2>
+        <div id="lb-legacy" hidden></div>
         <div class="page">
-          <h4>1 · Étiquette de chaque utilisateur</h4>
-          <p class="muted small">Texte affiché sur les touches de supervision qui visent cet utilisateur, sur tous les postes. Laissez vide pour utiliser son nom complet.</p>
-          <div class="btnrow"><input id="lb-search" type="search" placeholder="Filtrer (nom, extension)…" style="max-width:320px"></div>
-          <table class="diff lbltable"><thead><tr><th>Utilisateur</th><th>Ext.</th><th>Étiquette de touche</th></tr></thead><tbody id="lb-rows"></tbody></table>
+          <h4>1 · Étiquette de chaque utilisateur supervisé</h4>
+          <p class="muted small">Libellé le plus utilisé sur les touches qui visent cette personne. Modifiez-le pour renommer ces touches sur tous les postes ; laissez vide pour son nom complet.</p>
+          <div class="btnrow"><input id="lb-search" type="search" placeholder="Filtrer (nom, extension)…" style="max-width:320px"><span id="lb-count" class="muted small" style="align-self:center"></span></div>
+          <table class="diff lbltable"><thead><tr><th>Utilisateur</th><th>Ext.</th><th>Touches</th><th>Étiquette de touche</th></tr></thead><tbody id="lb-rows"></tbody></table>
         </div>
         <div class="actions">
           <span class="spacer"></span>
-          <button id="lb-scan">Vérifier les touches de tous les postes</button>
-          <button id="lb-save" class="primary" disabled>Enregistrer les étiquettes</button>
+          <button id="lb-scan">Harmoniser les libellés</button>
+          <button id="lb-save" class="primary" disabled>Appliquer aux touches</button>
         </div>
         <div class="page" id="lb-result-wrap" hidden>
           <h4>2 · Touches à mettre à jour</h4>
@@ -187,6 +188,6 @@
     <div class="btnrow right"><button id="modal-cancel">Annuler</button><button id="modal-ok" class="primary">Confirmer</button></div></div></div>
   <div id="toast" class="toast" hidden></div>
 </div>
-<script type="module" src="./app.js?v=0.16.1"></script>
+<script type="module" src="./app.js?v=0.17.0"></script>
 </body>
 </html>

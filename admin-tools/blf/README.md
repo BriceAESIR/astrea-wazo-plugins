@@ -51,7 +51,7 @@ du serveur ouvert dans le portail, avec le token que fournit le portail.
 - onglet **Déploiement en masse** : *Nouveau modèle* / *Modifier ce modèle*
   ouvre l'éditeur de poste sur un modèle de touches Wazo (aperçu sur un modèle
   Yealink au choix), touches ligne comprises. Le nombre de touches ligne est
-  noté dans le nom du modèle Wazo avec le même jeton que le userfield
+  noté dans le nom du modèle Wazo
   (`Commerciaux blf-linekeys=2` ; sans jeton = 1 ligne). Une touche placée
   dans Wazo sur une position de ligne est décalée après les lignes (avec
   avertissement). Applique ensuite le modèle (ou les touches d'un
@@ -61,15 +61,19 @@ du serveur ouvert dans le portail, avec le token que fournit le portail.
   remontent ; le bloc commence après les touches ligne de chacun. Aperçu
   avant/après, un seul PUT par utilisateur modifié, resynchro optionnelle.
   Le modèle partagé n'est pas rattaché (il mettrait à chacun sa propre touche) ;
-- onglet **Étiquettes de touches** : une étiquette par utilisateur (texte des
-  BLF qui le supervisent chez ses collègues ; vide = nom complet), enregistrée
-  dans son `userfield` (jeton `blf-label=<texte encodé URI>`). Reprise par
-  l'éditeur et le déploiement en masse. *Vérifier les touches de tous les
-  postes* liste les touches dont l'étiquette diffère : cochées d'office pour
-  les étiquettes qui viennent de changer et les libellés par défaut, décochées
-  pour les libellés personnalisés ;
-- (ancien onglet **Libellés**) : repère les touches dont le libellé ne correspond plus
-  au nom du collègue (renommage) et les corrige en lot, sur les touches cochées.
+- onglet **Étiquettes de touches** : l'étiquette d'un utilisateur (texte des
+  BLF qui le supervisent chez ses collègues ; vide = nom complet) n'est
+  **stockée nulle part** : c'est le libellé le plus utilisé sur les touches qui
+  le visent, lu sur tous les postes (en tâche de fond au chargement, 6 lectures
+  en parallèle). La modifier renomme ces touches (aperçu coché, sauvegarde
+  avant). *Harmoniser les libellés* liste les touches dont le libellé diffère :
+  cochées d'office pour les libellés vides ou égaux au nom complet, décochées
+  pour les libellés personnalisés. Reprise pour les nouvelles touches dans
+  l'éditeur et le déploiement en masse ;
+- **userfield laissé libre** depuis la 0.17 : call-logd reprend le `userfield`
+  comme « Mots clés » des journaux d'appels. Les anciens jetons `blf-label=` et
+  `blf-linekeys=` sont signalés (bandeau orange) et retirés par *Nettoyer les
+  userfield* (onglet Étiquettes), et filtrés à la restauration d'une sauvegarde.
 
 ## Sécurité : auto-contrôle et sauvegardes
 
