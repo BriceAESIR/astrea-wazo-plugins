@@ -12,8 +12,8 @@
 //    queue_label, voicemail_name, ivr_name… ajoutés par confd.
 // Supposé, à vérifier en réel : le token du portail peut lire /moh,
 // /voicemails, /callpermissions, /schedules (sinon libellés techniques).
-import { S, $, esc, toast, api, listAll, connect, fullName, setReadonly, showCompat, loaded, loadFailed, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.25.1';
-import { SETTINGS, settingById, same, LANG } from './settings.js?v=0.25.1';
+import { S, $, esc, toast, api, listAll, connect, fullName, setReadonly, showCompat, loaded, loadFailed, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.25.2';
+import { SETTINGS, settingById, same, LANG } from './settings.js?v=0.25.2';
 
 const A = { users: [], byId: new Map(), moh: new Map(), groups: new Map(), vms: new Map(), perms: new Map(), scheds: new Map(), queues: new Map(), sbs: new Map(), contexts: [], callerOpts: [], callerOptsErr: '', lr: null, picked: new Set(), sort: { col: 'name', dir: 1 }, sel: null, scope: null, cols: null };
 
@@ -77,7 +77,11 @@ const names = (arr, f) => { const t = (arr || []).map(f).sort((a, b) => a.locale
 const COLS = [
   { id: 'name', label: 'Utilisateur', grp: 'Identité', fixed: true, odd: false, get: (u) => txt(fullName(u)) },
   { id: 'exten', label: 'Numéro', grp: 'Identité', def: true, odd: false, get: (u) => { const e = exten(u); return { t: e || '—', k: e.padStart(12, '0'), c: e ? '' : 'none' }; } },
-  { id: 'email', label: 'E-mail', grp: 'Identité', odd: false, get: (u) => txt(u.email) },
+  { id: 'email', label: 'E-mail (annuaire)', tip: 'Courriel public de la fiche (Renseignements personnels), affiché dans les annuaires. Différent des adresses de connexion (Authentification) et de l\'e-mail de la boîte vocale.', grp: 'Identité', odd: false, get: (u) => txt(u.email) },
+  // Licence = subscription_type (0-10). Libellés du portail (Voix, Communication
+  // unifiée, Relation client) : correspondance non trouvée dans le code de
+  // confd, à confirmer en réel avant de l'afficher / de la modifier en masse.
+  { id: 'sub', label: 'Licence', tip: 'Type de souscription (subscription_type), valeur brute en attendant la correspondance avec les libellés du portail.', grp: 'Identité', def: true, get: (u) => ({ t: u.subscription_type ?? '—', k: String(u.subscription_type ?? '') }) },
   { id: 'enabled', label: 'Actif', grp: 'Identité', get: (u) => (u.enabled === false ? { t: 'Non', k: '0', c: 'alert' } : { t: 'Oui', k: '1', c: 'none' }) },
   { id: 'dnd', label: 'Ne pas déranger', grp: 'Services', def: true, get: (u) => yes(u.services?.dnd?.enabled) },
   { id: 'incallfilter', label: 'Filtrage', grp: 'Services', get: (u) => yes(u.services?.incallfilter?.enabled) },
@@ -95,8 +99,8 @@ const COLS = [
   { id: 'simul', label: 'Appels simult.', grp: 'Sonnerie', def: true, get: (u) => ({ t: u.simultaneous_calls ?? '—', k: String(u.simultaneous_calls ?? '').padStart(3, '0') }) },
   { id: 'callerid', label: 'Numéro présenté', grp: 'Identité d\'appel', def: true, get: (u) => txt(callerId(u.outgoing_caller_id)) },
   { id: 'mobile', label: 'Mobile', grp: 'Identité d\'appel', odd: false, get: (u) => txt(u.mobile_phone_number || '') },
-  { id: 'vm', label: 'Messagerie', grp: 'Messagerie', def: true, odd: false, get: vm },
-  { id: 'vm_email', label: 'E-mail messagerie', grp: 'Messagerie', odd: false, get: (u) => txt(A.vms.get(u.voicemail?.id)?.email || '') },
+  { id: 'vm', label: 'Boîte vocale', tip: 'Numéro et nom de la boîte vocale de l\'utilisateur.', grp: 'Messagerie', def: true, odd: false, get: vm },
+  { id: 'vm_email', label: 'E-mail boîte vocale', tip: 'Adresse à laquelle la boîte vocale envoie les messages (réglage de la messagerie vocale). Différente de l\'e-mail de l\'annuaire.', grp: 'Messagerie', odd: false, get: (u) => txt(A.vms.get(u.voicemail?.id)?.email || '') },
   { id: 'moh', label: 'Musique d\'attente', grp: 'Divers', def: true, get: (u) => txt(mohLabel(u.music_on_hold)) },
   { id: 'lang', label: 'Langue', grp: 'Divers', def: true, get: (u) => txt(LANG[u.language] || u.language || '') },
   { id: 'tz', label: 'Fuseau', grp: 'Divers', get: (u) => txt(u.timezone || '') },
@@ -104,8 +108,8 @@ const COLS = [
   { id: 'perms', label: 'Droits d\'appel', grp: 'Groupes et droits', get: (u) => names(u.call_permissions, (c) => c.name) },
   { id: 'sched', label: 'Horaire', grp: 'Groupes et droits', get: (u) => names(u.schedules, (s) => s.name || `#${s.id}`) },
 ];
-// v2 (0.23.2) : nouvelles colonnes par défaut, l'ancien choix est ignoré.
-const COLS_KEY = 'astrea-users-cols-v2';
+// v3 (0.25.2, colonne Licence) : nouvelles colonnes par défaut, l'ancien choix est ignoré.
+const COLS_KEY = 'astrea-users-cols-v3';
 function loadCols() {
   try { const c = JSON.parse(localStorage.getItem(COLS_KEY)); if (Array.isArray(c)) return new Set(c); } catch { /* stockage indisponible */ }
   return new Set(COLS.filter((c) => c.def).map((c) => c.id));
@@ -226,7 +230,7 @@ function render() {
   // de l'en-tête coche / décoche les lignes affichées.
   A.shown = list.map((r) => r.u.id);
   const allOn = list.length && list.every((r) => A.picked.has(r.u.id));
-  $('g-head').innerHTML = `<tr>${cols.map((c, i) => `<th data-col="${c.id}">${i ? '' : `<input type="checkbox" class="pick" id="pick-all" title="Cocher les lignes affichées"${allOn ? ' checked' : ''}> `}${esc(c.label)}${c.id === A.sort.col ? `<span class="arrow">${A.sort.dir > 0 ? '▲' : '▼'}</span>` : ''}</th>`).join('')}</tr>`;
+  $('g-head').innerHTML = `<tr>${cols.map((c, i) => `<th data-col="${c.id}"${c.tip ? ` title="${esc(c.tip)}"` : ''}>${i ? '' : `<input type="checkbox" class="pick" id="pick-all" title="Cocher les lignes affichées"${allOn ? ' checked' : ''}> `}${esc(c.label)}${c.id === A.sort.col ? `<span class="arrow">${A.sort.dir > 0 ? '▲' : '▼'}</span>` : ''}</th>`).join('')}</tr>`;
   $('g-body').innerHTML = list.map((r) => `<tr data-u="${r.u.id}" class="${r.u.id === A.sel ? 'sel' : ''}${r.u.enabled === false ? ' disabled' : ''}">${r.v.map((x, i) => {
     const cls = [x.c, oddOn && odd[i] != null && x.k !== odd[i] ? 'odd' : ''].filter(Boolean).join(' ');
     const box = i ? '' : `<input type="checkbox" class="pick" data-pick="${r.u.id}"${A.picked.has(r.u.id) ? ' checked' : ''}> `;
@@ -242,8 +246,8 @@ function renderCols() {
   if ($('cols').dataset.ready) { $('cols').querySelectorAll('input[data-col]').forEach((x) => (x.checked = A.cols.has(x.dataset.col))); return; }
   let grp = '';
   $('cols').innerHTML = COLS.filter((c) => !c.fixed).map((c) => {
-    const h = c.grp !== grp ? `<div class="grp">${esc((grp = c.grp))}</div>` : '';
-    return `${h}<label class="inline"><input type="checkbox" data-col="${c.id}"${A.cols.has(c.id) ? ' checked' : ''}> ${esc(c.label)}</label>`;
+    const h = c.grp !== grp ? `<div class="grp" data-grp="${esc(c.grp)}" title="Cocher / décocher tout le groupe">${esc((grp = c.grp))}</div>` : '';
+    return `${h}<label class="inline"${c.tip ? ` title="${esc(c.tip)}"` : ''}><input type="checkbox" data-col="${c.id}" data-g="${esc(c.grp)}"${A.cols.has(c.id) ? ' checked' : ''}> ${esc(c.label)}</label>`;
   }).join('');
   $('cols').dataset.ready = '1';
 }
@@ -259,13 +263,13 @@ function renderDetail() {
   const f = (k) => { const x = u.forwards?.[k]; return x?.enabled ? `activé → ${x.destination || '?'}` : `désactivé${x?.destination ? ` (${x.destination})` : ''}`; };
   const v = A.vms.get(u.voicemail?.id);
   $('d-body').innerHTML = [
-    sec('Identité', row('Numéro', exten(u)) + row('E-mail', u.email) + row('Actif', u.enabled === false ? 'non' : 'oui') + row('Mobile', u.mobile_phone_number) + row('Numéro présenté', callerId(u.outgoing_caller_id)) + row('Nom présenté', u.caller_id)),
+    sec('Identité', row('Numéro', exten(u)) + row('E-mail (annuaire)', u.email) + row('Licence', u.subscription_type) + row('Actif', u.enabled === false ? 'non' : 'oui') + row('Mobile', u.mobile_phone_number) + row('Numéro présenté', callerId(u.outgoing_caller_id)) + row('Nom présenté', u.caller_id)),
     sec('Services', row('Ne pas déranger', u.services?.dnd?.enabled ? 'activé' : 'désactivé') + row('Filtrage', u.services?.incallfilter?.enabled ? 'activé' : 'désactivé')),
     sec('Renvois d\'appel (utilisateur)', row('Occupé', f('busy')) + row('Inconditionnel', f('unconditional')) + row('Pas de réponse', f('noanswer'))),
     sec('Renvois par défaut (admin)', row('Si occupé', destText(u.fallbacks?.busy_destination)) + row('Congestion', destText(u.fallbacks?.congestion_destination))
       + row('Échec', destText(u.fallbacks?.fail_destination)) + row('Non répondu', destText(u.fallbacks?.noanswer_destination))),
     sec('Sonnerie', row('Durée', u.ring_seconds != null ? `${u.ring_seconds} s` : '') + row('Appels simultanés', u.simultaneous_calls)),
-    sec('Messagerie', u.voicemail ? row('Boîte', v ? `${v.number}@${v.context}` : u.voicemail.name) + row('Nom', v?.name || u.voicemail.name) + row('E-mail', v?.email)
+    sec('Boîte vocale', u.voicemail ? row('Boîte', v ? `${v.number}@${v.context}` : u.voicemail.name) + row('Nom', v?.name || u.voicemail.name) + row('E-mail boîte vocale', v?.email)
       + row('Joindre l\'audio', v ? (v.attach_audio ? 'oui' : 'non') : '') + row('Supprimer après envoi', v ? (v.delete_messages ? 'oui' : 'non') : '') + row('Demander le code', v ? (v.ask_password ? 'oui' : 'non') : '') : row('Boîte', '')),
     sec('Divers', row('Musique d\'attente', mohLabel(u.music_on_hold)) + row('Langue', LANG[u.language] || u.language) + row('Fuseau', u.timezone)),
     sec('Groupes et droits', row('Groupes', (u.groups || []).map(groupLabel).join(', ')) + row('Droits d\'appel', (u.call_permissions || []).map((c) => c.name).join(', ')) + row('Horaire', (u.schedules || []).map((s) => s.name || `#${s.id}`).join(', '))),
@@ -341,7 +345,7 @@ function openMass() {
     let ok = 'Suivant';
     if (W.step === 0) {
       const grps = [...new Set(SETTINGS.map((s) => s.grp))];
-      $('modal-body').innerHTML = `${head('Réglages à modifier')}<div class="wizsets">${grps.map((g) => `<div class="grp">${esc(g)}</div>${SETTINGS.filter((s) => s.grp === g).map((s) => `<label class="inline"><input type="checkbox" data-set="${s.id}"${W.ids.includes(s.id) ? ' checked' : ''}> ${esc(s.label)}</label>`).join('')}`).join('')}</div>`;
+      $('modal-body').innerHTML = `${head('Réglages à modifier')}<div class="wizsets">${grps.map((g) => `<div class="grp" data-grp="${esc(g)}" title="Cocher / décocher tout le groupe">${esc(g)}</div>${SETTINGS.filter((s) => s.grp === g).map((s) => `<label class="inline"><input type="checkbox" data-set="${s.id}" data-g="${esc(s.grp)}"${W.ids.includes(s.id) ? ' checked' : ''}> ${esc(s.label)}</label>`).join('')}`).join('')}</div>`;
     } else if (W.step <= n) {
       const s = list()[W.step - 1];
       $('modal-body').innerHTML = `${head(s.label)}<div id="m-form">${s.form(ctx())}</div><div id="m-prev" class="mprev"></div>${back}`;
@@ -356,6 +360,7 @@ function openMass() {
         <p class="muted small">Chaque utilisateur est relu juste avant l'écriture. Une sauvegarde des valeurs actuelles est téléchargée avant la première écriture (« Restaurer… » pour revenir en arrière).</p>${back}`;
       ok = 'Appliquer';
     }
+    $('modal-body').querySelectorAll('.wizsets .grp[data-grp]').forEach((g) => (g.onclick = () => toggleGroup($('modal-body'), g.dataset.grp)));
     $('modal-ok').textContent = ok;
     if ($('m-back')) $('m-back').onclick = () => { saveVals(); W.step--; render(); };
   };
@@ -549,6 +554,20 @@ $('q').oninput = render;
 $('f-group').onchange = render;
 $('f-odd').onchange = render;
 $('f-oddonly').onchange = render;
+// Clic sur le titre d'un groupe : tout cocher (ou tout décocher s'il l'est déjà).
+function toggleGroup(box, grp) {
+  const inputs = [...box.querySelectorAll('input[data-g]')].filter((x) => x.dataset.g === grp);
+  const on = !inputs.every((x) => x.checked);
+  inputs.forEach((x) => (x.checked = on));
+  return inputs;
+}
+$('cols').onclick = (e) => {
+  const g = e.target.closest('.grp[data-grp]');
+  if (!g) return;
+  for (const x of toggleGroup($('cols'), g.dataset.grp)) if (x.checked) A.cols.add(x.dataset.col); else A.cols.delete(x.dataset.col);
+  saveCols();
+  render();
+};
 $('cols').onchange = (e) => {
   const id = e.target.dataset.col;
   if (!id) return;
