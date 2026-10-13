@@ -12,8 +12,8 @@
 //    queue_label, voicemail_name, ivr_name… ajoutés par confd.
 // Supposé, à vérifier en réel : le token du portail peut lire /moh,
 // /voicemails, /callpermissions, /schedules (sinon libellés techniques).
-import { S, $, esc, toast, api, listAll, connect, fullName, setReadonly, showCompat, loaded, loadFailed, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.25.0';
-import { SETTINGS, settingById, same, LANG } from './settings.js?v=0.25.0';
+import { S, $, esc, toast, api, listAll, connect, fullName, setReadonly, showCompat, loaded, loadFailed, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.25.1';
+import { SETTINGS, settingById, same, LANG } from './settings.js?v=0.25.1';
 
 const A = { users: [], byId: new Map(), moh: new Map(), groups: new Map(), vms: new Map(), perms: new Map(), scheds: new Map(), queues: new Map(), sbs: new Map(), contexts: [], callerOpts: [], callerOptsErr: '', lr: null, picked: new Set(), sort: { col: 'name', dir: 1 }, sel: null, scope: null, cols: null };
 
@@ -300,7 +300,13 @@ function planHtml(s, p) {
   const c = ctx();
   return `<p class="small">${counts(p)}</p>
     ${p.change.length ? `<table class="diff"><tr><th>Utilisateur</th><th>Avant</th><th>Après</th></tr>${p.change.slice(0, 300).map((x) => `<tr><td>${esc(fullName(x.u))}</td><td class="muted">${esc(s.text(x.cur, c))}</td><td><strong>${esc(s.text(x.next, c))}</strong></td></tr>`).join('')}</table>` : ''}
-    ${p.bad.map((x) => `<div class="warn">${esc(fullName(x.u))} : ${esc(x.err)}</div>`).join('')}`;
+    ${badHtml(p.bad)}`;
+}
+// Impossibles regroupés par motif : « aucune SDA associée (6) : Bart, Jerry… ».
+function badHtml(bad) {
+  const by = new Map();
+  for (const x of bad) { if (!by.has(x.err)) by.set(x.err, []); by.get(x.err).push(fullName(x.u)); }
+  return [...by].map(([err, names]) => `<div class="warn">${esc(err)} (${names.length}) : ${esc(names.join(', '))}</div>`).join('');
 }
 // steps : [{ s, desc, p }] → récapitulatif de toutes les modifications.
 function recapHtml(steps) {
@@ -308,7 +314,7 @@ function recapHtml(steps) {
   const rows = steps.flatMap(({ s, p }, i) => p.change.map((x) => ({ i, s, x })))
     .sort((a, b) => fullName(a.x.u).localeCompare(fullName(b.x.u), 'fr') || a.i - b.i);
   const heavy = steps.reduce((n, { s, p }) => n + (s.heavy ? p.change.length : 0), 0);
-  return `${steps.map(({ desc, p }) => `<div class="small"><strong>${esc(desc)}</strong> — ${counts(p)}</div>${p.bad.map((x) => `<div class="warn">${esc(fullName(x.u))} : ${esc(x.err)}</div>`).join('')}`).join('')}
+  return `${steps.map(({ desc, p }) => `<div class="small"><strong>${esc(desc)}</strong> — ${counts(p)}</div>${badHtml(p.bad)}`).join('')}
     ${rows.length ? `<table class="diff"><tr><th>Utilisateur</th><th>Réglage</th><th>Avant</th><th>Après</th></tr>${rows.slice(0, 500).map((r) => `<tr><td>${esc(fullName(r.x.u))}</td><td>${esc(r.s.label)}</td><td class="muted">${esc(r.s.text(r.x.cur, c))}</td><td><strong>${esc(r.s.text(r.x.next, c))}</strong></td></tr>`).join('')}</table>` : ''}
     ${heavyHtml(heavy)}`;
 }

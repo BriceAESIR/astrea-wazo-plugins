@@ -11,7 +11,7 @@
 //  vm                 true = a besoin de la messagerie de l'utilisateur (u._vm)
 // Routes et sémantique vérifiées dans le code de wazo-confd (13/10/2026),
 // voir docs/USER-MANAGER.md. Écritures non encore testées en réel.
-import { api, esc, fullName } from '../common/core.js?v=0.25.0';
+import { api, esc, fullName } from '../common/core.js?v=0.25.1';
 
 // Comparaison indépendante de l'ordre des clés (objets relus vs construits).
 const canon = (v) => (Array.isArray(v) ? v.map(canon) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, canon(v[k])])) : v ?? null);
@@ -133,8 +133,10 @@ const fallback = (k, label) => ({
 // Numéro présenté : champ outgoing_caller_id de l'utilisateur (« default »,
 // « anonymous » ou `"Nom" <numéro>`). La route /callerids/outgoing/default
 // est trop récente (26.10) pour être présente partout : non utilisée.
+// SDA() renvoie null si l'utilisateur n'a pas d'appel entrant : « impossible ».
 const SDA = (u) => (u.incalls || []).flatMap((i) => i.extensions || []).map((e) => String(e.exten || '').replace(/^_/, '')).find((x) => /^\+?\d+$/.test(x)) || null;
-const cidFmt = (number, name) => `"${String(name || '').replace(/"/g, '')}" <${number}>`;
+// Même règle que confd (format_caller_id) : sans nom, le numéro seul.
+const cidFmt = (number, name) => { const n = String(name || '').replace(/"/g, '').trim(); return n ? `"${n}" <${number}>` : String(number); };
 const CID_TYPE = { main: 'numéro principal', shared: 'numéro partagé' };
 const callerIdSetting = {
   id: 'outgoing_caller_id', label: 'Numéro présenté', grp: 'Identité d\'appel', ...userField('outgoing_caller_id'),
@@ -147,7 +149,8 @@ const callerIdSetting = {
   wire: () => showSub('m-v', 'data-cid'),
   parse: () => {
     const v = $v('m-v');
-    if (v === '@sda') return { target: (cur, u) => { const n = SDA(u); return n ? cidFmt(n, fullName(u)) : null; }, desc: 'Numéro présenté : sa SDA' };
+    // Comme confd pour un numéro « associated » : sans nom.
+    if (v === '@sda') return { target: (cur, u) => SDA(u), desc: 'Numéro présenté : sa SDA' };
     if (v === '@free') {
       const n = $v('m-fn').trim();
       if (!/^\+?\d{2,20}$/.test(n)) throw new Error('Numéro invalide (chiffres, + en tête).');
