@@ -12,7 +12,7 @@
 //  - confd régénère la config provd, mais ne synchronise pas l'appareil.
 // Supposé, à vérifier en réel : GET /lines renvoie device_id et position ;
 // un PUT /lines/{id} avec l'objet relu par GET est accepté.
-import { S, $, esc, toast, api, listAll, confirmModal, connect, fullName, canWrite, setReadonly, showCompat, loaded, loadFailed } from '../common/core.js?v=0.19.1';
+import { S, $, esc, toast, api, listAll, confirmModal, connect, fullName, canWrite, setReadonly, showCompat, loaded, loadFailed } from '../common/core.js?v=0.19.2';
 
 // Comptes SIP par modèle (_NB_SIP_ACCOUNTS / plugin-info des plugins provd).
 const DECT_MAX = {
@@ -51,9 +51,11 @@ async function reload() {
   D.lines = lines;
   D.users = users.sort((a, b) => fullName(a).localeCompare(fullName(b), 'fr'));
   D.byLineUsers = new Map();
+  D.userLine = new Map(); // id de ligne → ligne vue depuis l'utilisateur (porte is_webrtc)
   for (const u of users) for (const l of u.lines || []) {
     if (!D.byLineUsers.has(l.id)) D.byLineUsers.set(l.id, []);
     D.byLineUsers.get(l.id).push(u);
+    D.userLine.set(l.id, l);
   }
   render();
 }
@@ -77,7 +79,10 @@ const posOf = (l) => eff(l).pos;
 const linesOf = (devId) => D.lines.filter((l) => eff(l).dev === devId).sort((a, b) => (posOf(a) ?? 1e9) - (posOf(b) ?? 1e9));
 const lineUsers = (l) => D.byLineUsers.get(l.id) || l.users || [];
 const lineNumber = (l) => (l.extensions || [])[0]?.exten || '';
-const lineLabel = (l) => `${(l.protocol || (l.endpoint_sip ? 'sip' : '')).toUpperCase()} ${l.name || l.endpoint_sip?.name || l.endpoint_sip?.username || `#${l.id}`}`.trim();
+// Ligne WebRTC (champ is_webrtc de confd, sur la ligne ou dans user.lines) :
+// pas provisionnable sur une base DECT.
+const isWebrtc = (l) => l?.is_webrtc === true || D.userLine?.get(l?.id)?.is_webrtc === true;
+const lineLabel = (l) => isWebrtc(l) ? `WebRTC ${l.name || ''}`.trim() : `${(l.protocol || (l.endpoint_sip ? 'sip' : '')).toUpperCase()} ${l.name || l.endpoint_sip?.name || l.endpoint_sip?.username || `#${l.id}`}`.trim();
 const devById = (id) => D.devices.find((d) => d.id === id);
 const devLabel = (d) => (d ? `${[d.vendor, d.model].filter(Boolean).join(' ') || 'appareil'} ${d.description || d.mac || d.ip || ''}`.trim() : '');
 function usedPositions(devId, exceptLineId) {
@@ -323,6 +328,7 @@ function openAssign() {
       if (q && !`${fullName(u)} ${u.username || ''} ${(u.lines || []).map((l) => (l.extensions || []).map((e) => e.exten).join(' ')).join(' ')}`.toLowerCase().includes(q)) continue;
       for (const ul of u.lines || []) {
         const l = D.lines.find((x) => x.id === ul.id) || ul;
+        if (isWebrtc(l)) continue; // WebRTC : navigateur / appli, pas une base DECT
         items.push({ user: u, line: l });
       }
       if (items.length > 60) break;
