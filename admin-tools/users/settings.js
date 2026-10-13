@@ -18,7 +18,7 @@
 //                     rechargement à redéclencher à la fin ('user')
 // Routes et sémantique vérifiées dans le code de wazo-confd (13/10/2026),
 // voir docs/USER-MANAGER.md. Écritures non encore testées en réel.
-import { S, api, esc, fullName } from '../common/core.js?v=0.30.4';
+import { S, api, esc, fullName } from '../common/core.js?v=0.30.5';
 
 // Comparaison indépendante de l'ordre des clés (objets relus vs construits).
 const canon = (v) => (Array.isArray(v) ? v.map(canon) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, canon(v[k])])) : v ?? null);
@@ -429,9 +429,16 @@ const ALL_SETTINGS = [
   },
   {
     id: 'timezone', label: 'Fuseau horaire', grp: 'Divers', ...userField('timezone'),
-    form: () => `<label>Fuseau horaire (vide = aucun) <input id="m-v" list="m-tz" value="Europe/Paris"></label><datalist id="m-tz">${TZ.map((z) => `<option value="${z}">`).join('')}</datalist>`,
+    // Liste déroulante comme les autres réglages (pas de datalist native) ;
+    // valeur actuelle hors liste ajoutée ; « Autre… » = saisie libre.
+    form: (c, cur, u, users) => {
+      const extra = [...new Set([cur, ...(users || []).map((x) => x.timezone)].filter((z) => z && !TZ.includes(z)))];
+      return `<label>Fuseau horaire <select id="m-v">${options([['', 'Aucun (fuseau du serveur)'], ...TZ.map((z) => [z, z]), ...extra.map((z) => [z, z]), ['@other', 'Autre…']], 'Europe/Paris')}</select></label>
+        <div data-tz="@other"><label>Autre fuseau (ex. America/Toronto) <input id="m-tzo" spellcheck="false"></label></div>`;
+    },
+    wire: () => showSub('m-v', 'data-tz'),
     parse: () => {
-      const v = $v('m-v').trim() || null;
+      const v = ($v('m-v') === '@other' ? $v('m-tzo') : $v('m-v')).trim() || null;
       if (v && !/^[A-Za-z_]+(\/[A-Za-z0-9_+-]+)*$/.test(v)) throw new Error('Fuseau invalide (ex. Europe/Paris).');
       return { target: () => v, desc: `Fuseau : ${v || 'aucun'}` };
     },
