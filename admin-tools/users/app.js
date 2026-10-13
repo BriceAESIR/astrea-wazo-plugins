@@ -12,7 +12,7 @@
 //    queue_label, voicemail_name, ivr_name… ajoutés par confd.
 // Supposé, à vérifier en réel : le token du portail peut lire /moh,
 // /voicemails, /callpermissions, /schedules (sinon libellés techniques).
-import { S, $, esc, toast, api, listAll, connect, fullName, setReadonly, showCompat, loaded, loadFailed } from '../common/core.js?v=0.23.1';
+import { S, $, esc, toast, api, listAll, connect, fullName, setReadonly, showCompat, loaded, loadFailed } from '../common/core.js?v=0.23.2';
 
 const A = { users: [], byId: new Map(), moh: new Map(), groups: new Map(), vms: new Map(), sort: { col: 'name', dir: 1 }, sel: null, scope: null, cols: null };
 
@@ -40,7 +40,7 @@ function destText(d) {
     case 'extension': return `Numéro ${d.exten}`;
     case 'outcall': return `Sortant ${d.exten || ''}`;
     case 'sound': return `Son ${d.filename || ''}`;
-    case 'switchboard': return `Standard ${d.switchboard_name || ''}`;
+    case 'switchboard': return `POPC ${d.switchboard_name || ''}`; // nom du portail pour un standard
     case 'hangup': return `Raccrocher (${HANGUP[d.cause] || d.cause || ''})`;
     case 'application': return `Application ${d.application_name || d.application || ''}`;
     case 'custom': return `Commande ${d.command || ''}`;
@@ -79,15 +79,18 @@ const COLS = [
   { id: 'enabled', label: 'Actif', grp: 'Identité', get: (u) => (u.enabled === false ? { t: 'Non', k: '0', c: 'alert' } : { t: 'Oui', k: '1', c: 'none' }) },
   { id: 'dnd', label: 'Ne pas déranger', grp: 'Services', def: true, get: (u) => yes(u.services?.dnd?.enabled) },
   { id: 'incallfilter', label: 'Filtrage', grp: 'Services', get: (u) => yes(u.services?.incallfilter?.enabled) },
-  { id: 'fwd_unc', label: 'Renvoi immédiat', grp: 'Renvois', def: true, get: (u) => fwd(u, 'unconditional') },
-  { id: 'fwd_busy', label: 'Renvoi occupé', grp: 'Renvois', def: true, get: (u) => fwd(u, 'busy') },
-  { id: 'fwd_noans', label: 'Renvoi non-réponse', grp: 'Renvois', def: true, get: (u) => fwd(u, 'noanswer') },
-  { id: 'ring', label: 'Sonnerie (s)', grp: 'Sonnerie et débordement', def: true, get: (u) => ({ t: u.ring_seconds ?? '—', k: String(u.ring_seconds ?? '').padStart(6, '0') }) },
-  { id: 'simul', label: 'Appels simult.', grp: 'Sonnerie et débordement', def: true, get: (u) => ({ t: u.simultaneous_calls ?? '—', k: String(u.simultaneous_calls ?? '').padStart(3, '0') }) },
-  { id: 'fb_noans', label: 'Débord. non-réponse', grp: 'Sonnerie et débordement', def: true, get: (u) => fb(u, 'noanswer') },
-  { id: 'fb_busy', label: 'Débord. occupé', grp: 'Sonnerie et débordement', get: (u) => fb(u, 'busy') },
-  { id: 'fb_cong', label: 'Débord. encombré', grp: 'Sonnerie et débordement', get: (u) => fb(u, 'congestion') },
-  { id: 'fb_fail', label: 'Débord. injoignable', grp: 'Sonnerie et débordement', get: (u) => fb(u, 'fail') },
+  // Libellés du portail (fiche utilisateur › Renvois, relevés le 13/10/2026) :
+  // « Renvois d'appel » = forwards (gérés aussi par l'utilisateur), « Renvois
+  // par défaut » = fallbacks (admin seulement).
+  { id: 'fwd_busy', label: 'Renvoi occupé', grp: 'Renvois d\'appel (utilisateur)', def: true, get: (u) => fwd(u, 'busy') },
+  { id: 'fwd_unc', label: 'Renvoi inconditionnel', grp: 'Renvois d\'appel (utilisateur)', def: true, get: (u) => fwd(u, 'unconditional') },
+  { id: 'fwd_noans', label: 'Renvoi pas de réponse', grp: 'Renvois d\'appel (utilisateur)', def: true, get: (u) => fwd(u, 'noanswer') },
+  { id: 'fb_busy', label: 'Défaut si occupé', grp: 'Renvois par défaut (admin)', def: true, get: (u) => fb(u, 'busy') },
+  { id: 'fb_cong', label: 'Défaut congestion', grp: 'Renvois par défaut (admin)', def: true, get: (u) => fb(u, 'congestion') },
+  { id: 'fb_fail', label: 'Défaut échec', grp: 'Renvois par défaut (admin)', def: true, get: (u) => fb(u, 'fail') },
+  { id: 'fb_noans', label: 'Défaut non répondu', grp: 'Renvois par défaut (admin)', def: true, get: (u) => fb(u, 'noanswer') },
+  { id: 'ring', label: 'Sonnerie (s)', grp: 'Sonnerie', def: true, get: (u) => ({ t: u.ring_seconds ?? '—', k: String(u.ring_seconds ?? '').padStart(6, '0') }) },
+  { id: 'simul', label: 'Appels simult.', grp: 'Sonnerie', def: true, get: (u) => ({ t: u.simultaneous_calls ?? '—', k: String(u.simultaneous_calls ?? '').padStart(3, '0') }) },
   { id: 'callerid', label: 'Numéro présenté', grp: 'Identité d\'appel', def: true, get: (u) => txt(callerId(u.outgoing_caller_id)) },
   { id: 'mobile', label: 'Mobile', grp: 'Identité d\'appel', odd: false, get: (u) => txt(u.mobile_phone_number || '') },
   { id: 'vm', label: 'Messagerie', grp: 'Messagerie', def: true, odd: false, get: vm },
@@ -99,7 +102,8 @@ const COLS = [
   { id: 'perms', label: 'Droits d\'appel', grp: 'Groupes et droits', get: (u) => names(u.call_permissions, (c) => c.name) },
   { id: 'sched', label: 'Horaire', grp: 'Groupes et droits', get: (u) => names(u.schedules, (s) => s.name || `#${s.id}`) },
 ];
-const COLS_KEY = 'astrea-users-cols';
+// v2 (0.23.2) : nouvelles colonnes par défaut, l'ancien choix est ignoré.
+const COLS_KEY = 'astrea-users-cols-v2';
 function loadCols() {
   try { const c = JSON.parse(localStorage.getItem(COLS_KEY)); if (Array.isArray(c)) return new Set(c); } catch { /* stockage indisponible */ }
   return new Set(COLS.filter((c) => c.def).map((c) => c.id));
@@ -225,10 +229,10 @@ function renderDetail() {
   $('d-body').innerHTML = [
     sec('Identité', row('Numéro', exten(u)) + row('E-mail', u.email) + row('Actif', u.enabled === false ? 'non' : 'oui') + row('Mobile', u.mobile_phone_number) + row('Numéro présenté', callerId(u.outgoing_caller_id)) + row('Nom présenté', u.caller_id)),
     sec('Services', row('Ne pas déranger', u.services?.dnd?.enabled ? 'activé' : 'désactivé') + row('Filtrage', u.services?.incallfilter?.enabled ? 'activé' : 'désactivé')),
-    sec('Renvois', row('Immédiat', f('unconditional')) + row('Sur occupation', f('busy')) + row('Sur non-réponse', f('noanswer'))),
-    sec('Sonnerie et débordement', row('Sonnerie', u.ring_seconds != null ? `${u.ring_seconds} s` : '') + row('Appels simultanés', u.simultaneous_calls)
-      + row('Non-réponse', destText(u.fallbacks?.noanswer_destination)) + row('Occupé', destText(u.fallbacks?.busy_destination))
-      + row('Encombré', destText(u.fallbacks?.congestion_destination)) + row('Injoignable', destText(u.fallbacks?.fail_destination))),
+    sec('Renvois d\'appel (utilisateur)', row('Occupé', f('busy')) + row('Inconditionnel', f('unconditional')) + row('Pas de réponse', f('noanswer'))),
+    sec('Renvois par défaut (admin)', row('Si occupé', destText(u.fallbacks?.busy_destination)) + row('Congestion', destText(u.fallbacks?.congestion_destination))
+      + row('Échec', destText(u.fallbacks?.fail_destination)) + row('Non répondu', destText(u.fallbacks?.noanswer_destination))),
+    sec('Sonnerie', row('Durée', u.ring_seconds != null ? `${u.ring_seconds} s` : '') + row('Appels simultanés', u.simultaneous_calls)),
     sec('Messagerie', u.voicemail ? row('Boîte', v ? `${v.number}@${v.context}` : u.voicemail.name) + row('Nom', v?.name || u.voicemail.name) + row('E-mail', v?.email)
       + row('Joindre l\'audio', v ? (v.attach_audio ? 'oui' : 'non') : '') + row('Supprimer après envoi', v ? (v.delete_messages ? 'oui' : 'non') : '') + row('Demander le code', v ? (v.ask_password ? 'oui' : 'non') : '') : row('Boîte', '')),
     sec('Divers', row('Musique d\'attente', mohLabel(u.music_on_hold)) + row('Langue', LANG[u.language] || u.language) + row('Fuseau', u.timezone)),
