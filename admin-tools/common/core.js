@@ -34,6 +34,16 @@ export async function api(method, path, body) {
   const txt = await r.text();
   return txt ? JSON.parse(txt) : null;
 }
+// Lecture sur un autre service Wazo (ex. calldGet('/lines')) : même token et tenant.
+export async function calldGet(path) {
+  const headers = { 'X-Auth-Token': S.token, Accept: 'application/json' };
+  if (S.tenant) headers['Wazo-Tenant'] = S.tenant;
+  const r = await fetch(`${S.base}/api/calld/1.0${path}`, { headers });
+  if (r.status === 401) { refreshFromPortal(); throw new ApiError(401, 'Session expirée : rechargez la page du portail.'); }
+  if (!r.ok) throw new ApiError(r.status, `calld GET ${path} → ${r.status}`);
+  return r.json();
+}
+
 // ---------------------------------------------------------------------------
 // API provd (options libres des appareils, validé en réel avec BLF Manager)
 // ---------------------------------------------------------------------------

@@ -12,8 +12,8 @@
 //  - confd régénère la config provd, mais ne synchronise pas l'appareil.
 // Supposé, à vérifier en réel : GET /lines renvoie device_id et position ;
 // un PUT /lines/{id} avec l'objet relu par GET est accepté.
-import { S, $, esc, toast, api, listAll, confirmModal, connect, fullName, canWrite, setReadonly, showCompat, loaded, loadFailed, provd, provdDevice, updateProvdOptions, downloadJson } from '../common/core.js?v=0.20.4';
-import { CATALOG, randomPassword, checkField } from './catalog.js?v=0.20.4';
+import { S, $, esc, toast, api, listAll, confirmModal, connect, fullName, canWrite, setReadonly, showCompat, loaded, loadFailed, provd, provdDevice, updateProvdOptions, downloadJson, calldGet } from '../common/core.js?v=0.21.0';
+import { CATALOG, randomPassword, checkField } from './catalog.js?v=0.21.0';
 
 // Comptes SIP par modèle (_NB_SIP_ACCOUNTS / plugin-info des plugins provd).
 const DECT_MAX = {
@@ -45,8 +45,52 @@ async function boot() {
     $('conn').textContent = `${new URL(S.base).host}`;
   } catch (e) { loadFailed(e); }
 }
+// État d'enregistrement SIP des lignes (wazo-calld GET /lines, ACL calld.lines.read ;
+// vérifié dans le code : registered = contact PJSIP joignable, true/false/null).
+// Un appareil est « connecté » si une de ses lignes est enregistrée : c'est ce
+// qui permet la synchronisation (NOTIFY check-sync envoyé au contact SIP).
+async function loadReg() {
+  try {
+    const items = await calldGet('/lines');
+    D.reg = new Map((Array.isArray(items) ? items : items?.items || []).map((x) => [x.id, x]));
+    D.regOk = true;
+  } catch (e) { D.regOk = false; D.regErr = e.message; console.warn('[astrea] état des lignes', e.message); }
+}
+// 'on' | 'off' | 'call' | 'unknown' + nombre de lignes enregistrées.
+function devState(d) {
+  const ls = D.lines.filter((l) => l.device_id === d?.id);
+  if (!D.regOk || !ls.length) return { st: 'unknown', on: 0, n: ls.length };
+  const r = ls.map((l) => D.reg.get(l.id));
+  const on = r.filter((x) => x?.registered === true).length;
+  const calls = r.reduce((s, x) => s + (x?.current_call_count || 0), 0);
+  const st = on ? (calls ? 'call' : 'on') : r.every((x) => x?.registered === false) ? 'off' : 'unknown';
+  return { st, on, n: ls.length, calls };
+}
+// Pastille d'une ligne (tableau des comptes DECT).
+function lineDot(l) {
+  const r = D.regOk ? D.reg.get(l.id) : null;
+  const st = !r || r.registered == null ? 'unknown' : r.registered ? (r.current_call_count ? 'call' : 'on') : 'off';
+  return `<span class="st ${st}" title="${ST_TEXT[st]}"></span>`;
+}
+const ST_TEXT = { on: 'connecté', call: 'connecté, en appel', off: 'non connecté', unknown: 'état inconnu' };
+function stDot(d) {
+  const s = devState(d);
+  const tip = s.st === 'unknown' && !D.regOk ? `état d'enregistrement indisponible (${D.regErr || 'droits calld ?'})` : `${ST_TEXT[s.st]} · ${s.on}/${s.n} ligne(s) enregistrée(s)`;
+  return `<span class="st ${s.st}" title="${esc(tip)}"></span>`;
+}
+function stText(d) {
+  const s = devState(d);
+  if (!D.regOk) return 'état d\'enregistrement indisponible';
+  if (!s.n) return 'aucune ligne';
+  return `${ST_TEXT[s.st]} (${s.on}/${s.n} ligne(s) enregistrée(s))`;
+}
+// Avertissement à afficher avant une synchronisation.
+function syncWarn(ids) {
+  const off = [...new Set(ids.filter(Boolean))].map(devById).filter((d) => d && devState(d).st === 'off');
+  return off.length ? `<div class="warn">Non connecté(s) à la stack : ${off.map((d) => esc(d.mac || d.description || d.id)).join(', ')}. La synchronisation ne les atteindra pas ; ils prendront la configuration à leur prochain démarrage ou provisionnement.</div>` : '';
+}
 async function reload() {
-  const [devices, lines, users] = await Promise.all([listAll('/devices'), listAll('/lines'), listAll('/users')]);
+  const [devices, lines, users] = await Promise.all([listAll('/devices'), listAll('/lines'), listAll('/users'), loadReg()]);
   selfCheck(devices, lines);
   D.devices = devices;
   D.lines = lines;
@@ -144,7 +188,7 @@ function renderList() {
     li.className = D.sel === d.id ? 'sel' : '';
     li.dataset.dev = d.id; // cible de dépôt (déplacer un compte vers cette base)
     if (d.description) li.title = d.description;
-    li.innerHTML = `<span>${esc(baseName(d))}${al.length ? `<span class="dot${al.some((a) => a.level === 'bad') ? ' bad' : ''}" title="${esc(al.map((a) => a.text).join('\n'))}"></span>` : ''}</span><span class="sub">${esc(d.model)} · <span class="occ${n >= max ? ' full' : ''}">${n}/${max}</span></span>`;
+    li.innerHTML = `<span>${stDot(d)}${esc(baseName(d))}${al.length ? `<span class="dot${al.some((a) => a.level === 'bad') ? ' bad' : ''}" title="${esc(al.map((a) => a.text).join('\n'))}"></span>` : ''}</span><span class="sub">${esc(d.model)} · <span class="occ${n >= max ? ' full' : ''}">${n}/${max}</span></span>`;
     li.onclick = () => { D.sel = d.id; render(); };
     ul.appendChild(li);
   }
@@ -172,7 +216,7 @@ function renderBase() {
   const max = maxOf(d);
   const ls = linesOf(d.id);
   $('b-name').textContent = `${[d.vendor, d.model].filter(Boolean).join(' ')} · ${baseName(d)}`;
-  $('b-tech').textContent = [d.mac && `MAC ${d.mac}`, d.ip && `IP publique de la base ${d.ip}`, d.version && `firmware ${d.version}`, d.plugin && `plugin ${d.plugin}`, d.status && `état ${d.status}`].filter(Boolean).join(' · ');
+  $('b-tech').textContent = [stText(d), d.mac && `MAC ${d.mac}`, d.ip && `IP publique de la base ${d.ip}`, d.version && `firmware ${d.version}`, d.plugin && `plugin ${d.plugin}`, d.status && `état ${d.status}`].filter(Boolean).join(' · ');
   $('b-warn').innerHTML = alertsOf(d).map((a) => `<div class="warn">${a.level === 'bad' ? `<span class="error">${esc(a.text)}</span>` : esc(a.text)}</div>`).join('');
   $('b-title').textContent = `Comptes · ${ls.length}/${max}`;
   // Une ligne par compte (1..max) : les comptes libres sont des cibles de
@@ -184,7 +228,7 @@ function renderBase() {
     const us = lineUsers(l);
     const moved = D.plan.has(l.id);
     const was = moved ? `<div class="muted small">avant : ${l.device_id === d.id ? '' : `${esc(baseName(devById(l.device_id)) || 'aucune base')}, `}compte ${l.position ?? '?'}</div>` : '';
-    return `<tr draggable="true" data-line="${l.id}" data-pos="${posOf(l) ?? ''}" class="${dup ? 'dup' : ''}${moved ? ' changed' : ''}"><td>${posOf(l) ?? '—'}</td><td>${esc(us.map(fullName).join(', ')) || '<span class="muted">sans utilisateur</span>'}${was}</td><td>${esc(lineNumber(l))}</td><td class="muted small">${esc(lineLabel(l))}</td>
+    return `<tr draggable="true" data-line="${l.id}" data-pos="${posOf(l) ?? ''}" class="${dup ? 'dup' : ''}${moved ? ' changed' : ''}"><td>${lineDot(l)}${posOf(l) ?? '—'}</td><td>${esc(us.map(fullName).join(', ')) || '<span class="muted">sans utilisateur</span>'}${was}</td><td>${esc(lineNumber(l))}</td><td class="muted small">${esc(lineLabel(l))}</td>
       <td><button data-act="remove" data-line="${l.id}" class="danger">Retirer</button></td></tr>`;
   };
   const rows = [];
@@ -358,7 +402,7 @@ function openRemove(lineId) {
   if (!canWrite() || hasPending()) return;
   const line = D.lines.find((l) => l.id === lineId);
   const d = devById(line.device_id);
-  confirmModal(`<h3>Retirer de la base</h3><p>${esc(lineUsers(line).map(fullName).join(', ') || 'Ligne sans utilisateur')} ${esc(lineNumber(line))} (compte ${line.position ?? '?'}) ne sera plus provisionnée sur ${esc(baseName(d))}. La ligne et l'utilisateur restent dans Wazo. Sur la base, le compte est désactivé et ses identifiants effacés.</p>${linesOf(d.id).length === 1 ? lastLineWarn(d) : ''}${syncBox()}`, async () => {
+  confirmModal(`<h3>Retirer de la base</h3><p>${esc(lineUsers(line).map(fullName).join(', ') || 'Ligne sans utilisateur')} ${esc(lineNumber(line))} (compte ${line.position ?? '?'}) ne sera plus provisionnée sur ${esc(baseName(d))}. La ligne et l'utilisateur restent dans Wazo. Sur la base, le compte est désactivé et ses identifiants effacés.</p>${linesOf(d.id).length === 1 ? lastLineWarn(d) : ''}${syncWarn([d.id])}${syncBox()}`, async () => {
     const sync = $('m-sync').checked;
     await run('Ligne retirée de la base', async () => {
       await api('DELETE', `/lines/${lineId}/devices/${d.id}`);
@@ -398,7 +442,7 @@ function savePlan() {
   const place = (dev, pos) => (dev ? `${esc(baseName(devById(dev)) || '?')} · compte ${pos ?? '?'}` : 'aucune base');
   confirmModal(`<h3>Enregistrer ${changes.length} déplacement(s)</h3>
     <table class="diff"><tr><th>Ligne</th><th>Avant</th><th>Après</th></tr>${changes.map((c) => `<tr><td>${esc(who(c.line))}</td><td>${place(c.line.device_id, c.line.position)}</td><td><strong>${place(c.to.dev, c.to.pos)}</strong></td></tr>`).join('')}</table>
-    ${devs.filter((id) => !linesOf(id).length).map((id) => lastLineWarn(devById(id))).join('')}<p class="muted small">Chaque base concernée reçoit sa nouvelle configuration ; le combiné qui utilisait un compte doit être réaffecté sur la page web de la base si le compte change.</p>${syncBox()}`, async () => {
+    ${devs.filter((id) => !linesOf(id).length).map((id) => lastLineWarn(devById(id))).join('')}<p class="muted small">Chaque base concernée reçoit sa nouvelle configuration ; le combiné qui utilisait un compte doit être réaffecté sur la page web de la base si le compte change.</p>${syncWarn(devs)}${syncBox()}`, async () => {
     const sync = $('m-sync').checked;
     D.plan.clear(); // l'état réel est relu après l'écriture, réussie ou non
     await run(`${changes.length} déplacement(s) enregistré(s)`, async () => {
@@ -475,7 +519,7 @@ function renderDevList() {
     const li = document.createElement('li');
     li.className = C.sel === d.id ? 'sel' : '';
     if (d.description && devName(d) !== d.description) li.title = d.description;
-    li.innerHTML = `<span>${esc(devName(d))}${users.length ? `<br><span class="muted small">${esc(users.slice(0, 2).join(', '))}${users.length > 2 ? '…' : ''}</span>` : ''}</span><span class="sub">${esc(d.model || '?')}${kindOf(d) === 'dect' ? ' · DECT' : ''}</span>`;
+    li.innerHTML = `<span>${stDot(d)}${esc(devName(d))}${users.length ? `<br><span class="muted small">${esc(users.slice(0, 2).join(', '))}${users.length > 2 ? '…' : ''}</span>` : ''}</span><span class="sub">${esc(d.model || '?')}${kindOf(d) === 'dect' ? ' · DECT' : ''}</span>`;
     li.onclick = () => guardCfg(() => selectDevice(d.id));
     ul.appendChild(li);
   }
@@ -515,7 +559,7 @@ function renderCfg() {
   $('empty').hidden = !!d;
   if (!d) { $('empty').textContent = 'Choisissez un appareil.'; return; }
   $('c-name').textContent = `${[d.vendor, d.model].filter(Boolean).join(' ')} · ${devName(d)}`;
-  $('c-tech').textContent = [d.mac && `MAC ${d.mac}`, d.ip && `IP publique ${kindOf(d) === 'dect' ? 'de la base' : 'de l\'appareil'} ${d.ip}`, d.version && `firmware ${d.version}`, d.plugin && `plugin ${d.plugin}`, devUsers(d).length && `utilisateur(s) : ${devUsers(d).join(', ')}`].filter(Boolean).join(' · ');
+  $('c-tech').textContent = [stText(d), d.mac && `MAC ${d.mac}`, d.ip && `IP publique ${kindOf(d) === 'dect' ? 'de la base' : 'de l\'appareil'} ${d.ip}`, d.version && `firmware ${d.version}`, d.plugin && `plugin ${d.plugin}`, devUsers(d).length && `utilisateur(s) : ${devUsers(d).join(', ')}`].filter(Boolean).join(' · ');
   const warn = [];
   if (kindOf(d) === 'dect' && /v86\b/.test(d.plugin || '')) warn.push('Plugin v86 : il ne gère pas les bases DECT, les options ne seront pas appliquées.');
   $('c-warn').innerHTML = warn.map((w) => `<div class="warn">${esc(w)}</div>`).join('');
@@ -592,7 +636,7 @@ function saveCfg() {
   const reboot = CATALOG.some((o) => o.reboot && stable(next[o.id]) !== stable(C.orig[o.id]));
   confirmModal(`<h3>Enregistrer ${esc(devName(d))}</h3>
     ${keys.length ? `<table class="diff"><tr><th>Paramètre Yealink</th><th>Avant</th><th>Après</th></tr>${keys.map((k) => `<tr><td><code>${esc(k)}</code></td><td class="muted">${esc(before[k] ?? '—')}</td><td><strong>${esc(after[k] ?? '(n\'est plus écrit)')}</strong></td></tr>`).join('')}</table>` : '<p class="muted">Aucun paramètre modifié.</p>'}
-    ${reboot ? '<div class="warn">VLAN ou mot de passe modifié : l\'appareil redémarrera en appliquant sa configuration.</div>' : ''}
+    ${reboot ? '<div class="warn">VLAN ou mot de passe modifié : l\'appareil redémarrera en appliquant sa configuration.</div>' : ''}${syncWarn([d.id])}
     <label class="inline"><input type="checkbox" id="m-sync"${reboot ? '' : ' checked'}> Synchroniser l'appareil maintenant (sinon : au prochain redémarrage ou provisionnement planifié)</label>`, async () => {
     const sync = $('m-sync').checked;
     try {
@@ -679,7 +723,11 @@ function setView(v) {
 $('search').oninput = renderList;
 $('found').onclick = (e) => { const h = e.target.closest('.hit'); if (h) { D.sel = h.dataset.dev; render(); } };
 $('b-assign').onclick = openAssign;
-$('b-sync').onclick = () => { if (canWrite()) syncDevices([D.sel]).then(() => toast('Synchronisation demandée')); };
+$('b-sync').onclick = () => {
+  if (!canWrite()) return;
+  const off = devState(devById(D.sel)).st === 'off';
+  syncDevices([D.sel]).then(() => toast(off ? 'Synchronisation demandée, mais la base n\'est pas connectée à la stack : elle ne la recevra pas.' : 'Synchronisation demandée', off ? 7000 : 2600));
+};
 $('b-rows').onclick = (e) => {
   const b = e.target.closest('button[data-act]');
   if (!b) return;
@@ -713,4 +761,10 @@ $('c-bulk').onclick = openBulk;$('b-save').onclick = savePlan;
 $('b-revert').onclick = () => { D.plan.clear(); render(); };
 window.addEventListener('beforeunload', (e) => { if (pendingChanges().length || cfgDirty()) { e.preventDefault(); e.returnValue = ''; } });
 wireDragDrop();
+// État d'enregistrement rafraîchi toutes les minutes (pastilles seulement).
+setInterval(async () => {
+  if (document.hidden || !S.token) return;
+  await loadReg();
+  if (VIEW === 'config') renderDevList(); else renderList();
+}, 60000);
 connect(boot);

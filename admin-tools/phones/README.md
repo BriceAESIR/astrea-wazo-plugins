@@ -9,6 +9,12 @@ Sous-menu **Astrea Admin Tools > Phone Manager** (ex-DECT Manager), deux vues :
 - **Configuration des appareils** (Yealink, postes et bases DECT) : options du
   catalogue `catalog.js` cochées par appareil ou appliquées en masse.
 
+## État de connexion (0.21)
+- Pastille par appareil (listes) et par compte (tableau DECT), état dans l'en-tête : vert connecté, bleu en appel, rouge non connecté, vide inconnu. Source : `GET /api/calld/1.0/lines` (ACL `calld.lines.read`, un seul appel, tenant courant) : `registered` = contact PJSIP joignable (vérifié dans le code wazo-calld). Appareil connecté si une de ses lignes est enregistrée. Rafraîchi chaque minute.
+- Avertissement avant une synchronisation vers un appareil non connecté (le NOTIFY check-sync ne l'atteindra pas).
+- Pas d'IP ni d'user agent : seul wazo-amid les donne, réservé au tenant master.
+- À vérifier en réel : droit `calld.lines.read` du token du portail (sinon « état indisponible »).
+
 ## Configuration des appareils
 - Options (fiche d'aide dans l'appli : description, valeurs, défaut Yealink) :
   VLAN WAN + priorité, mot de passe admin propre à l'appareil, provisionnement
