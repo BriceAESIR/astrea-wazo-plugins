@@ -1,6 +1,6 @@
 {
   "manifestVersion": "0.1",
-  "version": "0.15.0",
+  "version": "0.15.1",
   "id": "astrea-blf",
   "packageName": "io.github.briceaesir.astrea.blf",
   "productType": "portal",
@@ -24,7 +24,7 @@
       "entityId": "astrea-blf-user",
       "context": ["pbx.users"],
       "name": "Touches",
-      "contentUrl": "./index.html?view=user&v=0.15.0"
+      "contentUrl": "./index.html?view=user&v=0.15.1"
     },
     {
       "entityId": "astrea-blf-overview",
@@ -32,7 +32,7 @@
       "parent": "common.layout.pbxMenu.userManagement",
       "name": "ASTREA - BLF Manager",
       "icon": "Dialpad",
-      "contentUrl": "./index.html?view=overview&v=0.15.0"
+      "contentUrl": "./index.html?view=overview&v=0.15.1"
     }
   ]
 }

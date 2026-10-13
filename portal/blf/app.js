@@ -146,6 +146,7 @@ async function provd(method, path, body) {
   if (S.tenant) headers['Wazo-Tenant'] = S.tenant;
   if (body !== undefined) headers['Content-Type'] = PROVD_TYPE;
   const r = await fetch(`${S.base}/api/provd/0.2${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+  if (r.status === 401) { refreshFromPortal(); throw new ApiError(401, 'Session expirée : rechargez la page du portail.'); }
   if (!r.ok) {
     let msg = `provd ${method} ${path} → ${r.status}`;
     try { msg += ' ' + (await r.text()).slice(0, 300); } catch { /* */ }
@@ -176,7 +177,9 @@ const provdLinesCache = new Map(); // device id → { "1": n1, "2": n2… }
 // %NULL% (valeur spéciale Yealink), 20 caractères max.
 const provdLabelsCache = new Map(); // device id → { "1": "Ligne {n}" }
 const cleanLineLabel = (s) => String(s || '').replace(/[\r\n\t]+/g, ' ').replace(/%NULL%/gi, '').trim().slice(0, 20);
-const renderLineLabel = (tpl, i, num) => (tpl ? tpl.replace(/\{n\}/g, String(i)).replace(/\{num\}/g, num || '') : num) || '';
+// Étiquettes telles qu'elles seront écrites (champ vide = pas d'étiquette).
+const cleanLabels = (m) => Object.fromEntries(Object.entries(m || {}).map(([k, v]) => [k, cleanLineLabel(v)]).filter(([, v]) => v));
+const renderLineLabel = (raw, i, num, tpl = cleanLineLabel(raw)) => (tpl ?tpl.replace(/\{n\}/g, String(i)).replace(/\{num\}/g, num || '') : num) || '';
 async function deviceLineMap(devId) {
   if (provdLinesCache.has(devId)) return provdLinesCache.get(devId);
   const d = (await provd('GET', `/dev_mgr/devices/${devId}`))?.device;
@@ -319,7 +322,9 @@ async function connect() {
   const inIframe = window.parent !== window;
   if (inIframe) {
     try {
-      await sdk.initialize();
+      // Portail muet (iframe hors Wazo, SDK incompatible) : on ne tourne pas
+      // indéfiniment, on passe en connexion directe au bout de 15 s.
+      await Promise.race([sdk.initialize(), new Promise((_, ko) => setTimeout(() => ko(new Error('pas de réponse du portail')), 15000))]);
       document.body.classList.add('in-portal');
       try { applyTheme(sdk.getContext()?.app?.theme); } catch (e) { console.warn('thème', e); }
       sdk.onSwitchTenant = (uuid) => { S.tenant = uuid; boot(); };
@@ -339,6 +344,7 @@ async function connect() {
       sdk.onRouteChanged = (loc) => { const ref = userRefFrom(loc); if (ref && S.users.length) openUserByRef(ref); };
       if (applyStack(stackFromContext())) return boot();
       $('conn').textContent = 'Aucun serveur sélectionné dans le portail.';
+      document.body.classList.add('idle');
       return;
     } catch (e) { console.warn('SDK', e); }
   }
@@ -347,6 +353,7 @@ async function connect() {
 
 function showStandalone() {
   $('conn').textContent = 'Hors portail';
+  document.documentElement.classList.remove('framed'); // en-tête normal
   $('standalone').hidden = false;
   $('sa-go').onclick = async () => {
     $('sa-err').textContent = '';
@@ -373,6 +380,7 @@ function showStandalone() {
 
 async function boot() {
   $('conn').textContent = 'Chargement…';
+  document.body.classList.remove('idle');
   // Autre tenant (ou autre serveur) : tout ce qui est en mémoire appartient à
   // l'ancien (poste ouvert, modèles, cases cochées du déploiement).
   const scope = `${S.base}|${S.tenant}`;
@@ -387,6 +395,7 @@ async function boot() {
     if ($('deploy').hidden) $('empty').hidden = false;
   }
   S.scope = scope;
+  forgetDevice(null); // (re)chargement : options provd et positions relues
   try {
     let devicesOk = true;
     const [users, devices] = await Promise.all([listAll('/users'), listAll('/devices').catch(() => { devicesOk = false; return []; })]);
@@ -414,7 +423,8 @@ async function boot() {
     }
     layout();
   } catch (e) {
-    $('conn').textContent = 'Erreur';
+    $('conn').textContent = `Erreur de chargement : ${e.message}`;
+    document.body.classList.add('idle');
     toast(e.message, 8000);
     console.error(e);
   }
@@ -475,6 +485,13 @@ function userDevice(u) {
 // (sauf si une touche de fonction l'occupe : elle masque alors la ligne) ; seules
 // les touches de l'utilisateur de la plus petite position vont sur le poste.
 const lineCache = new Map(); // id de ligne → ligne confd (position, device_id…)
+// Oublie ce qui est en cache pour un poste (relu au prochain accès) : options
+// provd et positions de ses lignes. Sans argument : tous les postes.
+function forgetDevice(dev) {
+  if (!dev) { lineCache.clear(); provdLinesCache.clear(); provdLabelsCache.clear(); return; }
+  provdLinesCache.delete(dev.id); provdLabelsCache.delete(dev.id);
+  for (const x of S.users) for (const l of x.lines || []) if (l.device_id === dev.id) lineCache.delete(l.id);
+}
 const sharesDevice = (dev) => !!dev && S.users.flatMap((x) => (x.lines || []).filter((l) => l.device_id === dev.id)).length > 1;
 async function deviceLines(dev) {
   if (!dev) return [];
@@ -576,7 +593,7 @@ function isDirty() {
   if (!c) return false;
   return c.lineKeys !== c.origLineKeys || JSON.stringify(targetKeys()) !== JSON.stringify(normMap(c.orig))
     || JSON.stringify(c.otherCounts || {}) !== JSON.stringify(c.origOtherCounts || {})
-    || JSON.stringify(c.lineLabels || {}) !== JSON.stringify(c.origLineLabels || {})
+    || JSON.stringify(cleanLabels(c.lineLabels)) !== JSON.stringify(cleanLabels(c.origLineLabels))
     || (!!c.tpl && (c.tpl.name.trim() !== c.tpl.origName || !c.tpl.id));
 }
 function normMap(m) { const o = {}; for (const p of Object.keys(m).map(Number).sort((a, b) => a - b)) o[p] = cleanKey(m[p]); return o; }
@@ -597,7 +614,10 @@ function lineAt(p) {
   const sh = c.shared?.isOwner ? c.shared : null;
   if (!sh) return p <= c.lineKeys ? acc1 : null;
   const counts = c.otherCounts || {};
-  const auto = c.lineKeys > 1 || sh.others.some((l) => (counts[l.pos] || 1) > 1);
+  // Même condition que le bloc v4 du base.tpl : placement explicite à la
+  // suite dès qu'un compte a plus d'une touche OU qu'une étiquette existe.
+  const auto = c.lineKeys > 1 || sh.others.some((l) => (counts[l.pos] || 1) > 1)
+    || Object.keys(cleanLabels(c.lineLabels)).length > 0;
   if (!auto) {
     if (p === 1) return acc1;
     const o = sh.others.find((l) => l.pos === p);
@@ -705,7 +725,7 @@ function renderEditor() {
   // Poste partagé : seul le compte 1 (propriétaire) règle ses touches ligne.
   const multi = (!!c.prof?.multiLine || isTpl) && (!c.shared || c.shared.isOwner);
   $('lk-plus').disabled = !multi;
-  $('lk-minus').disabled = c.lineKeys <= 1;
+  $('lk-minus').disabled = c.lineKeys <= 1 || (!!c.shared && !c.shared.isOwner);
   $('lk-plus').title = c.shared && !c.shared.isOwner ? 'Poste partagé : seul le compte 1 règle les touches ligne de ce téléphone' : multi ? '' : 'Touches ligne multiples non gérées pour cette marque';
   // Poste à plusieurs comptes SIP (vu du compte 1) : un réglage par compte.
   const own = c.shared?.isOwner && multi;
@@ -1194,6 +1214,7 @@ function changeLineKeys(delta) {
   const max = c.lk ?? 12;
   const n = c.lineKeys + delta;
   if (n < 1 || n > max || (delta > 0 && !c.prof?.multiLine)) return;
+  if (c.shared && !c.shared.isOwner) return; // réglé par le compte 1 du poste
   // Les touches suivent : +1 ligne = toutes les touches reculent d'une case.
   while (c.slots.length < c.lineKeys) c.slots.push(null);
   if (delta > 0) c.slots.splice(c.lineKeys, 0, null);
@@ -1228,8 +1249,9 @@ async function applyLineKeys(u, dev, n, labels) {
   if (!dev) throw new Error(`${fullName(u)} : aucun poste, touches ligne non applicables`);
   if (!vendorOf(dev)?.multiLine) throw new Error(`${fullName(u)} : touches ligne multiples non gérées pour ${dev.vendor || 'cette marque'}`);
   const map = typeof n === 'number' ? { 1: n } : n;
-  const wantsMore = Object.values(map).some((x) => x > 1);
-  if (wantsMore && sharesDevice(dev) && (await deviceLines(dev))[0]?.user.uuid !== u.uuid) throw new Error(`${fullName(u)} : poste partagé, seul le compte 1 règle les touches ligne de ce téléphone`);
+  // Poste partagé : quel que soit le nombre demandé (1 compris), seul le
+  // compte 1 écrit l'option du téléphone.
+  if (sharesDevice(dev) && (await deviceLines(dev))[0]?.user.uuid !== u.uuid) throw new Error(`${fullName(u)} : poste partagé, seul le compte 1 règle les touches ligne de ce téléphone`);
   await setDeviceLineKeys(dev.id, map, labels);
   await clearLegacyLineKeys(u);
 }
@@ -1245,19 +1267,22 @@ function save() {
   const positions = [...new Set([...Object.keys(target), ...Object.keys(orig)].map(Number))].sort((a, b) => a - b);
   for (const p of positions) if (keySig(target[p]) !== keySig(orig[p])) rows.push(`<tr><td>${p}</td><td>${describe(orig[p])}</td><td>${describe(target[p])}</td></tr>`);
   const othersChanged = (c.shared?.others || []).filter((o) => (c.otherCounts?.[o.pos] || 1) !== (c.origOtherCounts?.[o.pos] || 1));
-  const labelsChanged = JSON.stringify(c.lineLabels || {}) !== JSON.stringify(c.origLineLabels || {});
+  const newLabels = cleanLabels(c.lineLabels), oldLabels = cleanLabels(c.origLineLabels);
+  const labelsChanged = JSON.stringify(newLabels) !== JSON.stringify(oldLabels);
   const lkChanged = c.lineKeys !== c.origLineKeys || othersChanged.length > 0 || labelsChanged;
   const html = `<h3>Enregistrer ${esc(fullName(c.user))}</h3>
-    ${lkChanged ? `<p>Touches ligne${c.shared ? ' (compte 1)' : ''} : ${c.origLineKeys} → <strong>${c.lineKeys}</strong>${othersChanged.map((o) => ` ; compte ${o.pos} (${esc(fullName(o.user))}) : ${c.origOtherCounts[o.pos] || 1} → <strong>${c.otherCounts[o.pos]}</strong>`).join('')}${labelsChanged ? ` ; étiquettes : ${Object.entries({ ...c.origLineLabels, ...c.lineLabels }).map(([k]) => `compte ${k} « ${esc(c.lineLabels[k] || 'numéro')} »`).join(', ')}` : ''}. Option du poste dans provd, appliquée par les lignes Astrea du base.tpl ; le poste est resynchronisé.</p>` : ''}
+    ${lkChanged ? `<p>Touches ligne${c.shared ? ' (compte 1)' : ''} : ${c.origLineKeys} → <strong>${c.lineKeys}</strong>${othersChanged.map((o) => ` ; compte ${o.pos} (${esc(fullName(o.user))}) : ${c.origOtherCounts[o.pos] || 1} → <strong>${c.otherCounts[o.pos]}</strong>`).join('')}${labelsChanged ? ` ; étiquettes : ${Object.keys({ ...oldLabels, ...newLabels }).filter((k) => oldLabels[k] !== newLabels[k]).map((k) => `compte ${k} « ${esc(newLabels[k] || 'numéro')} »`).join(', ')}` : ''}. Option du poste dans provd, appliquée par les lignes Astrea du base.tpl ; le poste est resynchronisé.</p>` : ''}
     ${rows.length ? `<table class="diff"><tr><th>Pos.</th><th>Avant</th><th>Après</th></tr>${rows.join('')}</table>` : '<p class="muted">Aucune touche de fonction modifiée.</p>'}`;
   confirmModal(html, async () => {
     try {
-      if (rows.length) await api('PUT', `/users/${c.user.uuid}/funckeys`, { keys: target });
+      // Touches ligne d'abord (l'étape qui peut être refusée : poste partagé,
+      // droits provd) : en cas d'échec, les touches ne sont pas décalées.
       if (lkChanged) {
         // Étiquettes : on envoie toutes les clés connues (vide = retour au numéro).
-        const labels = Object.fromEntries(Object.keys({ ...c.origLineLabels, ...c.lineLabels }).map((k) => [k, c.lineLabels[k] || '']));
+        const labels = Object.fromEntries(Object.keys({ ...oldLabels, ...newLabels }).map((k) => [k, newLabels[k] || '']));
         await applyLineKeys(c.user, c.dev, { 1: c.lineKeys, ...(c.otherCounts || {}) }, labels);
       }
+      if (rows.length) await api('PUT', `/users/${c.user.uuid}/funckeys`, { keys: target });
       // Touches ligne : resynchro toujours (sinon rien ne change sur le poste).
       if (c.dev && (lkChanged || ($('resync').checked && rows.length))) {
         try { await api('GET', `/devices/${c.dev.id}/synchronize`); } catch (e) { toast(`Enregistré, mais resynchro impossible : ${e.message}`, 6000); }
@@ -1589,8 +1614,7 @@ async function previewDeploy() {
       const changed = keysChanged || linesChanged;
       const cap = capOf(u);
       const over = cap ? Object.keys(keys).map(Number).filter((p) => p > cap) : [];
-      const tdevb = userDevice(u);
-      D.plan.push({ u, keys, lines, keysChanged, linesChanged, changed, before: { userfield: u.userfield || '', keys: cur, linekeys: lineKeysOf(u), linemap: tdevb && provdLinesCache.has(tdevb.id) ? provdLinesCache.get(tdevb.id) : undefined } });
+      D.plan.push({ u, keys, lines, keysChanged, linesChanged, changed, before: { userfield: u.userfield || '', keys: cur, linekeys: lineKeysOf(u), ...deviceBackup(userDevice(u)) } });
       // Poste partagé : compte secondaire (touches non affichées) ou positions
       // réservées aux autres comptes.
       const tdev = userDevice(u);
@@ -1630,9 +1654,9 @@ async function applyDeploy() {
   for (const [i, x] of todo.entries()) {
     toast(`Déploiement ${i + 1}/${todo.length}…`, 60000);
     try {
-      if (x.keysChanged) await api('PUT', `/users/${x.u.uuid}/funckeys`, { keys: x.keys });
       const dev = userDevice(x.u);
-      if (x.linesChanged) await applyLineKeys(x.u, dev, x.lines);
+      if (x.linesChanged) await applyLineKeys(x.u, dev, x.lines); // d'abord : voir save()
+      if (x.keysChanged) await api('PUT', `/users/${x.u.uuid}/funckeys`, { keys: x.keys });
       ok++;
       if (dev && (x.linesChanged || $('dp-resync').checked)) { try { await api('GET', `/devices/${dev.id}/synchronize`); } catch { /* resynchro facultative */ } }
     } catch (e) { ko++; console.error(fullName(x.u), e); }
@@ -1646,7 +1670,7 @@ async function applyDeploy() {
 // Format : { app, version, created, base, tenant, reason, entries: [{ uuid,
 // name, userfield, keys }] } — keys = touches propres (hors héritées).
 const BK_STORE = 'astrea-blf-last-backup';
-const APP_VERSION = '0.15.0';
+const APP_VERSION = '0.15.1';
 function makeBackup(reason, entries) {
   const bk = { app: 'astrea-blf', version: APP_VERSION, created: new Date().toISOString(), base: S.base, tenant: S.tenant, reason, entries };
   const json = JSON.stringify(bk, null, 1);
@@ -1660,6 +1684,11 @@ function makeBackup(reason, entries) {
   } catch (e) { console.warn('téléchargement de la sauvegarde', e); }
   refreshBackupInfo();
 }
+// Options provd du poste connues (touches ligne par compte, étiquettes).
+function deviceBackup(dev) {
+  if (!dev || !provdLinesCache.has(dev.id)) return {};
+  return { linemap: provdLinesCache.get(dev.id), linelabels: provdLabelsCache.get(dev.id) || {} };
+}
 // Lit les touches propres + userfield des utilisateurs avant modification.
 async function snapshot(users) {
   const entries = [];
@@ -1669,7 +1698,7 @@ async function snapshot(users) {
     for (const [p, k] of Object.entries(data?.keys || {})) if (!k.inherited) keys[p] = cleanKey(k);
     const linekeys = await loadLineKeys(u);
     const dev = userDevice(u);
-    entries.push({ uuid: u.uuid, name: fullName(u), userfield: u.userfield || '', keys, linekeys, linemap: dev && provdLinesCache.has(dev.id) ? provdLinesCache.get(dev.id) : undefined });
+    entries.push({ uuid: u.uuid, name: fullName(u), userfield: u.userfield || '', keys, linekeys, ...deviceBackup(dev) });
   }
   return entries;
 }
@@ -1698,9 +1727,17 @@ function restoreBackup(bk) {
         if ((u.userfield || '') !== (e.userfield || '')) { await api('PUT', `/users/${e.uuid}`, { userfield: e.userfield || null }); u.userfield = e.userfield; }
         // Touches ligne (option provd), si la sauvegarde les contient.
         const dev = userDevice(u);
+        // Étiquettes : seulement si la sauvegarde les contient (versions ≥ 0.15.1).
         const wanted = e.linemap || (e.linekeys ? { 1: e.linekeys } : null);
-        if (wanted && dev && vendorOf(dev)?.multiLine && JSON.stringify(lineMapValue(await deviceLineMap(dev.id))) !== JSON.stringify(lineMapValue(parseLineMap(wanted)))) {
-          await setDeviceLineKeys(dev.id, wanted);
+        if (wanted && dev && vendorOf(dev)?.multiLine) {
+          forgetDevice(dev);
+          const curMap = await deviceLineMap(dev.id);
+          const curLb = provdLabelsCache.get(dev.id) || {};
+          const lbPatch = e.linelabels ? Object.fromEntries(Object.keys({ ...curLb, ...e.linelabels }).map((k) => [k, e.linelabels[k] || ''])) : undefined;
+          const sameLines = JSON.stringify(lineMapValue(curMap)) === JSON.stringify(lineMapValue(parseLineMap(wanted)));
+          const sameLabels = !lbPatch || JSON.stringify(curLb) === JSON.stringify(cleanLabels(e.linelabels));
+          if (sameLines && sameLabels) { ok++; continue; }
+          await setDeviceLineKeys(dev.id, wanted, lbPatch);
           try { await api('GET', `/devices/${dev.id}/synchronize`); } catch { /* resynchro facultative */ }
         }
         ok++;
@@ -1787,9 +1824,11 @@ $('lk-others').onclick = (e) => { const b = e.target.closest('button[data-acc]')
 // Étiquettes des touches ligne : mise à jour de l'aperçu à la frappe.
 const setLineLabel = (acc, v) => {
   const c = S.cur; if (!c) return;
-  const s = cleanLineLabel(v);
+  // Valeur brute (espaces de fin compris, sinon on ne peut pas taper
+  // « Ligne {n} ») ; nettoyée à la comparaison et à l'écriture.
+  const s = String(v || '').slice(0, 20);
   c.lineLabels = { ...(c.lineLabels || {}) };
-  if (s) c.lineLabels[acc] = s; else delete c.lineLabels[acc];
+  if (s.trim()) c.lineLabels[acc] = s; else delete c.lineLabels[acc];
   refreshTileOnly();
 };
 $('lk-label').oninput = () => setLineLabel('1', $('lk-label').value);
@@ -1806,7 +1845,7 @@ $('pages').addEventListener('click', (e) => {
   if (b.dataset.act === 'remove') removeBlock(b.dataset.kind, Number(b.dataset.n));
   if (b.dataset.act === 'modpage') { S.cur.modPage[Number(b.dataset.m)] = Number(b.dataset.p); renderEditor(); }
 });
-$('revert').onclick = () => { if (S.cur?.tpl) openTemplate(S.cur.tpl.id); else if (S.cur) selectUser(S.cur.user); };
+$('revert').onclick = () => { if (S.cur?.tpl) openTemplate(S.cur.tpl.id); else if (S.cur) { forgetDevice(S.cur.dev); selectUser(S.cur.user); } };
 $('save').onclick = save;
 window.addEventListener('beforeunload', (e) => { if (isDirty()) { e.preventDefault(); e.returnValue = ''; } });
 wireDetail();
