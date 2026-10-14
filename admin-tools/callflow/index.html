@@ -7,8 +7,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Mulish:wght@300..800&display=swap">
-<link rel="stylesheet" href="../common/style.css?v=0.32.4">
-<link rel="stylesheet" href="./callflow.css?v=0.32.4">
+<link rel="stylesheet" href="../common/style.css?v=0.33.0">
+<link rel="stylesheet" href="./callflow.css?v=0.33.0">
 <script>if (window.parent !== window) document.documentElement.classList.add('framed');</script>
 </head>
 <body>
@@ -58,9 +58,22 @@
           <button id="cf-fit" title="Tout afficher">Ajuster</button>
           <button id="cf-reset" title="Revenir à la disposition automatique (les cartes déplacées reprennent leur place)">Réorganiser</button>
           <button id="cf-reload" title="Relire la configuration du serveur">Recharger</button>
+          <button id="cf-edit" class="primary" title="Modifier les destinations en glissant des cartes sur les sorties (brouillon, rien n'est écrit avant « Appliquer »)">Modifier</button>
         </div>
       </div>
       <div id="cf-help-box"></div>
+      <!-- Mode Modifier : palette de cartes à glisser sur une sortie, et brouillon -->
+      <div id="cf-edit-bar" class="cf-editbar" hidden>
+        <div class="titlerow"><span class="cf-pal-title">Glissez une carte sur une sortie</span><span id="pal-help"></span></div>
+        <div id="cf-palette" class="cf-palette"></div>
+        <span class="spacer"></span>
+        <div class="cf-draft">
+          <span id="cf-draft-n" class="muted small">Aucune modification</span>
+          <button id="cf-draft-cancel" disabled title="Abandonner toutes les modifications du brouillon">Annuler</button>
+          <button id="cf-draft-apply" class="primary" disabled title="Aperçu avant / après, sauvegarde, puis écriture">Appliquer…</button>
+        </div>
+      </div>
+      <div id="pal-help-box"></div>
       <div id="cf-view" class="cf-view" tabindex="0" aria-label="Graphe du parcours des appels"></div>
       <div id="cf-time" class="cf-time">
         <div class="cf-time-top">
@@ -97,6 +110,6 @@
     <div class="btnrow right"><button id="modal-cancel">Annuler</button><button id="modal-ok" class="primary">Confirmer</button></div></div></div>
   <div id="toast" class="toast" hidden></div>
 </div>
-<script type="module" src="./app.js?v=0.32.4"></script>
+<script type="module" src="./app.js?v=0.33.0"></script>
 </body>
 </html>

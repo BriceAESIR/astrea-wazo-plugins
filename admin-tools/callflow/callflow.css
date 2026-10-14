@@ -152,6 +152,29 @@ body.in-portal.ready #workbench { height: 100vh; }
 @media (max-width: 800px) { .cf-lane { grid-template-columns: 90px minmax(0, 1fr); } }
 #t-help-box .helpbox { margin: 8px 0 0; }
 
+/* Mode Modifier : palette, brouillon, sorties modifiables */
+.cf-editbar { display: flex; align-items: center; gap: 8px 12px; flex-wrap: wrap; margin: 0 0 8px; padding: 8px 12px; border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line)); border-radius: var(--radius); background: color-mix(in srgb, var(--accent) 5%, var(--panel)); }
+.cf-pal-title { font-size: .75rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .08333em; white-space: nowrap; }
+.cf-editbar .titlerow { gap: 6px; }
+.cf-palette { display: flex; flex-wrap: wrap; gap: 6px; }
+.cf-chip { --c: var(--cf-leaf); display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px 0 4px; border: 1px solid var(--line); border-left: 3px solid var(--c); border-radius: var(--radius); background: var(--panel); font-size: .8125rem; cursor: grab; user-select: none; touch-action: none; }
+.cf-chip:hover { box-shadow: var(--shadow-1); }
+.cf-chip .cf-badge { min-width: 26px; height: 20px; }
+.cf-chip.t-extension, .cf-chip.t-sound, .cf-chip.t-hangup { --c: var(--cf-leaf); }
+.cf-ghost { position: fixed; z-index: 30; pointer-events: none; box-shadow: var(--shadow-6); opacity: .92; }
+.cf-draft { display: flex; align-items: center; gap: 8px; }
+.cf-view.editing .cf-ports li.editable { cursor: copy; }
+.cf-view.editing .cf-ports li.editable .cf-pl::before { content: "✎ "; color: var(--accent); font-weight: 400; }
+.cf-ports li.changed { background: color-mix(in srgb, var(--warn) 12%, var(--panel)); }
+.cf-ports li.changed::after { content: ""; position: absolute; left: 3px; top: 50%; width: 6px; height: 6px; margin-top: -3px; border-radius: 50%; background: var(--warn); }
+.cf-ports li.dropover { outline: 2px dashed var(--accent); outline-offset: -2px; background: color-mix(in srgb, var(--accent) 12%, var(--panel)); }
+.cf-x { min-width: 18px; width: 18px; height: 18px; margin-left: auto; padding: 0; border: 0; border-radius: 50%; font-size: .875rem; line-height: 1; color: var(--muted); text-transform: none; }
+.cf-x:hover:not(:disabled) { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
+.cf-node.dragcard { pointer-events: none; opacity: .85; box-shadow: var(--shadow-6); }
+.cf-dd-list { height: auto !important; padding: 0 !important; border: 1px solid var(--line) !important; border-radius: var(--radius) !important; font-size: .875rem !important; }
+.cf-dd-list option { padding: 4px 8px; }
+.cf-diffwrap { max-height: 50vh; overflow: auto; }
+
 /* Fiche */
 #detail { padding-top: 8px; }
 .detailhead { display: flex; align-items: center; gap: 8px; }

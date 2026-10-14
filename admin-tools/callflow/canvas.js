@@ -2,8 +2,8 @@
 // une carte mentale), cartes HTML, liens SVG, déplacement du canevas, zoom,
 // déplacement des cartes (avec leur sous-arbre), repli des branches.
 // Positions manuelles gardées dans le navigateur (localStorage, try/catch).
-import { esc } from '../common/core.js?v=0.32.4';
-import { TYPES } from './model.js?v=0.32.4';
+import { esc } from '../common/core.js?v=0.33.0';
+import { TYPES } from './model.js?v=0.33.0';
 
 const W = 236, GAP_X = 104, GAP_Y = 18;
 const POS_KEY = 'astrea-callflow-pos-v1';
@@ -19,12 +19,12 @@ function savePos(k, pos) {
   } catch { /* stockage indisponible */ }
 }
 
-export function createCanvas(viewport, { onSelect, onOpen, onFold }) {
+export function createCanvas(viewport, { onSelect, onOpen, onFold, onClear, onCardDrop }) {
   viewport.innerHTML = '<div class="cf-stage"><svg class="cf-links" width="1" height="1" aria-hidden="true"><defs><marker id="cf-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z"></path></marker></defs><g></g></svg><div class="cf-cards"></div></div>';
   const stage = viewport.querySelector('.cf-stage');
   const g = viewport.querySelector('.cf-links g');
   const cards = viewport.querySelector('.cf-cards');
-  const V = { tx: 40, ty: 40, s: 1, tree: null, dir: 'out', pos: {}, manual: {}, storeKey: '', sel: null };
+  const V = { tx: 40, ty: 40, s: 1, tree: null, dir: 'out', pos: {}, manual: {}, storeKey: '', sel: null, edit: false, changed: new Set() };
 
   const apply = () => { stage.style.transform = `translate(${V.tx}px, ${V.ty}px) scale(${V.s})`; viewport.style.setProperty('--cf-scale', V.s); };
   const el = (k) => cards.querySelector(`.cf-node[data-key="${CSS.escape(k)}"]`);
@@ -36,13 +36,19 @@ export function createCanvas(viewport, { onSelect, onOpen, onFold }) {
     const t = TYPES[n.info.type] || { label: n.info.type, badge: '?' };
     const hasKids = n.kids.length > 0;
     const fold = n.folded ? '<button class="cf-fold" data-fold title="Déplier">+</button>' : hasKids && n.depth > 0 ? '<button class="cf-fold" data-fold title="Replier">−</button>' : '';
-    const ports = (n.ports || []).map((p) => `<li data-port="${esc(p.id)}" class="${p.to ? '' : 'empty'}${p.assoc ? ' assoc' : ''}${p.inactive ? ' inactive' : ''}" title="${esc(p.help || '')}"><span class="cf-pl">${esc(p.label)}</span>${p.note ? `<span class="cf-pn">${esc(p.note)}</span>` : ''}${p.to ? '' : '<span class="cf-pn">non réglé</span>'}${p.self ? '<span class="cf-pn cf-self">↺ revient ici</span>' : '<i class="cf-dot"></i>'}</li>`).join('');
+    // Mode Modifier : sorties modifiables marquées (cible de dépôt), × pour vider, point orange si modifiée.
+    const ports = (n.ports || []).map((p) => {
+      const ed = V.edit && p.w;
+      const cls = [p.to ? '' : 'empty', p.assoc ? 'assoc' : '', p.inactive ? 'inactive' : '', ed ? 'editable' : '', ed && V.changed.has(p.w.key) ? 'changed' : ''].filter(Boolean).join(' ');
+      return `<li data-port="${esc(p.id)}"${ed ? ` data-w="${esc(p.w.key)}"` : ''} class="${cls}" title="${esc(ed ? `${p.help || ''} — déposez une carte ici pour changer la destination.` : p.help || '')}"><span class="cf-pl">${esc(p.label)}</span>${p.note ? `<span class="cf-pn">${esc(p.note)}</span>` : ''}${p.to ? '' : '<span class="cf-pn">non réglé</span>'}${ed && p.to ? '<button class="cf-x" data-clear title="Vider cette sortie (brouillon)">×</button>' : ''}${p.self ? '<span class="cf-pn cf-self">↺ revient ici</span>' : '<i class="cf-dot"></i>'}</li>`;
+    }).join('');
     return `<div class="cf-node t-${esc(n.info.type)}${n.depth === 0 ? ' root' : ''}${n.key === V.sel ? ' sel' : ''}${n.dim ? ' dim' : ''}" data-key="${esc(n.key)}" style="width:${W}px">
       <div class="cf-head" title="${esc(t.help || '')}"><span class="cf-badge">${esc(t.badge)}</span><div class="cf-txt"><div class="cf-type">${esc(t.label)}${n.key.startsWith('schedule:') ? `<span class="cf-state${n.timeOpen ? ' open' : ''}">${esc(n.timeLabel || '')}</span>` : ''}</div><div class="cf-title">${esc(n.info.title)}</div>${n.info.sub ? `<div class="cf-sub">${esc(n.info.sub)}</div>` : ''}</div>${fold}</div>
       ${ports ? `<ul class="cf-ports">${ports}</ul>` : ''}<i class="cf-in"></i></div>`;
   }
-  function render(tree, dir, storeKey, { keepView = false } = {}) {
-    V.tree = tree; V.dir = dir; V.storeKey = storeKey;
+  function render(tree, dir, storeKey, { keepView = false, edit = false, changed = new Set() } = {}) {
+    V.tree = tree; V.dir = dir; V.storeKey = storeKey; V.edit = edit; V.changed = changed;
+    viewport.classList.toggle('editing', edit);
     V.manual = loadPos(storeKey);
     cards.innerHTML = [...tree.nodes.values()].map(cardHtml).join('');
     layout();
@@ -169,19 +175,48 @@ export function createCanvas(viewport, { onSelect, onOpen, onFold }) {
     for (const [k, p] of drag.keys) {
       V.pos[k] = [p[0] + dx / V.s, p[1] + dy / V.s];
       const c = el(k); c.style.left = `${V.pos[k][0]}px`; c.style.top = `${V.pos[k][1]}px`;
+      if (V.edit) c.classList.add('dragcard'); // laisse passer le pointeur vers la sortie visée
     }
+    if (V.edit) hover(e.clientX, e.clientY);
     draw();
   });
-  const end = () => {
+  const end = (e) => {
     if (!drag) return;
     const d = drag; drag = null;
     viewport.classList.remove('panning', 'moving');
+    // Mode Modifier : carte lâchée sur une sortie modifiable → elle revient à
+    // sa place et devient la nouvelle destination (dialogue côté app). La
+    // sortie est cherchée AVANT de rendre la carte déplacée au pointeur.
+    const target = d.card && d.moved && V.edit && e ? portAt(e.clientX, e.clientY) : null;
+    for (const c of cards.querySelectorAll('.dragcard')) c.classList.remove('dragcard');
+    hover(null);
+    if (target && target.nodeKey !== d.card) {
+      for (const [k, p] of d.keys) { V.pos[k] = p; const c = el(k); c.style.left = `${p[0]}px`; c.style.top = `${p[1]}px`; }
+      draw();
+      onCardDrop?.(d.card, target);
+      return;
+    }
     if (d.card && d.moved) { for (const [k] of d.keys) V.manual[k] = V.pos[k]; savePos(V.storeKey, V.manual); }
     else if (!d.moved) select(d.card, true);
   };
+  // Sortie modifiable sous le pointeur (coordonnées écran).
+  function portAt(x, y) {
+    const li = document.elementFromPoint(x, y)?.closest?.('li[data-w]');
+    const card = li?.closest('.cf-node');
+    return li && card && viewport.contains(li) ? { nodeKey: card.dataset.key, portId: li.dataset.port } : null;
+  }
+  function hover(x, y) {
+    const t = x == null ? null : portAt(x, y);
+    for (const li of cards.querySelectorAll('li.dropover')) li.classList.remove('dropover');
+    if (t) el(t.nodeKey)?.querySelector(`li[data-port="${CSS.escape(t.portId)}"]`)?.classList.add('dropover');
+    return t;
+  }
   window.addEventListener('pointerup', end);
   window.addEventListener('pointercancel', end);
-  viewport.addEventListener('click', (e) => { const b = e.target.closest('[data-fold]'); if (b) onFold?.(b.closest('.cf-node').dataset.key); });
+  viewport.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-fold]'); if (b) return onFold?.(b.closest('.cf-node').dataset.key);
+    const x = e.target.closest('[data-clear]'); if (x) onClear?.(x.closest('.cf-node').dataset.key, x.closest('li').dataset.port);
+  });
   viewport.addEventListener('dblclick', (e) => { const c = e.target.closest('.cf-node'); if (c && !e.target.closest('button')) onOpen?.(c.dataset.key); });
 
   function select(k, notify) {
@@ -194,5 +229,5 @@ export function createCanvas(viewport, { onSelect, onOpen, onFold }) {
   // Recentrer sur une carte (sans changer le zoom).
   function focus(k) { const p = V.pos[k], e = el(k); if (!p || !e) return; V.tx = viewport.clientWidth / 2 - (p[0] + e.offsetWidth / 2) * V.s; V.ty = viewport.clientHeight / 3 - p[1] * V.s; apply(); }
   apply();
-  return { render, refreshTime, fit, zoom, resetLayout, select, focus, get hasManual() { return Object.keys(V.manual).length > 0; } };
+  return { render, refreshTime, fit, zoom, resetLayout, select, focus, portAt, hover, get hasManual() { return Object.keys(V.manual).length > 0; } };
 }

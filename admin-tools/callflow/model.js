@@ -21,7 +21,7 @@
 // Supposé, à vérifier en réel : les listes (GET /groups, /queues,
 // /switchboards, /schedules) contiennent déjà fallbacks, membres et
 // destinations ; sinon on lit le détail de chaque objet (ensureDetails).
-import { S, api, listAll, fullName } from '../common/core.js?v=0.32.4';
+import { S, api, listAll, fullName } from '../common/core.js?v=0.33.0';
 
 export const M = { lists: {}, by: {}, ext: new Map(), extAny: new Map(), rev: null, warns: [] };
 
@@ -183,6 +183,8 @@ const firstExten = (o) => o?.extensions?.[0]?.exten || '';
 const userExten = (u) => { for (const l of u.lines || []) for (const e of l.extensions || []) if (e.exten) return e.exten; return ''; };
 const ctxLabel = (name) => { const c = M.by.context?.get(name); return c ? (c.label || c.name) : (name || ''); };
 const sec = (n) => (n || n === 0 ? `${n} s` : '');
+// Délai avant le débordement (distinct de « sonne N s », durée portée par la destination).
+const after = (n) => (n ? `après ${n} s` : '');
 
 // Titre / sous-titre d'une entité (liste de gauche, cartes).
 export function describe(type, o) {
@@ -244,6 +246,15 @@ export function destTarget(d) {
 }
 // Durée de sonnerie portée par la destination (user, group, queue, switchboard).
 const ringNote = (d) => (d?.ring_time ? `sonne ${d.ring_time} s` : '');
+// Libellé lisible d'une destination (aperçu avant / après du brouillon).
+export function destLabel(d) {
+  const t = destTarget(d);
+  if (!t) return 'aucune';
+  let txt;
+  if (t.leaf) txt = t.leaf.type === 'hangup' ? `${t.leaf.title} (${t.leaf.sub})` : `${TYPES[t.leaf.type]?.label || ''} ${t.leaf.title}${t.leaf.sub && t.leaf.type !== 'missing' ? ` (${t.leaf.sub})` : ''}`;
+  else { const e = entity(t.key); const k = e.owner || t.key; const i = nodeInfo(k); txt = `${TYPES[i.type]?.label || ''} ${i.title}`; }
+  return [txt.trim(), ringNote(d)].filter(Boolean).join(' · ');
+}
 
 // ---------------------------------------------------------------------------
 // Sorties d'une carte : [{slot, label, help, dest (confd, pour le lot 2), to:{key, leaf?, note}}]
@@ -256,6 +267,9 @@ function out(slot, d, extraLabel = '') {
 }
 const link = (slot, k, note = '') => ({ slot, label: SLOTS[slot]?.label || slot, note, help: SLOTS[slot]?.help || '', to: { key: k } });
 const fb = (o, k) => o?.fallbacks?.[`${k}_destination`];
+// Sortie modifiable (lot 2a) : w = adresse d'écriture, voir write.js.
+const W = (e, k, id, f) => ({ ...e, w: { k, id, f, key: `${k}:${id}:${f}` } });
+const fbOut = (k, id, o, slot, extra) => W(out(slot, fb(o, slot), extra), k, id, slot);
 
 // when (simulation horaire) : sorties d'une carte horaire seulement —
 // 'open' (ouvert), 'closed' (fermé, hors exception), 'exc:i' (exception i).
@@ -266,7 +280,7 @@ export function edgesOf(k) {
     case 'incall': {
       // SDA avec horaire : la carte horaire se place entre la SDA et sa destination.
       const g = gateOf(k);
-      return [g ? { ...link('destination', g), dest: o.destination } : out('destination', o.destination)];
+      return [g ? { ...link('destination', g), dest: o.destination } : W(out('destination', o.destination), 'incall', o.id, 'destination')];
     }
     case 'user': {
       const f = o.forwards || {};
@@ -274,7 +288,7 @@ export function edgesOf(k) {
       if (f.unconditional?.enabled) e.push({ ...link('fwd_unconditional', ''), to: numberTarget(f.unconditional.destination), note: f.unconditional.destination });
       if (f.busy?.enabled) e.push({ ...link('fwd_busy', ''), to: numberTarget(f.busy.destination), note: f.busy.destination });
       if (f.noanswer?.enabled) e.push({ ...link('fwd_noanswer', ''), to: numberTarget(f.noanswer.destination), note: f.noanswer.destination });
-      e.push(out('noanswer', fb(o, 'noanswer'), sec(o.ring_seconds)), out('busy', fb(o, 'busy')), out('congestion', fb(o, 'congestion')), out('fail', fb(o, 'fail')));
+      e.push(fbOut('user_fb', o.uuid, o, 'noanswer', after(o.ring_seconds)), fbOut('user_fb', o.uuid, o, 'busy'), fbOut('user_fb', o.uuid, o, 'congestion'), fbOut('user_fb', o.uuid, o, 'fail'));
       const vmTargeted = e.some((x) => x.to?.key === `voicemail:${o.voicemail?.id}`);
       if (o.voicemail?.id && !vmTargeted && M.by.voicemail?.has(String(o.voicemail.id))) e.push({ ...link('vm_assoc', `voicemail:${o.voicemail.id}`), assoc: true });
       return e;
@@ -282,27 +296,28 @@ export function edgesOf(k) {
     case 'group':
       return [
         { slot: 'members', label: SLOTS.members.label, help: SLOTS.members.help, note: [STRATEGY[o.ring_strategy] || o.ring_strategy, o.user_timeout ? `${o.user_timeout} s chacun` : ''].filter(Boolean).join(' · '), to: membersLeaf('group', o) },
-        out('noanswer', fb(o, 'noanswer'), sec(o.timeout)), out('congestion', fb(o, 'congestion'))];
+        fbOut('group_fb', o.uuid, o, 'noanswer', after(o.timeout)), fbOut('group_fb', o.uuid, o, 'congestion')];
     case 'queue': {
       return [
         { slot: 'members', label: SLOTS.members.label, help: SLOTS.members.help, note: '', to: membersLeaf('queue', o) },
-        out('wait_time', o.wait_time_destination, o.wait_time_threshold != null ? `> ${o.wait_time_threshold} s` : ''),
-        out('wait_ratio', o.wait_ratio_destination, o.wait_ratio_threshold != null ? `> ${o.wait_ratio_threshold}` : ''),
-        out('noanswer', fb(o, 'noanswer'), sec(o.timeout)), out('busy', fb(o, 'busy')), out('congestion', fb(o, 'congestion')), out('fail', fb(o, 'fail'))];
+        W(out('wait_time', o.wait_time_destination, o.wait_time_threshold != null ? `> ${o.wait_time_threshold} s` : ''), 'queue', o.id, 'wait_time_destination'),
+        W(out('wait_ratio', o.wait_ratio_destination, o.wait_ratio_threshold != null ? `> ${o.wait_ratio_threshold}` : ''), 'queue', o.id, 'wait_ratio_destination'),
+        fbOut('queue_fb', o.id, o, 'noanswer', after(o.timeout)), fbOut('queue_fb', o.id, o, 'busy'), fbOut('queue_fb', o.id, o, 'congestion'), fbOut('queue_fb', o.id, o, 'fail')];
     }
     case 'ivr':
-      return [...(o.choices || []).map((c) => ({ ...out('choice', c.destination), label: `Touche ${c.exten}`, choice: c.exten })),
-        out('ivr_timeout', o.timeout_destination, sec(o.timeout)), out('ivr_invalid', o.invalid_destination), out('ivr_abort', o.abort_destination, o.max_tries ? `${o.max_tries} essais` : '')];
+      return [...(o.choices || []).map((c) => W({ ...out('choice', c.destination), label: `Touche ${c.exten}`, choice: c.exten }, 'ivr_choice', o.id, c.exten)),
+        W(out('ivr_timeout', o.timeout_destination, after(o.timeout)), 'ivr', o.id, 'timeout_destination'), W(out('ivr_invalid', o.invalid_destination), 'ivr', o.id, 'invalid_destination'),
+        W(out('ivr_abort', o.abort_destination, o.max_tries ? `${o.max_tries} essais` : ''), 'ivr', o.id, 'abort_destination')];
     case 'schedule': {
       // Carte condition (devant un objet) : Ouvert → l'objet (pour une SDA :
       // sa destination). Carte seule (choisie dans la liste) : pas de sortie Ouvert.
       const e = [];
-      if (owner) e.push(owner.startsWith('incall:') ? { ...out('open', M.by.incall?.get(owner.slice(7))?.destination, periodsText(o)), when: 'open' } : { ...link('open', owner, periodsText(o)), when: 'open' });
+      if (owner) e.push(owner.startsWith('incall:') ? { ...W(out('open', M.by.incall?.get(owner.slice(7))?.destination, periodsText(o)), 'incall', owner.slice(7), 'destination'), when: 'open' } : { ...link('open', owner, periodsText(o)), when: 'open' });
       e.push({ ...out('closed', o.closed_destination), when: 'closed' });
       (o.exceptional_periods || []).forEach((p, i) => e.push({ ...out('exception', p.destination, periodText(p)), label: `Fermeture exceptionnelle ${i + 1}`, when: `exc:${i}` }));
       return e;
     }
-    case 'switchboard': return [out('noanswer', fb(o, 'noanswer'), sec(o.timeout))];
+    case 'switchboard': return [fbOut('sb_fb', o.uuid, o, 'noanswer', after(o.timeout))];
     case 'trunk': return o.context && M.by.context?.has(o.context) ? [link('context', `context:${o.context}`)] : [];
     case 'context': {
       const e = [];

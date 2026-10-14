@@ -1,6 +1,6 @@
 {
   "manifestVersion": "0.1",
-  "version": "0.32.4",
+  "version": "0.33.0",
   "id": "astrea-admin-tools",
   "packageName": "io.github.briceaesir.astrea.admintools",
   "productType": "portal",
@@ -10,7 +10,7 @@
   },
   "description": {
     "short": "Outils d'administration Astrea pour Wazo (BLF, postes, utilisateurs, routage)",
-    "full": "Boite a outils d'administration pour les stacks Wazo, regroupee dans le menu Astrea Admin Tools du portail. Module Phone Manager : bases DECT (comptes, utilisateurs, alertes, affectation et deplacement des lignes) et configuration des appareils Yealink (VLAN, mot de passe admin, provisionnement planifie, audio, volumes). Module User Manager : audit des reglages des utilisateurs (renvois, services, renvois par defaut, messagerie, musique d'attente, groupes, droits) avec reperage des ecarts, et modification en masse avec apercu, sauvegarde et restauration. Module Call Flow Manager : vue graphique du parcours des appels (SDA, trunks, horaires, SVI, groupes, files, utilisateurs, debordements, renvois et durees de sonnerie), dans les deux sens. Module BLF Manager : touches de fonction (supervision BLF, numerotation rapide, groupes, files, conferences) poste par poste ou en masse, etiquettes de touches, et pour les postes Yealink capacite selon le modele, modules d'extension et touches ligne multiples."
+    "full": "Boite a outils d'administration pour les stacks Wazo, regroupee dans le menu Astrea Admin Tools du portail. Module Phone Manager : bases DECT (comptes, utilisateurs, alertes, affectation et deplacement des lignes) et configuration des appareils Yealink (VLAN, mot de passe admin, provisionnement planifie, audio, volumes). Module User Manager : audit des reglages des utilisateurs (renvois, services, renvois par defaut, messagerie, musique d'attente, groupes, droits) avec reperage des ecarts, et modification en masse avec apercu, sauvegarde et restauration. Module Call Flow Manager : vue graphique du parcours des appels (SDA, trunks, horaires, SVI, groupes, files, utilisateurs, debordements, renvois et durees de sonnerie), dans les deux sens, simulation des horaires selon la date et l'heure, membres de groupe inscrits en direct, et modification des destinations par glisser-deposer avec apercu et sauvegarde. Module BLF Manager : touches de fonction (supervision BLF, numerotation rapide, groupes, files, conferences) poste par poste ou en masse, etiquettes de touches, et pour les postes Yealink capacite selon le modele, modules d'extension et touches ligne multiples."
   },
   "icons": {
     "color": "./icon.svg",
@@ -24,7 +24,7 @@
       "entityId": "astrea-blf-user",
       "context": ["pbx.users"],
       "name": "Touches",
-      "contentUrl": "./blf/index.html?view=user&v=0.32.4"
+      "contentUrl": "./blf/index.html?view=user&v=0.33.0"
     },
     {
       "entityId": "astrea-blf-overview",
@@ -33,7 +33,7 @@
       "parentIcon": "./menu.svg",
       "name": "BLF Manager",
       "icon": "Dialpad",
-      "contentUrl": "./blf/index.html?view=overview&v=0.32.4"
+      "contentUrl": "./blf/index.html?view=overview&v=0.33.0"
     },
     {
       "entityId": "astrea-phones",
@@ -42,7 +42,7 @@
       "parentIcon": "./menu.svg",
       "name": "Phone Manager",
       "icon": "SettingsPhone",
-      "contentUrl": "./phones/index.html?v=0.32.4"
+      "contentUrl": "./phones/index.html?v=0.33.0"
     },
     {
       "entityId": "astrea-users",
@@ -51,7 +51,7 @@
       "parentIcon": "./menu.svg",
       "name": "User Manager",
       "icon": "Group",
-      "contentUrl": "./users/index.html?v=0.32.4"
+      "contentUrl": "./users/index.html?v=0.33.0"
     },
     {
       "entityId": "astrea-callflow",
@@ -60,7 +60,7 @@
       "parentIcon": "./menu.svg",
       "name": "Call Flow Manager",
       "icon": "AccountTree",
-      "contentUrl": "./callflow/index.html?v=0.32.4"
+      "contentUrl": "./callflow/index.html?v=0.33.0"
     }
   ]
 }
