@@ -21,7 +21,7 @@
 // Supposé, à vérifier en réel : les listes (GET /groups, /queues,
 // /switchboards, /schedules) contiennent déjà fallbacks, membres et
 // destinations ; sinon on lit le détail de chaque objet (ensureDetails).
-import { S, api, listAll, fullName } from '../common/core.js?v=0.33.0';
+import { S, api, listAll, fullName } from '../common/core.js?v=0.33.1';
 
 export const M = { lists: {}, by: {}, ext: new Map(), extAny: new Map(), rev: null, warns: [] };
 
@@ -34,7 +34,7 @@ export const TYPES = {
   context: { label: 'Contexte', badge: 'CTX', help: 'Contexte Asterisk : ensemble de numéros joignables. Type incall pour les SDA, internal pour les numéros internes, outcall pour les règles de sortie. Un contexte interne inclut en général le contexte sortant.' },
   user: { label: 'Utilisateur', badge: 'U', help: 'Utilisateur : ses postes sonnent pendant la durée de sonnerie, puis les renvois par défaut (admin) s\'appliquent : pas de réponse, occupé, encombré, indisponible. Les renvois d\'appel (réglés aussi par l\'utilisateur) passent avant : un renvoi inconditionnel actif ne fait pas sonner les postes.' },
   group: { label: 'Groupe', badge: 'GRP', help: 'Groupe d\'appel : fait sonner ses membres selon la stratégie, pendant la durée du groupe, puis part vers le débordement « pas de réponse ». Les renvois par défaut des membres ne s\'appliquent pas dans un groupe (supposé : comportement Wazo habituel, à confirmer).' },
-  queue: { label: 'File', badge: 'FILE', help: 'File d\'attente : l\'appelant attend en musique qu\'un membre se libère. Sorties : délai dépassé, seuils d\'attente (temps ou ratio appels/agents) et débordements (occupé, encombré, indisponible).' },
+  queue: { label: 'File d\'attente', badge: 'FA', help: 'File d\'attente : l\'appelant attend en musique qu\'un membre se libère. Sorties : délai dépassé, seuils d\'attente (temps ou ratio appels/agents) et débordements (occupé, encombré, indisponible).' },
   ivr: { label: 'SVI', badge: 'SVI', help: 'Serveur vocal interactif : joue un message et attend une touche. Chaque touche a sa destination ; sans saisie, saisie invalide et trop d\'essais ont la leur.' },
   schedule: { label: 'Horaire', badge: 'H', help: 'Horaire : condition vérifiée avant l\'objet auquel il est associé (SDA, utilisateur, groupe, file) ; la carte est donc placée devant lui. Ouvert : l\'appel continue vers l\'objet (pour une SDA, vers sa destination). Fermé : destination de fermeture. Fermeture exceptionnelle (prioritaire sur les heures d\'ouverture) : destination propre à cette fermeture.' },
   voicemail: { label: 'Messagerie', badge: 'VM', help: 'Boîte vocale : l\'appelant laisse un message. Fin du parcours.' },
@@ -66,8 +66,8 @@ export const SLOTS = {
   fail: { label: 'Indisponible', help: 'Débordement quand la cible ne peut pas être jointe (poste non enregistré, aucun membre…). Stocké « chanunavail » dans Wazo.' },
   vm_assoc: { label: 'Messagerie associée', help: 'Boîte vocale associée à l\'utilisateur. Ce n\'est pas un routage : elle n\'est atteinte que si un renvoi y mène.' },
   members: { label: 'Sonne les membres', help: 'Les membres sonnent selon la stratégie du groupe ou de la file.' },
-  wait_time: { label: 'Attente trop longue', help: 'File : l\'appelant part vers cette destination quand le temps d\'attente estimé dépasse le seuil.' },
-  wait_ratio: { label: 'Trop d\'appels par agent', help: 'File : l\'appelant part vers cette destination quand le ratio appels en attente / agents dépasse le seuil.' },
+  wait_time: { label: 'Attente trop longue', help: 'File d\'attente : l\'appelant part vers cette destination quand le temps d\'attente estimé dépasse le seuil.' },
+  wait_ratio: { label: 'Trop d\'appels par agent', help: 'File d\'attente : l\'appelant part vers cette destination quand le ratio appels en attente / agents dépasse le seuil.' },
   choice: { label: 'Touche', help: 'Touche du SVI composée par l\'appelant.' },
   ivr_timeout: { label: 'Sans saisie', help: 'SVI : aucune touche composée dans le délai.' },
   ivr_invalid: { label: 'Saisie invalide', help: 'SVI : touche qui ne correspond à aucun choix.' },
@@ -105,7 +105,7 @@ async function loadUsers() {
 }
 // [clé de type, chemin, libellé de l'avertissement, clé d'index]
 const SOURCES = [
-  ['incall', '/incalls', 'SDA', 'id'], ['group', '/groups', 'Groupes', 'id'], ['queue', '/queues', 'Files', 'id'],
+  ['incall', '/incalls', 'SDA', 'id'], ['group', '/groups', 'Groupes', 'id'], ['queue', '/queues', 'Files d\'attente', 'id'],
   ['ivr', '/ivr', 'SVI', 'id'], ['schedule', '/schedules', 'Horaires', 'id'], ['voicemail', '/voicemails', 'Messageries', 'id'],
   ['conference', '/conferences', 'Conférences', 'id'], ['switchboard', '/switchboards', 'Standards', 'uuid'], ['context', '/contexts', 'Contextes', 'name'],
   ['trunk', '/trunks', 'Trunks', 'id'], ['outcall', '/outcalls', 'Règles sortantes', 'id'], ['application', '/applications', 'Applications', 'uuid'],

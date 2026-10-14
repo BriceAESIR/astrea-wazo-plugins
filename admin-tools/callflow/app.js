@@ -3,14 +3,14 @@
 // déposer (lot 2a, brouillon puis aperçu, sauvegarde, écriture).
 // Cadrage : astrea-wazo-dev/docs/CALLFLOW-MANAGER.md.
 // Modèle (sources confd vérifiées) : model.js ; canevas : canvas.js ; écriture : write.js.
-import { S, $, esc, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.33.0';
-import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, scanGroupKeys, buildTree, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel } from './model.js?v=0.33.0';
-import { createCanvas } from './canvas.js?v=0.33.0';
-import { getDest, setDest, sameDest, prepare, execute } from './write.js?v=0.33.0';
+import { S, $, esc, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.33.1';
+import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, scanGroupKeys, buildTree, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel } from './model.js?v=0.33.1';
+import { createCanvas } from './canvas.js?v=0.33.1';
+import { getDest, setDest, sameDest, prepare, execute } from './write.js?v=0.33.1';
 
 const TESTED_STACK = ['26.07'];
 const NAV = [
-  ['incall', 'SDA'], ['trunk', 'Trunks'], ['user', 'Utilisateurs'], ['group', 'Groupes'], ['queue', 'Files'], ['ivr', 'SVI'],
+  ['incall', 'SDA'], ['trunk', 'Trunks'], ['user', 'Utilisateurs'], ['group', 'Groupes'], ['queue', 'Files d\'attente'], ['ivr', 'SVI'],
   ['schedule', 'Horaires'], ['voicemail', 'Messageries'], ['conference', 'Conférences'], ['switchboard', 'Standards'], ['outcall', 'Règles sortantes'], ['context', 'Contextes'],
 ];
 const C = { edit: false, draft: new Map(), time: { on: true, date: null, min: 0 }, type: 'incall', root: null, dir: 'out', collapsed: new Set(), expanded: new Set(), showEmpty: false, scope: null, canvas: null, tree: null, sel: null };
@@ -76,7 +76,7 @@ function renderList() {
 // Graphe
 // ---------------------------------------------------------------------------
 function draw(keepView = false) {
-  if (!C.canvas) C.canvas = createCanvas($('cf-view'), { onSelect: showDetail, onOpen: (k) => setRoot(k), onFold: fold, onClear: clearPort, onCardDrop: cardDrop });
+  if (!C.canvas) C.canvas = createCanvas($('cf-view'), { onSelect: showDetail, onOpen: (k) => setRoot(k), onFold: fold, onClear: clearPort, onUndo: (k, p) => { const r = portOf({ nodeKey: k, portId: p }); if (r) revertKey(r.p.w.key); }, onCardDrop: cardDrop });
   if (!C.root) { $('cf-title').textContent = 'Parcours des appels'; $('cf-view').classList.add('empty'); return; }
   $('cf-view').classList.remove('empty');
   // Mode Modifier : les sorties vides sont affichées (ce sont des cibles de dépôt).
@@ -207,11 +207,13 @@ function showDetail(n) {
     ${rows ? `<div class="dsec"><dl>${rows}</dl></div>` : ''}
     ${outs && C.dir === 'out' ? `<div class="dsec"><h4>Sorties</h4><dl>${outs}</dl></div>` : ''}
     ${n.leaf?.ownerType === 'group' ? `<div class="btnrow"><button id="d-keys" title="Lit les touches de fonction de chaque utilisateur du tenant (une lecture par utilisateur)">${M.keys ? 'Relire les touches de bascule' : 'Chercher les touches de bascule'}</button></div><div id="d-keys-st" class="muted small"></div>` : ''}
+    ${C.edit && C.dir === 'out' && incomingPort(n) ? `<div class="btnrow"><button id="d-remove" class="danger" title="Vide la sortie « ${esc(incomingPort(n).p.label)} » de ${esc(ownerTitle(incomingPort(n).n))} (brouillon ; touche Suppr)">Retirer de cette sortie</button></div>` : ''}
     ${n.leaf ? '' : `<div class="dsec"><h4>Arrive depuis</h4>${refs}</div>`}
     ${n.leaf ? '' : `<div class="btnrow">${n.key !== C.root ? '<button id="d-root" class="primary">Partir de cette carte</button>' : ''}<button id="d-in">${C.dir === 'in' && n.key === C.root ? 'Où vont les appels' : 'Qui arrive ici'}</button></div>`}`;
   $('detail').hidden = false;
   $('main').classList.remove('no-detail');
   const r = $('d-root'); if (r) r.onclick = () => setRoot(n.key);
+  const rm = $('d-remove'); if (rm) rm.onclick = removeSelected;
   const i = $('d-in'); if (i) i.onclick = () => { if (n.key !== C.root) setRoot(n.key); setDir(C.dir === 'in' && n.key === C.root ? 'out' : 'in'); };
   for (const li of $('d-body').querySelectorAll('.cf-refs li')) li.onclick = () => setRoot(li.dataset.key);
   const k = $('d-keys');
@@ -230,7 +232,7 @@ function showDetail(n) {
 // encore modifiables (lot 2b) ; les renvois d'appel (numéros libres) non plus.
 // ---------------------------------------------------------------------------
 const PALETTE = [
-  ['user', 'Utilisateur'], ['group', 'Groupe'], ['queue', 'File'], ['ivr', 'SVI'], ['voicemail', 'Messagerie'],
+  ['user', 'Utilisateur'], ['group', 'Groupe'], ['queue', 'File d\'attente'], ['ivr', 'SVI'], ['voicemail', 'Messagerie'],
   ['switchboard', 'Standard'], ['conference', 'Conférence'], ['extension', 'Numéro'], ['sound', 'Message'], ['hangup', 'Raccrocher'],
 ];
 const ENTITY_DEST = { user: 'user_id', group: 'group_id', queue: 'queue_id', ivr: 'ivr_id', voicemail: 'voicemail_id', conference: 'conference_id', switchboard: 'switchboard_uuid' };
@@ -243,7 +245,7 @@ const PAL_HELP = {
 function renderPalette() {
   $('cf-palette').innerHTML = PALETTE.map(([t, l]) => `<div class="cf-chip t-${t}" data-pal="${t}" title="${esc(PAL_HELP[t] || TYPES[t]?.help || '')}"><span class="cf-badge">${esc(TYPES[t]?.badge || '?')}</span>${esc(l)}</div>`).join('');
   $('pal-help').innerHTML = helpButton('pal-hb', 'Comment modifier');
-  $('pal-help-box').innerHTML = helpBox('pal-hb', 'Glissez une carte de la palette, ou une carte déjà présente dans le graphe, sur une sortie (Pas de réponse, Touche 1, Destination…) : un dialogue demande l\'objet visé et ses options, puis la modification part dans le brouillon (point orange). × sur une sortie la vide. Rien n\'est écrit avant « Appliquer… », qui montre l\'avant / après, télécharge une sauvegarde JSON, relit chaque objet sur le serveur et n\'écrit que ce qui change, une fois par objet. Pas encore modifiables : sorties des horaires, renvois d\'appel de l\'utilisateur, membres.');
+  $('pal-help-box').innerHTML = helpBox('pal-hb', 'Glissez une carte de la palette, ou une carte déjà présente dans le graphe, sur une sortie (Pas de réponse, Touche 1, Destination…) : un dialogue demande l\'objet visé et ses options, puis la modification part dans le brouillon (point orange). × sur une sortie la vide ; ↶ annule une modification (retour à la valeur d\'origine) ; la liste du brouillon (clic sur le compteur) permet aussi d\'annuler ligne par ligne ; une carte sélectionnée se retire de sa sortie par « Retirer de cette sortie » ou la touche Suppr. Rien n\'est écrit avant « Appliquer… », qui montre l\'avant / après, télécharge une sauvegarde JSON, relit chaque objet sur le serveur et n\'écrit que ce qui change, une fois par objet. Pas encore modifiables : sorties des horaires, renvois d\'appel de l\'utilisateur, membres.');
 }
 function setEdit(on) {
   if (!on && C.draft.size) {
@@ -261,7 +263,8 @@ function setEdit(on) {
 }
 function renderDraft() {
   const n = C.draft.size;
-  $('cf-draft-n').textContent = n ? `${n} modification${n > 1 ? 's' : ''} dans le brouillon` : 'Aucune modification';
+  $('cf-draft-n').textContent = n ? `${n} modification${n > 1 ? 's' : ''} dans le brouillon — voir / annuler` : 'Aucune modification';
+  $('cf-draft-n').classList.toggle('cf-link', !!n);
   $('cf-draft-cancel').disabled = !n;
   $('cf-draft-apply').disabled = !n;
 }
@@ -283,6 +286,33 @@ function cancelDraft() {
   for (const e of [...C.draft.values()].reverse()) setDest(e.w, e.before);
   C.draft.clear(); M.rev = null;
   draw(true); renderDraft();
+}
+// Annuler UNE modification : la sortie reprend la valeur lue sur le serveur.
+function revertKey(wkey) {
+  const e = C.draft.get(wkey); if (!e) return;
+  setDest(e.w, e.before);
+  C.draft.delete(wkey); M.rev = null;
+  draw(true); renderDraft();
+}
+// Liste du brouillon (clic sur le compteur) : une ligne par modification, ↶ pour l'annuler.
+function showDraftList() {
+  if (!C.draft.size) return;
+  const html = () => `<h3>Brouillon</h3><p class="small muted">Rien n'est encore écrit. ↶ annule une modification : la sortie reprend sa valeur d'origine.</p>
+    <div class="cf-diffwrap"><table class="diff"><thead><tr><th>Objet</th><th>Sortie</th><th>Avant</th><th>Après</th><th></th></tr></thead><tbody>${[...C.draft.entries()].map(([k, e]) => `<tr><td>${esc(e.where)}</td><td>${esc(e.slot)}</td><td>${esc(destLabel(e.before))}</td><td><strong>${esc(destLabel(e.after))}</strong></td><td><button class="icon cf-undo" data-revert="${esc(k)}" title="Annuler cette modification">↶</button></td></tr>`).join('') || '<tr><td colspan="5" class="muted">Brouillon vide.</td></tr>'}</tbody></table></div>`;
+  confirmModal(html(), () => true, 'Fermer');
+  $('modal-body').onclick = (ev) => { const b = ev.target.closest('[data-revert]'); if (!b) return; revertKey(b.dataset.revert); $('modal-body').innerHTML = html(); };
+}
+// Carte sélectionnée en mode Modifier : la retirer de la sortie qui y mène (= vider cette sortie).
+function incomingPort(n) {
+  const parent = n?.parent && C.tree.nodes.get(n.parent);
+  const p = parent?.ports?.find((x) => x.id === n.port);
+  return p?.w ? { n: parent, p } : null;
+}
+function removeSelected() {
+  const n = C.sel && C.tree?.nodes.get(C.sel); const r = incomingPort(n);
+  if (!r) { toast('Cette carte n\'est pas reliée par une sortie modifiable.'); return; }
+  addDraft(r.p.w, null, { where: ownerTitle(r.n), slot: r.p.label });
+  closeDetail();
 }
 function clearPort(nodeKey, portId) {
   const r = portOf({ nodeKey, portId }); if (!r) return;
@@ -398,6 +428,12 @@ async function applyDraft() {
 $('cf-edit').onclick = () => setEdit(!C.edit);
 $('cf-draft-cancel').onclick = () => confirmModal(`<h3>Annuler le brouillon ?</h3><p>Les ${C.draft.size} modification${C.draft.size > 1 ? 's' : ''} non écrite${C.draft.size > 1 ? 's' : ''} sont abandonnée${C.draft.size > 1 ? 's' : ''}.</p>`, () => cancelDraft(), 'Annuler le brouillon');
 $('cf-draft-apply').onclick = applyDraft;
+$('cf-draft-n').onclick = showDraftList;
+// Suppr / Retour arrière sur une carte sélectionnée (mode Modifier, hors champ de saisie).
+document.addEventListener('keydown', (e) => {
+  if (!C.edit || !C.sel || !$('modal').hidden || e.target?.closest?.('input, select, textarea')) return;
+  if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); removeSelected(); }
+});
 window.addEventListener('beforeunload', (e) => { if (C.draft.size) { e.preventDefault(); e.returnValue = ''; } });
 $('nav').onclick = (e) => {
   const b = e.target.closest('[data-type]'); if (!b) return;

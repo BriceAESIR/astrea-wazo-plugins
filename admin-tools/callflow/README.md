@@ -32,6 +32,10 @@ courant. Cadrage, sources et décisions : `docs/CALLFLOW-MANAGER.md` (dépôt de
   déjà présente dans le graphe. Un dialogue demande l'objet visé et ses
   options (durée de sonnerie, message d'accueil de la messagerie, tonalité…).
   **×** sur une sortie la vide.
+- **Annuler une erreur** :
+  - **↶** sur une sortie modifiée lui rend sa valeur d'origine ;
+  - un clic sur le compteur du brouillon liste les modifications, chacune avec son ↶ ;
+  - sur une carte sélectionnée, « Retirer de cette sortie » (ou la touche Suppr) vide la sortie qui y mène.
 - Sorties modifiables :
   - destination des SDA ;
   - renvois par défaut des utilisateurs (pas de réponse, occupé, encombré,

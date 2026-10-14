@@ -2,8 +2,8 @@
 // une carte mentale), cartes HTML, liens SVG, déplacement du canevas, zoom,
 // déplacement des cartes (avec leur sous-arbre), repli des branches.
 // Positions manuelles gardées dans le navigateur (localStorage, try/catch).
-import { esc } from '../common/core.js?v=0.33.0';
-import { TYPES } from './model.js?v=0.33.0';
+import { esc } from '../common/core.js?v=0.33.1';
+import { TYPES } from './model.js?v=0.33.1';
 
 const W = 236, GAP_X = 104, GAP_Y = 18;
 const POS_KEY = 'astrea-callflow-pos-v1';
@@ -19,7 +19,7 @@ function savePos(k, pos) {
   } catch { /* stockage indisponible */ }
 }
 
-export function createCanvas(viewport, { onSelect, onOpen, onFold, onClear, onCardDrop }) {
+export function createCanvas(viewport, { onSelect, onOpen, onFold, onClear, onUndo, onCardDrop }) {
   viewport.innerHTML = '<div class="cf-stage"><svg class="cf-links" width="1" height="1" aria-hidden="true"><defs><marker id="cf-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z"></path></marker></defs><g></g></svg><div class="cf-cards"></div></div>';
   const stage = viewport.querySelector('.cf-stage');
   const g = viewport.querySelector('.cf-links g');
@@ -40,7 +40,7 @@ export function createCanvas(viewport, { onSelect, onOpen, onFold, onClear, onCa
     const ports = (n.ports || []).map((p) => {
       const ed = V.edit && p.w;
       const cls = [p.to ? '' : 'empty', p.assoc ? 'assoc' : '', p.inactive ? 'inactive' : '', ed ? 'editable' : '', ed && V.changed.has(p.w.key) ? 'changed' : ''].filter(Boolean).join(' ');
-      return `<li data-port="${esc(p.id)}"${ed ? ` data-w="${esc(p.w.key)}"` : ''} class="${cls}" title="${esc(ed ? `${p.help || ''} — déposez une carte ici pour changer la destination.` : p.help || '')}"><span class="cf-pl">${esc(p.label)}</span>${p.note ? `<span class="cf-pn">${esc(p.note)}</span>` : ''}${p.to ? '' : '<span class="cf-pn">non réglé</span>'}${ed && p.to ? '<button class="cf-x" data-clear title="Vider cette sortie (brouillon)">×</button>' : ''}${p.self ? '<span class="cf-pn cf-self">↺ revient ici</span>' : '<i class="cf-dot"></i>'}</li>`;
+      return `<li data-port="${esc(p.id)}"${ed ? ` data-w="${esc(p.w.key)}"` : ''} class="${cls}" title="${esc(ed ? `${p.help || ''} — déposez une carte ici pour changer la destination.` : p.help || '')}"><span class="cf-pl">${esc(p.label)}</span>${p.note ? `<span class="cf-pn">${esc(p.note)}</span>` : ''}${p.to ? '' : '<span class="cf-pn">non réglé</span>'}${ed && V.changed.has(p.w.key) ? '<button class="cf-x cf-undo" data-undo title="Annuler cette modification : la sortie reprend sa valeur d\'origine">↶</button>' : ''}${ed && p.to ? '<button class="cf-x" data-clear title="Vider cette sortie (aucune destination ; modification du brouillon)">×</button>' : ''}${p.self ? '<span class="cf-pn cf-self">↺ revient ici</span>' : '<i class="cf-dot"></i>'}</li>`;
     }).join('');
     return `<div class="cf-node t-${esc(n.info.type)}${n.depth === 0 ? ' root' : ''}${n.key === V.sel ? ' sel' : ''}${n.dim ? ' dim' : ''}" data-key="${esc(n.key)}" style="width:${W}px">
       <div class="cf-head" title="${esc(t.help || '')}"><span class="cf-badge">${esc(t.badge)}</span><div class="cf-txt"><div class="cf-type">${esc(t.label)}${n.key.startsWith('schedule:') ? `<span class="cf-state${n.timeOpen ? ' open' : ''}">${esc(n.timeLabel || '')}</span>` : ''}</div><div class="cf-title">${esc(n.info.title)}</div>${n.info.sub ? `<div class="cf-sub">${esc(n.info.sub)}</div>` : ''}</div>${fold}</div>
@@ -215,7 +215,8 @@ export function createCanvas(viewport, { onSelect, onOpen, onFold, onClear, onCa
   window.addEventListener('pointercancel', end);
   viewport.addEventListener('click', (e) => {
     const b = e.target.closest('[data-fold]'); if (b) return onFold?.(b.closest('.cf-node').dataset.key);
-    const x = e.target.closest('[data-clear]'); if (x) onClear?.(x.closest('.cf-node').dataset.key, x.closest('li').dataset.port);
+    const x = e.target.closest('[data-clear]'); if (x) return onClear?.(x.closest('.cf-node').dataset.key, x.closest('li').dataset.port);
+    const u = e.target.closest('[data-undo]'); if (u) onUndo?.(u.closest('.cf-node').dataset.key, u.closest('li').dataset.port);
   });
   viewport.addEventListener('dblclick', (e) => { const c = e.target.closest('.cf-node'); if (c && !e.target.closest('button')) onOpen?.(c.dataset.key); });
 
