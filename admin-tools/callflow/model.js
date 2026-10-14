@@ -21,7 +21,7 @@
 // Supposé, à vérifier en réel : les listes (GET /groups, /queues,
 // /switchboards, /schedules) contiennent déjà fallbacks, membres et
 // destinations ; sinon on lit le détail de chaque objet (ensureDetails).
-import { api, listAll, fullName } from '../common/core.js?v=0.32.0';
+import { S, api, listAll, fullName } from '../common/core.js?v=0.32.1';
 
 export const M = { lists: {}, by: {}, ext: new Map(), extAny: new Map(), rev: null, warns: [] };
 
@@ -42,7 +42,7 @@ export const TYPES = {
   switchboard: { label: 'Standard (POPC)', badge: 'POPC', help: 'Standard : l\'appel attend d\'être pris par un standardiste ; sans réponse dans le délai, il part vers le débordement « pas de réponse ».' },
   outcall: { label: 'Sortant', badge: 'OUT', help: 'Règle d\'appel sortant : le numéro part vers l\'extérieur par les trunks, dans l\'ordre (le suivant si le premier échoue).' },
   application: { label: 'Application', badge: 'APP', help: 'Application Wazo (Stasis) : l\'appel est remis à une application externe.' },
-  members: { label: 'Membres', badge: '👥', help: 'Membres qui sonnent. Dans un groupe ou une file, ce sont les postes des membres qui sonnent : leurs propres renvois par défaut ne s\'appliquent pas (supposé).' },
+  members: { label: 'Membres', badge: '👥', help: 'Membres qui sonnent : membres fixes (réglés dans Wazo) et, pour un groupe, utilisateurs inscrits par la touche « bascule groupe » (*50) — ceux-là ne sont connus que d\'Asterisk, lus si le serveur l\'autorise. Ce sont les postes des membres qui sonnent : leurs propres renvois par défaut ne s\'appliquent pas (supposé).' },
   hangup: { label: 'Raccrocher', badge: '✕', help: 'Fin de l\'appel, avec la tonalité choisie : normal, occupé ou encombré.' },
   sound: { label: 'Message', badge: '♪', help: 'Joue un fichier son, puis raccroche (sauf « ne pas décrocher » : le son est joué en pré-décroché).' },
   custom: { label: 'Commande', badge: '{ }', help: 'Commande Asterisk personnalisée (application du dialplan).' },
@@ -122,7 +122,7 @@ export async function loadAll() {
   M.groupByUuid = new Map((M.lists.group || []).map((g) => [g.uuid, g]));
   M.userByUuid = new Map(users.map((u) => [u.uuid, u]));
   indexExtensions();
-  M.rev = null;
+  M.rev = null; M.keys = null; M.live = null; M.liveState = '';
   return M;
 }
 // Détails absents des listes (supposé) : relus un par un, une seule fois.
@@ -246,7 +246,18 @@ const link = (slot, k, note = '') => ({ slot, label: SLOTS[slot]?.label || slot,
 const schedOuts = (o) => (o?.schedules || []).filter((s) => M.by.schedule?.has(String(s.id))).map((s) => link('schedule', `schedule:${s.id}`));
 const fb = (o, k) => o?.fallbacks?.[`${k}_destination`];
 
+// Sorties + conditions horaires : avec un horaire associé, les sorties
+// normales de l'objet ne valent que « si ouvert » ; celles de l'horaire,
+// seulement fermé (closed) ou pendant l'exception i (exc:i).
 export function edgesOf(k) {
+  const e = rawEdgesOf(k);
+  const t = k.slice(0, k.indexOf(':'));
+  if (t === 'schedule') { for (const x of e) x.when = x.slot === 'closed' ? 'closed' : `exc:${e.indexOf(x) - 1}`; return e; }
+  const sch = e.find((x) => x.slot === 'schedule');
+  if (sch) for (const x of e) if (x.slot !== 'schedule') { x.when = 'open'; x.schedId = sch.to.key.slice(9); }
+  return e;
+}
+function rawEdgesOf(k) {
   const { type, obj: o } = entity(k);
   if (!o) return [];
   switch (type) {
@@ -265,16 +276,13 @@ export function edgesOf(k) {
       if (o.voicemail?.id && !vmTargeted && M.by.voicemail?.has(String(o.voicemail.id))) e.push({ ...link('vm_assoc', `voicemail:${o.voicemail.id}`), assoc: true });
       return e;
     }
-    case 'group': {
-      const mem = members(o.members);
+    case 'group':
       return [...schedOuts(o),
-        { slot: 'members', label: SLOTS.members.label, help: SLOTS.members.help, note: [STRATEGY[o.ring_strategy] || o.ring_strategy, o.user_timeout ? `${o.user_timeout} s chacun` : ''].filter(Boolean).join(' · '), to: leaf('members', `${mem.length} membre${mem.length > 1 ? 's' : ''}`, mem.slice(0, 6).join(', ') + (mem.length > 6 ? ` +${mem.length - 6}` : ''), { names: mem }) },
+        { slot: 'members', label: SLOTS.members.label, help: SLOTS.members.help, note: [STRATEGY[o.ring_strategy] || o.ring_strategy, o.user_timeout ? `${o.user_timeout} s chacun` : ''].filter(Boolean).join(' · '), to: membersLeaf('group', o) },
         out('noanswer', fb(o, 'noanswer'), sec(o.timeout)), out('congestion', fb(o, 'congestion'))];
-    }
     case 'queue': {
-      const mem = members(o.members);
       return [...schedOuts(o),
-        { slot: 'members', label: SLOTS.members.label, help: SLOTS.members.help, note: '', to: leaf('members', `${mem.length} membre${mem.length > 1 ? 's' : ''}`, mem.slice(0, 6).join(', ') + (mem.length > 6 ? ` +${mem.length - 6}` : ''), { names: mem }) },
+        { slot: 'members', label: SLOTS.members.label, help: SLOTS.members.help, note: '', to: membersLeaf('queue', o) },
         out('wait_time', o.wait_time_destination, o.wait_time_threshold != null ? `> ${o.wait_time_threshold} s` : ''),
         out('wait_ratio', o.wait_ratio_destination, o.wait_ratio_threshold != null ? `> ${o.wait_ratio_threshold}` : ''),
         out('noanswer', fb(o, 'noanswer'), sec(o.timeout)), out('busy', fb(o, 'busy')), out('congestion', fb(o, 'congestion')), out('fail', fb(o, 'fail'))];
@@ -303,6 +311,86 @@ function members(m) {
   const ext = (m.extensions || []).map((x) => x.exten);
   const agents = (m.agents || []).map((a) => `agent ${a.number || a.id}`);
   return [...users, ...ext, ...agents];
+}
+const plural = (n, w) => `${n} ${w}${n > 1 ? 's' : ''}`;
+// Carte « membres » : fixes (confd), inscrits en ce moment (Asterisk, si
+// lisible) et, pour un groupe, utilisateurs qui ont une touche de bascule.
+function membersLeaf(type, o) {
+  const fixed = members(o.members);
+  const live = M.live?.get(o.name);
+  const dyn = (live || []).filter((x) => x.dynamic);
+  const keys = type === 'group' ? M.keys?.get(o.id) : null;
+  const parts = [plural(fixed.length, 'fixe')];
+  if (live) parts.push(`${dyn.length} ${type === 'queue' ? 'connecté' : 'inscrit'}${dyn.length > 1 ? 's' : ''}`);
+  const sub = [fixed.slice(0, 4).join(', ') + (fixed.length > 4 ? ` +${fixed.length - 4}` : '')];
+  if (dyn.length) sub.push(`inscrits : ${dyn.slice(0, 4).map((x) => x.name).join(', ')}${dyn.length > 4 ? ` +${dyn.length - 4}` : ''}`);
+  else if (!live && type === 'group') sub.push('inscrits par touche : non lisibles');
+  if (keys) sub.push(`${plural(keys.length, 'touche')} de bascule`);
+  return leaf('members', parts.join(' · '), sub.filter(Boolean).join(' — '), { names: fixed, live: live || null, keys: keys || null, ownerType: type });
+}
+
+// ---------------------------------------------------------------------------
+// Membres inscrits en ce moment (touche « bascule groupe » *50/*51/*52, agents
+// connectés). Vérifié dans wazo-agid (modules/group_member.py) : la touche
+// fait AddQueueMember(group.name, Local/<uuid>@usersharedlines) dans
+// Asterisk, sans rien écrire en base : confd ne les voit pas. Seule lecture
+// REST : wazo-amid POST /1.0/action/QueueStatus (ACL
+// amid.action.QueueStatus.create), qui exige un token du tenant master
+// (@required_master_tenant) : le token du portail sera sans doute refusé
+// (à tester). Champs AMI supposés (Asterisk >= 12) : Queue, Interface /
+// StateInterface, MemberName, Membership static|dynamic, Paused, Status.
+// ---------------------------------------------------------------------------
+const DEVSTATE = { 1: 'libre', 2: 'en ligne', 3: 'occupé', 4: 'invalide', 5: 'indisponible', 6: 'sonne', 7: 'sonne', 8: 'en attente' };
+export async function loadLiveMembers() {
+  M.live = null; M.liveState = '';
+  const mine = new Set([...(M.lists.group || []), ...(M.lists.queue || [])].map((x) => x.name));
+  if (!mine.size) return;
+  try {
+    const headers = { 'X-Auth-Token': S.token, 'Content-Type': 'application/json', Accept: 'application/json' };
+    if (S.tenant) headers['Wazo-Tenant'] = S.tenant;
+    const r = await fetch(`${S.base}/api/amid/1.0/action/QueueStatus`, { method: 'POST', headers, body: '{}' });
+    if (!r.ok) { M.liveState = r.status === 401 || r.status === 403 ? `refusé par le serveur (${r.status}) : l'API Asterisk (amid) exige un token du tenant principal` : `erreur ${r.status}`; return; }
+    const msgs = await r.json();
+    M.live = new Map();
+    for (const q of mine) M.live.set(q, []);
+    for (const m of Array.isArray(msgs) ? msgs : []) {
+      if (m?.Event !== 'QueueMember' || !mine.has(m.Queue)) continue; // autres tenants : ignorés
+      const itf = m.Interface || m.Location || m.StateInterface || '';
+      const u = itf.match(/Local\/([0-9a-f-]{36})@usersharedlines/i);
+      const a = itf.match(/Local\/id-(\d+)@agentcallback/i);
+      const user = u ? M.userByUuid.get(u[1]) : null;
+      const name = user ? fullName(user) : a ? `agent ${m.MemberName || a[1]}` : (m.MemberName || itf);
+      const st = [DEVSTATE[m.Status] || '', m.Paused === '1' || m.Paused === true ? 'en pause' : ''].filter(Boolean).join(', ');
+      M.live.get(m.Queue).push({ name, uuid: u?.[1] || null, dynamic: String(m.Membership || '').toLowerCase() === 'dynamic', state: st });
+    }
+    M.liveState = 'ok';
+    console.info('[astrea] Call Flow : membres en direct (amid QueueStatus)', M.live);
+  } catch (e) { M.liveState = `indisponible (${e.message})`; console.warn('[astrea] amid', e); }
+}
+
+// Utilisateurs qui ont une touche « membre de groupe » (funckey confd type
+// groupmember, group_id entier, action join|leave|toggle ; vérifié dans
+// wazo-confd func_key/schema.py). Une lecture par utilisateur : à la demande.
+export async function scanGroupKeys(onProgress) {
+  const users = M.lists.user || [];
+  const keys = new Map();
+  let i = 0, done = 0;
+  await Promise.all(Array.from({ length: 6 }, async () => {
+    while (i < users.length) {
+      const u = users[i++];
+      try {
+        const r = await api('GET', `/users/${u.uuid}/funckeys`);
+        for (const [pos, k] of Object.entries(r?.keys || {})) {
+          const d = k?.destination;
+          if (d?.type !== 'groupmember') continue;
+          if (!keys.has(d.group_id)) keys.set(d.group_id, []);
+          keys.get(d.group_id).push({ uuid: u.uuid, name: fullName(u), action: d.action, pos });
+        }
+      } catch (e) { console.warn('[astrea] touches', u.uuid, e); }
+      onProgress?.(++done, users.length);
+    }
+  }));
+  M.keys = keys;
 }
 
 // ---------------------------------------------------------------------------
@@ -377,6 +465,77 @@ export function buildTree(rootKey, dir, { maxDepth = 8, collapsed = new Set(), e
 }
 
 // ---------------------------------------------------------------------------
+// Simulation date / heure. Vérifié dans wazo-agid (schedule.py, master) :
+// périodes exceptionnelles (fermées) testées d'abord, puis ouvertes, sinon
+// fermé (closed_destination) ; heures comparées en (heure, minute), bornes
+// incluses ; jours ISO 1 = lundi … 7 = dimanche ; champ vide = sans
+// restriction. L'heure du curseur est l'heure locale du site (fuseau de
+// l'horaire) : pas de conversion. Supposé : un horaire désactivé
+// (enabled = false) laisse toujours passer (ouvert).
+// ---------------------------------------------------------------------------
+const hm = (s) => { const [h, m] = String(s || '').split(':').map(Number); return Number.isFinite(h) ? h * 60 + (m || 0) : null; };
+function periodMatch(p, w) {
+  if (p.week_days?.length && !p.week_days.includes(w.wd)) return false;
+  if (p.month_days?.length && !p.month_days.includes(w.day)) return false;
+  if (p.months?.length && !p.months.includes(w.month)) return false;
+  const a = hm(p.hours_start), b = hm(p.hours_end);
+  if (a != null && b != null && (w.min < a || w.min > b)) return false;
+  return true;
+}
+// when = { wd, day, month, min } → { open, exc (index ou -1), label }
+export function scheduleState(s, w) {
+  if (!s || s.enabled === false) return { open: true, exc: -1, label: s ? 'Désactivé (ouvert)' : '' };
+  const i = (s.exceptional_periods || []).findIndex((p) => periodMatch(p, w));
+  if (i >= 0) return { open: false, exc: i, label: `Exception ${i + 1}` };
+  if ((s.open_periods || []).some((p) => periodMatch(p, w))) return { open: true, exc: -1, label: 'Ouvert' };
+  return { open: false, exc: -1, label: 'Fermé' };
+}
+export const whenOf = (date, min) => ({ wd: ((date.getDay() + 6) % 7) + 1, day: date.getDate(), month: date.getMonth() + 1, min });
+// Marque les sorties inactives (p.inactive) et les cartes atteintes seulement
+// par des sorties inactives (n.dim). w = null : tout est actif.
+export function applyTime(tree, w) {
+  const st = (id) => scheduleState(M.by.schedule?.get(String(id)), w);
+  for (const n of tree.nodes.values()) {
+    n.dim = false; n.timeLabel = '';
+    if (w && n.key.startsWith('schedule:')) { const s = st(n.key.slice(9)); n.timeLabel = s.label; n.timeOpen = s.open; }
+    for (const p of n.ports || []) {
+      p.inactive = false;
+      if (!w || !p.when) continue;
+      if (p.when === 'open') p.inactive = !st(p.schedId).open;
+      else { const s = st(n.key.slice(9)); p.inactive = p.when === 'closed' ? (s.open || s.exc >= 0) : s.exc !== Number(p.when.slice(4)); }
+    }
+  }
+  if (!w) return;
+  // Cartes atteignables par des sorties actives, depuis la carte de départ.
+  const reach = new Set([tree.root.key]);
+  const out = new Map();
+  const add = (from, port, to) => { if (!out.has(from)) out.set(from, []); out.get(from).push([port, to]); };
+  for (const n of tree.nodes.values()) if (n.parent) add(n.parent, n.port, n.key);
+  for (const c of tree.cross) add(c.from, c.port, c.to);
+  const queue = [tree.root.key];
+  while (queue.length) {
+    const k = queue.shift(); const n = tree.nodes.get(k);
+    for (const [port, to] of out.get(k) || []) {
+      if (reach.has(to) || n.ports?.find((p) => p.id === port)?.inactive) continue;
+      reach.add(to); queue.push(to);
+    }
+  }
+  for (const n of tree.nodes.values()) n.dim = !reach.has(n.key);
+}
+// État d'un horaire sur une journée, minute par minute (bandeau du curseur) ;
+// end = première minute hors de la tranche.
+export function dayBands(s, date) {
+  const out2 = [];
+  for (let m = 0; m < 1440; m++) {
+    const x = scheduleState(s, whenOf(date, m));
+    const k = x.exc >= 0 ? `exc${x.exc}` : x.open ? 'open' : 'closed';
+    const last = out2[out2.length - 1];
+    if (last && last.id === k) last.end = m + 1; else out2.push({ id: k, k: x.exc >= 0 ? 'exc' : k, start: m, end: m + 1, label: x.label });
+  }
+  return out2;
+}
+
+// ---------------------------------------------------------------------------
 // Fiche (panneau de droite) : [[libellé, valeur, aide?]]
 // ---------------------------------------------------------------------------
 const DAYS = ['', 'lun', 'mar', 'mer', 'jeu', 'ven', 'sam', 'dim'];
@@ -394,7 +553,16 @@ export function periodText(p) {
   return [days, md, mo, p.hours_start && p.hours_end ? `${p.hours_start}–${p.hours_end}` : ''].filter(Boolean).join(' ');
 }
 export function facts(k, leafInfo) {
-  if (leafInfo) return leafInfo.names ? [['Membres', leafInfo.names.join(', ') || '—']] : [[TYPES[leafInfo.type]?.label || 'Valeur', [leafInfo.title, leafInfo.sub].filter(Boolean).join(' · ')]];
+  if (leafInfo?.names) {
+    const ACT = { join: 'rejoindre', leave: 'quitter', toggle: 'bascule' };
+    const g = leafInfo.ownerType === 'group';
+    const dyn = (leafInfo.live || []).filter((x) => x.dynamic);
+    return [['Membres fixes', leafInfo.names.join(', ') || 'aucun', 'Membres réglés dans Wazo (confd). Ils sonnent toujours.'],
+      [g ? 'Inscrits en ce moment' : 'Connectés en ce moment', leafInfo.live ? (dyn.map((x) => `${x.name}${x.state ? ` (${x.state})` : ''}`).join(', ') || 'aucun') : `non lisible : ${M.liveState || 'non lu'}`,
+        g ? 'Utilisateurs inscrits par la touche « bascule groupe » (*50, *51, *52). Wazo ne les enregistre pas dans sa configuration : seul Asterisk les connaît (lecture par l\'API amid).' : 'Agents connectés à la file, lus dans Asterisk (API amid).'],
+      ...(g && leafInfo.keys ? [['Touches de bascule', leafInfo.keys.map((k) => `${k.name} (${ACT[k.action] || k.action}, touche ${k.pos})`).join(', ') || 'aucune', 'Utilisateurs qui ont une touche pour rejoindre ou quitter ce groupe : membres possibles, pas forcément inscrits.']] : [])];
+  }
+  if (leafInfo) return [[TYPES[leafInfo.type]?.label || 'Valeur', [leafInfo.title, leafInfo.sub].filter(Boolean).join(' · ')]];
   const { type, obj: o } = entity(k);
   if (!o) return [];
   const f = [];

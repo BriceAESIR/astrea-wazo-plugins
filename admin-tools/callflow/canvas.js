@@ -2,8 +2,8 @@
 // une carte mentale), cartes HTML, liens SVG, déplacement du canevas, zoom,
 // déplacement des cartes (avec leur sous-arbre), repli des branches.
 // Positions manuelles gardées dans le navigateur (localStorage, try/catch).
-import { esc } from '../common/core.js?v=0.32.0';
-import { TYPES } from './model.js?v=0.32.0';
+import { esc } from '../common/core.js?v=0.32.1';
+import { TYPES } from './model.js?v=0.32.1';
 
 const W = 236, GAP_X = 104, GAP_Y = 18;
 const POS_KEY = 'astrea-callflow-pos-v1';
@@ -36,9 +36,9 @@ export function createCanvas(viewport, { onSelect, onOpen, onFold }) {
     const t = TYPES[n.info.type] || { label: n.info.type, badge: '?' };
     const hasKids = n.kids.length > 0;
     const fold = n.folded ? '<button class="cf-fold" data-fold title="Déplier">+</button>' : hasKids && n.depth > 0 ? '<button class="cf-fold" data-fold title="Replier">−</button>' : '';
-    const ports = (n.ports || []).map((p) => `<li data-port="${esc(p.id)}" class="${p.to ? '' : 'empty'}${p.assoc ? ' assoc' : ''}" title="${esc(p.help || '')}"><span class="cf-pl">${esc(p.label)}</span>${p.note ? `<span class="cf-pn">${esc(p.note)}</span>` : ''}${p.to ? '' : '<span class="cf-pn">non réglé</span>'}${p.self ? '<span class="cf-pn cf-self">↺ revient ici</span>' : '<i class="cf-dot"></i>'}</li>`).join('');
-    return `<div class="cf-node t-${esc(n.info.type)}${n.depth === 0 ? ' root' : ''}${n.key === V.sel ? ' sel' : ''}" data-key="${esc(n.key)}" style="width:${W}px">
-      <div class="cf-head" title="${esc(t.help || '')}"><span class="cf-badge">${esc(t.badge)}</span><div class="cf-txt"><div class="cf-type">${esc(t.label)}</div><div class="cf-title">${esc(n.info.title)}</div>${n.info.sub ? `<div class="cf-sub">${esc(n.info.sub)}</div>` : ''}</div>${fold}</div>
+    const ports = (n.ports || []).map((p) => `<li data-port="${esc(p.id)}" class="${p.to ? '' : 'empty'}${p.assoc ? ' assoc' : ''}${p.inactive ? ' inactive' : ''}" title="${esc(p.help || '')}"><span class="cf-pl">${esc(p.label)}</span>${p.note ? `<span class="cf-pn">${esc(p.note)}</span>` : ''}${p.to ? '' : '<span class="cf-pn">non réglé</span>'}${p.self ? '<span class="cf-pn cf-self">↺ revient ici</span>' : '<i class="cf-dot"></i>'}</li>`).join('');
+    return `<div class="cf-node t-${esc(n.info.type)}${n.depth === 0 ? ' root' : ''}${n.key === V.sel ? ' sel' : ''}${n.dim ? ' dim' : ''}" data-key="${esc(n.key)}" style="width:${W}px">
+      <div class="cf-head" title="${esc(t.help || '')}"><span class="cf-badge">${esc(t.badge)}</span><div class="cf-txt"><div class="cf-type">${esc(t.label)}${n.key.startsWith('schedule:') ? `<span class="cf-state${n.timeOpen ? ' open' : ''}">${esc(n.timeLabel || '')}</span>` : ''}</div><div class="cf-title">${esc(n.info.title)}</div>${n.info.sub ? `<div class="cf-sub">${esc(n.info.sub)}</div>` : ''}</div>${fold}</div>
       ${ports ? `<ul class="cf-ports">${ports}</ul>` : ''}<i class="cf-in"></i></div>`;
   }
   function render(tree, dir, storeKey, { keepView = false } = {}) {
@@ -92,18 +92,31 @@ export function createCanvas(viewport, { onSelect, onOpen, onFold }) {
   function draw() {
     const out = [];
     const line = (a, b, cls) => { if (a && b) out.push(`<path class="${cls}" d="${path(a, b)}" marker-end="url(#cf-arrow)"></path>`); };
+    // Lien inactif (simulation horaire) : sortie inactive ou carte d'origine atténuée.
+    const off = (k, port) => { const n = V.tree.nodes.get(k); return !!(n?.dim || n?.ports?.find((p) => p.id === port)?.inactive); };
     for (const n of V.tree.nodes.values()) {
       if (!n.parent) continue;
       // Sens « où vont les appels » : sortie du parent → entrée de l'enfant ;
       // sens « qui arrive ici » : sortie de l'enfant (l'appelant) → entrée du parent.
       if (V.dir === 'in') line(portPoint(n.key, n.port), inPoint(n.parent), 'cf-edge');
-      else line(portPoint(n.parent, n.port), inPoint(n.key), n.edge?.assoc ? 'cf-edge assoc' : 'cf-edge');
+      else line(portPoint(n.parent, n.port), inPoint(n.key), `cf-edge${n.edge?.assoc ? ' assoc' : ''}${off(n.parent, n.port) ? ' inactive' : ''}`);
     }
     for (const c of V.tree.cross) {
       if (V.dir === 'in') line(portPoint(c.to, c.port), inPoint(c.from), 'cf-edge cross');
-      else line(portPoint(c.from, c.port), inPoint(c.to), c.edge?.assoc ? 'cf-edge cross assoc' : 'cf-edge cross');
+      else line(portPoint(c.from, c.port), inPoint(c.to), `cf-edge cross${c.edge?.assoc ? ' assoc' : ''}${off(c.from, c.port) ? ' inactive' : ''}`);
     }
     g.innerHTML = out.join('');
+  }
+  // Simulation horaire : met à jour les classes sans refaire la disposition.
+  function refreshTime() {
+    if (!V.tree) return;
+    for (const n of V.tree.nodes.values()) {
+      const e = el(n.key); if (!e) continue;
+      e.classList.toggle('dim', !!n.dim);
+      for (const p of n.ports || []) e.querySelector(`li[data-port="${CSS.escape(p.id)}"]`)?.classList.toggle('inactive', !!p.inactive);
+      const s = e.querySelector('.cf-state'); if (s) { s.textContent = n.timeLabel || ''; s.classList.toggle('open', !!n.timeOpen); }
+    }
+    draw();
   }
 
   // -------------------------------------------------------------------------
@@ -181,5 +194,5 @@ export function createCanvas(viewport, { onSelect, onOpen, onFold }) {
   // Recentrer sur une carte (sans changer le zoom).
   function focus(k) { const p = V.pos[k], e = el(k); if (!p || !e) return; V.tx = viewport.clientWidth / 2 - (p[0] + e.offsetWidth / 2) * V.s; V.ty = viewport.clientHeight / 3 - p[1] * V.s; apply(); }
   apply();
-  return { render, fit, zoom, resetLayout, select, focus, get hasManual() { return Object.keys(V.manual).length > 0; } };
+  return { render, refreshTime, fit, zoom, resetLayout, select, focus, get hasManual() { return Object.keys(V.manual).length > 0; } };
 }

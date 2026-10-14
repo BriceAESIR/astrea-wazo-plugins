@@ -28,6 +28,10 @@ Lecture seule :
 - `confd.ivr.read`, `confd.schedules.read`, `confd.voicemails.read`, `confd.conferences.read` ;
 - `confd.switchboards.read`, `confd.contexts.read`, `confd.trunks.read`, `confd.outcalls.read`, `confd.applications.read`.
 
+Pour les membres d'un groupe inscrits par la touche « bascule groupe », qui ne sont connus que d'Asterisk :
+- `amid.action.QueueStatus.create` : lecture en direct. Le serveur exige un token du tenant principal, et le portail le refuse sans doute ;
+- `confd.users.{uuid}.funckeys.read` : bouton « Chercher les touches de bascule ».
+
 Ces droits ne sont pas encore vérifiés en réel pour le token du portail. Sans
 l'un d'eux, le graphe s'affiche quand même, sans ce type d'objet, avec un
 avertissement.
