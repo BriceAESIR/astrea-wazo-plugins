@@ -110,27 +110,46 @@ body.in-portal.ready #workbench { height: 100vh; }
 .cf-state:empty { display: none; }
 
 /* Barre de temps (sous le canevas) */
-.cf-time { display: flex; align-items: center; gap: 8px 12px; flex-wrap: wrap; padding: 10px 0 0; }
+.cf-time { padding: 8px 0 0; }
+.cf-time-top { display: flex; align-items: center; gap: 8px 12px; flex-wrap: wrap; margin-bottom: 6px; }
 .cf-time label.inline { margin: 0; }
 .cf-date { display: inline-flex; align-items: center; gap: 2px; }
 .cf-date input { width: 136px; height: 28px; font-size: .875rem; }
 .cf-date button.icon:hover:not(:disabled) { color: var(--accent); background: var(--selected); }
-.cf-track { position: relative; flex: 1; min-width: 220px; padding-top: 2px; }
-.cf-bands { position: absolute; left: 2px; right: 2px; top: 8px; height: 12px; border-radius: 6px; overflow: hidden; background: var(--line); pointer-events: none; }
-.cf-bands i { position: absolute; top: 0; bottom: 0; }
-.cf-bands .b-open { background: color-mix(in srgb, var(--ok) 70%, var(--panel)); }
-.cf-bands .b-closed { background: color-mix(in srgb, var(--ink) 18%, var(--panel)); }
-.cf-bands .b-exc { background: color-mix(in srgb, var(--danger) 70%, var(--panel)); }
-/* Curseur dessiné ici : piste transparente pour laisser voir le bandeau de l'horaire */
-.cf-track input[type="range"] { -webkit-appearance: none; appearance: none; position: relative; width: 100%; height: 24px; margin: 0; padding: 0; border: 0; box-shadow: none !important; background: transparent; cursor: pointer; }
-.cf-track input[type="range"]::-webkit-slider-runnable-track { height: 24px; background: transparent; }
-.cf-track input[type="range"]::-moz-range-track { height: 24px; background: transparent; }
-.cf-track input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 4px; height: 22px; margin-top: 1px; border-radius: 2px; background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
-.cf-track input[type="range"]::-moz-range-thumb { width: 4px; height: 22px; border: 0; border-radius: 2px; background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
-.cf-track input[type="range"]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 35%, transparent); }.cf-ticks { display: flex; justify-content: space-between; padding: 0 2px; color: var(--muted); font-size: .625rem; font-variant-numeric: tabular-nums; }
-.cf-clock { display: flex; flex-direction: column; min-width: 150px; line-height: 1.3; }
-.cf-clock strong { font-size: .9375rem; font-variant-numeric: tabular-nums; }
-.cf-time.off .cf-track, .cf-time.off .cf-date, .cf-time.off .cf-clock strong { opacity: .45; }
+.cf-clock { display: flex; align-items: baseline; gap: 10px; min-width: 0; line-height: 1.3; }
+.cf-clock strong { font-size: .9375rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+#t-state { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Lignes du bandeau : libellé à gauche (colonne fixe), journée à droite ;
+   le curseur (ligne du dessous) est aligné sur la même colonne. */
+.cf-lane { display: grid; grid-template-columns: 150px minmax(0, 1fr); align-items: center; gap: 8px; }
+.cf-ln { font-size: .6875rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
+.cf-lanes .cf-lane + .cf-lane { margin-top: 3px; }
+.cf-lanes .cf-lb { position: relative; height: 14px; margin: 0 2px; border-radius: 3px; overflow: hidden; background: var(--line); }
+.cf-lanes .cf-result .cf-lb { height: 20px; }
+.cf-result .cf-ln { color: var(--ink); font-weight: 600; }
+.cf-lb i { position: absolute; top: 0; bottom: 0; display: flex; align-items: center; overflow: hidden; font-style: normal; }
+.cf-lb i + i { box-shadow: inset 1px 0 0 var(--panel); }
+.cf-lb i span { padding: 0 6px; font-size: .625rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cf-lb .b-open { background: color-mix(in srgb, var(--ok) 70%, var(--panel)); }
+.cf-lb .b-closed { background: color-mix(in srgb, var(--ink) 18%, var(--panel)); }
+.cf-lb .b-exc { background: color-mix(in srgb, var(--danger) 70%, var(--panel)); color: var(--panel); }
+/* Résultat : même couleur que la carte d'arrivée (familles de --c) */
+.cf-lb i.r { background: color-mix(in srgb, var(--c, var(--cf-leaf)) 32%, var(--panel)); color: color-mix(in srgb, var(--c, var(--cf-leaf)) 70%, var(--ink)); }
+.cf-lb i.r.t-none { background: repeating-linear-gradient(45deg, var(--line) 0 4px, transparent 4px 8px); color: var(--muted); }
+.cf-cursor { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--accent); pointer-events: none; }
+.cf-ticks { display: flex; justify-content: space-between; padding: 0 2px; color: var(--muted); font-size: .625rem; font-variant-numeric: tabular-nums; }
+
+/* Curseur : piste transparente, poignée fine */
+.cf-slider { margin-top: 2px; }
+.cf-slider input[type="range"] { -webkit-appearance: none; appearance: none; display: block; width: 100%; height: 18px; margin: 0; padding: 0; border: 0; box-shadow: none !important; background: transparent; cursor: pointer; }
+.cf-slider input[type="range"]::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: var(--line); }
+.cf-slider input[type="range"]::-moz-range-track { height: 4px; border-radius: 2px; background: var(--line); }
+.cf-slider input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 4px; height: 16px; margin-top: -6px; border-radius: 2px; background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+.cf-slider input[type="range"]::-moz-range-thumb { width: 4px; height: 16px; border: 0; border-radius: 2px; background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+.cf-slider input[type="range"]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 35%, transparent); }
+.cf-time.off .cf-lanes, .cf-time.off .cf-slider, .cf-time.off .cf-date, .cf-time.off .cf-clock strong { opacity: .45; }
+@media (max-width: 800px) { .cf-lane { grid-template-columns: 90px minmax(0, 1fr); } }
 #t-help-box .helpbox { margin: 8px 0 0; }
 
 /* Fiche */

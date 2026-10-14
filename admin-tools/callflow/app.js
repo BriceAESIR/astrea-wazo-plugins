@@ -1,9 +1,9 @@
 // Call Flow Manager (Astrea Admin Tools) — vue graphique du parcours des
 // appels (lot 1 : lecture seule). Cadrage : astrea-wazo-dev/docs/CALLFLOW-MANAGER.md.
 // Modèle (sources confd vérifiées) : model.js ; canevas : canvas.js.
-import { S, $, esc, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox } from '../common/core.js?v=0.32.3';
-import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, scanGroupKeys, buildTree, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, scheduleState } from './model.js?v=0.32.3';
-import { createCanvas } from './canvas.js?v=0.32.3';
+import { S, $, esc, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox } from '../common/core.js?v=0.32.4';
+import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, scanGroupKeys, buildTree, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments } from './model.js?v=0.32.4';
+import { createCanvas } from './canvas.js?v=0.32.4';
 
 const TESTED_STACK = ['26.07'];
 const NAV = [
@@ -85,6 +85,7 @@ function draw(keepView = false) {
   if (!$('cf-hb')) $('cf-help-box').innerHTML = helpBox('cf-hb', C.dir === 'out'
     ? 'Chaque carte est un objet Wazo ; ses sorties (à droite) sont les cas où l\'appel la quitte : débordements, touches de SVI, horaire fermé… Un lien en pointillé rejoint une carte déjà affichée ailleurs (boucle ou objet partagé). Un lien gris clair est une simple association (messagerie de l\'utilisateur), pas un routage. Les durées affichées sont celles de Wazo (sonnerie, délai du groupe ou de la file).'
     : 'Les cartes de gauche envoient des appels vers la carte choisie ; la sortie concernée est indiquée sur chacune. Seuls les routages lus dans confd sont trouvés (renvois vers un numéro interne compris).');
+  C.treeId = (C.treeId || 0) + 1; // bandeau à recalculer
   applyTime(C.tree, timeW());
   C.canvas.render(C.tree, C.dir, `${C.scope}|${C.root}|${C.dir}`, { keepView });
   renderTime();
@@ -136,18 +137,39 @@ function setNow() {
   C.time.min = d.getHours() * 60 + d.getMinutes();
 }
 const timeW = () => (C.time.on && C.dir === 'out' ? whenOf(C.time.date, C.time.min) : null);
-// Premier horaire du parcours affiché (le plus proche de la carte de départ).
-const firstSchedule = () => { for (const k of C.tree?.nodes.keys() || []) if (k.startsWith('schedule:')) return entity(k).obj; return null; };
+// Lignes du bandeau : « Résultat » (où arrive l'appel, après tous les
+// horaires) puis une ligne par horaire du parcours. Recalculées quand la date
+// ou l'arbre change, pas à chaque mouvement du curseur.
+const seg = (b, cls, label, text) => {
+  const w = ((b.end - b.start) / 1440) * 100;
+  return `<i class="${cls}" style="left:${(b.start / 1440) * 100}%;width:${w}%" title="${hhmm(b.start)}–${hhmm(b.end - 1)} : ${esc(label)}">${text && w > 9 ? `<span>${esc(text)}</span>` : ''}</i>`;
+};
+function renderLanes() {
+  const d = C.time.date;
+  const key = `${d.toDateString()}|${C.treeId}`;
+  if (C.lanesKey === key) return;
+  C.lanesKey = key;
+  const scheds = C.dir === 'out' ? schedulesIn(C.tree) : [];
+  if (!scheds.length) { $('t-lanes').innerHTML = ''; C.landing = null; return; }
+  C.landing = landingSegments(C.tree, d);
+  const rows = [`<div class="cf-lane cf-result"><span class="cf-ln" title="Où arrive l'appel à chaque moment de la journée, une fois tous les horaires du parcours franchis">Résultat</span><div class="cf-lb">${C.landing.map((b) => seg(b, `r t-${b.type}`, b.title, b.title)).join('')}<b class="cf-cursor"></b></div></div>`];
+  for (const s of scheds) {
+    rows.push(`<div class="cf-lane"><span class="cf-ln" title="${esc(s.name || '')}">${esc(s.name || `Horaire #${s.id}`)}</span><div class="cf-lb">${dayBands(s, d).map((b) => seg(b, `b-${b.k}`, b.label, b.k === 'exc' ? b.label.replace('Fermeture exceptionnelle', 'Ferm. exc.') : '')).join('')}<b class="cf-cursor"></b></div></div>`);
+  }
+  $('t-lanes').innerHTML = rows.join('');
+}
 function renderTime() {
   const d = C.time.date;
   $('t-date').value = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   $('t-min').value = C.time.min;
   $('t-label').textContent = `${hhmm(C.time.min)} · ${d.toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' })}`;
   $('cf-time').classList.toggle('off', !C.time.on || C.dir !== 'out');
-  const s = firstSchedule();
-  if (!s) { $('t-bands').innerHTML = ''; $('t-state').textContent = C.dir === 'out' ? 'Aucun horaire sur ce parcours' : 'Simulation : sens « où vont les appels » seulement'; return; }
-  $('t-bands').innerHTML = dayBands(s, d).map((b) => `<i class="b-${b.k}" style="left:${(b.start / 1440) * 100}%;width:${((b.end - b.start) / 1440) * 100}%" title="${hhmm(b.start)}–${hhmm(b.end - 1)} : ${esc(b.label)}"></i>`).join('');
-  $('t-state').textContent = `${s.name || 'Horaire'} : ${scheduleState(s, whenOf(d, C.time.min)).label}`;
+  renderLanes();
+  for (const c of $('t-lanes').querySelectorAll('.cf-cursor')) c.style.left = `${((C.time.min + 0.5) / 1440) * 100}%`;
+  if (C.dir !== 'out') { $('t-state').textContent = 'Simulation : sens « où vont les appels » seulement'; return; }
+  if (!C.landing) { $('t-state').textContent = 'Aucun horaire sur ce parcours'; return; }
+  const now = C.landing.find((b) => C.time.min >= b.start && C.time.min < b.end);
+  $('t-state').textContent = now ? `Arrive sur : ${now.title}` : '';
 }
 function updateTime() {
   if (!C.tree) return;
@@ -224,7 +246,7 @@ $('t-next').onclick = () => shiftDay(1);
 $('t-now').onclick = () => { setNow(); updateTime(); };
 $('t-on').onchange = () => { C.time.on = $('t-on').checked; updateTime(); };
 $('t-help').innerHTML = helpButton('t-hb', 'Simulation de la date et de l\'heure');
-$('t-help-box').innerHTML = helpBox('t-hb', 'Choisissez un jour et une heure : les branches qui ne s\'appliquent pas à ce moment sont atténuées (ouvert → sorties normales de la SDA, de l\'utilisateur, du groupe… ; fermé → destination de fermeture ; fermeture exceptionnelle → sa destination, prioritaire). Règles lues dans le code de Wazo : fermetures exceptionnelles d\'abord, puis plages d\'ouverture, sinon fermé ; bornes horaires incluses à la minute (une plage 09:00–12:30 couvre 12:30). L\'heure est celle du site (fuseau de l\'horaire). Le bandeau du curseur montre la journée du premier horaire du parcours : vert ouvert, gris fermé, rouge fermeture exceptionnelle.');
+$('t-help-box').innerHTML = helpBox('t-hb', 'Choisissez un jour et une heure : les branches qui ne s\'appliquent pas à ce moment sont atténuées (ouvert → sorties normales de la SDA, de l\'utilisateur, du groupe… ; fermé → destination de fermeture ; fermeture exceptionnelle → sa destination, prioritaire). Règles lues dans le code de Wazo : fermetures exceptionnelles d\'abord, puis plages d\'ouverture, sinon fermé ; bornes horaires incluses à la minute (une plage 09:00–12:30 couvre 12:30). L\'heure est celle du site (fuseau de l\'horaire). Le bandeau montre la journée choisie : la ligne « Résultat » indique où arrive l\'appel une fois tous les horaires franchis (couleur de la carte d\'arrivée), puis une ligne par horaire du parcours (vert ouvert, gris fermé, rouge fermeture exceptionnelle). Survolez une tranche pour ses heures exactes.');
 // Le canevas reprend sa taille avec la fenêtre (cadre du portail redimensionné).
 window.addEventListener('resize', () => { clearTimeout(window.__cfR); window.__cfR = setTimeout(() => C.canvas?.fit(), 200); });
 

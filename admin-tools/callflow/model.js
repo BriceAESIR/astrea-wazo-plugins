@@ -21,7 +21,7 @@
 // Supposé, à vérifier en réel : les listes (GET /groups, /queues,
 // /switchboards, /schedules) contiennent déjà fallbacks, membres et
 // destinations ; sinon on lit le détail de chaque objet (ensureDetails).
-import { S, api, listAll, fullName } from '../common/core.js?v=0.32.3';
+import { S, api, listAll, fullName } from '../common/core.js?v=0.32.4';
 
 export const M = { lists: {}, by: {}, ext: new Map(), extAny: new Map(), rev: null, warns: [] };
 
@@ -335,7 +335,9 @@ function membersLeaf(type, o) {
   else if (keys) parts.push(`${keys.length} par touche`);
   const few = (arr) => arr.slice(0, 4).join(', ') + (arr.length > 4 ? ` +${arr.length - 4}` : '');
   const sub = [few(fixed)];
-  if (dyn.length) sub.push(`inscrits : ${few(dyn.map((x) => x.name))}`);
+  const ghosts = dyn.filter((x) => x.unknown);
+  if (dyn.length > ghosts.length) sub.push(`inscrits : ${few(dyn.filter((x) => !x.unknown).map((x) => x.name))}`);
+  if (ghosts.length) sub.push(`⚠ ${plural(ghosts.length, 'inscrit')} inconnu${ghosts.length > 1 ? 's' : ''} (utilisateur supprimé ?)`);
   // Inscrits non lisibles (amid refusé) : on montre les membres possibles
   // (touche de bascule), sans savoir s'ils sont inscrits en ce moment.
   if (!live && keys?.length) sub.push(`bascule : ${few([...new Set(keys.map((k) => k.name))])} (inscrits ou non)`);
@@ -388,11 +390,19 @@ export async function loadLiveMembers() {
           const user = u ? M.userByUuid.get(u[1]) : null;
           const name = user ? fullName(user) : a ? `agent ${a[1]}` : (m.MemberName || itf);
           const st = [DEVSTATE[m.Status] || '', m.Paused === '1' || m.Paused === true ? 'en pause' : '', String(m.Membership).toLowerCase() === 'dynamic' ? since(m.LoginTime) : ''].filter(Boolean).join(', ');
-          list.push({ name, uuid: u?.[1] || null, dynamic: String(m.Membership || '').toLowerCase() === 'dynamic', state: st, calls: Number(m.CallsTaken) || 0 });
+          list.push({ name, uuid: u?.[1] || null, itf, queue: q, unknown: !!u && !user, dynamic: String(m.Membership || '').toLowerCase() === 'dynamic', state: st, calls: Number(m.CallsTaken) || 0 });
         }
         live.set(q, list);
       }
     }));
+    // Inscrit dont l'uuid n'est pas un utilisateur du tenant : relu dans confd.
+    // 404 = utilisateur supprimé (membre fantôme gardé par l'astdb d'Asterisk,
+    // persistentmembers = yes) ou utilisateur d'un autre tenant (constaté sur
+    // g_chaumes le 14/10/2026, cause à confirmer).
+    for (const x of [...live.values()].flat().filter((y) => y.unknown)) {
+      try { const usr = await api('GET', `/users/${x.uuid}`); if (usr) { x.name = fullName(usr); x.unknown = false; } } catch { /* introuvable */ }
+      if (x.unknown) x.name = `inscrit inconnu (${x.uuid.slice(0, 8)}…)`;
+    }
     M.live = live; M.liveState = 'ok';
     console.info('[astrea] Call Flow : membres en direct (amid QueueStatus)', M.live);
   } catch (e) { M.liveState = e.status ? e.message : `indisponible (${e.message})`; console.info('[astrea] amid QueueStatus :', M.liveState, e); }
@@ -568,6 +578,48 @@ export function dayBands(s, date) {
   return out2;
 }
 
+// Horaires distincts présents dans l'arbre (ordre de parcours depuis la carte de départ).
+export function schedulesIn(tree) {
+  const seen = new Map();
+  for (const k of tree?.nodes.keys() || []) if (k.startsWith('schedule:')) { const { id, obj } = entity(k); if (obj && !seen.has(id)) seen.set(id, obj); }
+  return [...seen.values()];
+}
+// Cible d'une sortie dans l'arbre affiché (enfant ou lien croisé).
+function targetOf(tree, k, portId) {
+  for (const n of tree.nodes.get(k)?.kids || []) if (n.port === portId) return n.key;
+  return tree.cross.find((c) => c.from === k && c.port === portId)?.to || null;
+}
+// Où arrive l'appel au moment w : on part de la carte de départ (une SDA passe
+// à sa destination), puis on traverse les cartes horaire par leur sortie
+// active, jusqu'au premier objet qui n'est pas un horaire.
+export function landingAt(tree, w) {
+  let k = tree.root.key;
+  if (k.startsWith('incall:')) k = targetOf(tree, k, tree.root.ports?.[0]?.id);
+  for (let i = 0; k && k.startsWith('schedule:') && i < 12; i++) {
+    const n = tree.nodes.get(k); const s = scheduleState(entity(k).obj, w);
+    const p = (n.ports || []).find((x) => (x.when === 'open' && s.open) || (x.when === 'closed' && !s.open && s.exc < 0) || (x.when === `exc:${s.exc}`));
+    if (!p) return { key: null, why: n.folded ? 'branche repliée' : 'sortie non réglée' };
+    k = targetOf(tree, k, p.id);
+    if (!k) return { key: null, why: n.folded ? 'branche repliée' : 'sortie non réglée' };
+  }
+  return { key: k };
+}
+// Résultat sur une journée, minute par minute : tranches [{start, end, key, type, title}].
+export function landingSegments(tree, date) {
+  const out2 = [];
+  for (let m = 0; m < 1440; m++) {
+    const r = landingAt(tree, whenOf(date, m));
+    const id = r.key || `none:${r.why}`;
+    const last = out2[out2.length - 1];
+    if (last && last.id === id) { last.end = m + 1; continue; }
+    const n = r.key ? tree.nodes.get(r.key) : null;
+    const lbl = TYPES[n?.info?.type]?.label || '';
+    const title = !n ? (r.why || 'aucune destination') : String(n.info.title).toLowerCase().startsWith(lbl.toLowerCase()) ? n.info.title : `${lbl} ${n.info.title}`.trim();
+    out2.push({ id, start: m, end: m + 1, key: r.key, type: n?.info?.type || 'none', title });
+  }
+  return out2;
+}
+
 // ---------------------------------------------------------------------------
 // Fiche (panneau de droite) : [[libellé, valeur, aide?]]
 // ---------------------------------------------------------------------------
@@ -591,8 +643,11 @@ export function facts(k, leafInfo) {
     const ACT = { join: 'rejoindre', leave: 'quitter', toggle: 'bascule' };
     const g = leafInfo.ownerType === 'group';
     const dyn = (leafInfo.live || []).filter((x) => x.dynamic);
+    const ghosts = dyn.filter((x) => x.unknown);
     return [['Membres fixes', leafInfo.names.join(', ') || 'aucun', 'Membres réglés dans Wazo (confd). Ils sonnent toujours.'],
-      [g ? 'Inscrits en ce moment' : 'Connectés en ce moment', leafInfo.live ? (dyn.map((x) => `${x.name}${x.state ? ` (${x.state})` : ''}`).join(', ') || 'aucun') : `non lisible : ${M.liveState || 'non lu'}`,
+      ...(ghosts.length ? [['⚠ Inscrits inconnus', ghosts.map((x) => `${x.uuid} — pour le retirer (CLI Asterisk) : queue remove member ${x.itf} from ${x.queue}`).join(' ; '),
+        'Inscription par touche dont l\'utilisateur n\'existe pas dans ce tenant : utilisateur supprimé alors qu\'il était inscrit (Asterisk garde l\'inscription, persistentmembers = yes), ou utilisateur d\'un autre tenant. Le groupe continue d\'appeler ce canal. Supposé : la commande queue remove member retire aussi l\'inscription persistante.']] : []),
+      [g ? 'Inscrits en ce moment' : 'Connectés en ce moment', leafInfo.live ? (dyn.filter((x) => !x.unknown).map((x) => `${x.name}${x.state ? ` (${x.state})` : ''}`).join(', ') || 'aucun') : `non lisible : ${M.liveState || 'non lu'}`,
         g ? 'Utilisateurs inscrits par la touche « bascule groupe » (*50, *51, *52). Wazo ne les enregistre pas dans sa configuration : seul Asterisk les connaît (lecture par l\'API amid).' : 'Agents connectés à la file, lus dans Asterisk (API amid).'],
       ...(g && leafInfo.keys ? [['Touches de bascule', leafInfo.keys.map((k) => `${k.name} (${ACT[k.action] || k.action}, touche ${k.pos})`).join(', ') || 'aucune', 'Utilisateurs qui ont une touche pour rejoindre ou quitter ce groupe : membres possibles, pas forcément inscrits.']] : [])];
   }

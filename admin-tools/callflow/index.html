@@ -7,8 +7,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Mulish:wght@300..800&display=swap">
-<link rel="stylesheet" href="../common/style.css?v=0.32.3">
-<link rel="stylesheet" href="./callflow.css?v=0.32.3">
+<link rel="stylesheet" href="../common/style.css?v=0.32.4">
+<link rel="stylesheet" href="./callflow.css?v=0.32.4">
 <script>if (window.parent !== window) document.documentElement.classList.add('framed');</script>
 </head>
 <body>
@@ -63,20 +63,25 @@
       <div id="cf-help-box"></div>
       <div id="cf-view" class="cf-view" tabindex="0" aria-label="Graphe du parcours des appels"></div>
       <div id="cf-time" class="cf-time">
-        <label class="inline small" title="Atténue les branches qui ne s'appliquent pas à la date et l'heure choisies (horaires : ouvert, fermé, fermetures exceptionnelles)"><input type="checkbox" id="t-on" checked> Simuler</label>
-        <div class="cf-date">
-          <button id="t-prev" class="icon" title="Jour précédent">‹</button>
-          <input type="date" id="t-date" aria-label="Date simulée">
-          <button id="t-next" class="icon" title="Jour suivant">›</button>
+        <div class="cf-time-top">
+          <label class="inline small" title="Atténue les branches qui ne s'appliquent pas à la date et l'heure choisies (horaires : ouvert, fermé, fermetures exceptionnelles)"><input type="checkbox" id="t-on" checked> Simuler</label>
+          <div class="cf-date">
+            <button id="t-prev" class="icon" title="Jour précédent">‹</button>
+            <input type="date" id="t-date" aria-label="Date simulée">
+            <button id="t-next" class="icon" title="Jour suivant">›</button>
+          </div>
+          <div class="cf-clock"><strong id="t-label">--:--</strong><span id="t-state" class="muted small"></span></div>
+          <span class="spacer"></span>
+          <button id="t-now" title="Revenir à la date et l'heure actuelles">Maintenant</button>
+          <span id="t-help"></span>
         </div>
-        <div class="cf-track">
-          <div id="t-bands" class="cf-bands" aria-hidden="true"></div>
-          <input type="range" id="t-min" min="0" max="1439" step="1" aria-label="Heure simulée">
-          <div class="cf-ticks" aria-hidden="true"><span>0 h</span><span>3 h</span><span>6 h</span><span>9 h</span><span>12 h</span><span>15 h</span><span>18 h</span><span>21 h</span><span>24 h</span></div>
+        <!-- Une ligne « Résultat » (où arrive l'appel) puis une ligne par horaire du parcours ; le curseur est en dessous, aligné. -->
+        <div id="t-lanes" class="cf-lanes" aria-hidden="true"></div>
+        <div class="cf-lane cf-slider">
+          <span class="cf-ln"></span>
+          <div class="cf-lb"><input type="range" id="t-min" min="0" max="1439" step="1" aria-label="Heure simulée"></div>
         </div>
-        <div class="cf-clock"><strong id="t-label">--:--</strong><span id="t-state" class="muted small"></span></div>
-        <button id="t-now" title="Revenir à la date et l'heure actuelles">Maintenant</button>
-        <span id="t-help"></span>
+        <div class="cf-lane"><span class="cf-ln"></span><div class="cf-ticks" aria-hidden="true"><span>0 h</span><span>3 h</span><span>6 h</span><span>9 h</span><span>12 h</span><span>15 h</span><span>18 h</span><span>21 h</span><span>24 h</span></div></div>
       </div>
       <div id="t-help-box"></div>
       <div class="cf-hint muted small">Glisser le fond : déplacer · molette : zoom · glisser une carte : la déplacer avec sa branche (Alt : seule) · double-clic : partir de cette carte</div>
@@ -92,6 +97,6 @@
     <div class="btnrow right"><button id="modal-cancel">Annuler</button><button id="modal-ok" class="primary">Confirmer</button></div></div></div>
   <div id="toast" class="toast" hidden></div>
 </div>
-<script type="module" src="./app.js?v=0.32.3"></script>
+<script type="module" src="./app.js?v=0.32.4"></script>
 </body>
 </html>
