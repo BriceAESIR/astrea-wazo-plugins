@@ -52,7 +52,8 @@ body.in-portal.ready #workbench { height: 100vh; }
 .cf-edge { fill: none; stroke: var(--cf-edge); stroke-width: 1.5; }
 .cf-edge.cross { stroke-dasharray: 6 4; }
 /* Horaire → objet gardé : attache épaisse dans la couleur des horaires */
-.cf-edge.guard { stroke: var(--cf-menu); stroke-width: 3.5; stroke-linecap: round; }
+.cf-edge.guard { stroke: var(--cf-menu); stroke-width: 3; stroke-linecap: round; }
+.cf-links #cf-arrow-g path { fill: var(--cf-menu); }
 .cf-edge.guard.inactive { stroke: var(--cf-edge); stroke-width: 2; }
 .cf-guard { margin: 0 8px 6px 10px; padding: 3px 8px; border-radius: var(--radius); background: color-mix(in srgb, var(--cf-menu) 10%, var(--panel)); color: color-mix(in srgb, var(--cf-menu) 75%, var(--ink)); font-size: .6875rem; line-height: 1.35; }
 .cf-gpill { margin-left: 6px; padding: 0 6px; border-radius: 9px; font-size: .625rem; letter-spacing: .02em; text-transform: none; background: color-mix(in srgb, var(--cf-menu) 14%, var(--panel)); color: color-mix(in srgb, var(--cf-menu) 80%, var(--ink)); white-space: nowrap; }
@@ -186,6 +187,17 @@ body.in-portal.ready #workbench { height: 100vh; }
 .cf-dd-list { height: auto !important; padding: 0 !important; border: 1px solid var(--line) !important; border-radius: var(--radius) !important; font-size: .875rem !important; }
 .cf-dd-list option { padding: 4px 8px; }
 .cf-diffwrap { max-height: 50vh; overflow: auto; }
+/* Choix au clic sur ✎ et éditeur des plages horaires */
+.cf-choose { margin: 4px 0 12px; }
+.cf-choose .cf-chip { cursor: pointer; text-transform: none; letter-spacing: normal; font-weight: 400; color: var(--ink); }
+.cf-per-t { margin: 16px 0 4px; font-size: .75rem; color: var(--muted); font-weight: 500; text-transform: uppercase; letter-spacing: .08333em; }
+.cf-per td, .cf-per th { padding: 4px 6px; vertical-align: middle; }
+.cf-per input:not([type="checkbox"]) { height: 28px; font-size: .8125rem; min-width: 64px; }
+.cf-per input[type="time"] { width: 92px; }
+.cf-wd { white-space: nowrap; }
+.cf-wd label.inline { margin: 0 4px 0 0; gap: 2px; font-size: .75rem; }
+.cf-wd input { width: 14px; height: 14px; }
+.modal-box:has(.cf-per) { max-width: 880px; }
 
 /* Fiche */
 #detail { padding-top: 8px; }

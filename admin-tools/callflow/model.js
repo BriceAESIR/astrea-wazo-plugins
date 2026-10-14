@@ -21,7 +21,7 @@
 // Supposé, à vérifier en réel : les listes (GET /groups, /queues,
 // /switchboards, /schedules) contiennent déjà fallbacks, membres et
 // destinations ; sinon on lit le détail de chaque objet (ensureDetails).
-import { S, api, listAll, fullName } from '../common/core.js?v=0.34.0';
+import { S, api, listAll, fullName } from '../common/core.js?v=0.34.1';
 
 export const M = { lists: {}, by: {}, ext: new Map(), extAny: new Map(), rev: null, warns: [] };
 
@@ -317,6 +317,8 @@ export function edgesOf(k) {
       // Lot 2b : fermé et fermetures exceptionnelles modifiables (PUT /schedules/{id}).
       e.push({ ...W(out('closed', o.closed_destination), 'sched', o.id, 'closed'), when: 'closed' });
       (o.exceptional_periods || []).forEach((p, i) => e.push({ ...W({ ...out('exception', p.destination, periodText(p)), label: `Fermeture exceptionnelle ${i + 1}` }, 'sched_exc', o.id, i), when: `exc:${i}` }));
+      // Toutes les sorties d'un horaire ouvrent aussi l'éditeur de ses plages (clic, mode Modifier).
+      for (const x of e) x.periods = o.id;
       return e;
     }
     case 'switchboard': return [fbOut('sb_fb', o.uuid, o, 'noanswer', after(o.timeout))];
@@ -530,8 +532,11 @@ export function buildTree(rootKey, dir, { maxDepth = 8, collapsed = new Set(), e
     if (!owner) continue;
     const oi = nodeInfo(owner);
     n.guardOf = owner.startsWith('incall:') ? `la SDA ${oi.title}` : `${TYPES[oi.type]?.label || ''} ${oi.title}`.trim();
-    for (const p of n.ports || []) if (p.slot === 'open') p.guard = true;
-    const target = owner.startsWith('incall:') ? null : nodes.get(owner);
+    // L'attache relie l'horaire à SON objet : SDA → horaire (la SDA est avant),
+    // horaire → objet (Ouvert) pour un utilisateur, un groupe ou une file.
+    if (owner.startsWith('incall:')) { for (const p of nodes.get(owner)?.ports || []) if (p.to?.key === n.key) p.guard = true; }
+    else for (const p of n.ports || []) if (p.slot === 'open') p.guard = true;
+    const target = nodes.get(owner);
     if (target) target.guardedBy = obj?.name || 'Horaire';
   }
   return { root, nodes, cross };

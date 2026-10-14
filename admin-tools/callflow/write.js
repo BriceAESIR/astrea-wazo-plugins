@@ -11,8 +11,8 @@
 //  - SVI : choices envoyé en entier (supposé : la liste est remplacée).
 // Toujours : relire juste avant d'écrire, ne rien écrire si c'est identique,
 // une seule écriture par objet.
-import { api } from '../common/core.js?v=0.34.0';
-import { M } from './model.js?v=0.34.0';
+import { api } from '../common/core.js?v=0.34.1';
+import { M } from './model.js?v=0.34.1';
 
 // Champs d'entrée de chaque type de destination (le reste est en lecture seule).
 const DEST_KEYS = {
@@ -65,12 +65,22 @@ function holder(w) {
   }
 }
 // Valeur affichée (copie locale, modifiée par le brouillon).
+// Plages d'un horaire (éditeur de conditions) : { open_periods, exceptional_periods }.
+const periodsOf = (s) => JSON.parse(JSON.stringify({ open_periods: s?.open_periods || [], exceptional_periods: s?.exceptional_periods || [] }));
+// Égalité d'une valeur du brouillon (destination, horaire associé ou plages).
+export const sameValue = (w, a, b) => (w.k === 'sched_periods' ? JSON.stringify(a) === JSON.stringify(b) : sameDest(a, b));
 export function getDest(w) {
+  if (w.k === 'sched_periods') return periodsOf(M.by.schedule?.get(String(w.id)));
   if (w.k === 'ivr_choice') return (M.by.ivr?.get(String(w.id))?.choices || []).find((c) => c.exten === w.f)?.destination || null;
   if (w.k === 'sched_assoc') { const s = ownerOf(w.id).o?.schedules?.[0]; return s ? { type: 'schedule', schedule_id: s.id } : null; }
   const h = holder(w); return h?.[0]?.[h[1]] || null;
 }
 export function setDest(w, d) {
+  if (w.k === 'sched_periods') {
+    const s = M.by.schedule?.get(String(w.id)); if (!s || !d) return;
+    const v = periodsOf(d); s.open_periods = v.open_periods; s.exceptional_periods = v.exceptional_periods;
+    return;
+  }
   if (w.k === 'sched_assoc') {
     const { o } = ownerOf(w.id); if (!o) return;
     const s = d && M.by.schedule?.get(String(d.schedule_id));
@@ -96,7 +106,7 @@ function opsOf(entries) {
   const by = new Map();
   for (const e of entries) {
     // Champs d'une file et débordements d'une file : deux routes différentes.
-    const k = e.w.k === 'ivr_choice' ? 'ivr' : e.w.k === 'sched_exc' ? 'sched' : e.w.k;
+    const k = e.w.k === 'ivr_choice' ? 'ivr' : e.w.k === 'sched_exc' || e.w.k === 'sched_periods' ? 'sched' : e.w.k;
     const res = `${k}:${e.w.id}`;
     if (!by.has(res)) by.set(res, { k, id: e.w.id, entries: [] });
     by.get(res).entries.push(e);
@@ -152,14 +162,22 @@ export async function prepare(entries) {
       const path = `/schedules/${op.id}`;
       const before = await api('GET', path);
       const per = (p, withDest) => { const x = { hours_start: p.hours_start, hours_end: p.hours_end, week_days: p.week_days, month_days: p.month_days, months: p.months }; if (withDest) x.destination = cleanDest(p.destination) || { type: 'none' }; return x; };
-      const exc = (before?.exceptional_periods || []).map((p) => per(p, true));
+      let exc = (before?.exceptional_periods || []).map((p) => per(p, true));
+      let open = (before?.open_periods || []).map((p) => per(p, false));
       let closed = cleanDest(before?.closed_destination) || { type: 'none' };
+      // Plages d'abord (éditeur), puis destinations par index (l'appli interdit
+      // de mélanger les deux sur un même horaire dans un brouillon).
+      for (const e of op.entries) if (e.w.k === 'sched_periods') {
+        open = e.after.open_periods.map((p) => per(p, false));
+        exc = e.after.exceptional_periods.map((p) => ({ ...per(p, false), destination: cleanDest(p.destination) || closed }));
+      }
       for (const e of op.entries) {
         if (e.w.k === 'sched') closed = cleanDest(e.after) || { type: 'none' };
-        else if (exc[e.w.f]) exc[e.w.f].destination = cleanDest(e.after) || { type: 'none' };
+        else if (e.w.k === 'sched_exc' && exc[e.w.f]) exc[e.w.f].destination = cleanDest(e.after) || { type: 'none' };
       }
-      const body = { closed_destination: closed, open_periods: (before?.open_periods || []).map((p) => per(p, false)), exceptional_periods: exc };
-      const changed = !sameDest(before?.closed_destination, closed) || exc.some((p, i) => !sameDest(before.exceptional_periods[i]?.destination, p.destination));
+      const body = { closed_destination: closed, open_periods: open, exceptional_periods: exc };
+      const norm = (b) => JSON.stringify({ o: (b?.open_periods || []).map((p) => per(p, false)), e: (b?.exceptional_periods || []).map((p) => per(p, true)), c: cleanDest(b?.closed_destination) || { type: 'none' } });
+      const changed = norm(before) !== norm(body);
       out.push({ path, before, body, changed });
     } else if (op.k === 'sched_assoc') {
       // Association : relire l'objet, retirer l'ancien horaire, associer le nouveau.

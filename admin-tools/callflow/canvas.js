@@ -2,8 +2,8 @@
 // une carte mentale), cartes HTML, liens SVG, déplacement du canevas, zoom,
 // déplacement des cartes (avec leur sous-arbre), repli des branches.
 // Positions manuelles gardées dans le navigateur (localStorage, try/catch).
-import { esc } from '../common/core.js?v=0.34.0';
-import { TYPES } from './model.js?v=0.34.0';
+import { esc } from '../common/core.js?v=0.34.1';
+import { TYPES } from './model.js?v=0.34.1';
 
 const W = 236, GAP_X = 104, GAP_Y = 18;
 const POS_KEY = 'astrea-callflow-pos-v1';
@@ -19,8 +19,11 @@ function savePos(k, pos) {
   } catch { /* stockage indisponible */ }
 }
 
-export function createCanvas(viewport, { onSelect, onOpen, onFold, onClear, onUndo, onCardDrop }) {
-  viewport.innerHTML = '<div class="cf-stage"><svg class="cf-links" width="1" height="1" aria-hidden="true"><defs><marker id="cf-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z"></path></marker></defs><g></g></svg><div class="cf-cards"></div></div>';
+export function createCanvas(viewport, { onSelect, onOpen, onFold, onClear, onUndo, onCardDrop, onPortClick }) {
+  // Pointes de flèche en unités du dessin (userSpaceOnUse) : elles ne grossissent
+  // pas avec l'épaisseur du trait (attache horaire → objet) ; une pointe par couleur.
+  const mk = (id) => `<marker id="${id}" viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth="10" markerHeight="10" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z"></path></marker>`;
+  viewport.innerHTML = `<div class="cf-stage"><svg class="cf-links" width="1" height="1" aria-hidden="true"><defs>${mk('cf-arrow')}${mk('cf-arrow-g')}</defs><g></g></svg><div class="cf-cards"></div></div>`;
   const stage = viewport.querySelector('.cf-stage');
   const g = viewport.querySelector('.cf-links g');
   const cards = viewport.querySelector('.cf-cards');
@@ -38,9 +41,11 @@ export function createCanvas(viewport, { onSelect, onOpen, onFold, onClear, onUn
     const fold = n.folded ? '<button class="cf-fold" data-fold title="Déplier">+</button>' : hasKids && n.depth > 0 ? '<button class="cf-fold" data-fold title="Replier">−</button>' : '';
     // Mode Modifier : sorties modifiables marquées (cible de dépôt), × pour vider, point orange si modifiée.
     const ports = (n.ports || []).map((p) => {
+      // ed : cible de dépôt (destination modifiable) ; clk : cliquable (aussi les sorties d'un horaire, pour ses plages).
       const ed = V.edit && p.w;
-      const cls = [p.to ? '' : 'empty', p.assoc ? 'assoc' : '', p.inactive ? 'inactive' : '', ed ? 'editable' : '', ed && V.changed.has(p.w.key) ? 'changed' : ''].filter(Boolean).join(' ');
-      return `<li data-port="${esc(p.id)}"${ed ? ` data-w="${esc(p.w.key)}"` : ''} class="${cls}" title="${esc(ed ? `${p.help || ''} — déposez une carte ici pour changer la destination.` : p.help || '')}"><span class="cf-pl">${esc(p.label)}</span>${p.note ? `<span class="cf-pn">${esc(p.note)}</span>` : ''}${p.to ? '' : '<span class="cf-pn">non réglé</span>'}${ed && V.changed.has(p.w.key) ? '<button class="cf-x cf-undo" data-undo title="Annuler cette modification : la sortie reprend sa valeur d\'origine">↶</button>' : ''}${ed && p.to ? '<button class="cf-x" data-clear title="Vider cette sortie (aucune destination ; modification du brouillon)">×</button>' : ''}${p.self ? '<span class="cf-pn cf-self">↺ revient ici</span>' : '<i class="cf-dot"></i>'}</li>`;
+      const clk = V.edit && (p.w || p.periods);
+      const cls = [p.to ? '' : 'empty', p.assoc ? 'assoc' : '', p.inactive ? 'inactive' : '', clk ? 'editable' : '', ed && V.changed.has(p.w.key) ? 'changed' : ''].filter(Boolean).join(' ');
+      return `<li data-port="${esc(p.id)}"${ed ? ` data-w="${esc(p.w.key)}"` : ''} class="${cls}" title="${esc(clk ? `${p.help || ''} — cliquez pour modifier${ed ? ', ou déposez une carte ici' : ''}.` : p.help || '')}"><span class="cf-pl">${esc(p.label)}</span>${p.note ? `<span class="cf-pn">${esc(p.note)}</span>` : ''}${p.to ? '' : '<span class="cf-pn">non réglé</span>'}${ed && V.changed.has(p.w.key) ? '<button class="cf-x cf-undo" data-undo title="Annuler cette modification : la sortie reprend sa valeur d\'origine">↶</button>' : ''}${ed && p.to ? '<button class="cf-x" data-clear title="Vider cette sortie (aucune destination ; modification du brouillon)">×</button>' : ''}${p.self ? '<span class="cf-pn cf-self">↺ revient ici</span>' : '<i class="cf-dot"></i>'}</li>`;
     }).join('');
     return `<div class="cf-node t-${esc(n.info.type)}${n.depth === 0 ? ' root' : ''}${n.key === V.sel ? ' sel' : ''}${n.dim ? ' dim' : ''}" data-key="${esc(n.key)}" style="width:${W}px">
       <div class="cf-head" title="${esc(t.help || '')}"><span class="cf-badge">${esc(t.badge)}</span><div class="cf-txt"><div class="cf-type">${esc(t.label)}${n.key.startsWith('schedule:') ? `<span class="cf-state${n.timeOpen ? ' open' : ''}">${esc(n.timeLabel || '')}</span>` : ''}${n.guardedBy ? `<span class="cf-gpill" title="Cet objet est gardé par l'horaire « ${esc(n.guardedBy)} » (carte précédente) : il n'est atteint que si l'horaire est ouvert.">⏱ ${esc(n.guardedBy)}</span>` : ''}</div><div class="cf-title">${esc(n.info.title)}</div>${n.info.sub ? `<div class="cf-sub">${esc(n.info.sub)}</div>` : ''}</div>${fold}</div>
@@ -98,7 +103,7 @@ export function createCanvas(viewport, { onSelect, onOpen, onFold, onClear, onUn
   }
   function draw() {
     const out = [];
-    const line = (a, b, cls) => { if (a && b) out.push(`<path class="${cls}" d="${path(a, b)}" marker-end="url(#cf-arrow)"></path>`); };
+    const line = (a, b, cls) => { if (a && b) out.push(`<path class="${cls}" d="${path(a, b)}" marker-end="url(#${/\bguard\b/.test(cls) && !/\binactive\b/.test(cls) ? 'cf-arrow-g' : 'cf-arrow'})"></path>`); };
     // Lien inactif (simulation horaire) : sortie inactive ou carte d'origine atténuée.
     const off = (k, port) => { const n = V.tree.nodes.get(k); return !!(n?.dim || n?.ports?.find((p) => p.id === port)?.inactive); };
     // Sortie « Ouvert » d'un horaire vers l'objet qu'il garde : lien épais (attache).
@@ -228,7 +233,10 @@ export function createCanvas(viewport, { onSelect, onOpen, onFold, onClear, onUn
   viewport.addEventListener('click', (e) => {
     const b = e.target.closest('[data-fold]'); if (b) return onFold?.(b.closest('.cf-node').dataset.key);
     const x = e.target.closest('[data-clear]'); if (x) return onClear?.(x.closest('.cf-node').dataset.key, x.closest('li').dataset.port);
-    const u = e.target.closest('[data-undo]'); if (u) onUndo?.(u.closest('.cf-node').dataset.key, u.closest('li').dataset.port);
+    const u = e.target.closest('[data-undo]'); if (u) return onUndo?.(u.closest('.cf-node').dataset.key, u.closest('li').dataset.port);
+    // Clic sur une sortie modifiable (mode Modifier) : choix de l'action.
+    const li = V.edit && !e.target.closest('button') && e.target.closest('li.editable');
+    if (li) onPortClick?.(li.closest('.cf-node').dataset.key, li.dataset.port);
   });
   viewport.addEventListener('dblclick', (e) => { const c = e.target.closest('.cf-node'); if (c && !e.target.closest('button')) onOpen?.(c.dataset.key); });
 
