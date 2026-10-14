@@ -11,8 +11,8 @@
 //  - SVI : choices envoyé en entier (supposé : la liste est remplacée).
 // Toujours : relire juste avant d'écrire, ne rien écrire si c'est identique,
 // une seule écriture par objet.
-import { api } from '../common/core.js?v=0.35.1';
-import { M } from './model.js?v=0.35.1';
+import { api } from '../common/core.js?v=0.35.2';
+import { M } from './model.js?v=0.35.2';
 
 // Champs d'entrée de chaque type de destination (le reste est en lecture seule).
 const DEST_KEYS = {
@@ -162,7 +162,12 @@ export async function prepare(entries) {
       // d'ouverture sont renvoyées telles quelles.
       const path = `/schedules/${op.id}`;
       const before = await api('GET', path);
-      const per = (p, withDest) => { const x = { hours_start: p.hours_start, hours_end: p.hours_end, week_days: p.week_days, month_days: p.month_days, months: p.months }; if (withDest) x.destination = cleanDest(p.destination) || { type: 'none' }; return x; };
+      // Constaté en réel (Brice, 14/10/2026) : confd refuse une liste vide
+      // (« month_days cannot be empty », « months cannot be empty ») alors que
+      // l'agid lit « vide » comme « sans restriction ». « Tous » s'envoie donc
+      // en liste complète : jours 1-31, mois 1-12, jours de semaine 1-7.
+      const all = (a, n) => (Array.isArray(a) && a.length ? [...a].sort((x, y) => x - y) : Array.from({ length: n }, (_, i) => i + 1));
+      const per = (p, withDest) => { const x = { hours_start: p.hours_start, hours_end: p.hours_end, week_days: all(p.week_days, 7), month_days: all(p.month_days, 31), months: all(p.months, 12) }; if (withDest) x.destination = cleanDest(p.destination) || { type: 'none' }; return x; };
       let exc = (before?.exceptional_periods || []).map((p) => per(p, true));
       let open = (before?.open_periods || []).map((p) => per(p, false));
       let closed = cleanDest(before?.closed_destination) || { type: 'none' };

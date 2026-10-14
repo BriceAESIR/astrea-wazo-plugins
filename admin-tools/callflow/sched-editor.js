@@ -19,8 +19,8 @@
 //  - ce qui n'entre pas dans ces formes (plage limitée à certains jours du
 //    mois, fermeture liée à un jour de semaine ou valable tous les mois) est
 //    conservé tel quel et listé.
-import { $, esc, confirmModal, helpButton, helpBox } from '../common/core.js?v=0.35.1';
-import { M, listOf, destLabel, loadSounds, soundName } from './model.js?v=0.35.1';
+import { $, esc, confirmModal, helpButton, helpBox } from '../common/core.js?v=0.35.2';
+import { M, listOf, destLabel, loadSounds, soundName } from './model.js?v=0.35.2';
 
 const SLOT = 15, N = 96;
 const DAYS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
