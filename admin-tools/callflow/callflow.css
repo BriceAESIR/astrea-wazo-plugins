@@ -51,6 +51,13 @@ body.in-portal.ready #workbench { height: 100vh; }
 .cf-links marker path { fill: var(--cf-edge); }
 .cf-edge { fill: none; stroke: var(--cf-edge); stroke-width: 1.5; }
 .cf-edge.cross { stroke-dasharray: 6 4; }
+/* Horaire → objet gardé : attache épaisse dans la couleur des horaires */
+.cf-edge.guard { stroke: var(--cf-menu); stroke-width: 3.5; stroke-linecap: round; }
+.cf-edge.guard.inactive { stroke: var(--cf-edge); stroke-width: 2; }
+.cf-guard { margin: 0 8px 6px 10px; padding: 3px 8px; border-radius: var(--radius); background: color-mix(in srgb, var(--cf-menu) 10%, var(--panel)); color: color-mix(in srgb, var(--cf-menu) 75%, var(--ink)); font-size: .6875rem; line-height: 1.35; }
+.cf-gpill { margin-left: 6px; padding: 0 6px; border-radius: 9px; font-size: .625rem; letter-spacing: .02em; text-transform: none; background: color-mix(in srgb, var(--cf-menu) 14%, var(--panel)); color: color-mix(in srgb, var(--cf-menu) 80%, var(--ink)); white-space: nowrap; }
+.cf-node.dropcard { outline: 2px dashed var(--cf-menu); outline-offset: 3px; }
+.cf-chip.t-schedule { border-style: dashed; border-left-style: solid; }
 .cf-edge.assoc { stroke: var(--line); stroke-dasharray: 2 4; }
 .cf-cards { position: absolute; left: 0; top: 0; }
 
@@ -110,7 +117,7 @@ body.in-portal.ready #workbench { height: 100vh; }
 .cf-state:empty { display: none; }
 
 /* Barre de temps (sous le canevas) */
-.cf-time { padding: 8px 0 0; }
+.cf-time { padding: 0 0 8px; } /* au-dessus du canevas */
 .cf-time-top { display: flex; align-items: center; gap: 8px 12px; flex-wrap: wrap; margin-bottom: 6px; }
 .cf-time label.inline { margin: 0; }
 .cf-date { display: inline-flex; align-items: center; gap: 2px; }
@@ -150,10 +157,11 @@ body.in-portal.ready #workbench { height: 100vh; }
 .cf-slider input[type="range"]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 35%, transparent); }
 .cf-time.off .cf-lanes, .cf-time.off .cf-slider, .cf-time.off .cf-date, .cf-time.off .cf-clock strong { opacity: .45; }
 @media (max-width: 800px) { .cf-lane { grid-template-columns: 90px minmax(0, 1fr); } }
-#t-help-box .helpbox { margin: 8px 0 0; }
+#t-help-box .helpbox { margin: 0 0 8px; }
+#pal-help-box .helpbox { margin: 8px 0 0; }
 
 /* Mode Modifier : palette, brouillon, sorties modifiables */
-.cf-editbar { display: flex; align-items: center; gap: 8px 12px; flex-wrap: wrap; margin: 0 0 8px; padding: 8px 12px; border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line)); border-radius: var(--radius); background: color-mix(in srgb, var(--accent) 5%, var(--panel)); }
+.cf-editbar { display: flex; align-items: center; gap: 8px 12px; flex-wrap: wrap; margin: 8px 0 0; /* sous le canevas */ padding: 8px 12px; border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line)); border-radius: var(--radius); background: color-mix(in srgb, var(--accent) 5%, var(--panel)); }
 .cf-pal-title { font-size: .75rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .08333em; white-space: nowrap; }
 .cf-editbar .titlerow { gap: 6px; }
 .cf-palette { display: flex; flex-wrap: wrap; gap: 6px; }

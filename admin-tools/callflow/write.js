@@ -1,4 +1,4 @@
-// Call Flow Manager — écriture des destinations (lot 2a). Sans DOM.
+// Call Flow Manager — écriture des destinations (lots 2a et 2b). Sans DOM.
 // Règles lues dans le code de wazo-confd (master, 14/10/2026) :
 //  - destination : schéma commun (helpers/destination.py), champs inconnus
 //    ignorés ; type « none » = aucune destination ;
@@ -11,8 +11,8 @@
 //  - SVI : choices envoyé en entier (supposé : la liste est remplacée).
 // Toujours : relire juste avant d'écrire, ne rien écrire si c'est identique,
 // une seule écriture par objet.
-import { api } from '../common/core.js?v=0.33.1';
-import { M } from './model.js?v=0.33.1';
+import { api } from '../common/core.js?v=0.34.0';
+import { M } from './model.js?v=0.34.0';
 
 // Champs d'entrée de chaque type de destination (le reste est en lecture seule).
 const DEST_KEYS = {
@@ -40,7 +40,16 @@ export const sameDest = (a, b) => canon(a) === canon(b);
 //   sb_fb       : /switchboards/{uuid}/fallbacks
 //   ivr         : /ivr/{id}                champ timeout|invalid|abort_destination
 //   ivr_choice  : /ivr/{id}                choix de touche f (exten)
+//   sched       : /schedules/{id}          closed_destination (lot 2b)
+//   sched_exc   : /schedules/{id}          exceptional_periods[f].destination
+//   sched_assoc : /{incalls|users|groups|queues}/{id}/schedules/{schedule_id}
+//                 id = clé de l'objet (incall:1, user:5…) ; valeur
+//                 {type: 'schedule', schedule_id} ou null. Vérifié dans
+//                 wazo-confd (user_schedule/validator.py) : un seul horaire
+//                 par objet → pour en changer, DELETE de l'ancien puis PUT.
 // ---------------------------------------------------------------------------
+const ASSOC_PATH = { incall: (o) => `/incalls/${o.id}`, user: (o) => `/users/${o.uuid}`, group: (o) => `/groups/${o.uuid}`, queue: (o) => `/queues/${o.id}` };
+const ownerOf = (k) => { const i = k.indexOf(':'); const t = k.slice(0, i); return { t, o: M.by[t]?.get(k.slice(i + 1)) }; };
 function holder(w) {
   const fbOf = (o) => { if (!o) return null; o.fallbacks ||= {}; return [o.fallbacks, `${w.f}_destination`]; };
   switch (w.k) {
@@ -50,15 +59,24 @@ function holder(w) {
     case 'queue_fb': return fbOf(M.by.queue?.get(String(w.id)));
     case 'sb_fb': return fbOf(M.by.switchboard?.get(w.id));
     case 'queue': case 'ivr': return [M.by[w.k]?.get(String(w.id)), w.f];
+    case 'sched': return [M.by.schedule?.get(String(w.id)), 'closed_destination'];
+    case 'sched_exc': return [M.by.schedule?.get(String(w.id))?.exceptional_periods?.[w.f], 'destination'];
     default: return null;
   }
 }
 // Valeur affichée (copie locale, modifiée par le brouillon).
 export function getDest(w) {
   if (w.k === 'ivr_choice') return (M.by.ivr?.get(String(w.id))?.choices || []).find((c) => c.exten === w.f)?.destination || null;
+  if (w.k === 'sched_assoc') { const s = ownerOf(w.id).o?.schedules?.[0]; return s ? { type: 'schedule', schedule_id: s.id } : null; }
   const h = holder(w); return h?.[0]?.[h[1]] || null;
 }
 export function setDest(w, d) {
+  if (w.k === 'sched_assoc') {
+    const { o } = ownerOf(w.id); if (!o) return;
+    const s = d && M.by.schedule?.get(String(d.schedule_id));
+    o.schedules = d ? [{ id: d.schedule_id, name: s?.name || '' }] : [];
+    return;
+  }
   if (w.k === 'ivr_choice') {
     const ivr = M.by.ivr?.get(String(w.id)); if (!ivr) return;
     ivr.choices ||= [];
@@ -78,8 +96,9 @@ function opsOf(entries) {
   const by = new Map();
   for (const e of entries) {
     // Champs d'une file et débordements d'une file : deux routes différentes.
-    const res = e.w.k === 'ivr_choice' ? `ivr:${e.w.id}` : `${e.w.k}:${e.w.id}`;
-    if (!by.has(res)) by.set(res, { k: e.w.k === 'ivr_choice' ? 'ivr' : e.w.k, id: e.w.id, entries: [] });
+    const k = e.w.k === 'ivr_choice' ? 'ivr' : e.w.k === 'sched_exc' ? 'sched' : e.w.k;
+    const res = `${k}:${e.w.id}`;
+    if (!by.has(res)) by.set(res, { k, id: e.w.id, entries: [] });
     by.get(res).entries.push(e);
   }
   return [...by.values()];
@@ -126,16 +145,43 @@ export async function prepare(entries) {
         ? JSON.stringify(body.choices) !== JSON.stringify((before?.choices || []).map((c) => ({ exten: c.exten, destination: cleanDest(c.destination) })).sort((a, b) => String(a.exten).localeCompare(String(b.exten), 'fr', { numeric: true })))
         : !sameDest(before?.[f], body[f]));
       out.push({ path, before, body, changed });
+    } else if (op.k === 'sched') {
+      // Horaire : PUT partiel, mais périodes envoyées en entier (pas d'id de
+      // période ; supposé : la liste envoyée remplace l'ancienne). Les plages
+      // d'ouverture sont renvoyées telles quelles.
+      const path = `/schedules/${op.id}`;
+      const before = await api('GET', path);
+      const per = (p, withDest) => { const x = { hours_start: p.hours_start, hours_end: p.hours_end, week_days: p.week_days, month_days: p.month_days, months: p.months }; if (withDest) x.destination = cleanDest(p.destination) || { type: 'none' }; return x; };
+      const exc = (before?.exceptional_periods || []).map((p) => per(p, true));
+      let closed = cleanDest(before?.closed_destination) || { type: 'none' };
+      for (const e of op.entries) {
+        if (e.w.k === 'sched') closed = cleanDest(e.after) || { type: 'none' };
+        else if (exc[e.w.f]) exc[e.w.f].destination = cleanDest(e.after) || { type: 'none' };
+      }
+      const body = { closed_destination: closed, open_periods: (before?.open_periods || []).map((p) => per(p, false)), exceptional_periods: exc };
+      const changed = !sameDest(before?.closed_destination, closed) || exc.some((p, i) => !sameDest(before.exceptional_periods[i]?.destination, p.destination));
+      out.push({ path, before, body, changed });
+    } else if (op.k === 'sched_assoc') {
+      // Association : relire l'objet, retirer l'ancien horaire, associer le nouveau.
+      const { t, o } = ownerOf(op.id);
+      const base = ASSOC_PATH[t]?.(o); if (!base) continue;
+      const before = await api('GET', base);
+      const cur = before?.schedules?.[0]?.id ?? null;
+      const next = op.entries[op.entries.length - 1].after?.schedule_id ?? null;
+      if (cur != null && cur !== next) out.push({ method: 'DELETE', path: `${base}/schedules/${cur}`, before: { schedules: before.schedules }, changed: true });
+      if (next != null && cur !== next) out.push({ method: 'PUT', path: `${base}/schedules/${next}`, before: { schedules: before?.schedules || [] }, changed: true });
+      if (cur === next) out.push({ path: `${base}/schedules`, before: { schedules: before?.schedules || [] }, changed: false });
     }
   }
   return out;
 }
-// Écrit les opérations modifiées, une à une ; renvoie [{ path, ok, error }].
+// Écrit les opérations modifiées, une à une, dans l'ordre ; renvoie [{ path, ok, error }].
 export async function execute(ops) {
   const res = [];
   for (const op of ops) {
     if (!op.changed) { res.push({ path: op.path, ok: true, skipped: true }); continue; }
-    try { await api('PUT', op.path, op.body); res.push({ path: op.path, ok: true }); } catch (e) { res.push({ path: op.path, ok: false, error: e.message }); }
+    const m = op.method || 'PUT';
+    try { await api(m, op.path, m === 'DELETE' || !op.body ? undefined : op.body); res.push({ path: `${m} ${op.path}`, ok: true }); } catch (e) { res.push({ path: `${m} ${op.path}`, ok: false, error: e.message }); }
   }
   return res;
 }

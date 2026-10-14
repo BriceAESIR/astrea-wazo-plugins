@@ -21,7 +21,7 @@
 // Supposé, à vérifier en réel : les listes (GET /groups, /queues,
 // /switchboards, /schedules) contiennent déjà fallbacks, membres et
 // destinations ; sinon on lit le détail de chaque objet (ensureDetails).
-import { S, api, listAll, fullName } from '../common/core.js?v=0.33.1';
+import { S, api, listAll, fullName } from '../common/core.js?v=0.34.0';
 
 export const M = { lists: {}, by: {}, ext: new Map(), extAny: new Map(), rev: null, warns: [] };
 
@@ -233,6 +233,7 @@ export function destTarget(d) {
     case 'ivr': return target('ivr', d.ivr_id);
     case 'conference': return target('conference', d.conference_id);
     case 'switchboard': return target('switchboard', d.switchboard_uuid);
+    case 'schedule': return target('schedule', d.schedule_id); // brouillon d'association (lot 2b), pas une destination confd
     case 'outcall': return { ...target('outcall', d.outcall_id), note: d.exten ? `compose ${d.exten}` : '' };
     case 'extension': { const k = M.ext.get(`${d.exten}@${d.context}`); return k ? { key: k.startsWith('incall:') ? k : gated(k), note: `via ${d.exten}` } : leaf('extension', d.exten, ctxLabel(d.context)); }
     case 'sound': return leaf('sound', d.filename || '?', [d.skip ? 'interruptible' : '', d.no_answer ? 'sans décrocher' : ''].filter(Boolean).join(' · '));
@@ -313,8 +314,9 @@ export function edgesOf(k) {
       // sa destination). Carte seule (choisie dans la liste) : pas de sortie Ouvert.
       const e = [];
       if (owner) e.push(owner.startsWith('incall:') ? { ...W(out('open', M.by.incall?.get(owner.slice(7))?.destination, periodsText(o)), 'incall', owner.slice(7), 'destination'), when: 'open' } : { ...link('open', owner, periodsText(o)), when: 'open' });
-      e.push({ ...out('closed', o.closed_destination), when: 'closed' });
-      (o.exceptional_periods || []).forEach((p, i) => e.push({ ...out('exception', p.destination, periodText(p)), label: `Fermeture exceptionnelle ${i + 1}`, when: `exc:${i}` }));
+      // Lot 2b : fermé et fermetures exceptionnelles modifiables (PUT /schedules/{id}).
+      e.push({ ...W(out('closed', o.closed_destination), 'sched', o.id, 'closed'), when: 'closed' });
+      (o.exceptional_periods || []).forEach((p, i) => e.push({ ...W({ ...out('exception', p.destination, periodText(p)), label: `Fermeture exceptionnelle ${i + 1}` }, 'sched_exc', o.id, i), when: `exc:${i}` }));
       return e;
     }
     case 'switchboard': return [fbOut('sb_fb', o.uuid, o, 'noanswer', after(o.timeout))];
@@ -519,6 +521,18 @@ export function buildTree(rootKey, dir, { maxDepth = 8, collapsed = new Set(), e
       n.kids.push(child);
       queue.push(child);
     }
+  }
+  // Lien visible horaire → objet gardé (demande de Brice) : la carte horaire
+  // dit de quel objet elle est la condition, l'objet affiche son horaire, et
+  // la sortie « Ouvert » est marquée « guard » (lien épais).
+  for (const n of nodes.values()) {
+    const { owner, obj } = n.key.startsWith('schedule:') ? entity(n.key) : {};
+    if (!owner) continue;
+    const oi = nodeInfo(owner);
+    n.guardOf = owner.startsWith('incall:') ? `la SDA ${oi.title}` : `${TYPES[oi.type]?.label || ''} ${oi.title}`.trim();
+    for (const p of n.ports || []) if (p.slot === 'open') p.guard = true;
+    const target = owner.startsWith('incall:') ? null : nodes.get(owner);
+    if (target) target.guardedBy = obj?.name || 'Horaire';
   }
   return { root, nodes, cross };
 }

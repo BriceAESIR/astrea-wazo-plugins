@@ -2,8 +2,8 @@
 // une carte mentale), cartes HTML, liens SVG, déplacement du canevas, zoom,
 // déplacement des cartes (avec leur sous-arbre), repli des branches.
 // Positions manuelles gardées dans le navigateur (localStorage, try/catch).
-import { esc } from '../common/core.js?v=0.33.1';
-import { TYPES } from './model.js?v=0.33.1';
+import { esc } from '../common/core.js?v=0.34.0';
+import { TYPES } from './model.js?v=0.34.0';
 
 const W = 236, GAP_X = 104, GAP_Y = 18;
 const POS_KEY = 'astrea-callflow-pos-v1';
@@ -43,7 +43,8 @@ export function createCanvas(viewport, { onSelect, onOpen, onFold, onClear, onUn
       return `<li data-port="${esc(p.id)}"${ed ? ` data-w="${esc(p.w.key)}"` : ''} class="${cls}" title="${esc(ed ? `${p.help || ''} — déposez une carte ici pour changer la destination.` : p.help || '')}"><span class="cf-pl">${esc(p.label)}</span>${p.note ? `<span class="cf-pn">${esc(p.note)}</span>` : ''}${p.to ? '' : '<span class="cf-pn">non réglé</span>'}${ed && V.changed.has(p.w.key) ? '<button class="cf-x cf-undo" data-undo title="Annuler cette modification : la sortie reprend sa valeur d\'origine">↶</button>' : ''}${ed && p.to ? '<button class="cf-x" data-clear title="Vider cette sortie (aucune destination ; modification du brouillon)">×</button>' : ''}${p.self ? '<span class="cf-pn cf-self">↺ revient ici</span>' : '<i class="cf-dot"></i>'}</li>`;
     }).join('');
     return `<div class="cf-node t-${esc(n.info.type)}${n.depth === 0 ? ' root' : ''}${n.key === V.sel ? ' sel' : ''}${n.dim ? ' dim' : ''}" data-key="${esc(n.key)}" style="width:${W}px">
-      <div class="cf-head" title="${esc(t.help || '')}"><span class="cf-badge">${esc(t.badge)}</span><div class="cf-txt"><div class="cf-type">${esc(t.label)}${n.key.startsWith('schedule:') ? `<span class="cf-state${n.timeOpen ? ' open' : ''}">${esc(n.timeLabel || '')}</span>` : ''}</div><div class="cf-title">${esc(n.info.title)}</div>${n.info.sub ? `<div class="cf-sub">${esc(n.info.sub)}</div>` : ''}</div>${fold}</div>
+      <div class="cf-head" title="${esc(t.help || '')}"><span class="cf-badge">${esc(t.badge)}</span><div class="cf-txt"><div class="cf-type">${esc(t.label)}${n.key.startsWith('schedule:') ? `<span class="cf-state${n.timeOpen ? ' open' : ''}">${esc(n.timeLabel || '')}</span>` : ''}${n.guardedBy ? `<span class="cf-gpill" title="Cet objet est gardé par l'horaire « ${esc(n.guardedBy)} » (carte précédente) : il n'est atteint que si l'horaire est ouvert.">⏱ ${esc(n.guardedBy)}</span>` : ''}</div><div class="cf-title">${esc(n.info.title)}</div>${n.info.sub ? `<div class="cf-sub">${esc(n.info.sub)}</div>` : ''}</div>${fold}</div>
+      ${n.guardOf ? `<div class="cf-guard" title="Horaire vérifié avant cet objet : ouvert → l'appel continue vers lui ; sinon → fermeture ou fermeture exceptionnelle.">⏱ Condition de : <strong>${esc(n.guardOf)}</strong></div>` : ''}
       ${ports ? `<ul class="cf-ports">${ports}</ul>` : ''}<i class="cf-in"></i></div>`;
   }
   function render(tree, dir, storeKey, { keepView = false, edit = false, changed = new Set() } = {}) {
@@ -100,16 +101,18 @@ export function createCanvas(viewport, { onSelect, onOpen, onFold, onClear, onUn
     const line = (a, b, cls) => { if (a && b) out.push(`<path class="${cls}" d="${path(a, b)}" marker-end="url(#cf-arrow)"></path>`); };
     // Lien inactif (simulation horaire) : sortie inactive ou carte d'origine atténuée.
     const off = (k, port) => { const n = V.tree.nodes.get(k); return !!(n?.dim || n?.ports?.find((p) => p.id === port)?.inactive); };
+    // Sortie « Ouvert » d'un horaire vers l'objet qu'il garde : lien épais (attache).
+    const guard = (k, port) => (V.tree.nodes.get(k)?.ports?.find((p) => p.id === port)?.guard ? ' guard' : '');
     for (const n of V.tree.nodes.values()) {
       if (!n.parent) continue;
       // Sens « où vont les appels » : sortie du parent → entrée de l'enfant ;
       // sens « qui arrive ici » : sortie de l'enfant (l'appelant) → entrée du parent.
       if (V.dir === 'in') line(portPoint(n.key, n.port), inPoint(n.parent), 'cf-edge');
-      else line(portPoint(n.parent, n.port), inPoint(n.key), `cf-edge${n.edge?.assoc ? ' assoc' : ''}${off(n.parent, n.port) ? ' inactive' : ''}`);
+      else line(portPoint(n.parent, n.port), inPoint(n.key), `cf-edge${n.edge?.assoc ? ' assoc' : ''}${guard(n.parent, n.port)}${off(n.parent, n.port) ? ' inactive' : ''}`);
     }
     for (const c of V.tree.cross) {
       if (V.dir === 'in') line(portPoint(c.to, c.port), inPoint(c.from), 'cf-edge cross');
-      else line(portPoint(c.from, c.port), inPoint(c.to), `cf-edge cross${c.edge?.assoc ? ' assoc' : ''}${off(c.from, c.port) ? ' inactive' : ''}`);
+      else line(portPoint(c.from, c.port), inPoint(c.to), `cf-edge cross${c.edge?.assoc ? ' assoc' : ''}${guard(c.from, c.port)}${off(c.from, c.port) ? ' inactive' : ''}`);
     }
     g.innerHTML = out.join('');
   }
@@ -205,9 +208,18 @@ export function createCanvas(viewport, { onSelect, onOpen, onFold, onClear, onUn
     const card = li?.closest('.cf-node');
     return li && card && viewport.contains(li) ? { nodeKey: card.dataset.key, portId: li.dataset.port } : null;
   }
-  function hover(x, y) {
-    const t = x == null ? null : portAt(x, y);
+  // Carte sous le pointeur (dépôt d'un horaire sur une carte).
+  function cardAt(x, y) {
+    const c = document.elementFromPoint(x, y)?.closest?.('.cf-node');
+    return c && viewport.contains(c) ? c.dataset.key : null;
+  }
+  // Survol pendant un glisser : sortie visée, ou carte visée si cardOk est fourni.
+  function hover(x, y, cardOk) {
     for (const li of cards.querySelectorAll('li.dropover')) li.classList.remove('dropover');
+    for (const c of cards.querySelectorAll('.cf-node.dropcard')) c.classList.remove('dropcard');
+    if (x == null) return null;
+    if (cardOk) { const k = cardAt(x, y); if (k && cardOk(k)) el(k)?.classList.add('dropcard'); return k; }
+    const t = portAt(x, y);
     if (t) el(t.nodeKey)?.querySelector(`li[data-port="${CSS.escape(t.portId)}"]`)?.classList.add('dropover');
     return t;
   }
@@ -230,5 +242,5 @@ export function createCanvas(viewport, { onSelect, onOpen, onFold, onClear, onUn
   // Recentrer sur une carte (sans changer le zoom).
   function focus(k) { const p = V.pos[k], e = el(k); if (!p || !e) return; V.tx = viewport.clientWidth / 2 - (p[0] + e.offsetWidth / 2) * V.s; V.ty = viewport.clientHeight / 3 - p[1] * V.s; apply(); }
   apply();
-  return { render, refreshTime, fit, zoom, resetLayout, select, focus, portAt, hover, get hasManual() { return Object.keys(V.manual).length > 0; } };
+  return { render, refreshTime, fit, zoom, resetLayout, select, focus, portAt, cardAt, hover, get hasManual() { return Object.keys(V.manual).length > 0; } };
 }

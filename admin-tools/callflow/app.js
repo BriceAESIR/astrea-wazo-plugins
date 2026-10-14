@@ -3,10 +3,10 @@
 // déposer (lot 2a, brouillon puis aperçu, sauvegarde, écriture).
 // Cadrage : astrea-wazo-dev/docs/CALLFLOW-MANAGER.md.
 // Modèle (sources confd vérifiées) : model.js ; canevas : canvas.js ; écriture : write.js.
-import { S, $, esc, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.33.1';
-import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, scanGroupKeys, buildTree, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel } from './model.js?v=0.33.1';
-import { createCanvas } from './canvas.js?v=0.33.1';
-import { getDest, setDest, sameDest, prepare, execute } from './write.js?v=0.33.1';
+import { S, $, esc, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.34.0';
+import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, scanGroupKeys, buildTree, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel } from './model.js?v=0.34.0';
+import { createCanvas } from './canvas.js?v=0.34.0';
+import { getDest, setDest, sameDest, prepare, execute } from './write.js?v=0.34.0';
 
 const TESTED_STACK = ['26.07'];
 const NAV = [
@@ -207,13 +207,16 @@ function showDetail(n) {
     ${rows ? `<div class="dsec"><dl>${rows}</dl></div>` : ''}
     ${outs && C.dir === 'out' ? `<div class="dsec"><h4>Sorties</h4><dl>${outs}</dl></div>` : ''}
     ${n.leaf?.ownerType === 'group' ? `<div class="btnrow"><button id="d-keys" title="Lit les touches de fonction de chaque utilisateur du tenant (une lecture par utilisateur)">${M.keys ? 'Relire les touches de bascule' : 'Chercher les touches de bascule'}</button></div><div id="d-keys-st" class="muted small"></div>` : ''}
-    ${C.edit && C.dir === 'out' && incomingPort(n) ? `<div class="btnrow"><button id="d-remove" class="danger" title="Vide la sortie « ${esc(incomingPort(n).p.label)} » de ${esc(ownerTitle(incomingPort(n).n))} (brouillon ; touche Suppr)">Retirer de cette sortie</button></div>` : ''}
+    ${C.edit && C.dir === 'out' && schedOwner(n.key) ? `<div class="dsec"><h4>Horaire</h4><div class="btnrow"><button id="d-sched" title="Associer, changer ou retirer l'horaire de cet objet (brouillon)">${(entity(schedOwner(n.key)).obj.schedules || []).length ? 'Changer l\'horaire…' : 'Associer un horaire…'}</button>${entity(n.key).owner ? '<button id="d-unsched" class="danger" title="Retire cet horaire de son objet (brouillon ; touche Suppr)">Retirer l\'horaire</button>' : ''}</div></div>` : ''}
+    ${C.edit && C.dir === 'out' && !entity(n.key).owner && incomingPort(n) ? `<div class="btnrow"><button id="d-remove" class="danger" title="Vide la sortie « ${esc(incomingPort(n).p.label)} » de ${esc(ownerTitle(incomingPort(n).n))} (brouillon ; touche Suppr)">Retirer de cette sortie</button></div>` : ''}
     ${n.leaf ? '' : `<div class="dsec"><h4>Arrive depuis</h4>${refs}</div>`}
     ${n.leaf ? '' : `<div class="btnrow">${n.key !== C.root ? '<button id="d-root" class="primary">Partir de cette carte</button>' : ''}<button id="d-in">${C.dir === 'in' && n.key === C.root ? 'Où vont les appels' : 'Qui arrive ici'}</button></div>`}`;
   $('detail').hidden = false;
   $('main').classList.remove('no-detail');
   const r = $('d-root'); if (r) r.onclick = () => setRoot(n.key);
   const rm = $('d-remove'); if (rm) rm.onclick = removeSelected;
+  const ds = $('d-sched'); if (ds) ds.onclick = () => openSchedule(schedOwner(n.key));
+  const du = $('d-unsched'); if (du) du.onclick = removeSelected;
   const i = $('d-in'); if (i) i.onclick = () => { if (n.key !== C.root) setRoot(n.key); setDir(C.dir === 'in' && n.key === C.root ? 'out' : 'in'); };
   for (const li of $('d-body').querySelectorAll('.cf-refs li')) li.onclick = () => setRoot(li.dataset.key);
   const k = $('d-keys');
@@ -227,13 +230,15 @@ function showDetail(n) {
 }
 
 // ---------------------------------------------------------------------------
-// Mode Modifier (lot 2a) : palette, brouillon, aperçu, écriture.
-// Les sorties des horaires (fermé, fermetures exceptionnelles) ne sont pas
-// encore modifiables (lot 2b) ; les renvois d'appel (numéros libres) non plus.
+// Mode Modifier : palette, brouillon, aperçu, écriture. Lot 2a : destinations ;
+// lot 2b : sorties des horaires (fermé, fermetures exceptionnelles) et
+// association d'un horaire à un objet. Pas modifiables : renvois d'appel
+// (numéros libres), membres.
 // ---------------------------------------------------------------------------
 const PALETTE = [
   ['user', 'Utilisateur'], ['group', 'Groupe'], ['queue', 'File d\'attente'], ['ivr', 'SVI'], ['voicemail', 'Messagerie'],
   ['switchboard', 'Standard'], ['conference', 'Conférence'], ['extension', 'Numéro'], ['sound', 'Message'], ['hangup', 'Raccrocher'],
+  ['schedule', 'Horaire'],
 ];
 const ENTITY_DEST = { user: 'user_id', group: 'group_id', queue: 'queue_id', ivr: 'ivr_id', voicemail: 'voicemail_id', conference: 'conference_id', switchboard: 'switchboard_uuid' };
 const RINGS = new Set(['user', 'group', 'queue', 'switchboard']);
@@ -241,11 +246,12 @@ const PAL_HELP = {
   extension: 'Numéro composé dans un contexte (interne, autre site…). Si le numéro correspond à un objet Wazo, le graphe le montre à sa place.',
   sound: 'Joue un fichier son du serveur puis raccroche. Nom du fichier tel que Wazo le stocke (ex. un son importé dans « Sons »).',
   hangup: 'Termine l\'appel avec la tonalité choisie.',
+  schedule: 'À déposer sur une CARTE (SDA, utilisateur, groupe, file d\'attente), pas sur une sortie : associe un horaire à cet objet. Un seul horaire par objet.',
 };
 function renderPalette() {
   $('cf-palette').innerHTML = PALETTE.map(([t, l]) => `<div class="cf-chip t-${t}" data-pal="${t}" title="${esc(PAL_HELP[t] || TYPES[t]?.help || '')}"><span class="cf-badge">${esc(TYPES[t]?.badge || '?')}</span>${esc(l)}</div>`).join('');
   $('pal-help').innerHTML = helpButton('pal-hb', 'Comment modifier');
-  $('pal-help-box').innerHTML = helpBox('pal-hb', 'Glissez une carte de la palette, ou une carte déjà présente dans le graphe, sur une sortie (Pas de réponse, Touche 1, Destination…) : un dialogue demande l\'objet visé et ses options, puis la modification part dans le brouillon (point orange). × sur une sortie la vide ; ↶ annule une modification (retour à la valeur d\'origine) ; la liste du brouillon (clic sur le compteur) permet aussi d\'annuler ligne par ligne ; une carte sélectionnée se retire de sa sortie par « Retirer de cette sortie » ou la touche Suppr. Rien n\'est écrit avant « Appliquer… », qui montre l\'avant / après, télécharge une sauvegarde JSON, relit chaque objet sur le serveur et n\'écrit que ce qui change, une fois par objet. Pas encore modifiables : sorties des horaires, renvois d\'appel de l\'utilisateur, membres.');
+  $('pal-help-box').innerHTML = helpBox('pal-hb', 'Glissez une carte de la palette, ou une carte déjà présente dans le graphe, sur une sortie (Pas de réponse, Touche 1, Destination…) : un dialogue demande l\'objet visé et ses options, puis la modification part dans le brouillon (point orange). × sur une sortie la vide ; ↶ annule une modification (retour à la valeur d\'origine) ; la liste du brouillon (clic sur le compteur) permet aussi d\'annuler ligne par ligne ; une carte sélectionnée se retire de sa sortie par « Retirer de cette sortie » ou la touche Suppr. Rien n\'est écrit avant « Appliquer… », qui montre l\'avant / après, télécharge une sauvegarde JSON, relit chaque objet sur le serveur et n\'écrit que ce qui change, une fois par objet. Horaires : leurs sorties Fermé et Fermetures exceptionnelles se modifient comme les autres ; la carte « Horaire » de la palette se dépose sur une carte (SDA, utilisateur, groupe, file d\'attente) pour lui associer un horaire ; sur une carte horaire sélectionnée, « Retirer l\'horaire » ou Suppr le retire de son objet. Pas encore modifiables : renvois d\'appel de l\'utilisateur, membres.');
 }
 function setEdit(on) {
   if (!on && C.draft.size) {
@@ -273,6 +279,8 @@ function portOf(t) {
   const n = C.tree?.nodes.get(t.nodeKey); const p = n?.ports?.find((x) => x.id === t.portId);
   return p?.w ? { n, p } : null;
 }
+// Objet modifié (brouillon, aperçu) : pour une sortie d'horaire, l'horaire lui-même (il peut être partagé).
+const whereOf = (n, p) => (p.w.k === 'sched' || p.w.k === 'sched_exc' ? `Horaire ${M.by.schedule?.get(String(p.w.id))?.name || p.w.id}` : ownerTitle(n));
 const ownerTitle = (n) => { const k = entity(n.key).owner || n.key; const i = nodeInfo(k); return `${TYPES[i.type]?.label || ''} ${i.title}`.trim(); };
 function addDraft(w, dest, meta) {
   const cur = C.draft.get(w.key);
@@ -308,15 +316,40 @@ function incomingPort(n) {
   const p = parent?.ports?.find((x) => x.id === n.port);
   return p?.w ? { n: parent, p } : null;
 }
+// ---- Lot 2b : associer / retirer un horaire (un seul par objet, vérifié dans confd) ----
+const SCHED_TYPES = new Set(['incall', 'user', 'group', 'queue']);
+// Objet auquel un horaire peut être associé, depuis une carte (une carte horaire « condition » → son objet).
+function schedOwner(k) {
+  const e = entity(k); const o = e.owner || k; const t = o.slice(0, o.indexOf(':'));
+  return SCHED_TYPES.has(t) && entity(o).obj ? o : null;
+}
+const assocW = (owner) => ({ k: 'sched_assoc', id: owner, f: 'schedule', key: `sched_assoc:${owner}:schedule` });
+function openSchedule(owner) {
+  const w = assocW(owner); const cur = getDest(w);
+  const items = listOf('schedule');
+  const title = (() => { const i = nodeInfo(owner); return `${TYPES[i.type]?.label || ''} ${i.title}`.trim(); })();
+  confirmModal(`<div class="titlerow"><h3>Horaire de ${esc(title)}</h3>${helpButton('ds-hb', 'Aide')}</div>${helpBox('ds-hb', 'L\'horaire est vérifié avant l\'objet : ouvert → l\'appel continue vers lui ; fermé → destination de fermeture de l\'horaire ; fermeture exceptionnelle → sa destination. Wazo n\'accepte qu\'un horaire par objet : en changer retire l\'ancien puis associe le nouveau (deux écritures). Rien n\'est écrit avant « Appliquer… ».')}
+    <p class="muted small">Actuellement : ${esc(destLabel(cur))}</p>
+    <label>Horaire <select id="ds-obj" size="8" class="cf-dd-list"><option value="">— Aucun horaire —</option>${items.map((x) => { const id = x.key.slice(9); return `<option value="${esc(id)}"${cur && String(cur.schedule_id) === id ? ' selected' : ''}>${esc(x.title)}${x.sub ? ` — ${esc(x.sub)}` : ''}</option>`; }).join('')}</select></label>`, () => {
+    const v = $('ds-obj').value;
+    addDraft(w, v ? { type: 'schedule', schedule_id: Number(v) } : null, { where: title, slot: 'Horaire' });
+    return true;
+  }, 'Ajouter au brouillon');
+  $('ds-obj').ondblclick = () => $('modal-ok').click();
+}
 function removeSelected() {
-  const n = C.sel && C.tree?.nodes.get(C.sel); const r = incomingPort(n);
+  const n = C.sel && C.tree?.nodes.get(C.sel);
+  // Carte horaire « condition » sélectionnée : Suppr retire l'horaire de son objet.
+  const own = n && entity(n.key).owner;
+  if (own) { addDraft(assocW(own), null, { where: ownerTitle(n), slot: 'Horaire' }); closeDetail(); return; }
+  const r = incomingPort(n);
   if (!r) { toast('Cette carte n\'est pas reliée par une sortie modifiable.'); return; }
-  addDraft(r.p.w, null, { where: ownerTitle(r.n), slot: r.p.label });
+  addDraft(r.p.w, null, { where: whereOf(r.n, r.p), slot: r.p.label });
   closeDetail();
 }
 function clearPort(nodeKey, portId) {
   const r = portOf({ nodeKey, portId }); if (!r) return;
-  addDraft(r.p.w, null, { where: ownerTitle(r.n), slot: r.p.label });
+  addDraft(r.p.w, null, { where: whereOf(r.n, r.p), slot: r.p.label });
 }
 function cardDrop(cardKey, t) {
   const e = entity(cardKey); const k = e.owner || cardKey; const type = k.slice(0, k.indexOf(':'));
@@ -367,7 +400,7 @@ function openDest(t, preset) {
       const f = $('dd-file').value.trim(); if (!f) return err('Indiquez le fichier son.');
       d = { type, filename: f, skip: $('dd-skip').checked, no_answer: $('dd-noans').checked };
     } else if (type === 'hangup') d = { type, cause: $('dd-cause').value };
-    addDraft(p.w, d, { where: ownerTitle(n), slot: p.label });
+    addDraft(p.w, d, { where: whereOf(n, p), slot: p.label });
     return true;
   }, 'Ajouter au brouillon');
   // Filtre de la liste (le dialogue est déjà dans le DOM).
@@ -385,10 +418,17 @@ $('cf-palette').addEventListener('pointerdown', (e) => {
   const chip = e.target.closest('[data-pal]'); if (!chip || e.button !== 0) return;
   e.preventDefault();
   const ghost = chip.cloneNode(true); ghost.classList.add('cf-ghost'); document.body.appendChild(ghost);
-  const move = (ev) => { ghost.style.left = `${ev.clientX + 10}px`; ghost.style.top = `${ev.clientY + 10}px`; C.canvas?.hover(ev.clientX, ev.clientY); };
+  const move = (ev) => { ghost.style.left = `${ev.clientX + 10}px`; ghost.style.top = `${ev.clientY + 10}px`; C.canvas?.hover(ev.clientX, ev.clientY, chip.dataset.pal === 'schedule' ? (k) => !!schedOwner(k) : null); };
   const up = (ev) => {
     window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up);
     ghost.remove();
+    // Horaire : se dépose sur une CARTE (SDA, utilisateur, groupe, file), pas sur une sortie.
+    if (chip.dataset.pal === 'schedule') {
+      const k = C.canvas?.cardAt(ev.clientX, ev.clientY); C.canvas?.hover(null);
+      const owner = k && schedOwner(k);
+      if (owner) openSchedule(owner); else toast('Lâchez l\'horaire sur une carte SDA, utilisateur, groupe ou file d\'attente.');
+      return;
+    }
     const t = C.canvas?.portAt(ev.clientX, ev.clientY); C.canvas?.hover(null);
     if (t) openDest(t, { type: chip.dataset.pal }); else toast('Lâchez la carte sur une sortie modifiable (ligne d\'une carte du graphe).');
   };

@@ -42,8 +42,16 @@ courant. Cadrage, sources et décisions : `docs/CALLFLOW-MANAGER.md` (dépôt de
     indisponible), des groupes, des files et des standards ;
   - seuils d'attente des files ;
   - touches existantes et cas (sans saisie, invalide, trop d'essais) des SVI.
-- Pas encore modifiables : sorties des horaires, renvois d'appel de
-  l'utilisateur, membres, ajout d'une nouvelle touche de SVI.
+- **Horaires** :
+  - leurs sorties « Fermé » et « Fermeture exceptionnelle N » se modifient comme les autres ;
+  - la carte « Horaire » de la palette se dépose sur une **carte** (SDA,
+    utilisateur, groupe, file d'attente) pour lui associer un horaire. On peut
+    aussi passer par « Associer / Changer l'horaire… » dans la fiche ;
+  - « Retirer l'horaire » (ou Suppr) sur une carte horaire le dissocie de son objet ;
+  - Wazo n'accepte qu'un horaire par objet : un remplacement retire l'ancien puis
+    associe le nouveau, à l'application du brouillon.
+- Pas encore modifiables : renvois d'appel de l'utilisateur, membres, ajout
+  d'une nouvelle touche de SVI.
 - Tout passe par un **brouillon** : un point orange marque chaque sortie
   modifiée, et rien n'est écrit tant qu'on n'a pas cliqué « Appliquer… ».
 - **Appliquer…** se déroule ainsi :
@@ -69,7 +77,9 @@ Pour les membres d'un groupe inscrits par la touche « bascule groupe », qui ne
 Écriture (mode Modifier) :
 - `confd.incalls.{id}.update`, `confd.users.{uuid}.fallbacks.update` ;
 - `confd.groups.{uuid}.fallbacks.update`, `confd.queues.{id}.fallbacks.update`, `confd.queues.{id}.update` ;
-- `confd.switchboards.{uuid}.fallbacks.update`, `confd.ivr.{id}.update`.
+- `confd.switchboards.{uuid}.fallbacks.update`, `confd.ivr.{id}.update` ;
+- horaires : `confd.schedules.{id}.update`, et les associations
+  `confd.{incalls|users|groups|queues}.{id}.schedules.{schedule_id}.update|delete`.
 
 Ces droits ne sont pas encore vérifiés en réel pour le token du portail. Sans
 l'un d'eux, le graphe s'affiche quand même, sans ce type d'objet, avec un

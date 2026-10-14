@@ -7,8 +7,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Mulish:wght@300..800&display=swap">
-<link rel="stylesheet" href="../common/style.css?v=0.33.1">
-<link rel="stylesheet" href="./callflow.css?v=0.33.1">
+<link rel="stylesheet" href="../common/style.css?v=0.34.0">
+<link rel="stylesheet" href="./callflow.css?v=0.34.0">
 <script>if (window.parent !== window) document.documentElement.classList.add('framed');</script>
 </head>
 <body>
@@ -62,19 +62,7 @@
         </div>
       </div>
       <div id="cf-help-box"></div>
-      <!-- Mode Modifier : palette de cartes à glisser sur une sortie, et brouillon -->
-      <div id="cf-edit-bar" class="cf-editbar" hidden>
-        <div class="titlerow"><span class="cf-pal-title">Glissez une carte sur une sortie</span><span id="pal-help"></span></div>
-        <div id="cf-palette" class="cf-palette"></div>
-        <span class="spacer"></span>
-        <div class="cf-draft">
-          <span id="cf-draft-n" class="muted small">Aucune modification</span>
-          <button id="cf-draft-cancel" disabled title="Abandonner toutes les modifications du brouillon">Annuler</button>
-          <button id="cf-draft-apply" class="primary" disabled title="Aperçu avant / après, sauvegarde, puis écriture">Appliquer…</button>
-        </div>
-      </div>
-      <div id="pal-help-box"></div>
-      <div id="cf-view" class="cf-view" tabindex="0" aria-label="Graphe du parcours des appels"></div>
+      <!-- Simulation date / heure (en haut, demande de Brice 14/10/2026) -->
       <div id="cf-time" class="cf-time">
         <div class="cf-time-top">
           <label class="inline small" title="Atténue les branches qui ne s'appliquent pas à la date et l'heure choisies (horaires : ouvert, fermé, fermetures exceptionnelles)"><input type="checkbox" id="t-on" checked> Simuler</label>
@@ -97,6 +85,19 @@
         <div class="cf-lane"><span class="cf-ln"></span><div class="cf-ticks" aria-hidden="true"><span>0 h</span><span>3 h</span><span>6 h</span><span>9 h</span><span>12 h</span><span>15 h</span><span>18 h</span><span>21 h</span><span>24 h</span></div></div>
       </div>
       <div id="t-help-box"></div>
+      <div id="cf-view" class="cf-view" tabindex="0" aria-label="Graphe du parcours des appels"></div>
+      <!-- Mode Modifier (en bas) : palette de cartes à glisser sur une sortie (ou un horaire sur une carte), et brouillon -->
+      <div id="cf-edit-bar" class="cf-editbar" hidden>
+        <div class="titlerow"><span class="cf-pal-title">Glissez une carte sur une sortie</span><span id="pal-help"></span></div>
+        <div id="cf-palette" class="cf-palette"></div>
+        <span class="spacer"></span>
+        <div class="cf-draft">
+          <span id="cf-draft-n" class="muted small">Aucune modification</span>
+          <button id="cf-draft-cancel" disabled title="Abandonner toutes les modifications du brouillon">Annuler</button>
+          <button id="cf-draft-apply" class="primary" disabled title="Aperçu avant / après, sauvegarde, puis écriture">Appliquer…</button>
+        </div>
+      </div>
+      <div id="pal-help-box"></div>
       <div class="cf-hint muted small">Glisser le fond : déplacer · molette : zoom · glisser une carte : la déplacer avec sa branche (Alt : seule) · double-clic : partir de cette carte</div>
     </section>
 
@@ -110,6 +111,6 @@
     <div class="btnrow right"><button id="modal-cancel">Annuler</button><button id="modal-ok" class="primary">Confirmer</button></div></div></div>
   <div id="toast" class="toast" hidden></div>
 </div>
-<script type="module" src="./app.js?v=0.33.1"></script>
+<script type="module" src="./app.js?v=0.34.0"></script>
 </body>
 </html>
