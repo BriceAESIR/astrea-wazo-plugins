@@ -11,8 +11,8 @@
 //  - SVI : choices envoyé en entier (supposé : la liste est remplacée).
 // Toujours : relire juste avant d'écrire, ne rien écrire si c'est identique,
 // une seule écriture par objet.
-import { api } from '../common/core.js?v=0.35.0';
-import { M } from './model.js?v=0.35.0';
+import { api } from '../common/core.js?v=0.35.1';
+import { M } from './model.js?v=0.35.1';
 
 // Champs d'entrée de chaque type de destination (le reste est en lecture seule).
 const DEST_KEYS = {

@@ -3,11 +3,11 @@
 // déposer (lot 2a, brouillon puis aperçu, sauvegarde, écriture).
 // Cadrage : astrea-wazo-dev/docs/CALLFLOW-MANAGER.md.
 // Modèle (sources confd vérifiées) : model.js ; canevas : canvas.js ; écriture : write.js.
-import { S, $, esc, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.35.0';
-import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, scanGroupKeys, buildTree, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel, periodText } from './model.js?v=0.35.0';
-import { createCanvas } from './canvas.js?v=0.35.0';
-import { getDest, setDest, sameValue, prepare, execute } from './write.js?v=0.35.0';
-import { openScheduleEditor } from './sched-editor.js?v=0.35.0';
+import { S, $, esc, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.35.1';
+import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, scanGroupKeys, buildTree, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel, periodText } from './model.js?v=0.35.1';
+import { createCanvas } from './canvas.js?v=0.35.1';
+import { getDest, setDest, sameValue, prepare, execute } from './write.js?v=0.35.1';
+import { openScheduleEditor, fillSoundSelect } from './sched-editor.js?v=0.35.1';
 
 const TESTED_STACK = ['26.07'];
 const NAV = [
@@ -240,7 +240,7 @@ function showDetail(n) {
 // ---------------------------------------------------------------------------
 const PALETTE = [
   ['user', 'Utilisateur'], ['group', 'Groupe'], ['queue', 'File d\'attente'], ['ivr', 'SVI'], ['voicemail', 'Messagerie'],
-  ['switchboard', 'Standard'], ['conference', 'Conférence'], ['extension', 'Numéro'], ['sound', 'Message'], ['hangup', 'Raccrocher'],
+  ['switchboard', 'Standard'], ['conference', 'Conférence'], ['extension', 'Numéro'], ['sound', 'Fichier son'], ['hangup', 'Raccrocher'],
   ['schedule', 'Horaire'],
 ];
 const ENTITY_DEST = { user: 'user_id', group: 'group_id', queue: 'queue_id', ivr: 'ivr_id', voicemail: 'voicemail_id', conference: 'conference_id', switchboard: 'switchboard_uuid' };
@@ -380,7 +380,7 @@ function openDest(t, preset) {
     body += `<label>Numéro <input id="dd-exten" value="${esc(same?.exten || '')}" placeholder="ex. 1001"></label>
       <label>Contexte <select id="dd-ctx">${ctx.map((c) => `<option value="${esc(c.name)}"${same?.context === c.name ? ' selected' : ''}>${esc(c.label || c.name)} (${esc(c.type)})</option>`).join('')}</select></label>`;
   } else if (type === 'sound') {
-    body += `<label>Fichier son <input id="dd-file" value="${esc(same?.filename || '')}" placeholder="nom du fichier sur le serveur"></label>
+    body += `<label>Fichier son <select id="dd-file"><option value="">Chargement des sons…</option></select></label>
       <label class="inline"><input type="checkbox" id="dd-skip"${same?.skip ? ' checked' : ''}> L'appelant peut l'interrompre</label>
       <label class="inline"><input type="checkbox" id="dd-noans"${same?.no_answer ? ' checked' : ''}> Sans décrocher (pré-décroché)</label>`;
   } else if (type === 'hangup') {
@@ -400,12 +400,13 @@ function openDest(t, preset) {
       const x = $('dd-exten').value.trim(); if (!/^[0-9*#]{1,255}$/.test(x)) return err('Numéro : chiffres, * et # seulement.');
       d = { type, exten: x, context: $('dd-ctx').value };
     } else if (type === 'sound') {
-      const f = $('dd-file').value.trim(); if (!f) return err('Indiquez le fichier son.');
+      const f = $('dd-file').value.trim(); if (!f) return err('Choisissez un fichier son.');
       d = { type, filename: f, skip: $('dd-skip').checked, no_answer: $('dd-noans').checked };
     } else if (type === 'hangup') d = { type, cause: $('dd-cause').value };
     addDraft(p.w, d, { where: whereOf(n, p), slot: p.label });
     return true;
   }, 'Ajouter au brouillon');
+  if (type === 'sound') fillSoundSelect($('dd-file'), same?.filename);
   // Filtre de la liste (le dialogue est déjà dans le DOM).
   const q = $('dd-q'), list = $('dd-obj');
   if (q && list) {

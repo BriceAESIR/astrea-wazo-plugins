@@ -228,6 +228,21 @@ body.in-portal.ready #workbench { height: 100vh; }
 .cf-cm-g i:hover { background: color-mix(in srgb, var(--danger) 18%, var(--panel)); }
 .cf-cm-g i.hol { box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--danger) 45%, transparent); }
 .cf-cm-g i.on { background: var(--danger); color: var(--panel); font-weight: 700; }
+/* Sélection en bloc dans la grille : aperçu du rectangle, bulle « Lun–Ven 09:00–12:00 : ouvrir » */
+.cf-wg-c i.pv-on { background: color-mix(in srgb, var(--ok) 45%, var(--panel)); box-shadow: inset 0 0 0 1px var(--ok); }
+.cf-wg-c i.pv-off { background: color-mix(in srgb, var(--danger) 25%, var(--panel)); box-shadow: inset 0 0 0 1px var(--danger); }
+.cf-se-sel { position: fixed; z-index: 40; pointer-events: none; padding: 4px 8px; border-radius: var(--radius); background: #323232; color: #fff; font-size: .75rem; box-shadow: var(--shadow-6); white-space: nowrap; }
+/* Fermetures exceptionnelles en liste */
+.cf-xr { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 6px 0; border-bottom: 1px solid var(--line); font-size: .8125rem; }
+.cf-xr select, .cf-xr input[type="time"] { width: auto !important; height: 28px; font-size: .8125rem; }
+.cf-xr label.inline { margin: 0; font-size: .8125rem; }
+.cf-xr-l { color: var(--muted); }
+.cf-xr button.icon { margin-left: auto; }
+.cf-holopt { margin: 8px 0; padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius); background: color-mix(in srgb, var(--ink) 2%, var(--panel)); }
+.cf-holopt label.inline { margin: 2px 0; }
+.cf-holopt .small { margin: 0 0 4px 26px; }
+#se-holx { margin-left: 26px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.cf-sched-ed .warn { margin: 4px 0 8px; }
 .cf-kept { margin: 4px 0; padding-left: 18px; font-size: .8125rem; }
 .cf-kept button.icon { width: 22px; height: 22px; min-width: 22px; vertical-align: middle; }
 @media (max-width: 800px) { .cf-wg-h, .cf-wg-r { grid-template-columns: 34px minmax(0, 1fr); } .cf-wg-s { display: none; } }

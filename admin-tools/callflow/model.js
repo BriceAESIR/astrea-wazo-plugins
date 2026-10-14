@@ -21,7 +21,7 @@
 // Supposé, à vérifier en réel : les listes (GET /groups, /queues,
 // /switchboards, /schedules) contiennent déjà fallbacks, membres et
 // destinations ; sinon on lit le détail de chaque objet (ensureDetails).
-import { S, api, listAll, fullName } from '../common/core.js?v=0.35.0';
+import { S, api, listAll, fullName } from '../common/core.js?v=0.35.1';
 
 export const M = { lists: {}, by: {}, ext: new Map(), extAny: new Map(), rev: null, warns: [] };
 
@@ -44,7 +44,7 @@ export const TYPES = {
   application: { label: 'Application', badge: 'APP', help: 'Application Wazo (Stasis) : l\'appel est remis à une application externe.' },
   members: { label: 'Membres', badge: '👥', help: 'Membres qui sonnent : membres fixes (réglés dans Wazo) et, pour un groupe, utilisateurs inscrits par la touche « bascule groupe » (*50) — ceux-là ne sont connus que d\'Asterisk, lus si le serveur l\'autorise. Ce sont les postes des membres qui sonnent : leurs propres renvois par défaut ne s\'appliquent pas (supposé).' },
   hangup: { label: 'Raccrocher', badge: '✕', help: 'Fin de l\'appel, avec la tonalité choisie : normal, occupé ou encombré.' },
-  sound: { label: 'Message', badge: '♪', help: 'Joue un fichier son, puis raccroche (sauf « ne pas décrocher » : le son est joué en pré-décroché).' },
+  sound: { label: 'Fichier son', badge: '♪', help: 'Joue un fichier son (sons du tenant ou sons système), puis raccroche (sauf « ne pas décrocher » : le son est joué en pré-décroché).' },
   custom: { label: 'Commande', badge: '{ }', help: 'Commande Asterisk personnalisée (application du dialplan).' },
   extension: { label: 'Numéro', badge: '#', help: 'Numéro composé dans un contexte. Résolu vers l\'objet correspondant quand il est connu ; sinon affiché tel quel.' },
   external: { label: 'Numéro externe', badge: '☎', help: 'Numéro hors de Wazo (renvoi vers un mobile, un autre site…). Le renvoi sort par les règles d\'appel sortant de l\'utilisateur.' },
@@ -121,7 +121,7 @@ export async function loadAll() {
   M.groupByUuid = new Map((M.lists.group || []).map((g) => [g.uuid, g]));
   M.userByUuid = new Map(users.map((u) => [u.uuid, u]));
   indexExtensions();
-  M.rev = null; M.keys = null; M.live = null; M.liveState = '';
+  M.rev = null; M.keys = null; M.live = null; M.liveState = ''; M.sounds = null;
   return M;
 }
 // Détails absents des listes (supposé) : relus un par un, une seule fois.
@@ -236,7 +236,7 @@ export function destTarget(d) {
     case 'schedule': return target('schedule', d.schedule_id); // brouillon d'association (lot 2b), pas une destination confd
     case 'outcall': return { ...target('outcall', d.outcall_id), note: d.exten ? `compose ${d.exten}` : '' };
     case 'extension': { const k = M.ext.get(`${d.exten}@${d.context}`); return k ? { key: k.startsWith('incall:') ? k : gated(k), note: `via ${d.exten}` } : leaf('extension', d.exten, ctxLabel(d.context)); }
-    case 'sound': return leaf('sound', d.filename || '?', [d.skip ? 'interruptible' : '', d.no_answer ? 'sans décrocher' : ''].filter(Boolean).join(' · '));
+    case 'sound': return leaf('sound', soundName(d.filename) || '?', [d.skip ? 'interruptible' : '', d.no_answer ? 'sans décrocher' : ''].filter(Boolean).join(' · '));
     case 'custom': return leaf('custom', d.command || '');
     case 'hangup': return leaf('hangup', 'Raccrocher', [HANGUP[d.cause] || d.cause, d.timeout ? `${d.timeout} s` : ''].filter(Boolean).join(' · '));
     case 'application':
@@ -426,6 +426,34 @@ export async function loadLiveMembers() {
     console.info('[astrea] Call Flow : membres en direct (amid QueueStatus)', M.live);
   } catch (e) { M.liveState = e.status ? e.message : `indisponible (${e.message})`; console.info('[astrea] amid QueueStatus :', M.liveState, e); }
 }
+
+// Fichiers son (menu des destinations « Fichier son »). Vérifié dans
+// wazo-confd plugins/sound (service.py, storage.py, master) : GET /sounds
+// liste les catégories du tenant + « system » (sons Asterisk, via ARI) ;
+// GET /sounds/{catégorie} donne files[].formats[].path, SANS extension
+// (/var/lib/wazo/sounds/tenants/<tenant>/<catégorie>/<fichier>) : c'est la
+// valeur à mettre dans destination.filename ; un son système se désigne par
+// son nom (ex. agent-alreadylogged, vu en réel). Chargé une fois, à la demande.
+// Renvoie [{ category, system, files: [{ label, value }] }].
+export async function loadSounds() {
+  if (M.sounds) return M.sounds;
+  const out = [];
+  try {
+    const cats = await listAll('/sounds');
+    const tenant = cats.filter((c) => c.name !== 'system'), sys = cats.find((c) => c.name === 'system');
+    for (const c of [...tenant, ...(sys ? [sys] : [])]) {
+      try {
+        const d = await api('GET', `/sounds/${encodeURIComponent(c.name)}`);
+        const files = (d?.files || []).map((f) => ({ label: f.name, value: c.name === 'system' ? f.name : (f.formats || []).find((x) => x.path)?.path || f.name }));
+        if (files.length) out.push({ category: c.name, system: c.name === 'system', files: files.sort((a, b) => a.label.localeCompare(b.label, 'fr')) });
+      } catch (e) { console.warn('[astrea] sons', c.name, e); }
+    }
+  } catch (e) { console.warn('[astrea] sons', e); }
+  M.sounds = out;
+  return out;
+}
+// Libellé lisible d'un fichier son (destination) : nom du fichier, sans le chemin du tenant.
+export const soundName = (filename) => String(filename || '').split('/').pop();
 
 // Utilisateurs qui ont une touche « membre de groupe » (funckey confd type
 // groupmember, group_id entier, action join|leave|toggle ; vérifié dans

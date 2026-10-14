@@ -46,12 +46,14 @@ courant. Cadrage, sources et décisions : `docs/CALLFLOW-MANAGER.md` (dépôt de
   - leurs sorties « Fermé » et « Fermeture exceptionnelle N » se modifient comme les autres ;
   - un clic sur ✎ d'une sortie propose de changer la destination et, pour un
     horaire, **« Modifier l'horaire… »**. L'éditeur a trois parties :
-    1. une grille de la semaine à peindre au quart d'heure ;
-    2. la destination « Si fermé » ;
-    3. un calendrier annuel des fermetures exceptionnelles, avec le bouton
-       « Jours fériés fixes » (fériés français à date fixe, Alsace-Moselle en
-       option). Attention : Wazo ne connaît pas l'année, donc un jour fermé
-       l'est chaque année ;
+    1. une grille de la semaine, où l'on sélectionne des blocs (rectangle jours ×
+       heures) au quart d'heure ;
+    2. la destination « Si fermé », avec un menu des fichiers son ;
+    3. la liste des fermetures exceptionnelles : date ou période, toute la
+       journée ou des heures précises, et une destination pour chacune.
+       L'option à cocher « jours fériés français à date fixe » (Alsace-Moselle
+       en plus) complète la liste. Attention : Wazo ne connaît pas l'année,
+       donc une fermeture revient chaque année ;
   - la carte « Horaire » de la palette se dépose sur une **carte** (SDA,
     utilisateur, groupe, file d'attente) pour lui associer un horaire. On peut
     aussi passer par « Associer / Changer l'horaire… » dans la fiche ;
@@ -86,6 +88,7 @@ Pour les membres d'un groupe inscrits par la touche « bascule groupe », qui ne
 - `confd.incalls.{id}.update`, `confd.users.{uuid}.fallbacks.update` ;
 - `confd.groups.{uuid}.fallbacks.update`, `confd.queues.{id}.fallbacks.update`, `confd.queues.{id}.update` ;
 - `confd.switchboards.{uuid}.fallbacks.update`, `confd.ivr.{id}.update` ;
+- menu des fichiers son : `confd.sounds.read` (supposé) ;
 - horaires : `confd.schedules.{id}.update`, et les associations
   `confd.{incalls|users|groups|queues}.{id}.schedules.{schedule_id}.update|delete`.
 

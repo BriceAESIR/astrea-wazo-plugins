@@ -1,33 +1,34 @@
-// Call Flow Manager — éditeur d'horaire (choix de Brice, 14/10/2026) :
-//  1. Ouvert : grille de la semaine à peindre, au quart d'heure ;
-//  2. Si fermé : destination de fermeture (closed_destination) ;
-//  3. Fermetures exceptionnelles : calendrier annuel cliquable (chaque
-//     année), bouton « Jours fériés fixes » (8 nationaux + Alsace-Moselle).
+// Call Flow Manager — éditeur d'horaire (choix et retours de Brice, 14/10/2026) :
+//  1. Ouvert : grille de la semaine au quart d'heure, sélection EN BLOC
+//     (on tire un rectangle jours × heures, aperçu, puis tout s'ouvre ou se
+//     ferme d'un coup) ;
+//  2. Si fermé : destination de fermeture (closed_destination), avec menu
+//     des fichiers son ;
+//  3. Fermetures exceptionnelles : liste « le … (jusqu'au …), toute la
+//     journée ou de … à …, → destination » ; option à cocher « jours fériés
+//     français à date fixe » (+ 26 décembre Alsace-Moselle en option).
 // Règles Wazo (wazo-agid schedule.py, lu) : critères d'une période en ET,
 // champ vide = sans restriction, heures (h, min) bornes incluses ; confd exige
-// hours_start / hours_end. Conversion :
-//  - une case = 15 min [t, t+15[ ; une suite de cases [a, b[ devient
-//    hours_start a, hours_end b (borne incluse : 12:00 couvre 12:00, comme les
-//    plages saisies dans le portail) ou 23:59 si b = 24:00 ; les jours qui ont
-//    les mêmes créneaux sont regroupés (week_days) ;
-//  - calendrier : une période par mois (months [m], month_days [jours]),
-//    00:00–23:59, sans jour de semaine ;
-//  - ce que la grille ou le calendrier ne savent pas représenter (plage
-//    limitée à certains jours du mois, fermeture à heures précises ou liée à
-//    un jour de semaine, autre destination) est conservé tel quel et listé.
-import { $, esc, confirmModal, helpButton, helpBox } from '../common/core.js?v=0.35.0';
-import { M, TYPES, listOf, destLabel } from './model.js?v=0.35.0';
+// hours_start / hours_end. Conversions :
+//  - grille : une case = 15 min [t, t+15[ ; une suite [a, b[ devient
+//    hours_start a, hours_end b (12:00 couvre 12:00, comme une saisie du
+//    portail) ou 23:59 si b = 24:00 ; jours aux créneaux identiques regroupés ;
+//  - fermetures : chaque jour d'une ligne (période « du … au … » comprise,
+//    même à cheval sur deux mois) est regroupé par mois, heures et
+//    destination : { months: [m], month_days: [...], week_days: [] } ;
+//  - ce qui n'entre pas dans ces formes (plage limitée à certains jours du
+//    mois, fermeture liée à un jour de semaine ou valable tous les mois) est
+//    conservé tel quel et listé.
+import { $, esc, confirmModal, helpButton, helpBox } from '../common/core.js?v=0.35.1';
+import { M, listOf, destLabel, loadSounds, soundName } from './model.js?v=0.35.1';
 
 const SLOT = 15, N = 96;
 const DAYS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
 const MONTHS = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
-const MDAYS = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]; // 29 février possible (chaque année où il existe)
+const MDAYS = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 // Jours fériés français à date fixe (les fériés mobiles — Pâques, Ascension, Pentecôte — sont exclus).
-const HOLIDAYS = [
-  [1, 1, 'Jour de l\'an', true], [5, 1, 'Fête du travail', true], [5, 8, 'Victoire 1945', true], [7, 14, 'Fête nationale', true],
-  [8, 15, 'Assomption', true], [11, 1, 'Toussaint', true], [11, 11, 'Armistice 1918', true], [12, 25, 'Noël', true],
-  [12, 26, 'Saint-Étienne (Alsace-Moselle)', false],
-];
+const HOL = [[1, 1], [5, 1], [5, 8], [7, 14], [8, 15], [11, 1], [11, 11], [12, 25]];
+const ALSACE = [12, 26];
 const pad = (n) => String(n).padStart(2, '0');
 const hhmm = (m) => `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
 const hm = (s) => { const [h, m] = String(s || '').split(':').map(Number); return Number.isFinite(h) ? h * 60 + (m || 0) : null; };
@@ -35,7 +36,7 @@ const partial = (a, full) => Array.isArray(a) && a.length > 0 && a.length < full
 const sameD = (a, b) => JSON.stringify(a || null) === JSON.stringify(b || null);
 
 // ---------------------------------------------------------------------------
-// Conversions
+// Grille ↔ plages d'ouverture
 // ---------------------------------------------------------------------------
 function gridFromPeriods(open) {
   const grid = Array.from({ length: 7 }, () => new Array(N).fill(0));
@@ -59,27 +60,64 @@ function periodsFromGrid(grid) {
   for (const { segs, days } of groups.values()) for (const [a, b] of segs) out.push({ hours_start: hhmm(a), hours_end: b === 1440 ? '23:59' : hhmm(b), week_days: days.length === 7 ? [] : days, month_days: [], months: [] });
   return out;
 }
-function calFromExc(exc, closedDest) {
-  const days = new Set(); const kept = []; let dest = null;
+
+// ---------------------------------------------------------------------------
+// Fermetures exceptionnelles ↔ lignes { m1, d1, m2, d2, all, hs, he, dest }
+// ---------------------------------------------------------------------------
+const nextDay = (m, d) => (d < MDAYS[m - 1] ? [m, d + 1] : [m === 12 ? 1 : m + 1, 1]);
+function rowsFromExc(exc) {
+  const rows = []; const kept = [];
   for (const p of exc || []) {
-    const allDay = hm(p.hours_start) === 0 && hm(p.hours_end) >= 1439;
-    const simple = allDay && !partial(p.week_days, 7) && partial(p.months, 12);
-    if (!simple || (dest && !sameD(dest, p.destination))) { kept.push(p); continue; }
-    dest = dest || p.destination;
-    for (const m of p.months) { const md = partial(p.month_days, 31) ? p.month_days : Array.from({ length: MDAYS[m - 1] }, (_, i) => i + 1); for (const d of md) if (d <= MDAYS[m - 1]) days.add(`${m}-${d}`); }
+    if (partial(p.week_days, 7) || !partial(p.months, 12)) { kept.push(p); continue; }
+    const s = hm(p.hours_start) ?? 0, e = hm(p.hours_end) ?? 1439;
+    const all = s === 0 && e >= 1439;
+    for (const m of [...p.months].sort((a, b) => a - b)) {
+      const days = (partial(p.month_days, 31) ? [...p.month_days] : Array.from({ length: MDAYS[m - 1] }, (_, i) => i + 1)).filter((d) => d <= MDAYS[m - 1]).sort((a, b) => a - b);
+      for (let i = 0; i < days.length; i++) { let j = i; while (j + 1 < days.length && days[j + 1] === days[j] + 1) j++; rows.push({ m1: m, d1: days[i], m2: m, d2: days[j], all, hs: hhmm(s), he: hhmm(Math.min(e, 1439)), dest: p.destination || null }); i = j; }
+    }
   }
-  return { days, kept, dest: dest || closedDest || null };
+  // Fusion d'une période à cheval sur deux mois (ex. 24 déc → 2 janv).
+  rows.sort((a, b) => a.m1 - b.m1 || a.d1 - b.d1);
+  for (let i = 0; i < rows.length; i++) for (let j = 0; j < rows.length; j++) {
+    const a = rows[i], b = rows[j]; if (!a || !b || a === b) continue;
+    const [nm, nd] = nextDay(a.m2, a.d2);
+    if (a.d2 === MDAYS[a.m2 - 1] && nm === b.m1 && nd === b.d1 && a.all === b.all && a.hs === b.hs && a.he === b.he && sameD(a.dest, b.dest)) { a.m2 = b.m2; a.d2 = b.d2; rows[j] = null; }
+  }
+  return { rows: rows.filter(Boolean), kept };
 }
-function excFromCal(days, dest) {
-  const by = new Map();
-  for (const k of days) { const [m, d] = k.split('-').map(Number); if (!by.has(m)) by.set(m, []); by.get(m).push(d); }
-  return [...by.keys()].sort((a, b) => a - b).map((m) => ({ hours_start: '00:00', hours_end: '23:59', week_days: [], month_days: by.get(m).sort((a, b) => a - b), months: [m], destination: dest || { type: 'none' } }));
+// Fériés fixes déjà présents (journée entière, même destination) → option cochée, lignes retirées.
+// Les 8 dates présentes (journée entière) → option cochée, avec la destination
+// la plus fréquente ; un férié à une autre destination reste une ligne (il
+// l'emporte, comme à la saisie) : l'aller-retour est exact.
+function extractHolidays(rows) {
+  const single = (r, [m, d]) => r.all && r.m1 === m && r.d1 === d && r.m2 === m && r.d2 === d;
+  const found = HOL.map((h) => rows.find((r) => single(r, h)));
+  const on = found.every(Boolean);
+  let dest = null;
+  if (on) { const cnt = new Map(); for (const r of found) { const k = JSON.stringify(r.dest); cnt.set(k, (cnt.get(k) || 0) + 1); } dest = JSON.parse([...cnt.entries()].sort((a, b) => b[1] - a[1])[0][0]); }
+  let rest = on ? rows.filter((r) => !(found.includes(r) && sameD(r.dest, dest))) : rows;
+  const als = on && rest.find((r) => single(r, ALSACE) && sameD(r.dest, dest));
+  if (als) rest = rest.filter((r) => r !== als);
+  return { on, alsace: !!als, dest, rows: rest };
+}
+function excFromRows(rows, hol) {
+  const groups = new Map(); const explicit = new Set();
+  const add = (m, d, hs, he, dest) => { const k = `${m}|${hs}|${he}|${JSON.stringify(dest)}`; if (!groups.has(k)) groups.set(k, { m, hs, he, dest, days: new Set() }); groups.get(k).days.add(d); };
+  for (const r of rows) {
+    const hs = r.all ? '00:00' : r.hs, he = r.all ? '23:59' : r.he;
+    let m = r.m1, d = r.d1;
+    for (let n = 0; n < 367; n++) { add(m, d, hs, he, r.dest); explicit.add(`${m}-${d}`); if (m === r.m2 && d === r.d2) break; [m, d] = nextDay(m, d); }
+  }
+  // Fériés : une ligne explicite le même jour l'emporte (sinon Wazo prendrait la première période trouvée).
+  if (hol.on) for (const [m, d] of [...HOL, ...(hol.alsace ? [ALSACE] : [])]) if (!explicit.has(`${m}-${d}`)) add(m, d, '00:00', '23:59', hol.dest);
+  return [...groups.values()].sort((a, b) => a.m - b.m || a.hs.localeCompare(b.hs))
+    .map((g) => ({ hours_start: g.hs, hours_end: g.he, week_days: [], month_days: [...g.days].sort((a, b) => a - b), months: [g.m], destination: g.dest || { type: 'none' } }));
 }
 
 // ---------------------------------------------------------------------------
-// Choix d'une destination (réutilisé pour « Si fermé » et les fermetures)
+// Choix d'une destination (« Si fermé », chaque fermeture, fériés)
 // ---------------------------------------------------------------------------
-const DTYPES = [['voicemail', 'Messagerie'], ['user', 'Utilisateur'], ['group', 'Groupe'], ['queue', 'File d\'attente'], ['ivr', 'SVI'], ['switchboard', 'Standard'], ['conference', 'Conférence'], ['hangup', 'Raccrocher'], ['sound', 'Message'], ['extension', 'Numéro'], ['none', 'Aucune']];
+const DTYPES = [['voicemail', 'Messagerie'], ['sound', 'Fichier son'], ['hangup', 'Raccrocher'], ['user', 'Utilisateur'], ['group', 'Groupe'], ['queue', 'File d\'attente'], ['ivr', 'SVI'], ['switchboard', 'Standard'], ['conference', 'Conférence'], ['extension', 'Numéro'], ['none', 'Aucune']];
 const IDF = { user: 'user_id', group: 'group_id', queue: 'queue_id', ivr: 'ivr_id', voicemail: 'voicemail_id', conference: 'conference_id', switchboard: 'switchboard_uuid' };
 function pickerHtml(id, cur) {
   const t = cur?.type || 'none';
@@ -90,109 +128,173 @@ function pickerExtra(t, cur) {
     const sel = cur?.type === t ? String(cur[IDF[t]]) : '';
     return `<select data-do>${listOf(t).map((x) => { const id = x.key.slice(x.key.indexOf(':') + 1); return `<option value="${esc(id)}"${id === sel ? ' selected' : ''}>${esc(x.title)}${x.sub ? ` — ${esc(x.sub)}` : ''}</option>`; }).join('')}</select>`;
   }
-  if (t === 'hangup') return `<select data-dc><option value="normal">normale</option><option value="busy"${cur?.cause === 'busy' ? ' selected' : ''}>occupé</option><option value="congestion"${cur?.cause === 'congestion' ? ' selected' : ''}>encombré</option></select>`;
-  if (t === 'sound') return `<input data-df value="${esc(cur?.type === 'sound' ? cur.filename || '' : '')}" placeholder="fichier son">`;
+  if (t === 'hangup') return `<select data-dc><option value="normal">tonalité normale</option><option value="busy"${cur?.cause === 'busy' ? ' selected' : ''}>occupé</option><option value="congestion"${cur?.cause === 'congestion' ? ' selected' : ''}>encombré</option></select>`;
+  if (t === 'sound') return `<select data-df data-cur="${esc(cur?.type === 'sound' ? cur.filename || '' : '')}"><option value="">Chargement des sons…</option></select>`;
   if (t === 'extension') return `<input data-de value="${esc(cur?.type === 'extension' ? cur.exten || '' : '')}" placeholder="numéro"><select data-dctx>${(M.lists.context || []).filter((c) => c.type !== 'incall').map((c) => `<option value="${esc(c.name)}"${cur?.context === c.name ? ' selected' : ''}>${esc(c.label || c.name)}</option>`).join('')}</select>`;
   return '';
 }
-function bindPicker(id) { const el = $(id); el.querySelector('[data-dt]').onchange = (e) => { el.querySelector('[data-dx]').innerHTML = pickerExtra(e.target.value, null); }; }
+// Menu des fichiers son (sons du tenant par catégorie, puis sons système).
+export async function fillSoundSelect(sel, current) {
+  if (!sel) return;
+  const cats = await loadSounds();
+  const cur = current || '';
+  const known = cats.some((c) => c.files.some((f) => f.value === cur));
+  sel.innerHTML = `${cur && !known ? `<option value="${esc(cur)}" selected>${esc(soundName(cur))} (actuel)</option>` : ''}${!cats.length ? '<option value="">Aucun son lisible (droit confd.sounds.read ?)</option>' : '<option value="">— Choisir un son —</option>'}`
+    + cats.map((c) => `<optgroup label="${esc(c.system ? 'Sons système (Asterisk)' : `Sons du tenant · ${c.category}`)}">${c.files.map((f) => `<option value="${esc(f.value)}"${f.value === cur ? ' selected' : ''}>${esc(f.label)}</option>`).join('')}</optgroup>`).join('');
+}
+function bindPicker(id) {
+  const el = $(id); if (!el) return;
+  const fill = () => { const s = el.querySelector('[data-df]'); if (s) fillSoundSelect(s, s.dataset.cur); };
+  el.querySelector('[data-dt]').onchange = (e) => { el.querySelector('[data-dx]').innerHTML = pickerExtra(e.target.value, null); fill(); };
+  fill();
+}
 function readPicker(id) {
   const el = $(id); const t = el.querySelector('[data-dt]').value;
   if (t === 'none') return null;
   if (IDF[t]) { const v = el.querySelector('[data-do]')?.value; if (!v) throw new Error('Choisissez un objet pour la destination.'); return { type: t, [IDF[t]]: t === 'switchboard' ? v : Number(v) }; }
   if (t === 'hangup') return { type: t, cause: el.querySelector('[data-dc]').value };
-  if (t === 'sound') { const f = el.querySelector('[data-df]').value.trim(); if (!f) throw new Error('Indiquez le fichier son.'); return { type: t, filename: f }; }
+  if (t === 'sound') { const f = el.querySelector('[data-df]').value; if (!f) throw new Error('Choisissez un fichier son.'); return { type: t, filename: f }; }
   if (t === 'extension') { const x = el.querySelector('[data-de]').value.trim(); if (!/^[0-9*#]+$/.test(x)) throw new Error('Numéro : chiffres, * et #.'); return { type: t, exten: x, context: el.querySelector('[data-dctx]').value }; }
   return null;
 }
 
 // ---------------------------------------------------------------------------
-// Éditeur
+// Éditeur. s : horaire (copie locale, brouillon compris) ; onSave(value)
+// avec value = { open_periods, exceptional_periods, closed_destination }.
 // ---------------------------------------------------------------------------
-// s : horaire (copie locale, brouillon compris) ; onSave(value) avec
-// value = { open_periods, exceptional_periods, closed_destination }.
 export function openScheduleEditor(s, onSave) {
   const G = gridFromPeriods(s.open_periods);
-  const X = calFromExc(s.exceptional_periods, s.closed_destination);
-  let keptExc = [...X.kept];
-  const cell = (d, i) => `<i data-d="${d}" data-i="${i}" class="${G.grid[d][i] ? 'on' : ''}${i % 4 === 0 ? ' h' : ''}"></i>`;
+  const R = rowsFromExc(s.exceptional_periods);
+  const H = extractHolidays(R.rows);
+  let rows = H.rows;
+  let keptExc = [...R.kept];
+  const defDest = () => s.closed_destination || null;
+
   const gridHtml = () => `<div class="cf-wg"><div class="cf-wg-h"><span></span><div>${Array.from({ length: 9 }, (_, k) => `<b style="left:${(k * 3 / 24) * 100}%">${k * 3} h</b>`).join('')}</div><span></span></div>
-    ${G.grid.map((row, d) => `<div class="cf-wg-r"><span class="cf-wg-d">${DAYS[d]}</span><div class="cf-wg-c" data-row="${d}">${row.map((_, i) => cell(d, i)).join('')}</div><span class="cf-wg-s" id="wg-s${d}"></span></div>`).join('')}</div>`;
-  const monthHtml = (m) => `<div class="cf-cm"><div class="cf-cm-t">${MONTHS[m - 1]}</div><div class="cf-cm-g">${Array.from({ length: MDAYS[m - 1] }, (_, i) => `<i data-md="${m}-${i + 1}" class="${X.days.has(`${m}-${i + 1}`) ? 'on' : ''}${HOLIDAYS.some(([hm2, hd]) => hm2 === m && hd === i + 1) ? ' hol' : ''}">${i + 1}</i>`).join('')}</div></div>`;
-  const keptHtml = () => keptExc.length ? `<ul class="cf-kept">${keptExc.map((p, i) => `<li>${esc(periodTxt(p))} → ${esc(destLabel(p.destination))} <button class="icon" data-delkept="${i}" title="Supprimer cette fermeture">×</button></li>`).join('')}</ul>` : '';
-  const help = `Ouvert : glissez dans la grille pour peindre les créneaux ouverts (au quart d'heure), ou partez d'une case déjà ouverte pour gommer. Les jours qui ont les mêmes créneaux sont regroupés à l'enregistrement, et une plage 09:00–12:00 couvre 12:00 (bornes incluses, comme dans Wazo). Si fermé : où part l'appel hors des plages d'ouverture. Fermetures exceptionnelles : cliquez ou glissez sur les jours du calendrier pour les fermer chaque année (en rouge) — attention, Wazo ne gère pas l'année : une fermeture ponctuelle oubliée se rejoue l'année suivante ; elles sont vérifiées AVANT les plages d'ouverture et partent vers leur propre destination. « Jours fériés fixes » ajoute les fériés français à date fixe (pas Pâques, l'Ascension ni la Pentecôte, dont la date change). Fuseau : ${s.timezone || '?'}. Rien n'est écrit avant « Appliquer… ».`;
+    ${G.grid.map((row, d) => `<div class="cf-wg-r"><span class="cf-wg-d">${DAYS[d]}</span><div class="cf-wg-c" data-row="${d}">${row.map((on, i) => `<i data-d="${d}" data-i="${i}" class="${on ? 'on' : ''}${i % 4 === 0 ? ' h' : ''}"></i>`).join('')}</div><span class="cf-wg-s" id="wg-s${d}"></span></div>`).join('')}</div>`;
+  const opt = (n, sel) => Array.from({ length: n }, (_, i) => `<option value="${i + 1}"${i + 1 === sel ? ' selected' : ''}>${i + 1}</option>`).join('');
+  const mopt = (sel) => MONTHS.map((m, i) => `<option value="${i + 1}"${i + 1 === sel ? ' selected' : ''}>${m}</option>`).join('');
+  const range = (r) => !(r.m1 === r.m2 && r.d1 === r.d2);
+  const rowHtml = (r, i) => `<div class="cf-xr" data-x="${i}">
+      <span class="cf-xr-l">Le</span><select data-d1>${opt(31, r.d1)}</select><select data-m1>${mopt(r.m1)}</select>
+      <label class="inline"><input type="checkbox" data-rg${range(r) ? ' checked' : ''}> jusqu'au</label>
+      <span data-end${range(r) ? '' : ' hidden'}><select data-d2>${opt(31, r.d2)}</select><select data-m2>${mopt(r.m2)}</select></span>
+      <label class="inline"><input type="checkbox" data-all${r.all ? ' checked' : ''}> toute la journée</label>
+      <span data-hrs${r.all ? ' hidden' : ''}>de <input type="time" data-hs value="${esc(r.hs)}"> à <input type="time" data-he value="${esc(r.he)}"></span>
+      <span class="cf-xr-l">→</span>${pickerHtml(`se-xd${i}`, r.dest)}
+      <button class="icon" data-delrow title="Supprimer cette fermeture">×</button></div>`;
+  const keptHtml = () => keptExc.length ? `<p class="small muted">Autres fermetures conservées telles quelles (liées à un jour de semaine ou valables tous les mois) :</p><ul class="cf-kept">${keptExc.map((p, i) => `<li>${esc(periodTxt(p))} → ${esc(destLabel(p.destination))} <button class="icon" data-delkept="${i}" title="Supprimer cette fermeture">×</button></li>`).join('')}</ul>` : '';
+  const help = `Ouvert : tirez un rectangle dans la grille (jours × heures) pour ouvrir tout le bloc ; partez d'une case déjà ouverte pour le fermer. Au quart d'heure ; les jours aux créneaux identiques sont regroupés, et une plage 09:00–12:00 couvre 12:00 (bornes incluses, comme dans Wazo). Si fermé : où part l'appel hors des plages d'ouverture. Fermetures exceptionnelles : vérifiées AVANT les plages d'ouverture ; chacune a sa date (ou sa période « jusqu'au »), ses heures et sa destination. Jours fériés : option qui ajoute les fériés français à date fixe (pas Pâques, l'Ascension ni la Pentecôte, dont la date change). Fuseau : ${s.timezone || '?'}. Rien n'est écrit avant « Appliquer… ».`;
+
   confirmModal(`<div class="cf-sched-ed">
     <div class="titlerow"><h3>Horaire « ${esc(s.name)} »</h3>${helpButton('se-hb', 'Aide')}</div>${helpBox('se-hb', help)}
     <h4 class="cf-per-t">1. Ouvert</h4>
-    <div class="btnrow cf-se-tools"><button data-tool="copy" title="Recopie les créneaux du lundi sur mardi à vendredi">Lundi → mar–ven</button><button data-tool="office" title="9h–12h et 14h–18h du lundi au vendredi">Bureau 9h-12h / 14h-18h</button><button data-tool="all" title="Ouvert tout le temps">24 h/24</button><button data-tool="clear">Tout effacer</button></div>
+    <div class="btnrow cf-se-tools"><button data-tool="copy" title="Recopie les créneaux du lundi sur mardi à vendredi">Lundi → mar–ven</button><button data-tool="office" title="9h–12h et 14h–18h du lundi au vendredi">Bureau 9h-12h / 14h-18h</button><button data-tool="all" title="Ouvert tout le temps">24 h/24</button><button data-tool="clear">Tout fermer</button><span class="small muted">Tirez un bloc pour l'ouvrir ; partez d'une case ouverte pour le fermer.</span></div>
     <div id="se-grid">${gridHtml()}</div>
-    ${G.rounded ? '<p class="warn small">Certaines heures n\'étaient pas au quart d\'heure : elles sont arrondies dans la grille.</p>' : ''}
+    ${G.rounded ? '<p class="warn small"><span>Certaines heures n\'étaient pas au quart d\'heure : elles sont arrondies dans la grille.</span></p>' : ''}
     ${G.kept.length ? `<p class="small muted">Plages particulières conservées telles quelles (limitées à certains jours du mois ou mois) : ${esc(G.kept.map(periodTxt).join(' ; '))}</p>` : ''}
     <h4 class="cf-per-t">2. Si fermé</h4>
     <div>L'appel part vers ${pickerHtml('se-closed', s.closed_destination)}</div>
     <h4 class="cf-per-t">3. Fermetures exceptionnelles (chaque année)</h4>
-    <div class="warn small"><span>Wazo ne connaît pas l'année : un jour fermé ici l'est <strong>chaque année</strong>. Une fermeture ponctuelle (pont, congés, inventaire…) oubliée se rejouera l'année suivante à la même date : pensez à la retirer une fois passée, et relisez ce calendrier régulièrement.</span></div>
-    <div class="btnrow cf-se-tools"><button data-tool="holidays">Jours fériés fixes…</button><button data-tool="calclear">Tout rouvrir</button><span class="small muted" id="se-count"></span></div>
-    <div id="se-hol" class="cf-hol" hidden>${HOLIDAYS.map(([m, d, l, on], i) => `<label class="inline"><input type="checkbox" data-hol="${i}"${on ? ' checked' : ''}> ${d} ${MONTHS[m - 1]} — ${esc(l)}</label>`).join('')}<div class="btnrow"><button data-tool="holadd" class="primary">Fermer ces jours</button></div></div>
-    <div class="cf-cal">${Array.from({ length: 12 }, (_, k) => monthHtml(k + 1)).join('')}</div>
-    <div>Ces jours partent vers ${pickerHtml('se-xdest', X.dest)}</div>
-    <div id="se-kept">${keptExc.length ? '<p class="small muted">Autres fermetures exceptionnelles conservées (heures précises, jour de semaine ou autre destination) :</p>' : ''}${keptHtml()}</div>
+    <div class="warn small"><span>Wazo ne connaît pas l'année : une fermeture s'applique <strong>chaque année</strong> à la même date. Une fermeture ponctuelle (pont, congés, inventaire…) oubliée se rejouera l'année suivante : pensez à la retirer une fois passée, et relisez cette liste régulièrement.</span></div>
+    <div class="cf-holopt">
+      <label class="inline"><input type="checkbox" id="se-hol"${H.on ? ' checked' : ''}> <strong>Fermer les jours fériés français à date fixe</strong></label>
+      <div class="small muted">1er janvier, 1er mai, 8 mai, 14 juillet, 15 août, 1er novembre, 11 novembre, 25 décembre — pas Pâques, l'Ascension ni la Pentecôte, dont la date change chaque année. Un jour férié qui a aussi sa propre ligne ci-dessous suit cette ligne.</div>
+      <div id="se-holx"${H.on ? '' : ' hidden'}><label class="inline"><input type="checkbox" id="se-als"${H.alsace ? ' checked' : ''}> et le 26 décembre (Alsace-Moselle)</label> <span class="cf-xr-l">→</span>${pickerHtml('se-holdest', H.dest || defDest())}</div>
+    </div>
+    <div id="se-xlist">${rows.map(rowHtml).join('')}</div>
+    <div class="btnrow"><button data-tool="addrow">+ Fermeture exceptionnelle</button></div>
+    <div id="se-kept">${keptHtml()}</div>
     <p id="se-err" class="error small"></p></div>`, () => {
     try {
       const closed = readPicker('se-closed');
-      const xdest = readPicker('se-xdest') || closed;
-      onSave({
-        open_periods: [...periodsFromGrid(G.grid), ...G.kept],
-        exceptional_periods: [...excFromCal(X.days, xdest), ...keptExc],
-        closed_destination: closed,
-      });
+      const rs = readRows(true);
+      const hol = { on: $('se-hol').checked, alsace: $('se-als').checked, dest: $('se-hol').checked ? (readPicker('se-holdest') || closed) : null };
+      onSave({ open_periods: [...periodsFromGrid(G.grid), ...G.kept], exceptional_periods: [...excFromRows(rs, hol), ...keptExc], closed_destination: closed });
       return true;
     } catch (e) { $('se-err').textContent = e.message; return false; }
   }, 'Ajouter au brouillon');
-  bindPicker('se-closed'); bindPicker('se-xdest');
-  const summary = () => {
-    G.grid.forEach((row, d) => { const segs = segmentsOf(row); $(`wg-s${d}`).textContent = segs.length ? segs.map(([a, b]) => `${hhmm(a)}–${b === 1440 ? '24:00' : hhmm(b)}`).join(' · ') : 'fermé'; });
-    $('se-count').textContent = `${X.days.size} jour${X.days.size > 1 ? 's' : ''} fermé${X.days.size > 1 ? 's' : ''}`;
-  };
+
+  // Lignes de fermeture : lecture du formulaire (validate : contrôles et destinations).
+  function readRows(validate) {
+    return [...$('se-xlist').querySelectorAll('.cf-xr')].map((el, i) => {
+      const v = (q) => el.querySelector(q);
+      const r = { d1: +v('[data-d1]').value, m1: +v('[data-m1]').value, all: v('[data-all]').checked, hs: v('[data-hs]').value, he: v('[data-he]').value };
+      if (v('[data-rg]').checked) { r.d2 = +v('[data-d2]').value; r.m2 = +v('[data-m2]').value; } else { r.d2 = r.d1; r.m2 = r.m1; }
+      const id = v('.cf-dp').id;
+      if (validate) {
+        if (r.d1 > MDAYS[r.m1 - 1] || r.d2 > MDAYS[r.m2 - 1]) throw new Error(`Fermeture ${i + 1} : le ${r.d1 > MDAYS[r.m1 - 1] ? r.d1 : r.d2} ${MONTHS[(r.d1 > MDAYS[r.m1 - 1] ? r.m1 : r.m2) - 1]} n'existe pas.`);
+        if (!r.all && (!/^\d\d:\d\d$/.test(r.hs) || !/^\d\d:\d\d$/.test(r.he) || r.hs > r.he)) throw new Error(`Fermeture ${i + 1} : heures au format HH:MM, début avant la fin (Wazo refuse une plage qui passe minuit).`);
+        r.dest = readPicker(id) || readPicker('se-closed');
+      } else r.dest = (() => { try { return readPicker(id); } catch { return rows[i]?.dest || null; } })(); // choix incomplet : on garde l'ancien
+      return r;
+    });
+  }
+  const renderRows = () => { $('se-xlist').innerHTML = rows.map(rowHtml).join(''); rows.forEach((_, i) => bindPicker(`se-xd${i}`)); };
+  ['se-closed', 'se-holdest'].forEach(bindPicker);
+  rows.forEach((_, i) => bindPicker(`se-xd${i}`));
+
+  const summary = () => G.grid.forEach((row, d) => { const segs = segmentsOf(row); $(`wg-s${d}`).textContent = segs.length ? segs.map(([a, b]) => `${hhmm(a)}–${b === 1440 ? '24:00' : hhmm(b)}`).join(' · ') : 'fermé'; });
   const redrawGrid = () => { $('se-grid').innerHTML = gridHtml(); summary(); };
   summary();
-  // Peinture (grille et calendrier) : pointeur enfoncé, le mode (ouvrir / effacer) est fixé par la première case.
-  let paint = null;
+
+  // Sélection en bloc : rectangle entre la case de départ et la case sous le pointeur.
   const box = $('modal-body');
+  let sel = null;
+  const cellAt = (x, y) => {
+    const rowsEl = [...$('se-grid').querySelectorAll('.cf-wg-c')];
+    let d = rowsEl.findIndex((r) => { const b = r.getBoundingClientRect(); return y >= b.top - 2 && y <= b.bottom + 2; });
+    if (d < 0) { const first = rowsEl[0].getBoundingClientRect(), last = rowsEl[6].getBoundingClientRect(); d = y < first.top ? 0 : y > last.bottom ? 6 : sel.d1; }
+    const b = rowsEl[d].getBoundingClientRect();
+    const i = Math.max(0, Math.min(N - 1, Math.floor(((x - b.left) / b.width) * N)));
+    return [d, i];
+  };
+  const preview = () => {
+    const [da, db] = [Math.min(sel.d0, sel.d1), Math.max(sel.d0, sel.d1)], [ia, ib] = [Math.min(sel.i0, sel.i1), Math.max(sel.i0, sel.i1)];
+    for (const c of $('se-grid').querySelectorAll('.cf-wg-c i')) { const d = +c.dataset.d, i = +c.dataset.i; const inR = d >= da && d <= db && i >= ia && i <= ib; c.classList.toggle('pv-on', inR && sel.on); c.classList.toggle('pv-off', inR && !sel.on); }
+    $('se-sel').textContent = `${DAYS[da]}${db > da ? `–${DAYS[db]}` : ''} ${hhmm(ia * SLOT)}–${hhmm((ib + 1) * SLOT === 1440 ? 1439 : (ib + 1) * SLOT)} : ${sel.on ? 'ouvrir' : 'fermer'}`;
+  };
+  box.insertAdjacentHTML('beforeend', '<div id="se-sel" class="cf-se-sel" hidden></div>');
+  const onMove = (e) => { if (!sel) return; [sel.d1, sel.i1] = cellAt(e.clientX, e.clientY); preview(); const t = $('se-sel'); t.hidden = false; t.style.left = `${e.clientX + 14}px`; t.style.top = `${e.clientY + 14}px`; };
+  const onUp = () => {
+    if (!sel) return;
+    const [da, db] = [Math.min(sel.d0, sel.d1), Math.max(sel.d0, sel.d1)], [ia, ib] = [Math.min(sel.i0, sel.i1), Math.max(sel.i0, sel.i1)];
+    for (let d = da; d <= db; d++) for (let i = ia; i <= ib; i++) G.grid[d][i] = sel.on ? 1 : 0;
+    sel = null; $('se-sel').hidden = true;
+    window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp);
+    redrawGrid();
+  };
   box.onpointerdown = (e) => {
-    const c = e.target.closest('.cf-wg-c i'); const k = e.target.closest('.cf-cm-g i');
-    if (c) { e.preventDefault(); const d = +c.dataset.d, i = +c.dataset.i; paint = { kind: 'g', on: G.grid[d][i] ? 0 : 1 }; setG(c); }
-    else if (k) { e.preventDefault(); paint = { kind: 'c', on: !X.days.has(k.dataset.md) }; setC(k); }
+    const c = e.target.closest('.cf-wg-c i'); if (!c || e.button !== 0) return;
+    e.preventDefault();
+    const d = +c.dataset.d, i = +c.dataset.i;
+    sel = { d0: d, i0: i, d1: d, i1: i, on: !G.grid[d][i] };
+    preview();
+    window.addEventListener('pointermove', onMove); window.addEventListener('pointerup', onUp);
   };
-  box.onpointerover = (e) => {
-    if (!paint) return;
-    if (paint.kind === 'g') { const c = e.target.closest('.cf-wg-c i'); if (c) setG(c); }
-    else { const k = e.target.closest('.cf-cm-g i'); if (k) setC(k); }
+  box.onchange = (e) => {
+    const t = e.target;
+    if (t.id === 'se-hol') $('se-holx').hidden = !t.checked;
+    const xr = t.closest('.cf-xr');
+    if (xr && t.matches('[data-rg]')) { xr.querySelector('[data-end]').hidden = !t.checked; if (t.checked) { xr.querySelector('[data-d2]').value = xr.querySelector('[data-d1]').value; xr.querySelector('[data-m2]').value = xr.querySelector('[data-m1]').value; } }
+    if (xr && t.matches('[data-all]')) xr.querySelector('[data-hrs]').hidden = t.checked;
   };
-  const stop = () => { paint = null; };
-  window.addEventListener('pointerup', stop);
-  function setG(c) { const d = +c.dataset.d, i = +c.dataset.i; G.grid[d][i] = paint.on; c.classList.toggle('on', !!paint.on); summary(); }
-  function setC(k) { if (paint.on) X.days.add(k.dataset.md); else X.days.delete(k.dataset.md); k.classList.toggle('on', paint.on); summary(); }
   box.onclick = (e) => {
-    const t = e.target.closest('[data-tool]')?.dataset.tool;
     const dk = e.target.closest('[data-delkept]');
     if (dk) { keptExc.splice(+dk.dataset.delkept, 1); $('se-kept').innerHTML = keptHtml(); return; }
-    if (!t) return;
+    const dr = e.target.closest('[data-delrow]');
+    if (dr) { rows = readRows(false); rows.splice(+dr.closest('.cf-xr').dataset.x, 1); renderRows(); return; }
+    const t = e.target.closest('[data-tool]')?.dataset.tool; if (!t) return;
+    if (t === 'addrow') { rows = readRows(false); rows.push({ m1: 12, d1: 24, m2: 12, d2: 24, all: true, hs: '12:00', he: '23:59', dest: rows[rows.length - 1]?.dest || defDest() }); renderRows(); }
     if (t === 'copy') { for (let d = 1; d < 5; d++) G.grid[d] = [...G.grid[0]]; redrawGrid(); }
     if (t === 'office') { G.grid.forEach((row, d) => { for (let i = 0; i < N; i++) { const m = i * SLOT; row[i] = d < 5 && ((m >= 540 && m < 720) || (m >= 840 && m < 1080)) ? 1 : 0; } }); redrawGrid(); }
     if (t === 'all') { G.grid.forEach((row) => row.fill(1)); redrawGrid(); }
     if (t === 'clear') { G.grid.forEach((row) => row.fill(0)); redrawGrid(); }
-    if (t === 'calclear') { X.days.clear(); for (const k of box.querySelectorAll('.cf-cm-g i.on')) k.classList.remove('on'); summary(); }
-    if (t === 'holidays') $('se-hol').hidden = !$('se-hol').hidden;
-    if (t === 'holadd') {
-      for (const cb of box.querySelectorAll('[data-hol]:checked')) { const [m, d] = HOLIDAYS[+cb.dataset.hol]; X.days.add(`${m}-${d}`); box.querySelector(`[data-md="${m}-${d}"]`)?.classList.add('on'); }
-      $('se-hol').hidden = true; summary();
-    }
   };
 }
 function periodTxt(p) {
   const wd = (p.week_days || []).length && p.week_days.length < 7 ? p.week_days.map((d) => DAYS[d - 1]).join(', ') + ' ' : '';
   const md = partial(p.month_days, 31) ? `le ${p.month_days.join(', ')} ` : '';
-  const mo = partial(p.months, 12) ? p.months.map((m) => MONTHS[m - 1]).join(', ') + ' ' : '';
+  const mo = partial(p.months, 12) ? p.months.map((m) => MONTHS[m - 1]).join(', ') + ' ' : 'tous les mois ';
   return `${wd}${md}${mo}${p.hours_start}–${p.hours_end}`.trim();
 }
