@@ -45,9 +45,13 @@ courant. Cadrage, sources et décisions : `docs/CALLFLOW-MANAGER.md` (dépôt de
 - **Horaires** :
   - leurs sorties « Fermé » et « Fermeture exceptionnelle N » se modifient comme les autres ;
   - un clic sur ✎ d'une sortie propose de changer la destination et, pour un
-    horaire, **« Modifier les plages horaires… »**. Cet éditeur couvre les plages
-    d'ouverture et les fermetures exceptionnelles (jours de semaine, jours du
-    mois, mois, heures), avec ajout et suppression de lignes ;
+    horaire, **« Modifier l'horaire… »**. L'éditeur a trois parties :
+    1. une grille de la semaine à peindre au quart d'heure ;
+    2. la destination « Si fermé » ;
+    3. un calendrier annuel des fermetures exceptionnelles, avec le bouton
+       « Jours fériés fixes » (fériés français à date fixe, Alsace-Moselle en
+       option). Attention : Wazo ne connaît pas l'année, donc un jour fermé
+       l'est chaque année ;
   - la carte « Horaire » de la palette se dépose sur une **carte** (SDA,
     utilisateur, groupe, file d'attente) pour lui associer un horaire. On peut
     aussi passer par « Associer / Changer l'horaire… » dans la fiche ;

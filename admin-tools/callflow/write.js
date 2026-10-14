@@ -11,8 +11,8 @@
 //  - SVI : choices envoyé en entier (supposé : la liste est remplacée).
 // Toujours : relire juste avant d'écrire, ne rien écrire si c'est identique,
 // une seule écriture par objet.
-import { api } from '../common/core.js?v=0.34.1';
-import { M } from './model.js?v=0.34.1';
+import { api } from '../common/core.js?v=0.35.0';
+import { M } from './model.js?v=0.35.0';
 
 // Champs d'entrée de chaque type de destination (le reste est en lecture seule).
 const DEST_KEYS = {
@@ -66,7 +66,8 @@ function holder(w) {
 }
 // Valeur affichée (copie locale, modifiée par le brouillon).
 // Plages d'un horaire (éditeur de conditions) : { open_periods, exceptional_periods }.
-const periodsOf = (s) => JSON.parse(JSON.stringify({ open_periods: s?.open_periods || [], exceptional_periods: s?.exceptional_periods || [] }));
+// Éditeur d'horaire : plages + destination « si fermé » ensemble.
+const periodsOf = (s) => JSON.parse(JSON.stringify({ open_periods: s?.open_periods || [], exceptional_periods: s?.exceptional_periods || [], closed_destination: s?.closed_destination || null }));
 // Égalité d'une valeur du brouillon (destination, horaire associé ou plages).
 export const sameValue = (w, a, b) => (w.k === 'sched_periods' ? JSON.stringify(a) === JSON.stringify(b) : sameDest(a, b));
 export function getDest(w) {
@@ -78,7 +79,7 @@ export function getDest(w) {
 export function setDest(w, d) {
   if (w.k === 'sched_periods') {
     const s = M.by.schedule?.get(String(w.id)); if (!s || !d) return;
-    const v = periodsOf(d); s.open_periods = v.open_periods; s.exceptional_periods = v.exceptional_periods;
+    const v = periodsOf(d); s.open_periods = v.open_periods; s.exceptional_periods = v.exceptional_periods; s.closed_destination = v.closed_destination;
     return;
   }
   if (w.k === 'sched_assoc') {
@@ -168,6 +169,7 @@ export async function prepare(entries) {
       // Plages d'abord (éditeur), puis destinations par index (l'appli interdit
       // de mélanger les deux sur un même horaire dans un brouillon).
       for (const e of op.entries) if (e.w.k === 'sched_periods') {
+        if ('closed_destination' in e.after) closed = cleanDest(e.after.closed_destination) || { type: 'none' };
         open = e.after.open_periods.map((p) => per(p, false));
         exc = e.after.exceptional_periods.map((p) => ({ ...per(p, false), destination: cleanDest(p.destination) || closed }));
       }

@@ -3,10 +3,11 @@
 // déposer (lot 2a, brouillon puis aperçu, sauvegarde, écriture).
 // Cadrage : astrea-wazo-dev/docs/CALLFLOW-MANAGER.md.
 // Modèle (sources confd vérifiées) : model.js ; canevas : canvas.js ; écriture : write.js.
-import { S, $, esc, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.34.1';
-import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, scanGroupKeys, buildTree, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel, periodText } from './model.js?v=0.34.1';
-import { createCanvas } from './canvas.js?v=0.34.1';
-import { getDest, setDest, sameValue, prepare, execute } from './write.js?v=0.34.1';
+import { S, $, esc, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.35.0';
+import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, scanGroupKeys, buildTree, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel, periodText } from './model.js?v=0.35.0';
+import { createCanvas } from './canvas.js?v=0.35.0';
+import { getDest, setDest, sameValue, prepare, execute } from './write.js?v=0.35.0';
+import { openScheduleEditor } from './sched-editor.js?v=0.35.0';
 
 const TESTED_STACK = ['26.07'];
 const NAV = [
@@ -208,7 +209,7 @@ function showDetail(n) {
     ${outs && C.dir === 'out' ? `<div class="dsec"><h4>Sorties</h4><dl>${outs}</dl></div>` : ''}
     ${n.leaf?.ownerType === 'group' ? `<div class="btnrow"><button id="d-keys" title="Lit les touches de fonction de chaque utilisateur du tenant (une lecture par utilisateur)">${M.keys ? 'Relire les touches de bascule' : 'Chercher les touches de bascule'}</button></div><div id="d-keys-st" class="muted small"></div>` : ''}
     ${C.edit && C.dir === 'out' && schedOwner(n.key) ? `<div class="dsec"><h4>Horaire</h4><div class="btnrow"><button id="d-sched" title="Associer, changer ou retirer l'horaire de cet objet (brouillon)">${(entity(schedOwner(n.key)).obj.schedules || []).length ? 'Changer l\'horaire…' : 'Associer un horaire…'}</button>${entity(n.key).owner ? '<button id="d-unsched" class="danger" title="Retire cet horaire de son objet (brouillon ; touche Suppr)">Retirer l\'horaire</button>' : ''}</div></div>` : ''}
-    ${C.edit && n.key.startsWith('schedule:') ? `<div class="btnrow"><button id="d-periods" class="primary" title="Plages d'ouverture et fermetures exceptionnelles de cet horaire (brouillon)">Modifier les plages horaires…</button></div>` : ''}
+    ${C.edit && n.key.startsWith('schedule:') ? `<div class="btnrow"><button id="d-periods" class="primary" title="Heures d'ouverture, destination si fermé et fermetures exceptionnelles de cet horaire (brouillon)">Modifier l'horaire…</button></div>` : ''}
     ${C.edit && C.dir === 'out' && !entity(n.key).owner && incomingPort(n) ? `<div class="btnrow"><button id="d-remove" class="danger" title="Vide la sortie « ${esc(incomingPort(n).p.label)} » de ${esc(ownerTitle(incomingPort(n).n))} (brouillon ; touche Suppr)">Retirer de cette sortie</button></div>` : ''}
     ${n.leaf ? '' : `<div class="dsec"><h4>Arrive depuis</h4>${refs}</div>`}
     ${n.leaf ? '' : `<div class="btnrow">${n.key !== C.root ? '<button id="d-root" class="primary">Partir de cette carte</button>' : ''}<button id="d-in">${C.dir === 'in' && n.key === C.root ? 'Où vont les appels' : 'Qui arrive ici'}</button></div>`}`;
@@ -419,8 +420,9 @@ function openDest(t, preset) {
 function valLabel(w, v) {
   if (w.k !== 'sched_periods') return destLabel(v);
   const o = (v?.open_periods || []).map(periodText).join(' ; ') || 'aucune plage (toujours fermé)';
-  const x = (v?.exceptional_periods || []).length;
-  return `Ouvert ${o}${x ? ` · ${x} fermeture${x > 1 ? 's' : ''} exceptionnelle${x > 1 ? 's' : ''}` : ''}`;
+  // Jours de fermeture exceptionnelle (une période par mois : on compte les jours).
+  const x = (v?.exceptional_periods || []).reduce((n, p) => n + ((p.month_days || []).length && (p.months || []).length ? p.month_days.length * p.months.length : 1), 0);
+  return `Ouvert ${o} · si fermé : ${destLabel(v?.closed_destination)}${x ? ` · ${x} jour${x > 1 ? 's' : ''} de fermeture exceptionnelle` : ''}`;
 }
 // Clic sur ✎ (mode Modifier) : changer la destination et/ou les plages de l'horaire.
 function portClick(nodeKey, portId) {
@@ -429,64 +431,21 @@ function portClick(nodeKey, portId) {
   const sched = p.periods ? M.by.schedule?.get(String(p.periods)) : null;
   confirmModal(`<h3>${esc(p.label)} — ${esc(p.w ? whereOf(n, p) : ownerTitle(n))}</h3>
     ${p.w ? `<p class="small muted">Actuellement : ${esc(destLabel(getDest(p.w)))}. Nouvelle destination :</p><div class="cf-palette cf-choose">${types.map(([t, l]) => `<button class="cf-chip t-${t}" data-choose="${t}"><span class="cf-badge">${esc(TYPES[t]?.badge || '?')}</span>${esc(l)}</button>`).join('')}</div>` : ''}
-    ${sched ? `<p class="small muted">${p.w ? 'Ou bien les conditions' : 'Conditions'} de l'horaire « ${esc(sched.name)} » : plages d'ouverture et fermetures exceptionnelles.</p><div class="btnrow"><button id="ch-periods" class="primary">Modifier les plages horaires…</button></div>` : ''}`, () => true, 'Fermer');
+    ${sched ? `<p class="small muted">${p.w ? 'Ou bien les conditions' : 'Conditions'} de l'horaire « ${esc(sched.name)} » : heures d'ouverture, destination si fermé, fermetures exceptionnelles.</p><div class="btnrow"><button id="ch-periods" class="primary">Modifier l'horaire…</button></div>` : ''}`, () => true, 'Fermer');
   $('modal-body').onclick = (ev) => {
     const b = ev.target.closest('[data-choose]');
     if (b) { openDest({ nodeKey, portId }, { type: b.dataset.choose }); return; }
     if (ev.target.closest('#ch-periods')) openPeriods(sched.id);
   };
 }
-// Éditeur des plages d'un horaire (lot 2b) : plages d'ouverture (jours + heures)
-// et fermetures exceptionnelles (jours du mois, mois, jours de semaine, heures).
-// Règles Wazo (agid schedule.py) : critères en ET, champ vide = sans restriction,
-// bornes incluses à la minute ; confd exige hours_start et hours_end.
-const WD = ['', 'lun', 'mar', 'mer', 'jeu', 'ven', 'sam', 'dim'];
-const toList = (s) => { const out = []; for (const part of String(s || '').split(',').map((x) => x.trim()).filter(Boolean)) { const m = part.match(/^(\d+)\s*-\s*(\d+)$/); if (m) { for (let i = +m[1]; i <= +m[2]; i++) out.push(i); } else if (/^\d+$/.test(part)) out.push(+part); else return null; } return [...new Set(out)].sort((a, b) => a - b); };
-const fromList = (a) => { const v = [...(a || [])].sort((x, y) => x - y); const out = []; for (let i = 0; i < v.length; i++) { let j = i; while (j + 1 < v.length && v[j + 1] === v[j] + 1) j++; out.push(j > i ? `${v[i]}-${v[j]}` : `${v[i]}`); i = j; } return out.join(', '); };
+// Éditeur d'horaire (sched-editor.js) : grille de la semaine à peindre, « si
+// fermé », calendrier annuel des fermetures exceptionnelles + fériés fixes.
 function openPeriods(schedId) {
   const s = M.by.schedule?.get(String(schedId)); if (!s) return;
   const w = { k: 'sched_periods', id: s.id, f: 'periods', key: `sched_periods:${s.id}:periods` };
-  if ([...C.draft.keys()].some((k) => k.startsWith(`sched_exc:${s.id}:`))) { toast('Appliquez ou annulez d\'abord les destinations des fermetures exceptionnelles de cet horaire (brouillon), puis modifiez ses plages.', 7000); return; }
-  const v = getDest(w);
-  const row = (p, kind, i) => `<tr data-kind="${kind}">
-    <td class="cf-wd">${WD.slice(1).map((d, k) => `<label class="inline" title="${d}"><input type="checkbox" data-wd="${k + 1}"${(p.week_days || []).includes(k + 1) ? ' checked' : ''}>${d[0].toUpperCase()}</label>`).join('')}</td>
-    <td><input data-md value="${esc(fromList(p.month_days))}" placeholder="tous" title="Jours du mois : 8, 14 ou 13-14 ; vide = tous"></td>
-    <td><input data-mo value="${esc(fromList(p.months))}" placeholder="tous" title="Mois : 5 (mai), 7 (juillet), 12 ; vide = tous"></td>
-    <td><input type="time" data-hs value="${esc(p.hours_start || '00:00')}"></td><td><input type="time" data-he value="${esc(p.hours_end || '23:59')}"></td>
-    ${kind === 'exc' ? `<td><span class="small muted" title="Destination de cette fermeture (se change sur la sortie de la carte)">${esc(i != null && p.destination ? destLabel(p.destination) : 'comme « Fermé »')}</span></td>` : ''}
-    <td><button class="icon" data-delrow title="Supprimer cette plage">×</button></td></tr>`;
-  const table = (kind, list) => `<div class="cf-diffwrap"><table class="diff cf-per"><thead><tr><th>Jours de semaine</th><th>Jours du mois</th><th>Mois</th><th>De</th><th>À</th>${kind === 'exc' ? '<th>Destination</th>' : ''}<th></th></tr></thead><tbody id="per-${kind}">${list.map((p, i) => row(p, kind, i)).join('')}</tbody></table></div>
-    <div class="btnrow"><button data-addrow="${kind}">+ ${kind === 'exc' ? 'Fermeture exceptionnelle' : 'Plage d\'ouverture'}</button></div>`;
-  confirmModal(`<div class="titlerow"><h3>Plages de l'horaire « ${esc(s.name)} »</h3>${helpButton('per-hb', 'Aide')}</div>${helpBox('per-hb', `Plages d'ouverture : l'horaire est ouvert si UNE plage correspond. Fermetures exceptionnelles : vérifiées AVANT les plages d'ouverture ; chacune envoie vers sa propre destination (modifiable sur la sortie de la carte ; une nouvelle prend celle de « Fermé »). Dans une plage, tous les critères doivent être vrais en même temps (jours de semaine ET jours du mois ET mois ET heures) : pour un jour férié, ne cochez aucun jour de semaine, sinon la fermeture ne s'applique que si la date tombe un de ces jours. Champ vide = sans restriction. Heures à la minute, bornes incluses (09:00–12:30 couvre 12:30). Fuseau : celui de l'horaire (${s.timezone || '?'}). Rien n'est écrit avant « Appliquer… ».`)}
-    <h4 class="cf-per-t">Plages d'ouverture</h4>${table('open', v.open_periods)}
-    <h4 class="cf-per-t">Fermetures exceptionnelles</h4>${table('exc', v.exceptional_periods)}
-    <p id="per-err" class="error small"></p>`, () => {
-    const err = (m) => { $('per-err').textContent = m; return false; };
-    const read = (kind) => {
-      const out = [];
-      for (const tr of $(`per-${kind}`).querySelectorAll('tr')) {
-        const hs = tr.querySelector('[data-hs]').value, he = tr.querySelector('[data-he]').value;
-        if (!/^\d\d:\d\d$/.test(hs) || !/^\d\d:\d\d$/.test(he)) return err('Heures au format HH:MM.');
-        if (hs > he) return err(`Plage ${hs}–${he} : le début doit précéder la fin (Wazo refuse une plage qui passe minuit ; coupez-la en deux).`);
-        const md = toList(tr.querySelector('[data-md]').value), mo = toList(tr.querySelector('[data-mo]').value);
-        if (!md || md.some((d) => d < 1 || d > 31)) return err('Jours du mois : nombres de 1 à 31, séparés par des virgules ou en intervalle (13-14).');
-        if (!mo || mo.some((d) => d < 1 || d > 12)) return err('Mois : nombres de 1 à 12.');
-        out.push({ hours_start: hs, hours_end: he, week_days: [...tr.querySelectorAll('[data-wd]:checked')].map((c) => +c.dataset.wd), month_days: md, months: mo });
-      }
-      return out;
-    };
-    const open = read('open'); if (open === false) return false;
-    const exc = read('exc'); if (exc === false) return false;
-    // Destinations des fermetures existantes conservées (même rang) ; nouvelles : comme « Fermé ».
-    exc.forEach((p, i) => { p.destination = v.exceptional_periods[i]?.destination || s.closed_destination || { type: 'none' }; });
-    addDraft(w, { open_periods: open, exceptional_periods: exc }, { where: `Horaire ${s.name}`, slot: 'Plages horaires' });
-    return true;
-  }, 'Ajouter au brouillon');
-  $('modal-body').onclick = (ev) => {
-    const add = ev.target.closest('[data-addrow]');
-    if (add) { const kind = add.dataset.addrow; $(`per-${kind}`).insertAdjacentHTML('beforeend', row(kind === 'open' ? { hours_start: '09:00', hours_end: '12:00', week_days: [1, 2, 3, 4, 5] } : { hours_start: '00:00', hours_end: '23:59' }, kind, null)); return; }
-    const del = ev.target.closest('[data-delrow]'); if (del) del.closest('tr').remove();
-  };
+  // Les destinations des fermetures sont repérées par leur rang : pas de mélange dans un même brouillon.
+  if ([...C.draft.keys()].some((k) => k.startsWith(`sched_exc:${s.id}:`))) { toast('Appliquez ou annulez d\'abord les destinations des fermetures exceptionnelles de cet horaire (brouillon), puis rouvrez l\'horaire.', 7000); return; }
+  openScheduleEditor(s, (val) => addDraft(w, val, { where: `Horaire ${s.name}`, slot: 'Plages, si fermé, fermetures' }));
 }
 // Palette : glisser une carte (pointeur) jusqu'à une sortie du canevas.
 $('cf-palette').addEventListener('pointerdown', (e) => {
