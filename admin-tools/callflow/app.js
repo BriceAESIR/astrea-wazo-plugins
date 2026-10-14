@@ -1,9 +1,9 @@
 // Call Flow Manager (Astrea Admin Tools) — vue graphique du parcours des
 // appels (lot 1 : lecture seule). Cadrage : astrea-wazo-dev/docs/CALLFLOW-MANAGER.md.
 // Modèle (sources confd vérifiées) : model.js ; canevas : canvas.js.
-import { S, $, esc, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox } from '../common/core.js?v=0.32.1';
-import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, scanGroupKeys, buildTree, reverseIndex, facts, listOf, nodeInfo, applyTime, whenOf, dayBands, scheduleState } from './model.js?v=0.32.1';
-import { createCanvas } from './canvas.js?v=0.32.1';
+import { S, $, esc, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox } from '../common/core.js?v=0.32.2';
+import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, scanGroupKeys, buildTree, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, scheduleState } from './model.js?v=0.32.2';
+import { createCanvas } from './canvas.js?v=0.32.2';
 
 const TESTED_STACK = ['26.07'];
 const NAV = [
@@ -38,7 +38,7 @@ async function reload() {
   renderNav();
   renderList();
 }
-const nodeExists = (k) => { const i = k.indexOf(':'); return !!M.by[k.slice(0, i)]?.has(k.slice(i + 1)); };
+const nodeExists = (k) => !!entity(k).obj;
 // Auto-contrôle (convention Astrea) : forme des réponses dont le graphe dépend.
 function selfCheck() {
   S.compatWarns = [];
@@ -76,7 +76,7 @@ function draw(keepView = false) {
   if (!C.root) { $('cf-title').textContent = 'Parcours des appels'; $('cf-view').classList.add('empty'); return; }
   $('cf-view').classList.remove('empty');
   C.tree = buildTree(C.root, C.dir, { collapsed: C.collapsed, expanded: C.expanded, showEmpty: C.showEmpty && C.dir === 'out' });
-  const info = C.tree.root.info, t = TYPES[info.type] || {};
+  const info = nodeInfo(C.root), t = TYPES[info.type] || {}; // objet choisi (le graphe peut commencer par son horaire)
   $('cf-title').textContent = `${t.label || ''} ${info.title}`;
   $('cf-sub').textContent = C.dir === 'out'
     ? `Où vont les appels · ${C.tree.nodes.size} carte${C.tree.nodes.size > 1 ? 's' : ''}${info.sub ? ` · ${info.sub}` : ''}`
@@ -127,7 +127,7 @@ function setNow() {
 }
 const timeW = () => (C.time.on && C.dir === 'out' ? whenOf(C.time.date, C.time.min) : null);
 // Premier horaire du parcours affiché (le plus proche de la carte de départ).
-const firstSchedule = () => { for (const k of C.tree?.nodes.keys() || []) if (k.startsWith('schedule:')) return M.by.schedule?.get(k.slice(9)); return null; };
+const firstSchedule = () => { for (const k of C.tree?.nodes.keys() || []) if (k.startsWith('schedule:')) return entity(k).obj; return null; };
 function renderTime() {
   const d = C.time.date;
   $('t-date').value = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;

@@ -21,7 +21,7 @@
 // Supposé, à vérifier en réel : les listes (GET /groups, /queues,
 // /switchboards, /schedules) contiennent déjà fallbacks, membres et
 // destinations ; sinon on lit le détail de chaque objet (ensureDetails).
-import { S, api, listAll, fullName } from '../common/core.js?v=0.32.1';
+import { S, api, listAll, fullName } from '../common/core.js?v=0.32.2';
 
 export const M = { lists: {}, by: {}, ext: new Map(), extAny: new Map(), rev: null, warns: [] };
 
@@ -36,7 +36,7 @@ export const TYPES = {
   group: { label: 'Groupe', badge: 'GRP', help: 'Groupe d\'appel : fait sonner ses membres selon la stratégie, pendant la durée du groupe, puis part vers le débordement « pas de réponse ». Les renvois par défaut des membres ne s\'appliquent pas dans un groupe (supposé : comportement Wazo habituel, à confirmer).' },
   queue: { label: 'File', badge: 'FILE', help: 'File d\'attente : l\'appelant attend en musique qu\'un membre se libère. Sorties : délai dépassé, seuils d\'attente (temps ou ratio appels/agents) et débordements (occupé, encombré, indisponible).' },
   ivr: { label: 'SVI', badge: 'SVI', help: 'Serveur vocal interactif : joue un message et attend une touche. Chaque touche a sa destination ; sans saisie, saisie invalide et trop d\'essais ont la leur.' },
-  schedule: { label: 'Horaire', badge: 'H', help: 'Horaire : vérifié avant l\'objet auquel il est associé (SDA, utilisateur, groupe, file). Hors des plages d\'ouverture, l\'appel part vers la destination de fermeture ; pendant une période exceptionnelle, vers celle de la période.' },
+  schedule: { label: 'Horaire', badge: 'H', help: 'Horaire : condition vérifiée avant l\'objet auquel il est associé (SDA, utilisateur, groupe, file) ; la carte est donc placée devant lui. Ouvert : l\'appel continue vers l\'objet (pour une SDA, vers sa destination). Fermé : destination de fermeture. Période exceptionnelle (prioritaire) : destination de la période.' },
   voicemail: { label: 'Messagerie', badge: 'VM', help: 'Boîte vocale : l\'appelant laisse un message. Fin du parcours.' },
   conference: { label: 'Conférence', badge: 'CONF', help: 'Salle de conférence. Fin du parcours.' },
   switchboard: { label: 'Standard (POPC)', badge: 'POPC', help: 'Standard : l\'appel attend d\'être pris par un standardiste ; sans réponse dans le délai, il part vers le débordement « pas de réponse ».' },
@@ -56,8 +56,6 @@ export const TYPES = {
 // Sorties (ports) : libellé et aide.
 export const SLOTS = {
   destination: { label: 'Destination', help: 'Destination de la SDA.' },
-  dest_open: { label: 'Si ouvert', help: 'Destination de la SDA pendant les heures d\'ouverture (un horaire est associé).' },
-  schedule: { label: 'Horaire', help: 'Horaire vérifié avant de continuer : fermé → destination de fermeture.' },
   fwd_unconditional: { label: 'Renvoi immédiat', help: 'Renvoi inconditionnel (renvoi d\'appel de l\'utilisateur) : actif, les postes ne sonnent pas.' },
   ring: { label: 'Sonne', help: 'Les postes de l\'utilisateur sonnent pendant la durée de sonnerie.' },
   fwd_busy: { label: 'Renvoi si occupé', help: 'Renvoi d\'appel sur occupation (réglé aussi par l\'utilisateur). Passe avant le renvoi par défaut « occupé ».' },
@@ -74,6 +72,7 @@ export const SLOTS = {
   ivr_timeout: { label: 'Sans saisie', help: 'SVI : aucune touche composée dans le délai.' },
   ivr_invalid: { label: 'Saisie invalide', help: 'SVI : touche qui ne correspond à aucun choix.' },
   ivr_abort: { label: 'Trop d\'essais', help: 'SVI : nombre maximal d\'essais atteint.' },
+  open: { label: 'Ouvert', help: 'Horaire : pendant les plages d\'ouverture (et hors période exceptionnelle), l\'appel continue vers l\'objet suivant.' },
   closed: { label: 'Fermé', help: 'Horaire : hors des plages d\'ouverture.' },
   exception: { label: 'Exception', help: 'Horaire : période exceptionnelle (jour férié, fermeture…), prioritaire sur les plages d\'ouverture.' },
   context: { label: 'Contexte', help: 'Contexte des appels entrants de ce trunk.' },
@@ -163,10 +162,23 @@ function indexExtensions() {
 // ---------------------------------------------------------------------------
 const IDKEY = { switchboard: 'uuid', context: 'name', application: 'uuid' };
 export const key = (type, o) => `${type}:${o[IDKEY[type] || 'id']}`;
+// Carte horaire « condition » : clé schedule:<id>@<clé de l'objet gardé>.
 export function entity(k) {
-  const i = k.indexOf(':'); const t = k.slice(0, i), id = k.slice(i + 1);
-  return { type: t, id, obj: M.by[t]?.get(id) || null };
+  const i = k.indexOf(':'); const t = k.slice(0, i); let id = k.slice(i + 1), owner = null;
+  if (t === 'schedule' && id.includes('@')) { owner = id.slice(id.indexOf('@') + 1); id = id.slice(0, id.indexOf('@')); }
+  return { type: t, id, owner, obj: M.by[t]?.get(id) || null };
 }
+// L'horaire associé à un objet (SDA, utilisateur, groupe, file) est vérifié
+// avant lui : la carte horaire s'intercale devant l'objet, avec ses
+// embranchements Ouvert (→ l'objet) / Fermé / Exceptions. Supposé : avec
+// plusieurs horaires sur un objet, seul le premier compte.
+export function gateOf(k) {
+  const { type, obj } = entity(k);
+  if (!obj || !['user', 'group', 'queue', 'incall'].includes(type)) return null;
+  const s = (obj.schedules || []).find((x) => M.by.schedule?.has(String(x.id)));
+  return s ? `schedule:${s.id}@${k}` : null;
+}
+const gated = (k) => gateOf(k) || k;
 const firstExten = (o) => o?.extensions?.[0]?.exten || '';
 const userExten = (u) => { for (const l of u.lines || []) for (const e of l.extensions || []) if (e.exten) return e.exten; return ''; };
 const ctxLabel = (name) => { const c = M.by.context?.get(name); return c ? (c.label || c.name) : (name || ''); };
@@ -203,11 +215,11 @@ export function nodeInfo(k, leaf) {
 // ---------------------------------------------------------------------------
 // Feuille (fin de parcours, pas d'objet confd) : sa clé est donnée par buildTree.
 const leaf = (type, title, sub = '', extra = {}) => ({ key: null, leaf: { type, title, sub, ...extra } });
-const target = (t, id) => (M.by[t]?.has(String(id)) ? { key: `${t}:${id}` } : leaf('missing', `${TYPES[t]?.label || t} #${id}`, 'introuvable'));
+const target = (t, id) => (M.by[t]?.has(String(id)) ? { key: gated(`${t}:${id}`) } : leaf('missing', `${TYPES[t]?.label || t} #${id}`, 'introuvable'));
 // Renvoi (numéro libre) : objet interne si le numéro est connu, sinon numéro externe (supposé : même résolution qu'Asterisk).
 function numberTarget(num) {
   const k = M.extAny.get(String(num));
-  return k ? { key: k, note: 'numéro interne' } : leaf('external', String(num || '?'));
+  return k ? { key: gated(k), note: 'numéro interne' } : leaf('external', String(num || '?'));
 }
 export function destTarget(d) {
   if (!d || !d.type || d.type === 'none') return null;
@@ -220,7 +232,7 @@ export function destTarget(d) {
     case 'conference': return target('conference', d.conference_id);
     case 'switchboard': return target('switchboard', d.switchboard_uuid);
     case 'outcall': return { ...target('outcall', d.outcall_id), note: d.exten ? `compose ${d.exten}` : '' };
-    case 'extension': { const k = M.ext.get(`${d.exten}@${d.context}`); return k ? { key: k, note: `via ${d.exten}` } : leaf('extension', d.exten, ctxLabel(d.context)); }
+    case 'extension': { const k = M.ext.get(`${d.exten}@${d.context}`); return k ? { key: k.startsWith('incall:') ? k : gated(k), note: `via ${d.exten}` } : leaf('extension', d.exten, ctxLabel(d.context)); }
     case 'sound': return leaf('sound', d.filename || '?', [d.skip ? 'interruptible' : '', d.no_answer ? 'sans décrocher' : ''].filter(Boolean).join(' · '));
     case 'custom': return leaf('custom', d.command || '');
     case 'hangup': return leaf('hangup', 'Raccrocher', [HANGUP[d.cause] || d.cause, d.timeout ? `${d.timeout} s` : ''].filter(Boolean).join(' · '));
@@ -243,31 +255,22 @@ function out(slot, d, extraLabel = '') {
   return { slot, label: SLOTS[slot]?.label || slot, note, help: SLOTS[slot]?.help || '', dest: d || null, to: t };
 }
 const link = (slot, k, note = '') => ({ slot, label: SLOTS[slot]?.label || slot, note, help: SLOTS[slot]?.help || '', to: { key: k } });
-const schedOuts = (o) => (o?.schedules || []).filter((s) => M.by.schedule?.has(String(s.id))).map((s) => link('schedule', `schedule:${s.id}`));
 const fb = (o, k) => o?.fallbacks?.[`${k}_destination`];
 
-// Sorties + conditions horaires : avec un horaire associé, les sorties
-// normales de l'objet ne valent que « si ouvert » ; celles de l'horaire,
-// seulement fermé (closed) ou pendant l'exception i (exc:i).
+// when (simulation horaire) : sorties d'une carte horaire seulement —
+// 'open' (ouvert), 'closed' (fermé, hors exception), 'exc:i' (exception i).
 export function edgesOf(k) {
-  const e = rawEdgesOf(k);
-  const t = k.slice(0, k.indexOf(':'));
-  if (t === 'schedule') { for (const x of e) x.when = x.slot === 'closed' ? 'closed' : `exc:${e.indexOf(x) - 1}`; return e; }
-  const sch = e.find((x) => x.slot === 'schedule');
-  if (sch) for (const x of e) if (x.slot !== 'schedule') { x.when = 'open'; x.schedId = sch.to.key.slice(9); }
-  return e;
-}
-function rawEdgesOf(k) {
-  const { type, obj: o } = entity(k);
+  const { type, obj: o, owner } = entity(k);
   if (!o) return [];
   switch (type) {
     case 'incall': {
-      const sch = schedOuts(o);
-      return [...sch, out(sch.length ? 'dest_open' : 'destination', o.destination)];
+      // SDA avec horaire : la carte horaire se place entre la SDA et sa destination.
+      const g = gateOf(k);
+      return [g ? { ...link('destination', g), dest: o.destination } : out('destination', o.destination)];
     }
     case 'user': {
       const f = o.forwards || {};
-      const e = [...schedOuts(o)];
+      const e = [];
       if (f.unconditional?.enabled) e.push({ ...link('fwd_unconditional', ''), to: numberTarget(f.unconditional.destination), note: f.unconditional.destination });
       if (f.busy?.enabled) e.push({ ...link('fwd_busy', ''), to: numberTarget(f.busy.destination), note: f.busy.destination });
       if (f.noanswer?.enabled) e.push({ ...link('fwd_noanswer', ''), to: numberTarget(f.noanswer.destination), note: f.noanswer.destination });
@@ -277,11 +280,11 @@ function rawEdgesOf(k) {
       return e;
     }
     case 'group':
-      return [...schedOuts(o),
+      return [
         { slot: 'members', label: SLOTS.members.label, help: SLOTS.members.help, note: [STRATEGY[o.ring_strategy] || o.ring_strategy, o.user_timeout ? `${o.user_timeout} s chacun` : ''].filter(Boolean).join(' · '), to: membersLeaf('group', o) },
         out('noanswer', fb(o, 'noanswer'), sec(o.timeout)), out('congestion', fb(o, 'congestion'))];
     case 'queue': {
-      return [...schedOuts(o),
+      return [
         { slot: 'members', label: SLOTS.members.label, help: SLOTS.members.help, note: '', to: membersLeaf('queue', o) },
         out('wait_time', o.wait_time_destination, o.wait_time_threshold != null ? `> ${o.wait_time_threshold} s` : ''),
         out('wait_ratio', o.wait_ratio_destination, o.wait_ratio_threshold != null ? `> ${o.wait_ratio_threshold}` : ''),
@@ -290,8 +293,15 @@ function rawEdgesOf(k) {
     case 'ivr':
       return [...(o.choices || []).map((c) => ({ ...out('choice', c.destination), label: `Touche ${c.exten}`, choice: c.exten })),
         out('ivr_timeout', o.timeout_destination, sec(o.timeout)), out('ivr_invalid', o.invalid_destination), out('ivr_abort', o.abort_destination, o.max_tries ? `${o.max_tries} essais` : '')];
-    case 'schedule':
-      return [out('closed', o.closed_destination), ...(o.exceptional_periods || []).map((p, i) => ({ ...out('exception', p.destination, periodText(p)), label: `Exception ${i + 1}` }))];
+    case 'schedule': {
+      // Carte condition (devant un objet) : Ouvert → l'objet (pour une SDA :
+      // sa destination). Carte seule (choisie dans la liste) : pas de sortie Ouvert.
+      const e = [];
+      if (owner) e.push(owner.startsWith('incall:') ? { ...out('open', M.by.incall?.get(owner.slice(7))?.destination, periodsText(o)), when: 'open' } : { ...link('open', owner, periodsText(o)), when: 'open' });
+      e.push({ ...out('closed', o.closed_destination), when: 'closed' });
+      (o.exceptional_periods || []).forEach((p, i) => e.push({ ...out('exception', p.destination, periodText(p)), label: `Exception ${i + 1}`, when: `exc:${i}` }));
+      return e;
+    }
     case 'switchboard': return [out('noanswer', fb(o, 'noanswer'), sec(o.timeout))];
     case 'trunk': return o.context && M.by.context?.has(o.context) ? [link('context', `context:${o.context}`)] : [];
     case 'context': {
@@ -399,16 +409,17 @@ export async function scanGroupKeys(onProgress) {
 export function reverseIndex() {
   if (M.rev) return M.rev;
   M.rev = new Map();
-  for (const t of ['incall', 'user', 'group', 'queue', 'ivr', 'schedule', 'switchboard', 'trunk', 'context', 'outcall']) {
-    for (const o of M.lists[t] || []) {
-      const from = key(t, o);
-      for (const e of edgesOf(from)) {
-        const k = e.to?.key;
-        // Règle sortante → trunk et inclusion de contexte : pas des arrivées d'appels entrants.
-        if (!k || e.to.leaf || e.assoc || e.slot === 'trunk' || e.slot === 'include') continue;
-        if (!M.rev.has(k)) M.rev.set(k, []);
-        M.rev.get(k).push({ from, slot: e.slot, label: e.label, note: e.note, help: e.help });
-      }
+  const froms = [];
+  for (const t of ['incall', 'user', 'group', 'queue', 'ivr', 'switchboard', 'trunk', 'context', 'outcall']) {
+    for (const o of M.lists[t] || []) { const k = key(t, o); froms.push(k); const g = gateOf(k); if (g) froms.push(g); }
+  }
+  for (const from of froms) {
+    for (const e of edgesOf(from)) {
+      const k = e.to?.key;
+      // Règle sortante → trunk et inclusion de contexte : pas des arrivées d'appels entrants.
+      if (!k || e.to.leaf || e.assoc || e.slot === 'trunk' || e.slot === 'include') continue;
+      if (!M.rev.has(k)) M.rev.set(k, []);
+      M.rev.get(k).push({ from, slot: e.slot, label: e.label, note: e.note, help: e.help });
     }
   }
   return M.rev;
@@ -420,6 +431,9 @@ export function reverseIndex() {
 // dir 'out' : où vont les appels ; 'in' : qui arrive ici.
 // ---------------------------------------------------------------------------
 export function buildTree(rootKey, dir, { maxDepth = 8, collapsed = new Set(), expanded = new Set(), showEmpty = false } = {}) {
+  // Objet gardé par un horaire : en sens « où vont les appels », le parcours
+  // commence par la carte horaire (une SDA garde sa carte, l'horaire suit).
+  if (dir === 'out' && !rootKey.startsWith('incall:')) rootKey = gated(rootKey);
   const nodes = new Map(); const cross = [];
   const root = { key: rootKey, depth: 0, kids: [], info: nodeInfo(rootKey), ports: [] };
   nodes.set(rootKey, root);
@@ -494,15 +508,14 @@ export const whenOf = (date, min) => ({ wd: ((date.getDay() + 6) % 7) + 1, day: 
 // Marque les sorties inactives (p.inactive) et les cartes atteintes seulement
 // par des sorties inactives (n.dim). w = null : tout est actif.
 export function applyTime(tree, w) {
-  const st = (id) => scheduleState(M.by.schedule?.get(String(id)), w);
   for (const n of tree.nodes.values()) {
     n.dim = false; n.timeLabel = '';
-    if (w && n.key.startsWith('schedule:')) { const s = st(n.key.slice(9)); n.timeLabel = s.label; n.timeOpen = s.open; }
+    const s = w && n.key.startsWith('schedule:') ? scheduleState(entity(n.key).obj, w) : null;
+    if (s) { n.timeLabel = s.label; n.timeOpen = s.open; }
     for (const p of n.ports || []) {
       p.inactive = false;
-      if (!w || !p.when) continue;
-      if (p.when === 'open') p.inactive = !st(p.schedId).open;
-      else { const s = st(n.key.slice(9)); p.inactive = p.when === 'closed' ? (s.open || s.exc >= 0) : s.exc !== Number(p.when.slice(4)); }
+      if (!s || !p.when) continue;
+      p.inactive = p.when === 'open' ? !s.open : p.when === 'closed' ? (s.open || s.exc >= 0) : s.exc !== Number(p.when.slice(4));
     }
   }
   if (!w) return;
@@ -545,6 +558,7 @@ function ranges(arr, names) {
   for (let i = 0; i < v.length; i++) { let j = i; while (j + 1 < v.length && v[j + 1] === v[j] + 1) j++; out2.push(j > i + 1 ? `${names ? names[v[i]] : v[i]}–${names ? names[v[j]] : v[j]}` : j === i + 1 ? `${names ? names[v[i]] : v[i]}, ${names ? names[v[j]] : v[j]}` : `${names ? names[v[i]] : v[i]}`); i = j; }
   return out2.join(', ');
 }
+function periodsText(s) { return (s?.open_periods || []).map(periodText).join(' ; '); }
 export function periodText(p) {
   if (!p) return '';
   const days = p.week_days?.length && p.week_days.length < 7 ? ranges(p.week_days, DAYS) : '';
