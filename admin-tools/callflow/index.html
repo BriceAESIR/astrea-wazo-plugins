@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Call Flow Manager · Astrea Admin Tools</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Mulish:wght@300..800&display=swap">
+<link rel="stylesheet" href="../common/style.css?v=0.32.0">
+<link rel="stylesheet" href="./callflow.css?v=0.32.0">
+<script>if (window.parent !== window) document.documentElement.classList.add('framed');</script>
+</head>
+<body>
+<div id="app">
+  <header class="topbar">
+    <div class="brand">Call Flow Manager</div>
+    <div id="conn" class="conn muted">Connexion…</div>
+  </header>
+
+  <!-- Connexion hors portail (tests) -->
+  <section id="standalone" class="card narrow" hidden>
+    <h2>Connexion directe</h2>
+    <p class="muted">Page ouverte hors du portail Wazo : connectez-vous à un serveur pour tester.</p>
+    <label>Serveur <input id="sa-host" placeholder="https://wazo.client.fr"></label>
+    <label>Identifiant <input id="sa-user" autocomplete="username"></label>
+    <label>Mot de passe <input id="sa-pass" type="password" autocomplete="current-password"></label>
+    <p class="muted small">ou</p>
+    <label>Token existant <input id="sa-token"></label>
+    <button id="sa-go" class="primary">Se connecter</button>
+    <p id="sa-err" class="error"></p>
+  </section>
+
+  <main id="main" class="no-detail" hidden>
+    <aside id="sidebar">
+      <nav id="nav" class="sidenav"></nav>
+      <input id="q" type="search" placeholder="Numéro, nom…">
+      <div id="count" class="muted small"></div>
+      <ul id="list" class="list"></ul>
+    </aside>
+
+    <section id="workbench">
+      <div id="compat" class="compat" role="alert" hidden></div>
+      <div id="lookwarn"></div>
+      <div class="cf-toolbar">
+        <div class="cf-rootname">
+          <div class="titlerow"><h2 id="cf-title">Parcours des appels</h2><span id="cf-help"></span></div>
+          <div id="cf-sub" class="muted small">Choisissez une SDA, un utilisateur, un groupe… dans la colonne de gauche.</div>
+        </div>
+        <div class="cf-tools">
+          <div class="cf-seg" role="group" aria-label="Sens">
+            <button data-dir="out" class="active" title="Où vont les appels qui arrivent sur l'objet choisi">Où vont les appels</button>
+            <button data-dir="in" title="Quels objets envoient des appels vers l'objet choisi">Qui arrive ici</button>
+          </div>
+          <label class="inline small" title="Afficher aussi les sorties non réglées (débordements vides…)"><input type="checkbox" id="cf-empty"> Sorties vides</label>
+          <button id="cf-out" class="icon zoom" title="Zoom arrière">−</button>
+          <button id="cf-in" class="icon zoom" title="Zoom avant">+</button>
+          <button id="cf-fit" title="Tout afficher">Ajuster</button>
+          <button id="cf-reset" title="Revenir à la disposition automatique (les cartes déplacées reprennent leur place)">Réorganiser</button>
+          <button id="cf-reload" title="Relire la configuration du serveur">Recharger</button>
+        </div>
+      </div>
+      <div id="cf-help-box"></div>
+      <div id="cf-view" class="cf-view" tabindex="0" aria-label="Graphe du parcours des appels"></div>
+      <div class="cf-hint muted small">Glisser le fond : déplacer · molette : zoom · glisser une carte : la déplacer avec sa branche (Alt : seule) · double-clic : partir de cette carte</div>
+    </section>
+
+    <aside id="detail" hidden>
+      <div class="detailhead"><h3 id="d-name"></h3><button id="d-close" class="icon" title="Fermer">×</button></div>
+      <div id="d-body"></div>
+    </aside>
+  </main>
+
+  <div id="modal" class="modal" hidden><div class="modal-box"><div id="modal-body"></div>
+    <div class="btnrow right"><button id="modal-cancel">Annuler</button><button id="modal-ok" class="primary">Confirmer</button></div></div></div>
+  <div id="toast" class="toast" hidden></div>
+</div>
+<script type="module" src="./app.js?v=0.32.0"></script>
+</body>
+</html>
