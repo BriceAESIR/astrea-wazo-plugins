@@ -1,9 +1,9 @@
 // Call Flow Manager (Astrea Admin Tools) — vue graphique du parcours des
 // appels (lot 1 : lecture seule). Cadrage : astrea-wazo-dev/docs/CALLFLOW-MANAGER.md.
 // Modèle (sources confd vérifiées) : model.js ; canevas : canvas.js.
-import { S, $, esc, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox } from '../common/core.js?v=0.32.2';
-import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, scanGroupKeys, buildTree, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, scheduleState } from './model.js?v=0.32.2';
-import { createCanvas } from './canvas.js?v=0.32.2';
+import { S, $, esc, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox } from '../common/core.js?v=0.32.3';
+import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, scanGroupKeys, buildTree, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, scheduleState } from './model.js?v=0.32.3';
+import { createCanvas } from './canvas.js?v=0.32.3';
 
 const TESTED_STACK = ['26.07'];
 const NAV = [
@@ -88,7 +88,17 @@ function draw(keepView = false) {
   applyTime(C.tree, timeW());
   C.canvas.render(C.tree, C.dir, `${C.scope}|${C.root}|${C.dir}`, { keepView });
   renderTime();
+  autoScanKeys();
   if (C.sel && C.tree.nodes.has(C.sel)) C.canvas.select(C.sel, false); else closeDetail();
+}
+// Groupe affiché sans membre fixe et inscrits non lisibles (amid refusé) :
+// recherche des touches de bascule, une fois par chargement, en arrière-plan.
+function autoScanKeys() {
+  if (M.keys || C.scanning || M.live) return;
+  const need = [...C.tree.nodes.values()].some((n) => n.leaf?.ownerType === 'group' && !n.leaf.names.length);
+  if (!need) return;
+  C.scanning = true;
+  scanGroupKeys().then(() => { C.scanning = false; const sel = C.sel; draw(true); const n = sel && C.tree.nodes.get(sel); if (n) { C.canvas.select(sel, false); showDetail(n); } });
 }
 function setRoot(k) {
   if (!k || k.startsWith('leaf:')) return;
@@ -214,7 +224,7 @@ $('t-next').onclick = () => shiftDay(1);
 $('t-now').onclick = () => { setNow(); updateTime(); };
 $('t-on').onchange = () => { C.time.on = $('t-on').checked; updateTime(); };
 $('t-help').innerHTML = helpButton('t-hb', 'Simulation de la date et de l\'heure');
-$('t-help-box').innerHTML = helpBox('t-hb', 'Choisissez un jour et une heure : les branches qui ne s\'appliquent pas à ce moment sont atténuées (ouvert → sorties normales de la SDA, de l\'utilisateur, du groupe… ; fermé → destination de fermeture ; période exceptionnelle → sa destination, prioritaire). Règles lues dans le code de Wazo : exceptions d\'abord, puis plages d\'ouverture, sinon fermé ; bornes horaires incluses à la minute (une plage 09:00–12:30 couvre 12:30). L\'heure est celle du site (fuseau de l\'horaire). Le bandeau du curseur montre la journée du premier horaire du parcours : vert ouvert, gris fermé, rouge exception.');
+$('t-help-box').innerHTML = helpBox('t-hb', 'Choisissez un jour et une heure : les branches qui ne s\'appliquent pas à ce moment sont atténuées (ouvert → sorties normales de la SDA, de l\'utilisateur, du groupe… ; fermé → destination de fermeture ; fermeture exceptionnelle → sa destination, prioritaire). Règles lues dans le code de Wazo : fermetures exceptionnelles d\'abord, puis plages d\'ouverture, sinon fermé ; bornes horaires incluses à la minute (une plage 09:00–12:30 couvre 12:30). L\'heure est celle du site (fuseau de l\'horaire). Le bandeau du curseur montre la journée du premier horaire du parcours : vert ouvert, gris fermé, rouge fermeture exceptionnelle.');
 // Le canevas reprend sa taille avec la fenêtre (cadre du portail redimensionné).
 window.addEventListener('resize', () => { clearTimeout(window.__cfR); window.__cfR = setTimeout(() => C.canvas?.fit(), 200); });
 

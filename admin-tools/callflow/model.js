@@ -21,7 +21,7 @@
 // Supposé, à vérifier en réel : les listes (GET /groups, /queues,
 // /switchboards, /schedules) contiennent déjà fallbacks, membres et
 // destinations ; sinon on lit le détail de chaque objet (ensureDetails).
-import { S, api, listAll, fullName } from '../common/core.js?v=0.32.2';
+import { S, api, listAll, fullName } from '../common/core.js?v=0.32.3';
 
 export const M = { lists: {}, by: {}, ext: new Map(), extAny: new Map(), rev: null, warns: [] };
 
@@ -36,7 +36,7 @@ export const TYPES = {
   group: { label: 'Groupe', badge: 'GRP', help: 'Groupe d\'appel : fait sonner ses membres selon la stratégie, pendant la durée du groupe, puis part vers le débordement « pas de réponse ». Les renvois par défaut des membres ne s\'appliquent pas dans un groupe (supposé : comportement Wazo habituel, à confirmer).' },
   queue: { label: 'File', badge: 'FILE', help: 'File d\'attente : l\'appelant attend en musique qu\'un membre se libère. Sorties : délai dépassé, seuils d\'attente (temps ou ratio appels/agents) et débordements (occupé, encombré, indisponible).' },
   ivr: { label: 'SVI', badge: 'SVI', help: 'Serveur vocal interactif : joue un message et attend une touche. Chaque touche a sa destination ; sans saisie, saisie invalide et trop d\'essais ont la leur.' },
-  schedule: { label: 'Horaire', badge: 'H', help: 'Horaire : condition vérifiée avant l\'objet auquel il est associé (SDA, utilisateur, groupe, file) ; la carte est donc placée devant lui. Ouvert : l\'appel continue vers l\'objet (pour une SDA, vers sa destination). Fermé : destination de fermeture. Période exceptionnelle (prioritaire) : destination de la période.' },
+  schedule: { label: 'Horaire', badge: 'H', help: 'Horaire : condition vérifiée avant l\'objet auquel il est associé (SDA, utilisateur, groupe, file) ; la carte est donc placée devant lui. Ouvert : l\'appel continue vers l\'objet (pour une SDA, vers sa destination). Fermé : destination de fermeture. Fermeture exceptionnelle (prioritaire sur les heures d\'ouverture) : destination propre à cette fermeture.' },
   voicemail: { label: 'Messagerie', badge: 'VM', help: 'Boîte vocale : l\'appelant laisse un message. Fin du parcours.' },
   conference: { label: 'Conférence', badge: 'CONF', help: 'Salle de conférence. Fin du parcours.' },
   switchboard: { label: 'Standard (POPC)', badge: 'POPC', help: 'Standard : l\'appel attend d\'être pris par un standardiste ; sans réponse dans le délai, il part vers le débordement « pas de réponse ».' },
@@ -72,9 +72,9 @@ export const SLOTS = {
   ivr_timeout: { label: 'Sans saisie', help: 'SVI : aucune touche composée dans le délai.' },
   ivr_invalid: { label: 'Saisie invalide', help: 'SVI : touche qui ne correspond à aucun choix.' },
   ivr_abort: { label: 'Trop d\'essais', help: 'SVI : nombre maximal d\'essais atteint.' },
-  open: { label: 'Ouvert', help: 'Horaire : pendant les plages d\'ouverture (et hors période exceptionnelle), l\'appel continue vers l\'objet suivant.' },
+  open: { label: 'Ouvert', help: 'Horaire : pendant les plages d\'ouverture (et hors fermeture exceptionnelle), l\'appel continue vers l\'objet suivant.' },
   closed: { label: 'Fermé', help: 'Horaire : hors des plages d\'ouverture.' },
-  exception: { label: 'Exception', help: 'Horaire : période exceptionnelle (jour férié, fermeture…), prioritaire sur les plages d\'ouverture.' },
+  exception: { label: 'Fermeture exceptionnelle', help: 'Horaire : fermeture exceptionnelle (jour férié, congés…), avec sa propre destination ; prioritaire sur les plages d\'ouverture. Tous ses critères doivent être vrais en même temps (jours de la semaine ET jours du mois ET mois ET heures).' },
   context: { label: 'Contexte', help: 'Contexte des appels entrants de ce trunk.' },
   incall: { label: 'SDA', help: 'SDA de ce contexte.' },
   include: { label: 'Inclut', help: 'Contexte inclus : ses numéros sont joignables depuis celui-ci.' },
@@ -299,7 +299,7 @@ export function edgesOf(k) {
       const e = [];
       if (owner) e.push(owner.startsWith('incall:') ? { ...out('open', M.by.incall?.get(owner.slice(7))?.destination, periodsText(o)), when: 'open' } : { ...link('open', owner, periodsText(o)), when: 'open' });
       e.push({ ...out('closed', o.closed_destination), when: 'closed' });
-      (o.exceptional_periods || []).forEach((p, i) => e.push({ ...out('exception', p.destination, periodText(p)), label: `Exception ${i + 1}`, when: `exc:${i}` }));
+      (o.exceptional_periods || []).forEach((p, i) => e.push({ ...out('exception', p.destination, periodText(p)), label: `Fermeture exceptionnelle ${i + 1}`, when: `exc:${i}` }));
       return e;
     }
     case 'switchboard': return [out('noanswer', fb(o, 'noanswer'), sec(o.timeout))];
@@ -332,10 +332,15 @@ function membersLeaf(type, o) {
   const keys = type === 'group' ? M.keys?.get(o.id) : null;
   const parts = [plural(fixed.length, 'fixe')];
   if (live) parts.push(`${dyn.length} ${type === 'queue' ? 'connecté' : 'inscrit'}${dyn.length > 1 ? 's' : ''}`);
-  const sub = [fixed.slice(0, 4).join(', ') + (fixed.length > 4 ? ` +${fixed.length - 4}` : '')];
-  if (dyn.length) sub.push(`inscrits : ${dyn.slice(0, 4).map((x) => x.name).join(', ')}${dyn.length > 4 ? ` +${dyn.length - 4}` : ''}`);
+  else if (keys) parts.push(`${keys.length} par touche`);
+  const few = (arr) => arr.slice(0, 4).join(', ') + (arr.length > 4 ? ` +${arr.length - 4}` : '');
+  const sub = [few(fixed)];
+  if (dyn.length) sub.push(`inscrits : ${few(dyn.map((x) => x.name))}`);
+  // Inscrits non lisibles (amid refusé) : on montre les membres possibles
+  // (touche de bascule), sans savoir s'ils sont inscrits en ce moment.
+  if (!live && keys?.length) sub.push(`bascule : ${few([...new Set(keys.map((k) => k.name))])} (inscrits ou non)`);
+  else if (!live && keys) sub.push('aucune touche de bascule');
   else if (!live && type === 'group') sub.push('inscrits par touche : non lisibles');
-  if (keys) sub.push(`${plural(keys.length, 'touche')} de bascule`);
   return leaf('members', parts.join(' · '), sub.filter(Boolean).join(' — '), { names: fixed, live: live || null, keys: keys || null, ownerType: type });
 }
 
@@ -343,39 +348,54 @@ function membersLeaf(type, o) {
 // Membres inscrits en ce moment (touche « bascule groupe » *50/*51/*52, agents
 // connectés). Vérifié dans wazo-agid (modules/group_member.py) : la touche
 // fait AddQueueMember(group.name, Local/<uuid>@usersharedlines) dans
-// Asterisk, sans rien écrire en base : confd ne les voit pas. Seule lecture
-// REST : wazo-amid POST /1.0/action/QueueStatus (ACL
-// amid.action.QueueStatus.create), qui exige un token du tenant master
-// (@required_master_tenant) : le token du portail sera sans doute refusé
-// (à tester). Champs AMI supposés (Asterisk >= 12) : Queue, Interface /
-// StateInterface, MemberName, Membership static|dynamic, Paused, Status.
+// Asterisk, sans rien écrire en base : confd ne les voit pas. Lecture REST :
+// wazo-amid POST /1.0/action/QueueStatus {"Queue": <group.name>} (ACL
+// amid.action.QueueStatus.create). Le code exige un token du tenant master
+// (@required_master_tenant), mais le token du portail de Brice est accepté
+// (200, testé en réel le 14/10/2026) quand on n'envoie PAS Wazo-Tenant (CORS).
+// Sans "Queue", amid renvoie les files de tous les tenants : une requête par file.
+// Réponse vérifiée en réel : messages AMI en JSON, QueueMember avec Name,
+// Location (Local/<uuid>@usersharedlines), StateInterface, Membership
+// (dynamic | static), Status (1 = libre…), Paused, LoginTime, CallsTaken.
 // ---------------------------------------------------------------------------
 const DEVSTATE = { 1: 'libre', 2: 'en ligne', 3: 'occupé', 4: 'invalide', 5: 'indisponible', 6: 'sonne', 7: 'sonne', 8: 'en attente' };
+const since = (t) => { const d = new Date(Number(t) * 1000); return Number(t) > 0 ? `inscrit le ${d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })} à ${d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}` : ''; };
+async function queueStatus(name) {
+  // Pas de Wazo-Tenant : amid ne l'autorise pas en CORS (Access-Control-Allow-Headers),
+  // le navigateur bloque alors la requête (« Failed to fetch », vérifié en réel le 14/10/2026).
+  const r = await fetch(`${S.base}/api/amid/1.0/action/QueueStatus`, { method: 'POST', headers: { 'X-Auth-Token': S.token, 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ Queue: name }) });
+  if (!r.ok) { const e = new Error(r.status === 401 || r.status === 403 ? `refusé par le serveur (${r.status}) : l'API Asterisk (amid) exige un token du tenant principal` : `erreur ${r.status}`); e.status = r.status; throw e; }
+  return r.json();
+}
 export async function loadLiveMembers() {
   M.live = null; M.liveState = '';
-  const mine = new Set([...(M.lists.group || []), ...(M.lists.queue || [])].map((x) => x.name));
-  if (!mine.size) return;
+  const names = [...(M.lists.group || []), ...(M.lists.queue || [])].map((x) => x.name).filter(Boolean);
+  if (!names.length) return;
+  const live = new Map();
   try {
-    const headers = { 'X-Auth-Token': S.token, 'Content-Type': 'application/json', Accept: 'application/json' };
-    if (S.tenant) headers['Wazo-Tenant'] = S.tenant;
-    const r = await fetch(`${S.base}/api/amid/1.0/action/QueueStatus`, { method: 'POST', headers, body: '{}' });
-    if (!r.ok) { M.liveState = r.status === 401 || r.status === 403 ? `refusé par le serveur (${r.status}) : l'API Asterisk (amid) exige un token du tenant principal` : `erreur ${r.status}`; return; }
-    const msgs = await r.json();
-    M.live = new Map();
-    for (const q of mine) M.live.set(q, []);
-    for (const m of Array.isArray(msgs) ? msgs : []) {
-      if (m?.Event !== 'QueueMember' || !mine.has(m.Queue)) continue; // autres tenants : ignorés
-      const itf = m.Interface || m.Location || m.StateInterface || '';
-      const u = itf.match(/Local\/([0-9a-f-]{36})@usersharedlines/i);
-      const a = itf.match(/Local\/id-(\d+)@agentcallback/i);
-      const user = u ? M.userByUuid.get(u[1]) : null;
-      const name = user ? fullName(user) : a ? `agent ${m.MemberName || a[1]}` : (m.MemberName || itf);
-      const st = [DEVSTATE[m.Status] || '', m.Paused === '1' || m.Paused === true ? 'en pause' : ''].filter(Boolean).join(', ');
-      M.live.get(m.Queue).push({ name, uuid: u?.[1] || null, dynamic: String(m.Membership || '').toLowerCase() === 'dynamic', state: st });
-    }
-    M.liveState = 'ok';
+    // Une requête par groupe / file du tenant (4 à la fois) : jamais les queues des autres tenants.
+    let i = 0;
+    await Promise.all(Array.from({ length: 4 }, async () => {
+      while (i < names.length) {
+        const q = names[i++];
+        const msgs = await queueStatus(q);
+        const list = [];
+        for (const m of Array.isArray(msgs) ? msgs : []) {
+          if (m?.Event !== 'QueueMember' || m.Queue !== q) continue;
+          const itf = m.Location || m.Interface || m.Name || m.StateInterface || '';
+          const u = itf.match(/([0-9a-f]{8}-[0-9a-f-]{27})@usersharedlines/i);
+          const a = itf.match(/Local\/id-(\d+)@agentcallback/i);
+          const user = u ? M.userByUuid.get(u[1]) : null;
+          const name = user ? fullName(user) : a ? `agent ${a[1]}` : (m.MemberName || itf);
+          const st = [DEVSTATE[m.Status] || '', m.Paused === '1' || m.Paused === true ? 'en pause' : '', String(m.Membership).toLowerCase() === 'dynamic' ? since(m.LoginTime) : ''].filter(Boolean).join(', ');
+          list.push({ name, uuid: u?.[1] || null, dynamic: String(m.Membership || '').toLowerCase() === 'dynamic', state: st, calls: Number(m.CallsTaken) || 0 });
+        }
+        live.set(q, list);
+      }
+    }));
+    M.live = live; M.liveState = 'ok';
     console.info('[astrea] Call Flow : membres en direct (amid QueueStatus)', M.live);
-  } catch (e) { M.liveState = `indisponible (${e.message})`; console.warn('[astrea] amid', e); }
+  } catch (e) { M.liveState = e.status ? e.message : `indisponible (${e.message})`; console.info('[astrea] amid QueueStatus :', M.liveState, e); }
 }
 
 // Utilisateurs qui ont une touche « membre de groupe » (funckey confd type
@@ -500,7 +520,7 @@ function periodMatch(p, w) {
 export function scheduleState(s, w) {
   if (!s || s.enabled === false) return { open: true, exc: -1, label: s ? 'Désactivé (ouvert)' : '' };
   const i = (s.exceptional_periods || []).findIndex((p) => periodMatch(p, w));
-  if (i >= 0) return { open: false, exc: i, label: `Exception ${i + 1}` };
+  if (i >= 0) return { open: false, exc: i, label: `Fermeture exceptionnelle ${i + 1}`, short: `Fermeture exc. ${i + 1}` };
   if ((s.open_periods || []).some((p) => periodMatch(p, w))) return { open: true, exc: -1, label: 'Ouvert' };
   return { open: false, exc: -1, label: 'Fermé' };
 }
@@ -511,7 +531,7 @@ export function applyTime(tree, w) {
   for (const n of tree.nodes.values()) {
     n.dim = false; n.timeLabel = '';
     const s = w && n.key.startsWith('schedule:') ? scheduleState(entity(n.key).obj, w) : null;
-    if (s) { n.timeLabel = s.label; n.timeOpen = s.open; }
+    if (s) { n.timeLabel = s.short || s.label; n.timeOpen = s.open; } // pastille de la carte : libellé court
     for (const p of n.ports || []) {
       p.inactive = false;
       if (!s || !p.when) continue;
@@ -610,7 +630,7 @@ export function facts(k, leafInfo) {
       break;
     case 'schedule':
       f.push(['Fuseau', o.timezone], ['Actif', o.enabled === false ? 'non' : 'oui'], ['Ouvert', (o.open_periods || []).map(periodText).join(' ; ') || '—'],
-        ['Exceptions', (o.exceptional_periods || []).map(periodText).join(' ; ') || '—'],
+        ['Fermetures exceptionnelles', (o.exceptional_periods || []).map(periodText).join(' ; ') || '—'],
         ['Utilisé par', ['incalls', 'users', 'groups', 'queues', 'outcalls'].map((x) => (o[x] || []).length).reduce((a, b) => a + b, 0) || '—']);
       break;
     case 'voicemail': f.push(['Numéro', o.number], ['Contexte', ctxLabel(o.context)], ['E-mail', o.email], ['Type', o.accesstype]); break;
