@@ -16,11 +16,13 @@
 //  - fermetures : chaque jour d'une ligne (période « du … au … » comprise,
 //    même à cheval sur deux mois) est regroupé par mois, heures et
 //    destination : { months: [m], month_days: [...], week_days: [] } ;
-//  - ce qui n'entre pas dans ces formes (plage limitée à certains jours du
-//    mois, fermeture liée à un jour de semaine ou valable tous les mois) est
-//    conservé tel quel et listé.
-import { $, esc, confirmModal, helpButton, helpBox } from '../common/core.js?v=0.35.3';
-import { M, listOf, destLabel, loadSounds, soundName } from './model.js?v=0.35.3';
+//  - plage d'ouverture limitée à certains mois / jours du mois : section
+//    « Plages saisonnières » (cases mois et jours, jours du mois, heures),
+//    modifiable (15/10/2026) ;
+//  - fermeture liée à un jour de semaine ou valable tous les mois : conservée
+//    telle quelle et listée (supprimable).
+import { $, esc, confirmModal, helpButton, helpBox } from '../common/core.js?v=0.35.4';
+import { M, listOf, destLabel, loadSounds, soundName } from './model.js?v=0.35.4';
 
 const SLOT = 15, N = 96;
 const DAYS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
@@ -34,6 +36,9 @@ const hhmm = (m) => `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
 const hm = (s) => { const [h, m] = String(s || '').split(':').map(Number); return Number.isFinite(h) ? h * 60 + (m || 0) : null; };
 const partial = (a, full) => Array.isArray(a) && a.length > 0 && a.length < full;
 const sameD = (a, b) => JSON.stringify(a || null) === JSON.stringify(b || null);
+// « 1-5, 7 » ↔ [1,2,3,4,5,7] ; null si la saisie est invalide.
+const toList = (s) => { const out = []; for (const part of String(s || '').split(',').map((x) => x.trim()).filter(Boolean)) { const m = part.match(/^(\d+)\s*-\s*(\d+)$/); if (m) { for (let i = +m[1]; i <= +m[2]; i++) out.push(i); } else if (/^\d+$/.test(part)) out.push(+part); else return null; } return [...new Set(out)].sort((a, b) => a - b); };
+const fromList = (a) => { const v = [...(a || [])].sort((x, y) => x - y); const out = []; for (let i = 0; i < v.length; i++) { let j = i; while (j + 1 < v.length && v[j + 1] === v[j] + 1) j++; out.push(j > i ? `${v[i]}-${v[j]}` : `${v[i]}`); i = j; } return out.join(', '); };
 
 // ---------------------------------------------------------------------------
 // Grille ↔ plages d'ouverture
@@ -169,6 +174,37 @@ export function openScheduleEditor(s, onSave) {
   let rows = H.rows;
   let keptExc = [...R.kept];
   const defDest = () => s.closed_destination || null;
+  // Plages saisonnières (demande de Brice, 15/10/2026) : plages limitées à
+  // certains mois / jours du mois, que la grille (semaine type) ne sait pas
+  // représenter. Toutes deviennent des lignes modifiables :
+  // { months: [..], wd: [..], md: '1-15' | '', hs, he }.
+  let seas = G.kept.map((p) => ({
+    months: partial(p.months, 12) ? [...p.months] : Array.from({ length: 12 }, (_, i) => i + 1),
+    wd: partial(p.week_days, 7) ? [...p.week_days] : [1, 2, 3, 4, 5, 6, 7],
+    md: partial(p.month_days, 31) ? fromList(p.month_days) : '', hs: p.hours_start || '09:00', he: p.hours_end || '12:00',
+  }));
+  const MSHORT = ['janv', 'févr', 'mars', 'avr', 'mai', 'juin', 'juil', 'août', 'sept', 'oct', 'nov', 'déc'];
+  const chip = (attr, v, label, on, title) => `<label class="cf-ck" title="${esc(title || label)}"><input type="checkbox" ${attr}="${v}"${on ? ' checked' : ''}><span>${esc(label)}</span></label>`;
+  const seasHtml = (r, i) => `<div class="cf-sr" data-s="${i}">
+      <span class="cf-cks">${MSHORT.map((m, k) => chip('data-smo', k + 1, m, r.months.includes(k + 1), MONTHS[k])).join('')}</span>
+      <span class="cf-cks">${DAYS.map((d, k) => chip('data-swd', k + 1, d, r.wd.includes(k + 1))).join('')}</span>
+      <label class="inline" title="Facultatif : jours du mois, ex. 1-15 ou 1, 15 ; vide = tous">jours du mois <input data-smd value="${esc(r.md)}" placeholder="tous"></label>
+      <span>de <input type="time" data-shs value="${esc(r.hs)}"> à <input type="time" data-she value="${esc(r.he)}"></span>
+      <button class="icon" data-delseas title="Supprimer cette plage">×</button></div>`;
+  function readSeas(validate) {
+    return [...$('se-slist').querySelectorAll('.cf-sr')].map((el, i) => {
+      const r = { months: [...el.querySelectorAll('[data-smo]:checked')].map((c) => +c.dataset.smo), wd: [...el.querySelectorAll('[data-swd]:checked')].map((c) => +c.dataset.swd), md: el.querySelector('[data-smd]').value.trim(), hs: el.querySelector('[data-shs]').value, he: el.querySelector('[data-she]').value };
+      if (validate) {
+        if (!r.months.length) throw new Error(`Plage saisonnière ${i + 1} : cochez au moins un mois.`);
+        if (!r.wd.length) throw new Error(`Plage saisonnière ${i + 1} : cochez au moins un jour de semaine.`);
+        const md = toList(r.md); if (!md || md.some((d) => d < 1 || d > 31)) throw new Error(`Plage saisonnière ${i + 1} : jours du mois de 1 à 31 (ex. 1-15 ou 1, 15).`);
+        if (!/^\d\d:\d\d$/.test(r.hs) || !/^\d\d:\d\d$/.test(r.he) || r.hs > r.he) throw new Error(`Plage saisonnière ${i + 1} : heures au format HH:MM, début avant la fin.`);
+      }
+      return r;
+    });
+  }
+  const seasPeriods = (list) => list.map((r) => ({ hours_start: r.hs, hours_end: r.he, week_days: r.wd.length === 7 ? [] : r.wd, month_days: toList(r.md) || [], months: r.months.length === 12 ? [] : r.months }));
+  const renderSeas = () => { $('se-slist').innerHTML = seas.map(seasHtml).join(''); };
 
   const gridHtml = () => `<div class="cf-wg"><div class="cf-wg-h"><span></span><div>${Array.from({ length: 9 }, (_, k) => `<b style="left:${(k * 3 / 24) * 100}%">${k * 3} h</b>`).join('')}</div><span></span></div>
     ${G.grid.map((row, d) => `<div class="cf-wg-r"><span class="cf-wg-d">${DAYS[d]}</span><div class="cf-wg-c" data-row="${d}">${row.map((on, i) => `<i data-d="${d}" data-i="${i}" class="${on ? 'on' : ''}${i % 4 === 0 ? ' h' : ''}"></i>`).join('')}</div><span class="cf-wg-s" id="wg-s${d}"></span></div>`).join('')}</div>`;
@@ -192,7 +228,10 @@ export function openScheduleEditor(s, onSave) {
     <div class="btnrow cf-se-tools"><button data-tool="copy" title="Recopie les créneaux du lundi sur mardi à vendredi">Lundi → mar–ven</button><button data-tool="office" title="9h–12h et 14h–18h du lundi au vendredi">Bureau 9h-12h / 14h-18h</button><button data-tool="all" title="Ouvert tout le temps">24 h/24</button><button data-tool="clear">Tout fermer</button><span class="small muted">Tirez un bloc pour l'ouvrir ; partez d'une case ouverte pour le fermer.</span></div>
     <div id="se-grid">${gridHtml()}</div>
     ${G.rounded ? '<p class="warn small"><span>Certaines heures n\'étaient pas au quart d\'heure : elles sont arrondies dans la grille.</span></p>' : ''}
-    ${G.kept.length ? `<p class="small muted">Plages particulières conservées telles quelles (limitées à certains jours du mois ou mois) : ${esc(G.kept.map(periodTxt).join(' ; '))}</p>` : ''}
+    <h4 class="cf-per-t">Plages saisonnières <span class="cf-per-n">(certains mois ou jours du mois seulement)</span></h4>
+    <p class="small muted">Elles s'ajoutent à la grille : l'horaire est ouvert si la grille <strong>ou</strong> une de ces plages correspond. Pour des horaires d'été différents, videz la grille et mettez une plage par saison (ex. juin–août 8h-13h, et les autres mois 9h-12h / 14h-18h).</p>
+    <div id="se-slist">${seas.map(seasHtml).join('')}</div>
+    <div class="btnrow"><button data-tool="addseas">+ Plage saisonnière</button></div>
     <h4 class="cf-per-t">2. Si fermé</h4>
     <div>L'appel part vers ${pickerHtml('se-closed', s.closed_destination)}</div>
     <h4 class="cf-per-t">3. Fermetures exceptionnelles (chaque année)</h4>
@@ -210,7 +249,8 @@ export function openScheduleEditor(s, onSave) {
       const closed = readPicker('se-closed');
       const rs = readRows(true);
       const hol = { on: $('se-hol').checked, alsace: $('se-als').checked, dest: $('se-hol').checked ? (readPicker('se-holdest') || closed) : null };
-      onSave({ open_periods: [...periodsFromGrid(G.grid), ...G.kept], exceptional_periods: [...excFromRows(rs, hol), ...keptExc], closed_destination: closed });
+      const ss = readSeas(true);
+      onSave({ open_periods: [...periodsFromGrid(G.grid), ...seasPeriods(ss)], exceptional_periods: [...excFromRows(rs, hol), ...keptExc], closed_destination: closed });
       return true;
     } catch (e) { $('se-err').textContent = e.message; return false; }
   }, 'Ajouter au brouillon');
@@ -282,9 +322,12 @@ export function openScheduleEditor(s, onSave) {
   box.onclick = (e) => {
     const dk = e.target.closest('[data-delkept]');
     if (dk) { keptExc.splice(+dk.dataset.delkept, 1); $('se-kept').innerHTML = keptHtml(); return; }
+    const ds = e.target.closest('[data-delseas]');
+    if (ds) { seas = readSeas(false); seas.splice(+ds.closest('.cf-sr').dataset.s, 1); renderSeas(); return; }
     const dr = e.target.closest('[data-delrow]');
     if (dr) { rows = readRows(false); rows.splice(+dr.closest('.cf-xr').dataset.x, 1); renderRows(); return; }
     const t = e.target.closest('[data-tool]')?.dataset.tool; if (!t) return;
+    if (t === 'addseas') { seas = readSeas(false); seas.push({ months: [6, 7, 8], wd: [1, 2, 3, 4, 5], md: '', hs: '09:00', he: '12:00' }); renderSeas(); }
     if (t === 'addrow') { rows = readRows(false); rows.push({ m1: 12, d1: 24, m2: 12, d2: 24, all: true, hs: '12:00', he: '23:59', dest: rows[rows.length - 1]?.dest || defDest() }); renderRows(); }
     if (t === 'copy') { for (let d = 1; d < 5; d++) G.grid[d] = [...G.grid[0]]; redrawGrid(); }
     if (t === 'office') { G.grid.forEach((row, d) => { for (let i = 0; i < N; i++) { const m = i * SLOT; row[i] = d < 5 && ((m >= 540 && m < 720) || (m >= 840 && m < 1080)) ? 1 : 0; } }); redrawGrid(); }

@@ -232,6 +232,19 @@ body.in-portal.ready #workbench { height: 100vh; }
 .cf-wg-c i.pv-on { background: color-mix(in srgb, var(--ok) 45%, var(--panel)); box-shadow: inset 0 0 0 1px var(--ok); }
 .cf-wg-c i.pv-off { background: color-mix(in srgb, var(--danger) 25%, var(--panel)); box-shadow: inset 0 0 0 1px var(--danger); }
 .cf-se-sel { position: fixed; z-index: 40; pointer-events: none; padding: 4px 8px; border-radius: var(--radius); background: #323232; color: #fff; font-size: .75rem; box-shadow: var(--shadow-6); white-space: nowrap; }
+/* Plages saisonnières : cases mois / jours en pastilles */
+.cf-per-n { text-transform: none; letter-spacing: normal; font-weight: 400; }
+.cf-sr { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 6px 0; border-bottom: 1px solid var(--line); font-size: .8125rem; }
+.cf-sr input[type="time"], .cf-sr [data-smd] { width: auto !important; height: 28px; font-size: .8125rem; }
+.cf-sr [data-smd] { width: 72px !important; }
+.cf-sr label.inline { margin: 0; font-size: .8125rem; }
+.cf-sr button.icon { margin-left: auto; }
+.cf-cks { display: inline-flex; flex-wrap: wrap; gap: 2px; }
+.cf-ck { display: inline-flex; margin: 0; cursor: pointer; }
+.cf-ck input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.cf-ck span { padding: 1px 6px; border: 1px solid var(--line); border-radius: 10px; font-size: .6875rem; color: var(--muted); background: var(--panel); }
+.cf-ck input:checked + span { background: color-mix(in srgb, var(--ok) 22%, var(--panel)); border-color: color-mix(in srgb, var(--ok) 60%, var(--panel)); color: var(--ink); font-weight: 600; }
+.cf-ck input:focus-visible + span { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent); }
 /* Fermetures exceptionnelles en liste */
 .cf-xr { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 6px 0; border-bottom: 1px solid var(--line); font-size: .8125rem; }
 .cf-xr select, .cf-xr input[type="time"] { width: auto !important; height: 28px; font-size: .8125rem; }

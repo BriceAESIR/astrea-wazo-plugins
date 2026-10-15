@@ -47,7 +47,9 @@ courant. Cadrage, sources et décisions : `docs/CALLFLOW-MANAGER.md` (dépôt de
   - un clic sur ✎ d'une sortie propose de changer la destination et, pour un
     horaire, **« Modifier les heures de « … »… »**. L'éditeur a trois parties :
     1. une grille de la semaine, où l'on sélectionne des blocs (rectangle jours ×
-       heures) au quart d'heure ;
+       heures) au quart d'heure. Sous la grille, les **plages saisonnières**
+       s'ajoutent à la semaine type : elles ne valent que certains mois ou
+       certains jours du mois (pastilles mois et jours, heures) ;
     2. la destination « Si fermé », avec un menu des fichiers son ;
     3. la liste des fermetures exceptionnelles : date ou période, toute la
        journée ou des heures précises, et une destination pour chacune.
