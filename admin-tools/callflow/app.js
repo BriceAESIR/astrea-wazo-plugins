@@ -3,11 +3,12 @@
 // déposer (lot 2a, brouillon puis aperçu, sauvegarde, écriture).
 // Cadrage : astrea-wazo-dev/docs/CALLFLOW-MANAGER.md.
 // Modèle (sources confd vérifiées) : model.js ; canevas : canvas.js ; écriture : write.js.
-import { S, $, esc, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.35.5';
-import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, scanGroupKeys, buildTree, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel, periodText } from './model.js?v=0.35.5';
-import { createCanvas } from './canvas.js?v=0.35.5';
-import { getDest, setDest, sameValue, prepare, execute } from './write.js?v=0.35.5';
-import { openScheduleEditor, fillSoundSelect } from './sched-editor.js?v=0.35.5';
+import { S, $, esc, fullName, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.36.0';
+import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, scanGroupKeys, buildTree, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel, periodText, STRATEGY } from './model.js?v=0.36.0';
+import { createCanvas } from './canvas.js?v=0.36.0';
+import { getDest, setDest, sameValue, prepare, execute } from './write.js?v=0.36.0';
+import { openScheduleEditor, fillSoundSelect } from './sched-editor.js?v=0.36.0';
+import { openGroupEditor, groupCfgDiff } from './group-editor.js?v=0.36.0';
 
 const TESTED_STACK = ['26.07'];
 const NAV = [
@@ -213,6 +214,7 @@ function showDetail(n) {
       const own = schedOwner(n.key), ot = ownerTitle({ key: own }), has = (entity(own).obj.schedules || []).length;
       return `<div class="dsec"><h4>Horaire de ${esc(ot)}</h4><div class="btnrow"><button id="d-sched" title="Choisir quel horaire est vérifié avant ${esc(ot)} (ne change pas les heures de l'horaire ; brouillon)">${has ? 'Remplacer par un autre horaire…' : 'Associer un horaire…'}</button>${entity(n.key).owner ? `<button id="d-unsched" class="danger" title="${esc(ot)} n'aura plus d'horaire : ses appels passent toujours (brouillon ; touche Suppr)">Retirer l'horaire de ${esc(ot)}</button>` : ''}</div></div>`;
     })() : ''}
+    ${C.edit && C.dir === 'out' && groupOfNode(n) ? '<div class="btnrow"><button id="d-group" class="primary" title="Toutes les options du groupe : stratégie, durées, membres, numéro, musique, débordements, horaire, autorisations (brouillon)">Régler le groupe…</button></div>' : ''}
     ${C.edit && n.key.startsWith('schedule:') ? (() => { const sc = entity(n.key).obj; const u = schedUsage(sc); return `<div class="btnrow"><button id="d-periods" class="primary" title="Change les heures d'ouverture, la destination si fermé et les fermetures exceptionnelles de l'horaire « ${esc(sc.name)} ». ${u > 1 ? `Il est utilisé par ${u} objets : tous sont concernés.` : 'Le changement vaut pour tout objet qui utilise cet horaire.'} (brouillon)">Modifier les heures de « ${esc(sc.name)} »…</button></div>${u > 1 ? `<p class="small muted">Horaire partagé par ${u} objets : modifier ses heures les concerne tous.</p>` : ''}`; })() : ''}
     ${C.edit && C.dir === 'out' && !entity(n.key).owner && incomingPort(n) ? `<div class="btnrow"><button id="d-remove" class="danger" title="Vide la sortie « ${esc(incomingPort(n).p.label)} » de ${esc(ownerTitle(incomingPort(n).n))} (brouillon ; touche Suppr)">Retirer de cette sortie</button></div>` : ''}
     ${n.leaf ? '' : `<div class="dsec"><h4>Arrive depuis</h4>${refs}</div>`}
@@ -224,6 +226,7 @@ function showDetail(n) {
   const ds = $('d-sched'); if (ds) ds.onclick = () => openSchedule(schedOwner(n.key));
   const du = $('d-unsched'); if (du) du.onclick = removeSelected;
   const dp = $('d-periods'); if (dp) dp.onclick = () => openPeriods(entity(n.key).id);
+  const dg = $('d-group'); if (dg) dg.onclick = () => openGroupFor(groupOfNode(n));
   const i = $('d-in'); if (i) i.onclick = () => { if (n.key !== C.root) setRoot(n.key); setDir(C.dir === 'in' && n.key === C.root ? 'out' : 'in'); };
   for (const li of $('d-body').querySelectorAll('.cf-refs li')) li.onclick = () => setRoot(li.dataset.key);
   const k = $('d-keys');
@@ -280,6 +283,7 @@ function renderDraft() {
   $('cf-draft-n').classList.toggle('cf-link', !!n);
   $('cf-draft-cancel').disabled = !n;
   $('cf-draft-apply').disabled = !n;
+  const sel = C.sel && C.tree?.nodes.get(C.sel); if (sel) showDetail(sel); // fiche à jour du brouillon
 }
 // Sortie visée (nœud + port) → objet du port, s'il est modifiable.
 function portOf(t) {
@@ -425,6 +429,14 @@ function openDest(t, preset) {
 }
 // Libellé d'une valeur du brouillon (destination, horaire associé, plages).
 function valLabel(w, v) {
+  if (w.k === 'group_cfg') {
+    // Résumé comparable avant / après d'un réglage de groupe.
+    const f = v?.fields || {};
+    return [`« ${f.label || '?'} »`, f.enabled === false ? 'DÉSACTIVÉ' : '', STRATEGY[f.ring_strategy] || f.ring_strategy, f.timeout ? `${f.timeout} s au total` : 'sans limite', `${f.user_timeout ?? '?'} s / membre`, `pause ${f.retry_delay ?? 0} s`,
+      `${(v?.users || []).length + (v?.exts || []).length} membre(s) : ${[...(v?.users || []).map((m) => fullName(M.userByUuid.get(m.uuid)) || m.uuid), ...(v?.exts || []).map((m) => m.exten)].join(', ') || 'aucun'}`,
+      v?.extension ? `n° ${v.extension.exten}` : 'sans numéro', f.max_calls ? `max ${f.max_calls} appels` : '', f.music_on_hold ? `musique ${f.music_on_hold}` : 'sonnerie',
+      (v?.perms || []).length ? `${v.perms.length} autorisation(s)` : ''].filter(Boolean).join(' · ');
+  }
   if (w.k !== 'sched_periods') return destLabel(v);
   const o = (v?.open_periods || []).map(periodText).join(' ; ') || 'aucune plage (toujours fermé)';
   // Jours de fermeture exceptionnelle (une période par mois : on compte les jours).
@@ -432,8 +444,24 @@ function valLabel(w, v) {
   return `Ouvert ${o} · si fermé : ${destLabel(v?.closed_destination)}${x ? ` · ${x} jour${x > 1 ? 's' : ''} de fermeture exceptionnelle` : ''}`;
 }
 // Clic sur ✎ (mode Modifier) : changer la destination et/ou les plages de l'horaire.
+// Réglage complet d'un groupe (group-editor.js) : réglages + membres + numéro +
+// autorisations dans une entrée « group_cfg » ; débordements et horaire dans
+// leurs entrées habituelles (group_fb, sched_assoc), pour ne jamais écrire deux
+// fois la même chose.
+function openGroupFor(uuid) {
+  const g = M.groupByUuid?.get(uuid); if (!g) return;
+  openGroupEditor(g, (r) => {
+    const where = `Groupe ${g.label || g.name}`;
+    addDraft({ k: 'group_cfg', id: uuid, f: 'cfg', key: `group_cfg:${uuid}:cfg` }, r.cfg, { where, slot: 'Réglages du groupe' });
+    for (const [f, d] of [['noanswer', r.noanswer], ['congestion', r.congestion]]) addDraft({ k: 'group_fb', id: uuid, f, key: `group_fb:${uuid}:${f}` }, d, { where, slot: f === 'noanswer' ? 'Pas de réponse' : 'Encombré' });
+    addDraft(assocW(`group:${g.id}`), r.schedule ? { type: 'schedule', schedule_id: r.schedule } : null, { where, slot: 'Horaire' });
+  });
+}
+// Groupe concerné par une carte (le groupe, sa carte « membres » ou une mini-carte membre).
+const groupOfNode = (n) => { if (!n) return null; if (n.key.startsWith('group:')) return entity(n.key).obj?.uuid; const lf = n.leaf; if (lf?.type === 'member') return entity(lf.group).obj?.uuid; if (lf?.ownerType === 'group' && n.parent?.startsWith('group:')) return entity(n.parent).obj?.uuid; return null; };
 function portClick(nodeKey, portId) {
   const n = C.tree?.nodes.get(nodeKey); const p = n?.ports?.find((x) => x.id === portId); if (!p) return;
+  if (p.cfg) { openGroupFor(p.cfg); return; }
   const types = PALETTE.filter(([t]) => t !== 'schedule');
   const sched = p.periods ? M.by.schedule?.get(String(p.periods)) : null;
   confirmModal(`<h3>${esc(p.label)} — ${esc(p.w ? whereOf(n, p) : ownerTitle(n))}</h3>
@@ -483,9 +511,9 @@ async function applyDraft() {
   let ops;
   try { ops = await prepare(entries.map((e) => ({ w: e.w, after: e.after }))); } catch (e) { toast(`Lecture avant écriture impossible : ${e.message}`, 8000); return; }
   const writes = ops.filter((o) => o.changed);
-  const rows = entries.map((e) => `<tr><td>${esc(e.where)}</td><td>${esc(e.slot)}</td><td>${esc(valLabel(e.w, e.before))}</td><td><strong>${esc(valLabel(e.w, e.after))}</strong></td></tr>`).join('');
+  const rows = entries.map((e) => `<tr><td>${esc(e.where)}</td><td>${esc(e.slot)}${e.w.k === 'group_cfg' ? `<br><span class="small muted">Modifié : ${esc(groupCfgDiff(e.before, e.after) || '—')}</span>` : ''}</td><td>${esc(valLabel(e.w, e.before))}</td><td><strong>${esc(valLabel(e.w, e.after))}</strong></td></tr>`).join('');
   confirmModal(`<h3>Appliquer le brouillon</h3>
-    <p class="small muted">${writes.length} écriture${writes.length > 1 ? 's' : ''} (une par objet)${ops.length > writes.length ? `, ${ops.length - writes.length} objet${ops.length - writes.length > 1 ? 's' : ''} déjà à jour sur le serveur` : ''}. Une sauvegarde JSON de l'état actuel est téléchargée avant d'écrire.</p>
+    <p class="small muted">${writes.length} écriture${writes.length > 1 ? 's' : ''} (une requête par partie modifiée)${ops.length > writes.length ? `, ${ops.length - writes.length} objet${ops.length - writes.length > 1 ? 's' : ''} déjà à jour sur le serveur` : ''}. Une sauvegarde JSON de l'état actuel est téléchargée avant d'écrire.</p>
     <div class="cf-diffwrap"><table class="diff"><thead><tr><th>Objet</th><th>Sortie</th><th>Avant</th><th>Après</th></tr></thead><tbody>${rows}</tbody></table></div>`, async () => {
     downloadJson(`astrea-callflow-sauvegarde-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.json`,
       { outil: 'Call Flow Manager', serveur: S.base, tenant: S.tenant, date: new Date().toISOString(), avant: ops.map((o) => ({ path: o.path, before: o.before })), envoye: writes.map((o) => ({ path: o.path, body: o.body })) });

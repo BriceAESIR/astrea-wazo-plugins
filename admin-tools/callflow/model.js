@@ -21,7 +21,7 @@
 // Supposé, à vérifier en réel : les listes (GET /groups, /queues,
 // /switchboards, /schedules) contiennent déjà fallbacks, membres et
 // destinations ; sinon on lit le détail de chaque objet (ensureDetails).
-import { S, api, listAll, fullName } from '../common/core.js?v=0.35.5';
+import { S, api, listAll, fullName } from '../common/core.js?v=0.36.0';
 
 export const M = { lists: {}, by: {}, ext: new Map(), extAny: new Map(), rev: null, warns: [] };
 
@@ -42,6 +42,7 @@ export const TYPES = {
   switchboard: { label: 'Standard (POPC)', badge: 'POPC', help: 'Standard : l\'appel attend d\'être pris par un standardiste ; sans réponse dans le délai, il part vers le débordement « pas de réponse ».' },
   outcall: { label: 'Sortant', badge: 'OUT', help: 'Règle d\'appel sortant : le numéro part vers l\'extérieur par les trunks, dans l\'ordre (le suivant si le premier échoue).' },
   application: { label: 'Application', badge: 'APP', help: 'Application Wazo (Stasis) : l\'appel est remis à une application externe.' },
+  member: { label: 'Membre', badge: 'M', help: 'Membre du groupe. En NPD, il ne sonne pas et l\'appel n\'est pas renvoyé (vérifié dans le code de Wazo). Les renvois d\'appel, renvois par défaut et le filtrage de l\'utilisateur ne s\'appliquent pas quand il est appelé par un groupe (déduit du dialplan, non testé). Un membre « numéro » qui pointe vers un utilisateur passe en revanche par le traitement normal de l\'utilisateur.' },
   members: { label: 'Membres', badge: '👥', help: 'Membres qui sonnent : membres fixes (réglés dans Wazo) et, pour un groupe, utilisateurs inscrits par la touche « bascule groupe » (*50) — ceux-là ne sont connus que d\'Asterisk, lus si le serveur l\'autorise. Ce sont les postes des membres qui sonnent : leurs propres renvois par défaut ne s\'appliquent pas (supposé).' },
   hangup: { label: 'Raccrocher', badge: '✕', help: 'Fin de l\'appel, avec la tonalité choisie : normal, occupé ou encombré.' },
   sound: { label: 'Fichier son', badge: '♪', help: 'Joue un fichier son (sons du tenant ou sons système), puis raccroche (sauf « ne pas décrocher » : le son est joué en pré-décroché).' },
@@ -88,8 +89,10 @@ const APP_SUB = { callback_disa: 'Rappel DISA', disa: 'DISA', directory: 'Annuai
 // ---------------------------------------------------------------------------
 // Chargement
 // ---------------------------------------------------------------------------
+// Listes qui ne servent qu'aux formulaires de réglage : pas d'avertissement en tête (console seulement).
+const QUIET = new Set(['/moh', '/callpermissions']);
 async function lookup(path, what) {
-  try { return await listAll(path); } catch (e) { M.warns.push(`${what} indisponibles (${e.status || ''} ${path}) : non affichés.`); console.warn('[astrea]', path, e); return []; }
+  try { return await listAll(path); } catch (e) { if (!QUIET.has(path)) M.warns.push(`${what} indisponibles (${e.status || ''} ${path}) : non affichés.`); console.warn('[astrea]', path, e); return []; }
 }
 // Utilisateurs par pages de 100 (au-delà, confd charge tout d'un coup).
 async function loadUsers() {
@@ -109,6 +112,9 @@ const SOURCES = [
   ['ivr', '/ivr', 'SVI', 'id'], ['schedule', '/schedules', 'Horaires', 'id'], ['voicemail', '/voicemails', 'Messageries', 'id'],
   ['conference', '/conferences', 'Conférences', 'id'], ['switchboard', '/switchboards', 'Standards', 'uuid'], ['context', '/contexts', 'Contextes', 'name'],
   ['trunk', '/trunks', 'Trunks', 'id'], ['outcall', '/outcalls', 'Règles sortantes', 'id'], ['application', '/applications', 'Applications', 'uuid'],
+  // Pour le réglage des groupes (lot 2c) : musiques d'attente (clé = name, valeur
+  // attendue par confd) et autorisations d'appels.
+  ['moh', '/moh', 'Musiques d\'attente', 'name'], ['callpermission', '/callpermissions', 'Autorisations d\'appels', 'id'],
 ];
 export async function loadAll() {
   M.warns = [];
@@ -192,7 +198,7 @@ export function describe(type, o) {
   switch (type) {
     case 'incall': return { title: firstExten(o) || `SDA #${o.id}`, sub: [o.description, ctxLabel(o.extensions?.[0]?.context)].filter(Boolean).join(' · ') };
     case 'user': return { title: fullName(o) || `#${o.id}`, sub: [userExten(o), o.ring_seconds != null ? `sonne ${o.ring_seconds} s` : '', o.services?.dnd?.enabled ? 'ne pas déranger' : ''].filter(Boolean).join(' · ') };
-    case 'group': return { title: o.label || o.name, sub: [firstExten(o), STRATEGY[o.ring_strategy] || o.ring_strategy, o.timeout ? `${o.timeout} s` : ''].filter(Boolean).join(' · ') };
+    case 'group': return { title: o.label || o.name, sub: [o.enabled === false ? '⚠ désactivé : l\'appel échoue' : '', firstExten(o), STRATEGY[o.ring_strategy] || o.ring_strategy, o.timeout ? `${o.timeout} s` : 'sans limite'].filter(Boolean).join(' · ') };
     case 'queue': return { title: o.label || o.name, sub: [firstExten(o), o.timeout ? `délai ${o.timeout} s` : ''].filter(Boolean).join(' · ') };
     case 'ivr': return { title: o.name, sub: [o.description, `${(o.choices || []).length} choix`].filter(Boolean).join(' · ') };
     case 'schedule': return { title: o.name || `Horaire #${o.id}`, sub: [o.enabled === false ? 'désactivé' : '', o.timezone].filter(Boolean).join(' · ') };
@@ -295,9 +301,14 @@ export function edgesOf(k) {
       return e;
     }
     case 'group':
+      // Membres affichés selon la stratégie (demande de Brice, 15/10/2026) :
+      // éventail de mini-cartes (sonnent ensemble ou une à la fois selon la
+      // stratégie) ou chaîne « un par un ». Durée totale vide ou 0 = le groupe
+      // sonne indéfiniment (vérifié : Queue() sans timeout, api.yml confd).
       return [
-        { slot: 'members', label: SLOTS.members.label, help: SLOTS.members.help, note: [STRATEGY[o.ring_strategy] || o.ring_strategy, o.user_timeout ? `${o.user_timeout} s chacun` : ''].filter(Boolean).join(' · '), to: membersLeaf('group', o) },
-        fbOut('group_fb', o.uuid, o, 'noanswer', after(o.timeout)), fbOut('group_fb', o.uuid, o, 'congestion')];
+        { slot: 'members', label: SLOTS.members.label, help: SLOTS.members.help, note: [STRATEGY[o.ring_strategy] || o.ring_strategy, o.user_timeout ? `${o.user_timeout} s chacun` : ''].filter(Boolean).join(' · '), to: groupFlow(o), cfg: o.uuid },
+        fbOut('group_fb', o.uuid, o, 'noanswer', o.timeout ? after(o.timeout) : 'jamais : sonne indéfiniment (durée totale vide)'),
+        fbOut('group_fb', o.uuid, o, 'congestion', o.max_calls ? `plus de ${o.max_calls} appel${o.max_calls > 1 ? 's' : ''} en cours` : '')];
     case 'queue': {
       return [
         { slot: 'members', label: SLOTS.members.label, help: SLOTS.members.help, note: '', to: membersLeaf('queue', o) },
@@ -342,6 +353,62 @@ function members(m) {
   return [...users, ...ext, ...agents];
 }
 const plural = (n, w) => `${n} ${w}${n > 1 ? 's' : ''}`;
+// Membres d'un groupe, dans l'ordre de sonnerie : utilisateurs fixes (par
+// priorité), puis numéros (vérifié : en linéaire l'agid fait les utilisateurs
+// puis les extensions), puis inscrits par touche (Asterisk, si lisibles).
+// NPD : le membre ne sonne pas et l'appel n'est pas renvoyé (vérifié :
+// linear_group_get_interfaces le saute ; avec Queue(), wazo-calld le met en
+// pause). Les renvois et débordements de l'utilisateur ne s'appliquent pas
+// dans un groupe (déduit du dialplan usersharedlines, non testé).
+export function groupMemberList(o) {
+  const out = [];
+  const users = [...(o.members?.users || [])].sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0));
+  for (const m of users) {
+    const u = M.userByUuid.get(m.uuid);
+    out.push({ kind: 'user', uuid: m.uuid, name: fullName(m) || fullName(u) || m.uuid, exten: u ? userExten(u) : '', dnd: !!u?.services?.dnd?.enabled });
+  }
+  for (const m of [...(o.members?.extensions || [])].sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0))) {
+    out.push({ kind: 'ext', exten: m.exten, context: m.context, name: `Numéro ${m.exten}` });
+  }
+  const fixedUuids = new Set(users.map((m) => m.uuid));
+  for (const x of (M.live?.get(o.name) || []).filter((y) => y.dynamic && !fixedUuids.has(y.uuid))) {
+    const u = x.uuid && M.userByUuid.get(x.uuid);
+    out.push({ kind: 'live', uuid: x.uuid, name: x.name, unknown: x.unknown, state: x.state, dnd: !!u?.services?.dnd?.enabled });
+  }
+  return out;
+}
+const ORDER = { random: 'un à la fois, au hasard', least_recent: 'un à la fois, le moins récemment appelé d\'abord', fewest_calls: 'un à la fois, celui qui a pris le moins d\'appels', memorized_round_robin: 'un à la fois, à tour de rôle', weight_random: 'un à la fois, au hasard pondéré' };
+// Carte « membres » + mini-cartes par membre (feuilles avec leurs propres sorties).
+function groupFlow(o) {
+  const hub = membersLeaf('group', o);
+  const list = groupMemberList(o);
+  const ut = o.user_timeout, rd = o.retry_delay;
+  const gk = `group:${o.id}`;
+  const badge = (m) => [m.kind === 'live' ? 'inscrit par touche' : '', m.kind === 'ext' ? 'numéro' : '', m.dnd ? 'NPD : ne sonne pas' : '', m.unknown ? '⚠ utilisateur inconnu' : '', m.exten && m.kind === 'user' ? m.exten : ''].filter(Boolean).join(' · ');
+  const card = (m, extra = {}) => leaf('member', m.name.replace(/^Numéro /, ''), badge(m), { dnd: m.dnd, live: m.kind === 'live', group: gk, member: m, ...extra });
+  if (!list.length) return hub;
+  if (o.ring_strategy === 'linear') {
+    // Chaîne : membre 1 → (après user_timeout) membre 2 → … → pause, nouveau tour.
+    let next = null;
+    for (let i = list.length - 1; i >= 0; i--) {
+      const m = list[i]; const last = i === list.length - 1;
+      const c = card(m, { last, order: i + 1 });
+      c.leaf.title = `${i + 1} · ${c.leaf.title}`;
+      c.leaf.edges = last
+        ? [{ slot: 'retry', label: `↺ pause ${rd || 0} s, puis nouveau tour`, note: o.timeout ? `jusqu'à ${o.timeout} s au total` : 'sans fin (durée totale vide)', help: 'Après le dernier membre, le groupe attend la pause de réessai puis recommence au premier, jusqu\'à la durée totale du groupe.', to: null, info: true }]
+        : [{ slot: 'next', label: m.dnd ? 'NPD : sauté' : `sinon, après ${ut ?? '?'} s`, help: 'Si ce membre ne répond pas pendant sa durée de sonnerie, le membre suivant sonne.', to: next }];
+      next = c;
+    }
+    hub.leaf.edges = [{ slot: 'first', label: 'Un par un, dans l\'ordre', note: `${ut ?? '?'} s chacun`, help: 'Stratégie linéaire : les membres sonnent l\'un après l\'autre, dans l\'ordre (utilisateurs puis numéros).', to: next }];
+  } else {
+    // Éventail : chaque membre a sa mini-carte ; elles convergent vers « pas de réponse ».
+    const how = o.ring_strategy === 'all' || !o.ring_strategy ? 'sonnent ensemble' : ORDER[o.ring_strategy] || o.ring_strategy;
+    hub.leaf.edges = list.map((m) => ({ slot: 'member', label: m.name, note: m.dnd ? 'NPD : ne sonne pas' : `${ut ?? '?'} s`, help: `Membre du groupe (${how}).`, to: card(m, { fan: true }) }));
+    hub.leaf.how = how;
+  }
+  hub.leaf.sub = [o.ring_strategy === 'linear' ? 'un par un' : hub.leaf.how, hub.leaf.sub].filter(Boolean).join(' — ');
+  return hub;
+}
 // Carte « membres » : fixes (confd), inscrits en ce moment (Asterisk, si
 // lisible) et, pour un groupe, utilisateurs qui ont une touche de bascule.
 function membersLeaf(type, o) {
@@ -534,8 +601,9 @@ export function buildTree(rootKey, dir, { maxDepth = 8, collapsed = new Set(), e
       });
       continue;
     }
-    let edges = n.leaf ? [] : edgesOf(n.key);
-    n.ports = edges.filter((e) => e.to || showEmpty).map((e, i) => ({ ...e, id: `${e.slot}#${i}` }));
+    // Une feuille peut porter ses propres sorties (membres d'un groupe).
+    let edges = n.leaf ? (n.leaf.edges || []) : edgesOf(n.key);
+    n.ports = edges.filter((e) => e.to || showEmpty || e.info).map((e, i) => ({ ...e, id: `${e.slot}#${i}` }));
     edges = n.ports;
     if (stop) { n.folded = edges.some((e) => e.to); continue; }
     for (const e of edges) {
@@ -551,6 +619,14 @@ export function buildTree(rootKey, dir, { maxDepth = 8, collapsed = new Set(), e
       n.kids.push(child);
       queue.push(child);
     }
+  }
+  // Membres d'un groupe : les mini-cartes (éventail) ou le dernier de la
+  // chaîne (un par un) rejoignent la sortie « pas de réponse » du groupe.
+  for (const n of nodes.values()) {
+    const lf = n.leaf; if (lf?.type !== 'member' || !(lf.fan || lf.last)) continue;
+    const g = nodes.get(lf.group); const p = g?.ports?.find((x) => x.slot === 'noanswer'); if (!p) continue;
+    const t = g.kids.find((c) => c.port === p.id)?.key || cross.find((c) => c.from === g.key && c.port === p.id)?.to;
+    if (t) n.flowTo = t;
   }
   // Lien visible horaire → objet gardé (demande de Brice) : la carte horaire
   // dit de quel objet elle est la condition, l'objet affiche son horaire, et
@@ -712,6 +788,13 @@ export function facts(k, leafInfo) {
       [g ? 'Inscrits en ce moment' : 'Connectés en ce moment', leafInfo.live ? (dyn.filter((x) => !x.unknown).map((x) => `${x.name}${x.state ? ` (${x.state})` : ''}`).join(', ') || 'aucun') : `non lisible : ${M.liveState || 'non lu'}`,
         g ? 'Utilisateurs inscrits par la touche « bascule groupe » (*50, *51, *52). Wazo ne les enregistre pas dans sa configuration : seul Asterisk les connaît (lecture par l\'API amid).' : 'Agents connectés à la file, lus dans Asterisk (API amid).'],
       ...(g && leafInfo.keys ? [['Touches de bascule', leafInfo.keys.map((k) => `${k.name} (${ACT[k.action] || k.action}, touche ${k.pos})`).join(', ') || 'aucune', 'Utilisateurs qui ont une touche pour rejoindre ou quitter ce groupe : membres possibles, pas forcément inscrits.']] : [])];
+  }
+  if (leafInfo?.type === 'member') {
+    const m = leafInfo.member || {};
+    return [['Membre', m.name], ['Type', m.kind === 'ext' ? `numéro ${m.exten} (${ctxLabel(m.context)})` : m.kind === 'live' ? 'inscrit par la touche de bascule' : 'membre fixe'],
+      ...(m.exten && m.kind === 'user' ? [['Numéro', m.exten]] : []),
+      ['Ne pas déranger', m.dnd ? 'oui : ne sonne pas, appel non renvoyé' : 'non'],
+      ['Renvois de l\'utilisateur', m.kind === 'ext' ? 'appliqués (le numéro passe par le traitement de l\'utilisateur)' : 'non appliqués dans un groupe (supposé)', 'Déduit du dialplan Wazo (contexte usersharedlines), non testé en réel.']];
   }
   if (leafInfo) return [[TYPES[leafInfo.type]?.label || 'Valeur', [leafInfo.title, leafInfo.sub].filter(Boolean).join(' · ')]];
   const { type, obj: o } = entity(k);

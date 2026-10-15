@@ -11,8 +11,9 @@
 //  - SVI : choices envoyé en entier (supposé : la liste est remplacée).
 // Toujours : relire juste avant d'écrire, ne rien écrire si c'est identique,
 // une seule écriture par objet.
-import { api } from '../common/core.js?v=0.35.5';
-import { M } from './model.js?v=0.35.5';
+import { api } from '../common/core.js?v=0.36.0';
+import { M } from './model.js?v=0.36.0';
+import { groupCfgOf, applyGroupCfg, GROUP_FIELDS } from './group-editor.js?v=0.36.0';
 
 // Champs d'entrée de chaque type de destination (le reste est en lecture seule).
 const DEST_KEYS = {
@@ -69,14 +70,17 @@ function holder(w) {
 // Éditeur d'horaire : plages + destination « si fermé » ensemble.
 const periodsOf = (s) => JSON.parse(JSON.stringify({ open_periods: s?.open_periods || [], exceptional_periods: s?.exceptional_periods || [], closed_destination: s?.closed_destination || null }));
 // Égalité d'une valeur du brouillon (destination, horaire associé ou plages).
-export const sameValue = (w, a, b) => (w.k === 'sched_periods' ? JSON.stringify(a) === JSON.stringify(b) : sameDest(a, b));
+export const sameValue = (w, a, b) => (w.k === 'sched_periods' || w.k === 'group_cfg' ? JSON.stringify(a) === JSON.stringify(b) : sameDest(a, b));
 export function getDest(w) {
+  // group_cfg (lot 2c) : réglage complet d'un groupe (voir group-editor.js).
+  if (w.k === 'group_cfg') return JSON.parse(JSON.stringify(groupCfgOf(M.groupByUuid?.get(w.id) || {})));
   if (w.k === 'sched_periods') return periodsOf(M.by.schedule?.get(String(w.id)));
   if (w.k === 'ivr_choice') return (M.by.ivr?.get(String(w.id))?.choices || []).find((c) => c.exten === w.f)?.destination || null;
   if (w.k === 'sched_assoc') { const s = ownerOf(w.id).o?.schedules?.[0]; return s ? { type: 'schedule', schedule_id: s.id } : null; }
   const h = holder(w); return h?.[0]?.[h[1]] || null;
 }
 export function setDest(w, d) {
+  if (w.k === 'group_cfg') { const g = M.groupByUuid?.get(w.id); if (g && d) applyGroupCfg(g, JSON.parse(JSON.stringify(d))); return; }
   if (w.k === 'sched_periods') {
     const s = M.by.schedule?.get(String(w.id)); if (!s || !d) return;
     const v = periodsOf(d); s.open_periods = v.open_periods; s.exceptional_periods = v.exceptional_periods; s.closed_destination = v.closed_destination;
@@ -186,6 +190,38 @@ export async function prepare(entries) {
       const norm = (b) => JSON.stringify({ o: (b?.open_periods || []).map((p) => per(p, false)), e: (b?.exceptional_periods || []).map((p) => per(p, true)), c: cleanDest(b?.closed_destination) || { type: 'none' } });
       const changed = norm(before) !== norm(body);
       out.push({ path, before, body, changed });
+    } else if (op.k === 'group_cfg') {
+      // Réglage complet d'un groupe (lot 2c) : relire, puis une écriture par partie modifiée.
+      const base = `/groups/${op.id}`;
+      const before = await api('GET', base);
+      const b = groupCfgOf(before || {}), a = op.entries[op.entries.length - 1].after;
+      const nn = (x) => (x === undefined ? null : x);
+      const mine = [];
+      const changedF = GROUP_FIELDS.filter((k) => JSON.stringify(nn(b.fields[k])) !== JSON.stringify(nn(a.fields[k])));
+      // ignore_forward toujours envoyé : sinon confd le remet à false (vérifié, post_load du schéma).
+      if (changedF.length) mine.push({ path: base, before, body: { ...Object.fromEntries(changedF.map((k) => [k, a.fields[k]])), ignore_forward: !!a.fields.ignore_forward }, changed: true });
+      if (JSON.stringify(b.users) !== JSON.stringify(a.users)) mine.push({ path: `${base}/members/users`, before: before?.members, body: { users: a.users.map((m, i) => ({ uuid: m.uuid, priority: i })) }, changed: true });
+      if (JSON.stringify(b.exts) !== JSON.stringify(a.exts)) mine.push({ path: `${base}/members/extensions`, before: before?.members, body: { extensions: a.exts.map((m, i) => ({ exten: m.exten, context: m.context, priority: i })) }, changed: true });
+      if (JSON.stringify(b.extension) !== JSON.stringify(a.extension)) {
+        const old = before?.extensions?.[0];
+        mine.push({ path: `${base}/extensions`, before: { extensions: before?.extensions }, body: { extension: a.extension }, changed: true,
+          // Une seule extension par groupe (vérifié) : créer la nouvelle, dissocier
+          // l'ancienne, associer la nouvelle ; en cas d'échec, réassocier l'ancienne
+          // et supprimer la nouvelle. L'ancienne extension reste libre dans Wazo.
+          run: async () => {
+            const created = a.extension ? await api('POST', '/extensions', { exten: a.extension.exten, context: a.extension.context }) : null;
+            if (old) await api('DELETE', `${base}/extensions/${old.id}`);
+            if (!created) return;
+            try { await api('PUT', `${base}/extensions/${created.id}`); } catch (e) {
+              if (old) { try { await api('PUT', `${base}/extensions/${old.id}`); } catch { /* */ } }
+              try { await api('DELETE', `/extensions/${created.id}`); } catch { /* */ }
+              throw e;
+            }
+          } });
+      }
+      for (const id of a.perms.filter((x) => !b.perms.includes(x))) mine.push({ method: 'PUT', path: `${base}/callpermissions/${id}`, before: { call_permissions: before?.call_permissions }, changed: true });
+      for (const id of b.perms.filter((x) => !a.perms.includes(x))) mine.push({ method: 'DELETE', path: `${base}/callpermissions/${id}`, before: { call_permissions: before?.call_permissions }, changed: true });
+      out.push(...(mine.length ? mine : [{ path: base, before, changed: false }]));
     } else if (op.k === 'sched_assoc') {
       // Association : relire l'objet, retirer l'ancien horaire, associer le nouveau.
       const { t, o } = ownerOf(op.id);
@@ -206,7 +242,10 @@ export async function execute(ops) {
   for (const op of ops) {
     if (!op.changed) { res.push({ path: op.path, ok: true, skipped: true }); continue; }
     const m = op.method || 'PUT';
-    try { await api(m, op.path, m === 'DELETE' || !op.body ? undefined : op.body); res.push({ path: `${m} ${op.path}`, ok: true }); } catch (e) { res.push({ path: `${m} ${op.path}`, ok: false, error: e.message }); }
+    try {
+      if (op.run) await op.run(); else await api(m, op.path, m === 'DELETE' || !op.body ? undefined : op.body);
+      res.push({ path: `${m} ${op.path}`, ok: true });
+    } catch (e) { res.push({ path: `${m} ${op.path}`, ok: false, error: e.message }); }
   }
   return res;
 }

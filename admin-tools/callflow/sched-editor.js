@@ -21,8 +21,8 @@
 //    modifiable (15/10/2026) ;
 //  - fermeture liée à un jour de semaine ou valable tous les mois : conservée
 //    telle quelle et listée (supprimable).
-import { $, esc, confirmModal, helpButton, helpBox } from '../common/core.js?v=0.35.5';
-import { M, listOf, destLabel, loadSounds, soundName } from './model.js?v=0.35.5';
+import { $, esc, confirmModal, helpButton, helpBox } from '../common/core.js?v=0.36.0';
+import { M, listOf, destLabel, loadSounds, soundName } from './model.js?v=0.36.0';
 
 const SLOT = 15, N = 96;
 const DAYS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
@@ -124,7 +124,7 @@ function excFromRows(rows, hol) {
 // ---------------------------------------------------------------------------
 const DTYPES = [['voicemail', 'Messagerie'], ['sound', 'Fichier son'], ['hangup', 'Raccrocher'], ['user', 'Utilisateur'], ['group', 'Groupe'], ['queue', 'File d\'attente'], ['ivr', 'SVI'], ['switchboard', 'Standard'], ['conference', 'Conférence'], ['extension', 'Numéro'], ['none', 'Aucune']];
 const IDF = { user: 'user_id', group: 'group_id', queue: 'queue_id', ivr: 'ivr_id', voicemail: 'voicemail_id', conference: 'conference_id', switchboard: 'switchboard_uuid' };
-function pickerHtml(id, cur) {
+export function pickerHtml(id, cur) {
   const t = cur?.type || 'none';
   return `<span class="cf-dp" id="${id}"><select data-dt>${DTYPES.map(([k, l]) => `<option value="${k}"${k === t ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select><span data-dx>${pickerExtra(t, cur)}</span></span>`;
 }
@@ -147,13 +147,13 @@ export async function fillSoundSelect(sel, current) {
   sel.innerHTML = `${cur && !known ? `<option value="${esc(cur)}" selected>${esc(soundName(cur))} (actuel)</option>` : ''}${!cats.length ? '<option value="">Aucun son lisible (droit confd.sounds.read ?)</option>' : '<option value="">— Choisir un son —</option>'}`
     + cats.map((c) => `<optgroup label="${esc(c.system ? 'Sons système (Asterisk)' : `Sons du tenant · ${c.category}`)}">${c.files.map((f) => `<option value="${esc(f.value)}"${f.value === cur ? ' selected' : ''}>${esc(f.label)}</option>`).join('')}</optgroup>`).join('');
 }
-function bindPicker(id) {
+export function bindPicker(id) {
   const el = $(id); if (!el) return;
   const fill = () => { const s = el.querySelector('[data-df]'); if (s) fillSoundSelect(s, s.dataset.cur); };
   el.querySelector('[data-dt]').onchange = (e) => { el.querySelector('[data-dx]').innerHTML = pickerExtra(e.target.value, null); fill(); };
   fill();
 }
-function readPicker(id) {
+export function readPicker(id) {
   const el = $(id); const t = el.querySelector('[data-dt]').value;
   if (t === 'none') return null;
   if (IDF[t]) { const v = el.querySelector('[data-do]')?.value; if (!v) throw new Error('Choisissez un objet pour la destination.'); return { type: t, [IDF[t]]: t === 'switchboard' ? v : Number(v) }; }

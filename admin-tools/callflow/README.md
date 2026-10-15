@@ -26,8 +26,9 @@ courant. Cadrage, sources et décisions : `docs/CALLFLOW-MANAGER.md` (dépôt de
   l'appel, minute par minute, et chaque horaire du parcours a sa propre ligne.
 
 ## Mode édition (bouton « Mode édition »)
-- Une palette de cartes apparaît au-dessus du graphe : utilisateur, groupe,
-  file, SVI, messagerie, standard, conférence, numéro, message, raccrocher.
+- Une palette de cartes apparaît sous le graphe : utilisateur, groupe,
+  file d'attente, SVI, messagerie, standard, conférence, numéro, fichier son,
+  raccrocher, horaire.
 - **Glisser une carte sur une sortie** (✎) : celle de la palette, ou une carte
   déjà présente dans le graphe. Un dialogue demande l'objet visé et ses
   options (durée de sonnerie, message d'accueil de la messagerie, tonalité…).
@@ -62,8 +63,18 @@ courant. Cadrage, sources et décisions : `docs/CALLFLOW-MANAGER.md` (dépôt de
   - « Retirer l'horaire » (ou Suppr) sur une carte horaire le dissocie de son objet ;
   - Wazo n'accepte qu'un horaire par objet : un remplacement retire l'ancien puis
     associe le nouveau, à l'application du brouillon.
-- Pas encore modifiables : renvois d'appel de l'utilisateur, membres, ajout
-  d'une nouvelle touche de SVI.
+- **Groupes d'appel** : les membres s'affichent selon la stratégie (« un par
+  un » : une chaîne membre → membre avec la sonnerie de chacun, puis pause et
+  nouveau tour ; « tous en même temps » et autres : un éventail). Un membre en
+  NPD est marqué « ne sonne pas » : il est sauté, l'appel n'est pas renvoyé.
+  « Régler le groupe… » (fiche) ou un clic sur « Sonne les membres » ouvre
+  toutes les options du groupe : nom, numéro interne, stratégie, musique
+  d'attente, identification de l'appelant, sous-routine, options (activé,
+  sonnerie en cours, ignorer la redirection, répondu ailleurs, enregistrement),
+  durées, membres (utilisateurs et numéros, dans l'ordre), débordements,
+  appels maximum, horaire, autorisations d'appels.
+- Pas encore modifiables : renvois d'appel de l'utilisateur, membres des files
+  d'attente, ajout d'une nouvelle touche de SVI.
 - Tout passe par un **brouillon** : un point orange marque chaque sortie
   modifiée, et rien n'est écrit tant qu'on n'a pas cliqué « Appliquer… ».
 - **Appliquer…** se déroule ainsi :
@@ -92,7 +103,12 @@ Pour les membres d'un groupe inscrits par la touche « bascule groupe », qui ne
 - `confd.switchboards.{uuid}.fallbacks.update`, `confd.ivr.{id}.update` ;
 - menu des fichiers son : `confd.sounds.read` (supposé) ;
 - horaires : `confd.schedules.{id}.update`, et les associations
-  `confd.{incalls|users|groups|queues}.{id}.schedules.{schedule_id}.update|delete`.
+  `confd.{incalls|users|groups|queues}.{id}.schedules.{schedule_id}.update|delete` ;
+- groupes : `confd.groups.{uuid}.update`, `confd.groups.{uuid}.members.users.update`,
+  `confd.groups.{uuid}.members.extensions.update`, `confd.extensions.create`,
+  `confd.groups.{uuid}.extensions.{id}.update|delete`,
+  `confd.groups.{uuid}.callpermissions.{id}.update|delete` ; listes
+  `confd.moh.read` et `confd.callpermissions.read` (sans elles, menus vides).
 
 Ces droits ne sont pas encore vérifiés en réel pour le token du portail. Sans
 l'un d'eux, le graphe s'affiche quand même, sans ce type d'objet, avec un
