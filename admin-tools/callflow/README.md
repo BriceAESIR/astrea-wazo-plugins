@@ -25,7 +25,7 @@ courant. Cadrage, sources et décisions : `docs/CALLFLOW-MANAGER.md` (dépôt de
   moment choisi sont atténuées. La ligne « Résultat » indique où arrive
   l'appel, minute par minute, et chaque horaire du parcours a sa propre ligne.
 
-## Modifier (bouton « Modifier »)
+## Mode édition (bouton « Mode édition »)
 - Une palette de cartes apparaît au-dessus du graphe : utilisateur, groupe,
   file, SVI, messagerie, standard, conférence, numéro, message, raccrocher.
 - **Glisser une carte sur une sortie** (✎) : celle de la palette, ou une carte
@@ -45,7 +45,7 @@ courant. Cadrage, sources et décisions : `docs/CALLFLOW-MANAGER.md` (dépôt de
 - **Horaires** :
   - leurs sorties « Fermé » et « Fermeture exceptionnelle N » se modifient comme les autres ;
   - un clic sur ✎ d'une sortie propose de changer la destination et, pour un
-    horaire, **« Modifier l'horaire… »**. L'éditeur a trois parties :
+    horaire, **« Modifier les heures de « … »… »**. L'éditeur a trois parties :
     1. une grille de la semaine, où l'on sélectionne des blocs (rectangle jours ×
        heures) au quart d'heure ;
     2. la destination « Si fermé », avec un menu des fichiers son ;
@@ -56,7 +56,7 @@ courant. Cadrage, sources et décisions : `docs/CALLFLOW-MANAGER.md` (dépôt de
        donc une fermeture revient chaque année ;
   - la carte « Horaire » de la palette se dépose sur une **carte** (SDA,
     utilisateur, groupe, file d'attente) pour lui associer un horaire. On peut
-    aussi passer par « Associer / Changer l'horaire… » dans la fiche ;
+    aussi passer par la fiche : « Associer un horaire… » ou « Remplacer par un autre horaire… ». Ces boutons choisissent QUEL horaire garde l'objet ; « Modifier les heures de … » change le CONTENU de l'horaire, pour tous les objets qui l'utilisent ;
   - « Retirer l'horaire » (ou Suppr) sur une carte horaire le dissocie de son objet ;
   - Wazo n'accepte qu'un horaire par objet : un remplacement retire l'ancien puis
     associe le nouveau, à l'application du brouillon.

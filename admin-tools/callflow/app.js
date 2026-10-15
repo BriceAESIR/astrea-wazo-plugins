@@ -3,11 +3,11 @@
 // déposer (lot 2a, brouillon puis aperçu, sauvegarde, écriture).
 // Cadrage : astrea-wazo-dev/docs/CALLFLOW-MANAGER.md.
 // Modèle (sources confd vérifiées) : model.js ; canevas : canvas.js ; écriture : write.js.
-import { S, $, esc, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.35.2';
-import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, scanGroupKeys, buildTree, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel, periodText } from './model.js?v=0.35.2';
-import { createCanvas } from './canvas.js?v=0.35.2';
-import { getDest, setDest, sameValue, prepare, execute } from './write.js?v=0.35.2';
-import { openScheduleEditor, fillSoundSelect } from './sched-editor.js?v=0.35.2';
+import { S, $, esc, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.35.3';
+import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, scanGroupKeys, buildTree, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel, periodText } from './model.js?v=0.35.3';
+import { createCanvas } from './canvas.js?v=0.35.3';
+import { getDest, setDest, sameValue, prepare, execute } from './write.js?v=0.35.3';
+import { openScheduleEditor, fillSoundSelect } from './sched-editor.js?v=0.35.3';
 
 const TESTED_STACK = ['26.07'];
 const NAV = [
@@ -208,8 +208,12 @@ function showDetail(n) {
     ${rows ? `<div class="dsec"><dl>${rows}</dl></div>` : ''}
     ${outs && C.dir === 'out' ? `<div class="dsec"><h4>Sorties</h4><dl>${outs}</dl></div>` : ''}
     ${n.leaf?.ownerType === 'group' ? `<div class="btnrow"><button id="d-keys" title="Lit les touches de fonction de chaque utilisateur du tenant (une lecture par utilisateur)">${M.keys ? 'Relire les touches de bascule' : 'Chercher les touches de bascule'}</button></div><div id="d-keys-st" class="muted small"></div>` : ''}
-    ${C.edit && C.dir === 'out' && schedOwner(n.key) ? `<div class="dsec"><h4>Horaire</h4><div class="btnrow"><button id="d-sched" title="Associer, changer ou retirer l'horaire de cet objet (brouillon)">${(entity(schedOwner(n.key)).obj.schedules || []).length ? 'Changer l\'horaire…' : 'Associer un horaire…'}</button>${entity(n.key).owner ? '<button id="d-unsched" class="danger" title="Retire cet horaire de son objet (brouillon ; touche Suppr)">Retirer l\'horaire</button>' : ''}</div></div>` : ''}
-    ${C.edit && n.key.startsWith('schedule:') ? `<div class="btnrow"><button id="d-periods" class="primary" title="Heures d'ouverture, destination si fermé et fermetures exceptionnelles de cet horaire (brouillon)">Modifier l'horaire…</button></div>` : ''}
+    ${C.edit && C.dir === 'out' && schedOwner(n.key) ? (() => {
+      // Deux actions bien distinctes : QUEL horaire garde cet objet (association) / CE QUE contient l'horaire (heures).
+      const own = schedOwner(n.key), ot = ownerTitle({ key: own }), has = (entity(own).obj.schedules || []).length;
+      return `<div class="dsec"><h4>Horaire de ${esc(ot)}</h4><div class="btnrow"><button id="d-sched" title="Choisir quel horaire est vérifié avant ${esc(ot)} (ne change pas les heures de l'horaire ; brouillon)">${has ? 'Remplacer par un autre horaire…' : 'Associer un horaire…'}</button>${entity(n.key).owner ? `<button id="d-unsched" class="danger" title="${esc(ot)} n'aura plus d'horaire : ses appels passent toujours (brouillon ; touche Suppr)">Retirer l'horaire de ${esc(ot)}</button>` : ''}</div></div>`;
+    })() : ''}
+    ${C.edit && n.key.startsWith('schedule:') ? (() => { const sc = entity(n.key).obj; const u = schedUsage(sc); return `<div class="btnrow"><button id="d-periods" class="primary" title="Change les heures d'ouverture, la destination si fermé et les fermetures exceptionnelles de l'horaire « ${esc(sc.name)} ». ${u > 1 ? `Il est utilisé par ${u} objets : tous sont concernés.` : 'Le changement vaut pour tout objet qui utilise cet horaire.'} (brouillon)">Modifier les heures de « ${esc(sc.name)} »…</button></div>${u > 1 ? `<p class="small muted">Horaire partagé par ${u} objets : modifier ses heures les concerne tous.</p>` : ''}`; })() : ''}
     ${C.edit && C.dir === 'out' && !entity(n.key).owner && incomingPort(n) ? `<div class="btnrow"><button id="d-remove" class="danger" title="Vide la sortie « ${esc(incomingPort(n).p.label)} » de ${esc(ownerTitle(incomingPort(n).n))} (brouillon ; touche Suppr)">Retirer de cette sortie</button></div>` : ''}
     ${n.leaf ? '' : `<div class="dsec"><h4>Arrive depuis</h4>${refs}</div>`}
     ${n.leaf ? '' : `<div class="btnrow">${n.key !== C.root ? '<button id="d-root" class="primary">Partir de cette carte</button>' : ''}<button id="d-in">${C.dir === 'in' && n.key === C.root ? 'Où vont les appels' : 'Qui arrive ici'}</button></div>`}`;
@@ -265,7 +269,7 @@ function setEdit(on) {
   if (on && C.dir !== 'out') { setDir('out'); }
   $('cf-edit-bar').hidden = !on;
   $('pal-help-box').hidden = !on;
-  $('cf-edit').textContent = on ? 'Terminer' : 'Modifier';
+  $('cf-edit').textContent = on ? 'Quitter le mode édition' : 'Mode édition';
   $('cf-edit').classList.toggle('primary', !on);
   if (on) renderPalette();
   draw(true);
@@ -326,6 +330,8 @@ function schedOwner(k) {
   const e = entity(k); const o = e.owner || k; const t = o.slice(0, o.indexOf(':'));
   return SCHED_TYPES.has(t) && entity(o).obj ? o : null;
 }
+// Nombre d'objets qui utilisent un horaire (copie locale : brouillon compris).
+const schedUsage = (s) => (s ? [...SCHED_TYPES].reduce((n, t) => n + (M.lists[t] || []).filter((o) => (o.schedules || []).some((x) => String(x.id) === String(s.id))).length, 0) : 0);
 const assocW = (owner) => ({ k: 'sched_assoc', id: owner, f: 'schedule', key: `sched_assoc:${owner}:schedule` });
 function openSchedule(owner) {
   const w = assocW(owner); const cur = getDest(w);
@@ -432,7 +438,7 @@ function portClick(nodeKey, portId) {
   const sched = p.periods ? M.by.schedule?.get(String(p.periods)) : null;
   confirmModal(`<h3>${esc(p.label)} — ${esc(p.w ? whereOf(n, p) : ownerTitle(n))}</h3>
     ${p.w ? `<p class="small muted">Actuellement : ${esc(destLabel(getDest(p.w)))}. Nouvelle destination :</p><div class="cf-palette cf-choose">${types.map(([t, l]) => `<button class="cf-chip t-${t}" data-choose="${t}"><span class="cf-badge">${esc(TYPES[t]?.badge || '?')}</span>${esc(l)}</button>`).join('')}</div>` : ''}
-    ${sched ? `<p class="small muted">${p.w ? 'Ou bien les conditions' : 'Conditions'} de l'horaire « ${esc(sched.name)} » : heures d'ouverture, destination si fermé, fermetures exceptionnelles.</p><div class="btnrow"><button id="ch-periods" class="primary">Modifier l'horaire…</button></div>` : ''}`, () => true, 'Fermer');
+    ${sched ? `<p class="small muted">${p.w ? 'Ou bien les heures' : 'Heures'} de l'horaire « ${esc(sched.name)} » : heures d'ouverture, destination si fermé, fermetures exceptionnelles${schedUsage(sched) > 1 ? ` — horaire partagé par ${schedUsage(sched)} objets, tous concernés` : ''}.</p><div class="btnrow"><button id="ch-periods" class="primary">Modifier les heures de « ${esc(sched.name)} »…</button></div>` : ''}`, () => true, 'Fermer');
   $('modal-body').onclick = (ev) => {
     const b = ev.target.closest('[data-choose]');
     if (b) { openDest({ nodeKey, portId }, { type: b.dataset.choose }); return; }
