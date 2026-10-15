@@ -17,15 +17,15 @@
 //    linéaire ; les utilisateurs sonnent avant les numéros) ;
 //  - une seule extension, contexte internal, dans les group_ranges ; un seul
 //    horaire ; plusieurs autorisations d'appels.
-import { $, esc, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.36.3';
-import { M, STRATEGY, listOf } from './model.js?v=0.36.3';
-import { pickerHtml, bindPicker, readPicker } from './sched-editor.js?v=0.36.3';
-import { sec, field } from './ed-ui.js?v=0.36.3';
+import { $, esc, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.36.4';
+import { M, STRATEGY, listOf, linearRound } from './model.js?v=0.36.4';
+import { pickerHtml, bindPicker, readPicker } from './sched-editor.js?v=0.36.4';
+import { sec, field } from './ed-ui.js?v=0.36.4';
 
 const STRATS = ['all', 'linear', 'random', 'least_recent', 'fewest_calls', 'memorized_round_robin', 'weight_random'];
 const STRAT_HELP = {
   all: 'Tous les membres sonnent en même temps ; le premier qui décroche prend l\'appel.',
-  linear: 'Un par un, dans l\'ordre de la liste (utilisateurs puis numéros), chacun pendant « sonnerie par membre » ; après le dernier, pause puis nouveau tour.',
+  linear: 'Un par un, dans l\'ordre de la liste (utilisateurs puis numéros) : chaque membre sonne pendant « sonnerie par membre », puis la pause de réessai, puis le suivant ; après le dernier, nouveau tour. Membres en NPD sautés.',
   random: 'Un membre à la fois, choisi au hasard.',
   least_recent: 'Un membre à la fois : celui qui a raccroché depuis le plus longtemps d\'abord.',
   fewest_calls: 'Un membre à la fois : celui qui a pris le moins d\'appels de ce groupe d\'abord.',
@@ -107,9 +107,10 @@ export function openGroupEditor(g, onSave) {
       <div class="cf-ge-3">
         ${num('timeout', 'Durée totale (s)', 'Avant le débordement « pas de réponse ». Vide ou 0 : sonne indéfiniment.', 'illimitée')}
         ${num('user_timeout', 'Sonnerie par membre (s)', 'Combien de temps chaque membre sonne.', '15')}
-        ${num('retry_delay', 'Pause entre deux tours (s)', 'Attente avant de refaire sonner.', '5')}
+        ${num('retry_delay', 'Pause de réessai (s)', 'Attente après une sonnerie sans réponse : après chaque membre en « un par un ».', '5')}
       </div>
-      ${bool('ring_in_use')}`, { help: 'Vérifié dans le code Wazo : « sonnerie par membre » = timeout de chaque membre dans la file Asterisk ; « pause » = retry ; « durée totale » = délai de Queue() (ou du Dial en linéaire) avant le débordement « pas de réponse ».' })}
+      <div id="ge-tour" class="cf-ge-tour" hidden></div>
+      ${bool('ring_in_use')}`, { help: 'Vérifié dans le code Wazo : « sonnerie par membre » = timeout de chaque membre ; « pause » = retry ; « durée totale » = délai de Queue() (ou du Dial en « un par un ») avant le débordement « pas de réponse ». En « un par un » (dialplan group-linear), la pause a lieu après CHAQUE membre : un tour complet = nombre de membres × (sonnerie + pause). Pour les autres stratégies (file Asterisk), la pause sépare deux tentatives (supposé, non vérifié dans Asterisk).' })}
     ${sec('mem', 'Membres', `
       <div class="cf-ge-l">Utilisateurs</div>
       <ul class="cf-ge-list" id="ge-users">${userRows()}</ul>
@@ -190,6 +191,25 @@ export function openGroupEditor(g, onSave) {
       adv: [val('[data-f="preprocess_subroutine"]') || ''],
     };
     for (const [k, a] of Object.entries(S)) { const el = box.querySelector(`[data-sum="${k}"]`); if (el) el.textContent = a.filter(Boolean).join(' · '); }
+    tourBox(dnd);
+  };
+  // « Un par un » : durée d'un tour complet, proposée comme durée totale
+  // (demande de Brice). Vérifié : pause après chaque membre ; NPD sautés.
+  const tourBox = (dnd) => {
+    const el = $('ge-tour'); if (!el) return;
+    const n = users.length + ($('ge-exton')?.checked ? exts.length : 0);
+    if (val('[data-f="ring_strategy"]') !== 'linear' || !n) { el.hidden = true; return; }
+    const ut = Number(val('[data-f="user_timeout"]') || 15), rd = Number(val('[data-f="retry_delay"]') || 0), step = ut + rd;
+    const tour = linearRound(n, ut, rd), cur = Number(val('[data-f="timeout"]') || 0);
+    const reached = cur ? Math.min(n, Math.ceil(cur / step)) : n;
+    const now = cur === tour ? '<strong>réglée sur un tour complet.</strong>'
+      : !cur ? 'actuellement illimitée : les tours se répètent sans fin.'
+      : cur < tour ? `actuellement ${cur} s : seul${reached > 1 ? 's' : ''} le${reached > 1 ? 's' : ''} ${reached} premier${reached > 1 ? 's' : ''} membre${reached > 1 ? 's' : ''} sur ${n} sonne${reached > 1 ? 'nt' : ''}${cur % step && cur % step < ut ? ` (le dernier pendant ${cur % step} s seulement)` : ''}.`
+      : `actuellement ${cur} s ≈ ${Math.round((cur / tour) * 10) / 10} tours.`;
+    el.innerHTML = `<div><strong>Un tour complet : ${n} membre${n > 1 ? 's' : ''} × (${ut} s + ${rd} s de pause) = ${tour} s</strong>
+      <span class="small muted">Durée totale ${now}${dnd ? ` ${dnd} membre${dnd > 1 ? 's' : ''} en NPD en ce moment : sauté${dnd > 1 ? 's' : ''}, le tour dure alors ${linearRound(n - dnd, ut, rd)} s.` : ''}</span></div>
+      ${cur === tour ? '' : `<button type="button" data-usetour="${tour}">Utiliser ${tour} s</button>`}`;
+    el.hidden = false;
   };
   const redraw = () => { $('ge-users').innerHTML = userRows(); $('ge-uadd').innerHTML = addOpts(); $('ge-exts').innerHTML = extRows(); $('ge-exts').hidden = !exts.length; recap(); };
   box.addEventListener('input', recap);
@@ -198,6 +218,8 @@ export function openGroupEditor(g, onSave) {
     if (e.target.matches('[data-f="caller_id_mode"]')) $('ge-cidtxt').hidden = !e.target.value;
     if (e.target.id === 'ge-exton') { $('ge-extbox').hidden = !e.target.checked; $('ge-extwarn').hidden = e.target.checked || !exts.length; } recap(); });
   box.onclick = (e) => {
+    const t = e.target.closest('[data-usetour]');
+    if (t) { box.querySelector('[data-f="timeout"]').value = t.dataset.usetour; recap(); return; }
     const b = e.target.closest('[data-up],[data-down],[data-del],[data-add]'); if (!b) return;
     const ref = b.dataset.up || b.dataset.down || b.dataset.del;
     if (ref) {

@@ -21,7 +21,7 @@
 // Supposé, à vérifier en réel : les listes (GET /groups, /queues,
 // /switchboards, /schedules) contiennent déjà fallbacks, membres et
 // destinations ; sinon on lit le détail de chaque objet (ensureDetails).
-import { S, api, listAll, fullName } from '../common/core.js?v=0.36.3';
+import { S, api, listAll, fullName } from '../common/core.js?v=0.36.4';
 
 export const M = { lists: {}, by: {}, ext: new Map(), extAny: new Map(), rev: null, warns: [] };
 
@@ -382,6 +382,10 @@ export function groupMemberList(o) {
   return out;
 }
 const ORDER = { random: 'un à la fois, au hasard', least_recent: 'un à la fois, le moins récemment appelé d\'abord', fewest_calls: 'un à la fois, celui qui a pris le moins d\'appels', memorized_round_robin: 'un à la fois, à tour de rôle', weight_random: 'un à la fois, au hasard pondéré' };
+// Durée d'un tour complet en stratégie « un par un » : chaque membre sonne
+// user_timeout puis la pause retry_delay (dialplan group-linear). Au-delà, le
+// premier membre resonne. NPD exclus du calcul par l'appelant s'il le souhaite.
+export const linearRound = (n, ut, rd) => (n > 0 ? n * ((ut ?? 15) + (rd ?? 0)) : 0);
 const PICTO = { random: '🎲', least_recent: '⏳', fewest_calls: '📉', memorized_round_robin: '🔁', weight_random: '⚖' };
 const STRAT_HELP_SHORT = {
   random: 'Asterisk choisit un membre au hasard, le fait sonner, puis un autre s\'il ne répond pas.',
@@ -401,18 +405,29 @@ function groupFlow(o) {
   const card = (m, extra = {}) => leaf('member', m.name.replace(/^Numéro /, ''), badge(m), { dnd: m.dnd, live: m.kind === 'live', group: gk, member: m, ...extra });
   if (!list.length) return hub;
   if (o.ring_strategy === 'linear') {
-    // Chaîne : membre 1 → (après user_timeout) membre 2 → … → pause, nouveau tour.
+    // Chaîne : membre 1 → (sonnerie, puis pause) membre 2 → … → nouveau tour.
+    // Vérifié (dialplan extensions_lib_group.conf, group-linear) : Wait(retry)
+    // après CHAQUE membre, pas seulement entre deux tours ; un membre en NPD
+    // est retiré de la liste (ni sonnerie ni pause).
     let next = null;
-    for (let i = list.length - 1; i >= 0; i--) {
-      const m = list[i]; const last = i === list.length - 1;
+    const step = `sinon, après ${ut ?? '?'} s${rd ? ` + pause ${rd} s` : ''}`;
+    // Inscrits par touche : absents de la chaîne. linear_group_get_interfaces lit
+    // les membres dans la base (user_queue_members, extension_queue_members),
+    // or ces inscriptions n'existent que dans Asterisk (déduit, non testé).
+    const chain = list.filter((m) => m.kind !== 'live');
+    const liveN = list.length - chain.length;
+    for (let i = chain.length - 1; i >= 0; i--) {
+      const m = chain[i]; const last = i === chain.length - 1;
       const c = card(m, { last, order: i + 1 });
       c.leaf.title = `${i + 1} · ${c.leaf.title}`;
       c.leaf.edges = last
-        ? [{ slot: 'retry', label: `↺ pause ${rd || 0} s, puis nouveau tour`, note: o.timeout ? `jusqu'à ${o.timeout} s au total` : 'sans fin (durée totale vide)', help: 'Après le dernier membre, le groupe attend la pause de réessai puis recommence au premier, jusqu\'à la durée totale du groupe.', to: null, info: true }]
-        : [{ slot: 'next', label: m.dnd ? 'NPD : sauté' : `sinon, après ${ut ?? '?'} s`, help: 'Si ce membre ne répond pas pendant sa durée de sonnerie, le membre suivant sonne.', to: next }];
+        ? [{ slot: 'retry', label: `↺ ${rd ? `pause ${rd} s, puis ` : ''}nouveau tour`, note: o.timeout ? `jusqu'à ${o.timeout} s au total` : 'sans fin (durée totale vide)', help: 'Après le dernier membre (et sa pause), le groupe recommence au premier, jusqu\'à la durée totale du groupe.', to: null, info: true }]
+        : [{ slot: 'next', label: m.dnd ? 'NPD : sauté' : step, help: 'Si ce membre ne répond pas pendant sa durée de sonnerie, le groupe attend la pause de réessai puis fait sonner le membre suivant.', to: next }];
       next = c;
     }
-    hub.leaf.edges = [{ slot: 'first', label: 'Un par un, dans l\'ordre', note: `${ut ?? '?'} s chacun`, help: 'Stratégie linéaire : les membres sonnent l\'un après l\'autre, dans l\'ordre (utilisateurs puis numéros).', to: next }];
+    const tour = linearRound(chain.length, ut, rd);
+    hub.leaf.edges = [{ slot: 'first', label: 'Un par un, dans l\'ordre', note: `${ut ?? '?'} s chacun${rd ? ` + ${rd} s de pause` : ''}${tour ? ` · un tour ≈ ${tour} s` : ''}`, help: 'Stratégie linéaire : les membres sonnent l\'un après l\'autre, dans l\'ordre (utilisateurs puis numéros), avec la pause de réessai après chacun.', to: next },
+      ...(liveN ? [{ slot: 'live', label: `${liveN} inscrit${liveN > 1 ? 's' : ''} par touche : non appelé${liveN > 1 ? 's' : ''}`, note: 'en « un par un »', help: 'La stratégie « un par un » de Wazo lit les membres dans sa base ; les inscriptions par touche de bascule n\'existent que dans Asterisk, elles ne sont donc pas appelées (déduit du code de wazo-agid, non testé).', to: null, info: true }] : [])];
   } else if (o.ring_strategy === 'all' || !o.ring_strategy) {
     // Éventail : tous sonnent ensemble, une mini-carte par membre.
     const how = 'sonnent ensemble';

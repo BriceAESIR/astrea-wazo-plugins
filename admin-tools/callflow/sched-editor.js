@@ -21,8 +21,8 @@
 //    modifiable (15/10/2026) ;
 //  - fermeture liée à un jour de semaine ou valable tous les mois : conservée
 //    telle quelle et listée (supprimable).
-import { $, esc, confirmModal, helpButton, helpBox } from '../common/core.js?v=0.36.3';
-import { M, listOf, destLabel, loadSounds, soundName } from './model.js?v=0.36.3';
+import { $, esc, confirmModal, helpButton, helpBox } from '../common/core.js?v=0.36.4';
+import { M, listOf, destLabel, loadSounds, soundName } from './model.js?v=0.36.4';
 
 const SLOT = 15, N = 96;
 const DAYS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];

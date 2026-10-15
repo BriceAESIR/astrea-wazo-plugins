@@ -3,13 +3,13 @@
 // déposer (lot 2a, brouillon puis aperçu, sauvegarde, écriture).
 // Cadrage : astrea-wazo-dev/docs/CALLFLOW-MANAGER.md.
 // Modèle (sources confd vérifiées) : model.js ; canevas : canvas.js ; écriture : write.js.
-import { S, $, esc, fullName, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.36.3';
-import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, scanGroupKeys, buildTree, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel, periodText, STRATEGY, baseKey } from './model.js?v=0.36.3';
-import { createCanvas } from './canvas.js?v=0.36.3';
-import { getDest, setDest, sameValue, prepare, execute } from './write.js?v=0.36.3';
-import { openScheduleEditor } from './sched-editor.js?v=0.36.3';
-import { openGroupEditor, groupCfgDiff } from './group-editor.js?v=0.36.3';
-import { openDestEditor, ENTITY_DEST } from './dest-editor.js?v=0.36.3';
+import { S, $, esc, fullName, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.36.4';
+import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, scanGroupKeys, buildTree, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel, periodText, STRATEGY, baseKey } from './model.js?v=0.36.4';
+import { createCanvas } from './canvas.js?v=0.36.4';
+import { getDest, setDest, sameValue, prepare, execute } from './write.js?v=0.36.4';
+import { openScheduleEditor } from './sched-editor.js?v=0.36.4';
+import { openGroupEditor, groupCfgDiff } from './group-editor.js?v=0.36.4';
+import { openDestEditor, ENTITY_DEST } from './dest-editor.js?v=0.36.4';
 
 const TESTED_STACK = ['26.07'];
 const NAV = [

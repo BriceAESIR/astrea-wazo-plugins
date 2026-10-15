@@ -301,6 +301,10 @@ body.in-portal.ready #workbench { height: 100vh; }
 .cf-ge-gap { margin-top: 8px; }
 .cf-ge-note { margin: -8px 0 0; }
 .cf-ge-sub { display: grid; gap: 12px; margin: -4px 0 0 26px; padding-left: 12px; border-left: 2px solid var(--line); }
+/* « Un par un » : durée d'un tour complet proposée */
+.cf-ge-tour { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: var(--radius); background: color-mix(in srgb, var(--accent) 7%, var(--panel)); border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--panel)); font-size: .875rem; }
+.cf-ge-tour > div { flex: 1; display: grid; gap: 2px; }
+.cf-ge-tour button { flex: none; }
 .cf-ge-sub[hidden] { display: none; }
 .cf-ge-sub .cf-ge-list { margin: 0; }
 .cf-ge-sub p { margin: 0; }
