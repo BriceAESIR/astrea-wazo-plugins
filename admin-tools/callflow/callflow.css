@@ -234,11 +234,15 @@ body.in-portal.ready #workbench { height: 100vh; }
 .cf-se-sel { position: fixed; z-index: 40; pointer-events: none; padding: 4px 8px; border-radius: var(--radius); background: #323232; color: #fff; font-size: .75rem; box-shadow: var(--shadow-6); white-space: nowrap; }
 /* Plages saisonnières : cases mois / jours en pastilles */
 .cf-per-n { text-transform: none; letter-spacing: normal; font-weight: 400; }
-.cf-sr { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 6px 0; border-bottom: 1px solid var(--line); font-size: .8125rem; }
+.cf-per-sub { margin: 4px 0 6px; }
+.cf-sr { position: relative; display: grid; grid-template-columns: 1fr; gap: 4px; padding: 8px 36px 8px 12px; margin-bottom: 6px; border: 1px solid var(--line); border-left: 3px solid color-mix(in srgb, var(--ok) 60%, var(--panel)); border-radius: var(--radius); font-size: .8125rem; }
+.cf-sr-f { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.cf-sr-k { width: 96px; flex: none; color: var(--muted); font-size: .75rem; }
+.cf-sr-txt { margin-top: 2px; padding-left: 106px; color: var(--ink); font-style: italic; }
+.cf-sr-x { position: absolute; top: 6px; right: 6px; }
 .cf-sr input[type="time"], .cf-sr [data-smd] { width: auto !important; height: 28px; font-size: .8125rem; }
 .cf-sr [data-smd] { width: 72px !important; }
 .cf-sr label.inline { margin: 0; font-size: .8125rem; }
-.cf-sr button.icon { margin-left: auto; }
 .cf-cks { display: inline-flex; flex-wrap: wrap; gap: 2px; }
 .cf-ck { display: inline-flex; margin: 0; cursor: pointer; }
 .cf-ck input { position: absolute; opacity: 0; width: 1px; height: 1px; }

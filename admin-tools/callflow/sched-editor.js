@@ -21,8 +21,8 @@
 //    modifiable (15/10/2026) ;
 //  - fermeture liée à un jour de semaine ou valable tous les mois : conservée
 //    telle quelle et listée (supprimable).
-import { $, esc, confirmModal, helpButton, helpBox } from '../common/core.js?v=0.35.4';
-import { M, listOf, destLabel, loadSounds, soundName } from './model.js?v=0.35.4';
+import { $, esc, confirmModal, helpButton, helpBox } from '../common/core.js?v=0.35.5';
+import { M, listOf, destLabel, loadSounds, soundName } from './model.js?v=0.35.5';
 
 const SLOT = 15, N = 96;
 const DAYS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
@@ -185,20 +185,32 @@ export function openScheduleEditor(s, onSave) {
   }));
   const MSHORT = ['janv', 'févr', 'mars', 'avr', 'mai', 'juin', 'juil', 'août', 'sept', 'oct', 'nov', 'déc'];
   const chip = (attr, v, label, on, title) => `<label class="cf-ck" title="${esc(title || label)}"><input type="checkbox" ${attr}="${v}"${on ? ' checked' : ''}><span>${esc(label)}</span></label>`;
+  // Même découpage qu'une plage Wazo (heures, jours de semaine, jours du mois,
+  // mois), libellés explicites, et la plage relue en clair sous la ligne.
+  const WDL = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche'];
+  const listFr = (a) => (a.length <= 1 ? a.join('') : `${a.slice(0, -1).join(', ')} et ${a[a.length - 1]}`);
+  const runs = (v) => { const out = []; for (let i = 0; i < v.length; i++) { let j = i; while (j + 1 < v.length && v[j + 1] === v[j] + 1) j++; out.push([v[i], v[j]]); i = j; } return out; };
+  const seasText = (r) => {
+    const wd = r.wd.length === 7 ? 'tous les jours' : listFr(runs([...r.wd].sort((a, b) => a - b)).map(([a, b]) => (b - a >= 2 ? `du ${WDL[a - 1]} au ${WDL[b - 1]}` : a === b ? `le ${WDL[a - 1]}` : `le ${WDL[a - 1]} et le ${WDL[b - 1]}`)));
+    const mo = r.months.length === 12 ? 'tous les mois' : listFr(runs([...r.months].sort((a, b) => a - b)).map(([a, b]) => (b - a >= 2 ? `de ${MONTHS[a - 1]} à ${MONTHS[b - 1]}` : a === b ? `en ${MONTHS[a - 1]}` : `en ${MONTHS[a - 1]} et ${MONTHS[b - 1]}`)));
+    const md = r.md ? `, les jours ${r.md} du mois` : '';
+    return r.months.length && r.wd.length ? `Ouvert de ${r.hs} à ${r.he}, ${wd}${md}, ${mo}.` : 'Plage incomplète : cochez au moins un jour et un mois.';
+  };
   const seasHtml = (r, i) => `<div class="cf-sr" data-s="${i}">
-      <span class="cf-cks">${MSHORT.map((m, k) => chip('data-smo', k + 1, m, r.months.includes(k + 1), MONTHS[k])).join('')}</span>
-      <span class="cf-cks">${DAYS.map((d, k) => chip('data-swd', k + 1, d, r.wd.includes(k + 1))).join('')}</span>
-      <label class="inline" title="Facultatif : jours du mois, ex. 1-15 ou 1, 15 ; vide = tous">jours du mois <input data-smd value="${esc(r.md)}" placeholder="tous"></label>
-      <span>de <input type="time" data-shs value="${esc(r.hs)}"> à <input type="time" data-she value="${esc(r.he)}"></span>
-      <button class="icon" data-delseas title="Supprimer cette plage">×</button></div>`;
+      <div class="cf-sr-f"><span class="cf-sr-k">Heures</span><span>de <input type="time" data-shs value="${esc(r.hs)}"> à <input type="time" data-she value="${esc(r.he)}"></span></div>
+      <div class="cf-sr-f"><span class="cf-sr-k">Jours</span><span class="cf-cks">${DAYS.map((d, k) => chip('data-swd', k + 1, d, r.wd.includes(k + 1), WDL[k])).join('')}</span></div>
+      <div class="cf-sr-f"><span class="cf-sr-k">Mois</span><span class="cf-cks">${MSHORT.map((m, k) => chip('data-smo', k + 1, m, r.months.includes(k + 1), MONTHS[k])).join('')}</span></div>
+      <div class="cf-sr-f"><span class="cf-sr-k" title="Facultatif : ex. 1-15 ou 1, 15 ; vide = tous les jours du mois">Jours du mois</span><input data-smd value="${esc(r.md)}" placeholder="tous"></div>
+      <div class="cf-sr-txt" data-stxt>${esc(seasText(r))}</div>
+      <button class="icon cf-sr-x" data-delseas title="Supprimer cette plage">×</button></div>`;
   function readSeas(validate) {
     return [...$('se-slist').querySelectorAll('.cf-sr')].map((el, i) => {
       const r = { months: [...el.querySelectorAll('[data-smo]:checked')].map((c) => +c.dataset.smo), wd: [...el.querySelectorAll('[data-swd]:checked')].map((c) => +c.dataset.swd), md: el.querySelector('[data-smd]').value.trim(), hs: el.querySelector('[data-shs]').value, he: el.querySelector('[data-she]').value };
       if (validate) {
-        if (!r.months.length) throw new Error(`Plage saisonnière ${i + 1} : cochez au moins un mois.`);
-        if (!r.wd.length) throw new Error(`Plage saisonnière ${i + 1} : cochez au moins un jour de semaine.`);
-        const md = toList(r.md); if (!md || md.some((d) => d < 1 || d > 31)) throw new Error(`Plage saisonnière ${i + 1} : jours du mois de 1 à 31 (ex. 1-15 ou 1, 15).`);
-        if (!/^\d\d:\d\d$/.test(r.hs) || !/^\d\d:\d\d$/.test(r.he) || r.hs > r.he) throw new Error(`Plage saisonnière ${i + 1} : heures au format HH:MM, début avant la fin.`);
+        if (!r.months.length) throw new Error(`Plage limitée ${i + 1} : cochez au moins un mois.`);
+        if (!r.wd.length) throw new Error(`Plage limitée ${i + 1} : cochez au moins un jour de semaine.`);
+        const md = toList(r.md); if (!md || md.some((d) => d < 1 || d > 31)) throw new Error(`Plage limitée ${i + 1} : jours du mois de 1 à 31 (ex. 1-15 ou 1, 15).`);
+        if (!/^\d\d:\d\d$/.test(r.hs) || !/^\d\d:\d\d$/.test(r.he) || r.hs > r.he) throw new Error(`Plage limitée ${i + 1} : heures au format HH:MM, début avant la fin.`);
       }
       return r;
     });
@@ -225,13 +237,13 @@ export function openScheduleEditor(s, onSave) {
   confirmModal(`<div class="cf-sched-ed">
     <div class="titlerow"><h3>Horaire « ${esc(s.name)} »</h3>${helpButton('se-hb', 'Aide')}</div>${helpBox('se-hb', help)}
     <h4 class="cf-per-t">1. Ouvert</h4>
+    <p class="small muted cf-per-sub">Plages valables <strong>toute l'année</strong> (tous les mois, tous les jours du mois) :</p>
     <div class="btnrow cf-se-tools"><button data-tool="copy" title="Recopie les créneaux du lundi sur mardi à vendredi">Lundi → mar–ven</button><button data-tool="office" title="9h–12h et 14h–18h du lundi au vendredi">Bureau 9h-12h / 14h-18h</button><button data-tool="all" title="Ouvert tout le temps">24 h/24</button><button data-tool="clear">Tout fermer</button><span class="small muted">Tirez un bloc pour l'ouvrir ; partez d'une case ouverte pour le fermer.</span></div>
     <div id="se-grid">${gridHtml()}</div>
     ${G.rounded ? '<p class="warn small"><span>Certaines heures n\'étaient pas au quart d\'heure : elles sont arrondies dans la grille.</span></p>' : ''}
-    <h4 class="cf-per-t">Plages saisonnières <span class="cf-per-n">(certains mois ou jours du mois seulement)</span></h4>
-    <p class="small muted">Elles s'ajoutent à la grille : l'horaire est ouvert si la grille <strong>ou</strong> une de ces plages correspond. Pour des horaires d'été différents, videz la grille et mettez une plage par saison (ex. juin–août 8h-13h, et les autres mois 9h-12h / 14h-18h).</p>
+    <p class="small muted cf-per-sub">Plages <strong>limitées à certains mois ou jours du mois</strong> — comme dans Wazo, elles s'ajoutent aux plages ci-dessus (l'horaire est ouvert si l'une d'elles correspond) :</p>
     <div id="se-slist">${seas.map(seasHtml).join('')}</div>
-    <div class="btnrow"><button data-tool="addseas">+ Plage saisonnière</button></div>
+    <div class="btnrow"><button data-tool="addseas">+ Plage limitée à certains mois</button></div>
     <h4 class="cf-per-t">2. Si fermé</h4>
     <div>L'appel part vers ${pickerHtml('se-closed', s.closed_destination)}</div>
     <h4 class="cf-per-t">3. Fermetures exceptionnelles (chaque année)</h4>
@@ -312,8 +324,15 @@ export function openScheduleEditor(s, onSave) {
     preview();
     window.addEventListener('pointermove', onMove); window.addEventListener('pointerup', onUp);
   };
+  // Phrase en clair d'une plage limitée, mise à jour à chaque saisie.
+  box.oninput = (e) => {
+    const sr = e.target.closest?.('.cf-sr'); if (!sr) return;
+    const i = [...$('se-slist').querySelectorAll('.cf-sr')].indexOf(sr);
+    sr.querySelector('[data-stxt]').textContent = seasText(readSeas(false)[i]);
+  };
   box.onchange = (e) => {
     const t = e.target;
+    if (t.closest?.('.cf-sr')) box.oninput(e);
     if (t.id === 'se-hol') $('se-holx').hidden = !t.checked;
     const xr = t.closest('.cf-xr');
     if (xr && t.matches('[data-rg]')) { xr.querySelector('[data-end]').hidden = !t.checked; if (t.checked) { xr.querySelector('[data-d2]').value = xr.querySelector('[data-d1]').value; xr.querySelector('[data-m2]').value = xr.querySelector('[data-m1]').value; } }

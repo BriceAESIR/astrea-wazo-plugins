@@ -3,11 +3,11 @@
 // déposer (lot 2a, brouillon puis aperçu, sauvegarde, écriture).
 // Cadrage : astrea-wazo-dev/docs/CALLFLOW-MANAGER.md.
 // Modèle (sources confd vérifiées) : model.js ; canevas : canvas.js ; écriture : write.js.
-import { S, $, esc, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.35.4';
-import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, scanGroupKeys, buildTree, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel, periodText } from './model.js?v=0.35.4';
-import { createCanvas } from './canvas.js?v=0.35.4';
-import { getDest, setDest, sameValue, prepare, execute } from './write.js?v=0.35.4';
-import { openScheduleEditor, fillSoundSelect } from './sched-editor.js?v=0.35.4';
+import { S, $, esc, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.35.5';
+import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, scanGroupKeys, buildTree, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel, periodText } from './model.js?v=0.35.5';
+import { createCanvas } from './canvas.js?v=0.35.5';
+import { getDest, setDest, sameValue, prepare, execute } from './write.js?v=0.35.5';
+import { openScheduleEditor, fillSoundSelect } from './sched-editor.js?v=0.35.5';
 
 const TESTED_STACK = ['26.07'];
 const NAV = [
