@@ -17,9 +17,9 @@
 //    linéaire ; les utilisateurs sonnent avant les numéros) ;
 //  - une seule extension, contexte internal, dans les group_ranges ; un seul
 //    horaire ; plusieurs autorisations d'appels.
-import { $, esc, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.36.1';
-import { M, STRATEGY, listOf } from './model.js?v=0.36.1';
-import { pickerHtml, bindPicker, readPicker } from './sched-editor.js?v=0.36.1';
+import { $, esc, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.36.2';
+import { M, STRATEGY, listOf } from './model.js?v=0.36.2';
+import { pickerHtml, bindPicker, readPicker } from './sched-editor.js?v=0.36.2';
 
 const STRATS = ['all', 'linear', 'random', 'least_recent', 'fewest_calls', 'memorized_round_robin', 'weight_random'];
 const STRAT_HELP = {
@@ -87,6 +87,8 @@ export function openGroupEditor(g, onSave) {
   const moves = (p, i, n) => `<button class="icon" data-up="${p}${i}" title="Monter"${i ? '' : ' disabled'}>↑</button><button class="icon" data-down="${p}${i}" title="Descendre"${i < n - 1 ? '' : ' disabled'}>↓</button><button class="icon" data-del="${p}${i}" title="Retirer du groupe">×</button>`;
   const userRows = () => users.map((m, i) => `<li><span class="cf-ge-n">${i + 1}</span><span>${esc(uname(m.uuid))}</span>${isDnd(m.uuid) ? '<span class="cf-ge-dnd">NPD : ne sonne pas</span>' : ''}<span class="spacer"></span>${moves('u', i, users.length)}</li>`).join('') || '<li class="muted">Aucun utilisateur</li>';
   const extRows = () => exts.map((m, i) => `<li><span class="cf-ge-n">${users.length + i + 1}</span><span>${esc(m.exten)} <span class="small muted">composé depuis ${esc(ctxName(m.context))}</span></span><span class="spacer"></span>${moves('e', i, exts.length)}</li>`).join('');
+  // Liste d'ajout : seulement les utilisateurs pas encore membres.
+  const addOpts = () => `<option value="">Choisir un utilisateur à ajouter…</option>${cand.filter((u) => !users.some((m) => m.uuid === u.uuid)).map((u) => `<option value="${esc(u.uuid)}">${esc(fullName(u))}</option>`).join('')}`;
   const live = (M.live?.get(g.name) || []).filter((x) => x.dynamic);
   const sched = (g.schedules || [])[0]?.id;
   const fb = g.fallbacks || {};
@@ -115,12 +117,14 @@ export function openGroupEditor(g, onSave) {
     ${sec('mem', 'Membres', `
       <div class="cf-ge-l">Utilisateurs</div>
       <ul class="cf-ge-list" id="ge-users">${userRows()}</ul>
-      <div class="cf-ge-row"><select id="ge-uadd"><option value="">Choisir un utilisateur à ajouter…</option>${cand.map((u) => `<option value="${esc(u.uuid)}">${esc(fullName(u))}</option>`).join('')}</select><button data-add="u">Ajouter</button></div>
+      <div class="cf-ge-row"><select id="ge-uadd">${addOpts()}</select><button data-add="u">Ajouter</button></div>
       ${live.length ? `<p class="small muted">Inscrits par touche en ce moment (gérés par leur touche, pas ici) : ${esc(live.map((x) => x.name).join(', '))}</p>` : ''}
-      <div class="cf-ge-l cf-ge-gap">Numéros à faire sonner aussi</div>
-      <p class="small muted cf-ge-note">Pour un numéro qui n'est pas un utilisateur Wazo du groupe : un portable, un poste d'un autre site… Le numéro est composé comme si on l'appelait depuis le contexte choisi (il doit donc permettre de sortir vers l'extérieur pour un numéro externe).</p>
+      <label class="cf-ge-b cf-ge-gap"><input type="checkbox" id="ge-exton"${exts.length ? ' checked' : ''}><span><strong>Faire sonner aussi des numéros</strong><span class="small muted">Portable, poste d'un autre site… Option peu utilisée.</span></span></label>
+      <div id="ge-extbox" class="cf-ge-sub"${exts.length ? '' : ' hidden'}>
+      <p class="small muted">Pour un numéro qui n'est pas un utilisateur Wazo du groupe : un portable, un poste d'un autre site… Le numéro est composé comme si on l'appelait depuis le contexte choisi (il doit donc permettre de sortir vers l'extérieur pour un numéro externe).</p>
       <ul class="cf-ge-list" id="ge-exts"${exts.length ? '' : ' hidden'}>${extRows()}</ul>
-      <div class="cf-ge-row"><input id="ge-eadd" placeholder="ex. 0612345678"><select id="ge-ectx" title="Contexte depuis lequel le numéro est composé">${ctxOpts(ctxAll, ctxInt[0]?.name)}</select><button data-add="e">Ajouter</button></div>`, { open: true, help: 'La liste est remplacée en entier à l\'écriture ; l\'ordre sert de priorité (stratégie « un par un » : les utilisateurs sonnent avant les numéros). Un membre en NPD ne sonne pas et l\'appel n\'est pas renvoyé. Les renvois et le filtrage d\'un utilisateur ne s\'appliquent pas dans un groupe (supposé), sauf s\'il est ajouté comme numéro.' })}
+      <div class="cf-ge-row"><input id="ge-eadd" placeholder="ex. 0612345678"><select id="ge-ectx" title="Contexte depuis lequel le numéro est composé">${ctxOpts(ctxAll, ctxInt[0]?.name)}</select><button data-add="e">Ajouter</button></div></div>
+      <p class="warn small" id="ge-extwarn" hidden><span>Case décochée : les numéros du groupe seront retirés à l'enregistrement.</span></p>`, { open: true, help: 'La liste est remplacée en entier à l\'écriture ; l\'ordre sert de priorité (stratégie « un par un » : les utilisateurs sonnent avant les numéros). Un membre en NPD ne sonne pas et l\'appel n\'est pas renvoyé. Les renvois et le filtrage d\'un utilisateur ne s\'appliquent pas dans un groupe (supposé), sauf s\'il est ajouté comme numéro.' })}
     ${sec('fb', 'Débordements', `
       <div class="cf-ge-f"><span class="cf-ge-l">Si personne ne répond</span>${pickerHtml('ge-noans', fb.noanswer_destination)}</div>
       ${num('max_calls', 'Appels simultanés maximum', '0 = illimité. Au-delà, les appels suivants partent vers « Si trop d\'appels ».', '0')}
@@ -129,7 +133,7 @@ export function openGroupEditor(g, onSave) {
       ${field('Musique d\'attente', `<select data-f="music_on_hold">${mohOpts}</select>`, 'Ce qu\'entend l\'appelant pendant que le groupe sonne.')}
       <div class="cf-ge-2">
         ${field('Nom affiché aux membres', `<select data-f="caller_id_mode">${cidOpts}</select>`)}
-        ${field('Texte', `<input data-f="caller_id_name" value="${esc(f.caller_id_name || '')}" maxlength="80" placeholder="ex. Compta">`, 'Pour savoir que l\'appel vient du groupe.')}
+        <span id="ge-cidtxt"${f.caller_id_mode ? '' : ' hidden'}>${field('Texte', `<input data-f="caller_id_name" value="${esc(f.caller_id_name || '')}" maxlength="80" placeholder="ex. Compta">`, 'Pour savoir que l\'appel vient du groupe.')}</span>
       </div>
       ${bool('mark_answered_elsewhere')}${bool('dtmf_record_toggle')}${bool('ignore_forward')}`)}
     ${sec('sch', 'Horaire', field('Horaire du groupe', `<select id="ge-sched"><option value="">Aucun : toujours ouvert</option>${listOf('schedule').map((x) => `<option value="${esc(x.key.slice(9))}"${String(sched) === x.key.slice(9) ? ' selected' : ''}>${esc(x.title)}</option>`).join('')}</select>`, 'Un seul horaire par groupe.'))}
@@ -149,7 +153,8 @@ export function openGroupEditor(g, onSave) {
     }
     nf.music_on_hold = box.querySelector('[data-f="music_on_hold"]').value || null;
     nf.caller_id_mode = box.querySelector('[data-f="caller_id_mode"]').value || null;
-    nf.caller_id_name = box.querySelector('[data-f="caller_id_name"]').value.trim() || null;
+    nf.caller_id_name = nf.caller_id_mode ? box.querySelector('[data-f="caller_id_name"]').value.trim() || null : null;
+    if (nf.caller_id_mode && !nf.caller_id_name) { open('opt'); return err('Nom affiché aux membres : saisissez le texte, ou choisissez « Inchangé ».'); }
     nf.preprocess_subroutine = box.querySelector('[data-f="preprocess_subroutine"]').value.trim() || null;
     for (const k of Object.keys(BOOL)) nf[k] = box.querySelector(`[data-b="${k}"]`).checked;
     const ex = box.querySelector('[data-ext]').value.trim();
@@ -166,7 +171,7 @@ export function openGroupEditor(g, onSave) {
     try { noanswer = readPicker('ge-noans'); congestion = readPicker('ge-cong'); } catch (e) { open('fb'); return err(e.message); }
     const perms = [...box.querySelectorAll('[data-perm]:checked')].map((c) => Number(c.dataset.perm)).sort((a, b) => a - b);
     const s = $('ge-sched').value;
-    onSave({ cfg: { fields: nf, users, exts, extension, perms }, noanswer, congestion, schedule: s ? Number(s) : null });
+    onSave({ cfg: { fields: nf, users, exts: $('ge-exton').checked ? exts : [], extension, perms }, noanswer, congestion, schedule: s ? Number(s) : null });
     return true;
   }, 'Ajouter au brouillon');
 
@@ -181,7 +186,7 @@ export function openGroupEditor(g, onSave) {
     const S = {
       gen: [val('[data-f="label"]') || '(sans nom)', val('[data-ext]') ? `n° ${val('[data-ext]')}` : 'sans numéro', on('[data-b="enabled"]') ? '' : 'DÉSACTIVÉ'],
       ring: [STRATEGY[val('[data-f="ring_strategy"]')], Number(val('[data-f="timeout"]')) ? `${val('[data-f="timeout"]')} s au total` : 'sans limite', `${val('[data-f="user_timeout"]') || 15} s par membre`],
-      mem: [`${users.length} utilisateur${users.length > 1 ? 's' : ''}`, exts.length ? `${exts.length} numéro${exts.length > 1 ? 's' : ''}` : '', dnd ? `${dnd} en NPD` : ''],
+      mem: [`${users.length} utilisateur${users.length > 1 ? 's' : ''}`, exts.length && $('ge-exton')?.checked ? `${exts.length} numéro${exts.length > 1 ? 's' : ''}` : '', dnd ? `${dnd} en NPD` : ''],
       fb: [`sans réponse : ${pick('ge-noans')}`, Number(val('[data-f="max_calls"]')) ? `max ${val('[data-f="max_calls"]')} appels` : ''],
       opt: [box.querySelector('[data-f="music_on_hold"]')?.selectedOptions[0]?.value ? `musique ${box.querySelector('[data-f="music_on_hold"]').selectedOptions[0].text}` : 'sonnerie', val('[data-f="caller_id_mode"]') ? `nom « ${val('[data-f="caller_id_name"]')} »` : ''],
       sch: [$('ge-sched')?.value ? $('ge-sched').selectedOptions[0].text : 'aucun'],
@@ -190,9 +195,12 @@ export function openGroupEditor(g, onSave) {
     };
     for (const [k, a] of Object.entries(S)) { const el = box.querySelector(`[data-sum="${k}"]`); if (el) el.textContent = a.filter(Boolean).join(' · '); }
   };
-  const redraw = () => { $('ge-users').innerHTML = userRows(); $('ge-exts').innerHTML = extRows(); $('ge-exts').hidden = !exts.length; recap(); };
+  const redraw = () => { $('ge-users').innerHTML = userRows(); $('ge-uadd').innerHTML = addOpts(); $('ge-exts').innerHTML = extRows(); $('ge-exts').hidden = !exts.length; recap(); };
   box.addEventListener('input', recap);
-  box.addEventListener('change', (e) => { if (e.target.matches('[data-f="ring_strategy"]')) $('ge-strat-h').textContent = STRAT_HELP[e.target.value] || ''; recap(); });
+  box.addEventListener('change', (e) => {
+    if (e.target.matches('[data-f="ring_strategy"]')) $('ge-strat-h').textContent = STRAT_HELP[e.target.value] || '';
+    if (e.target.matches('[data-f="caller_id_mode"]')) $('ge-cidtxt').hidden = !e.target.value;
+    if (e.target.id === 'ge-exton') { $('ge-extbox').hidden = !e.target.checked; $('ge-extwarn').hidden = e.target.checked || !exts.length; } recap(); });
   box.onclick = (e) => {
     const b = e.target.closest('[data-up],[data-down],[data-del],[data-add]'); if (!b) return;
     const ref = b.dataset.up || b.dataset.down || b.dataset.del;

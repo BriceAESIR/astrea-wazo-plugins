@@ -2,8 +2,8 @@
 // une carte mentale), cartes HTML, liens SVG, déplacement du canevas, zoom,
 // déplacement des cartes (avec leur sous-arbre), repli des branches.
 // Positions manuelles gardées dans le navigateur (localStorage, try/catch).
-import { esc } from '../common/core.js?v=0.36.1';
-import { TYPES } from './model.js?v=0.36.1';
+import { esc } from '../common/core.js?v=0.36.2';
+import { TYPES } from './model.js?v=0.36.2';
 
 const W = 236, GAP_X = 104, GAP_Y = 18;
 const POS_KEY = 'astrea-callflow-pos-v1';
@@ -44,7 +44,7 @@ export function createCanvas(viewport, { onSelect, onOpen, onFold, onClear, onUn
       // ed : cible de dépôt (destination modifiable) ; clk : cliquable (aussi les sorties d'un horaire, pour ses plages).
       const ed = V.edit && p.w;
       const clk = V.edit && (p.w || p.periods || p.cfg);
-      const cls = [p.to ? '' : 'empty', p.assoc ? 'assoc' : '', p.inactive ? 'inactive' : '', clk ? 'editable' : '', ed && V.changed.has(p.w.key) ? 'changed' : ''].filter(Boolean).join(' ');
+      const cls = [p.to ? '' : p.info ? 'info' : 'empty', p.npd ? 'npd' : '', p.assoc ? 'assoc' : '', p.inactive ? 'inactive' : '', clk ? 'editable' : '', ed && V.changed.has(p.w.key) ? 'changed' : ''].filter(Boolean).join(' ');
       return `<li data-port="${esc(p.id)}"${ed ? ` data-w="${esc(p.w.key)}"` : ''} class="${cls}" title="${esc(clk ? `${p.help || ''} — cliquez pour modifier${ed ? ', ou déposez une carte ici' : ''}.` : p.help || '')}"><span class="cf-pl">${esc(p.label)}</span>${p.note ? `<span class="cf-pn">${esc(p.note)}</span>` : ''}${p.to || p.info ? '' : '<span class="cf-pn">non réglé</span>'}${ed && V.changed.has(p.w.key) ? '<button class="cf-x cf-undo" data-undo title="Annuler cette modification : la sortie reprend sa valeur d\'origine">↶</button>' : ''}${ed && p.to ? '<button class="cf-x" data-clear title="Vider cette sortie (aucune destination ; modification du brouillon)">×</button>' : ''}${p.self ? '<span class="cf-pn cf-self">↺ revient ici</span>' : '<i class="cf-dot"></i>'}</li>`;
     }).join('');
     return `<div class="cf-node t-${esc(n.info.type)}${n.depth === 0 ? ' root' : ''}${n.key === V.sel ? ' sel' : ''}${n.dim ? ' dim' : ''}${n.info.dnd ? ' npd' : ''}${n.info.type === 'member' ? ' mini' : ''}" data-key="${esc(n.key)}" style="width:${n.info.type === 'member' ? 170 : W}px">

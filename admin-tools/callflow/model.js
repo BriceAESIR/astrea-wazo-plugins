@@ -21,7 +21,7 @@
 // Supposé, à vérifier en réel : les listes (GET /groups, /queues,
 // /switchboards, /schedules) contiennent déjà fallbacks, membres et
 // destinations ; sinon on lit le détail de chaque objet (ensureDetails).
-import { S, api, listAll, fullName } from '../common/core.js?v=0.36.1';
+import { S, api, listAll, fullName } from '../common/core.js?v=0.36.2';
 
 export const M = { lists: {}, by: {}, ext: new Map(), extAny: new Map(), rev: null, warns: [] };
 
@@ -382,7 +382,16 @@ export function groupMemberList(o) {
   return out;
 }
 const ORDER = { random: 'un à la fois, au hasard', least_recent: 'un à la fois, le moins récemment appelé d\'abord', fewest_calls: 'un à la fois, celui qui a pris le moins d\'appels', memorized_round_robin: 'un à la fois, à tour de rôle', weight_random: 'un à la fois, au hasard pondéré' };
-// Carte « membres » + mini-cartes par membre (feuilles avec leurs propres sorties).
+const PICTO = { random: '🎲', least_recent: '⏳', fewest_calls: '📉', memorized_round_robin: '🔁', weight_random: '⚖' };
+const STRAT_HELP_SHORT = {
+  random: 'Asterisk choisit un membre au hasard, le fait sonner, puis un autre s\'il ne répond pas.',
+  least_recent: 'Asterisk fait sonner d\'abord le membre qui a raccroché depuis le plus longtemps.',
+  fewest_calls: 'Asterisk fait sonner d\'abord le membre qui a pris le moins d\'appels de ce groupe.',
+  memorized_round_robin: 'À tour de rôle : Asterisk reprend après le dernier membre qui a répondu.',
+  weight_random: 'Au hasard, pondéré par les pénalités des membres.',
+};
+// Carte « membres » : « un par un » = chaîne de mini-cartes ; « tous » =
+// éventail de mini-cartes ; autres stratégies = un bloc qui liste les membres.
 function groupFlow(o) {
   const hub = membersLeaf('group', o);
   const list = groupMemberList(o);
@@ -404,10 +413,19 @@ function groupFlow(o) {
       next = c;
     }
     hub.leaf.edges = [{ slot: 'first', label: 'Un par un, dans l\'ordre', note: `${ut ?? '?'} s chacun`, help: 'Stratégie linéaire : les membres sonnent l\'un après l\'autre, dans l\'ordre (utilisateurs puis numéros).', to: next }];
-  } else {
-    // Éventail : chaque membre a sa mini-carte ; elles convergent vers « pas de réponse ».
-    const how = o.ring_strategy === 'all' || !o.ring_strategy ? 'sonnent ensemble' : ORDER[o.ring_strategy] || o.ring_strategy;
+  } else if (o.ring_strategy === 'all' || !o.ring_strategy) {
+    // Éventail : tous sonnent ensemble, une mini-carte par membre.
+    const how = 'sonnent ensemble';
     hub.leaf.edges = list.map((m) => ({ slot: 'member', label: m.name, note: m.dnd ? 'NPD : ne sonne pas' : `${ut ?? '?'} s`, help: `Membre du groupe (${how}).`, to: card(m, { fan: true }) }));
+    hub.leaf.how = how;
+  } else {
+    // Autres stratégies (un à la fois, ordre choisi par Asterisk) : un seul
+    // bloc qui contient les membres, sans mini-cartes (demande de Brice).
+    const how = ORDER[o.ring_strategy] || o.ring_strategy;
+    hub.leaf.edges = [
+      { slot: 'pick', label: `${PICTO[o.ring_strategy] || '•'} ${how[0].toUpperCase()}${how.slice(1)}`, note: `${ut ?? '?'} s chacun, puis un autre${rd ? ` · pause ${rd} s entre deux tours` : ''}`, help: STRAT_HELP_SHORT[o.ring_strategy] || '', to: null, info: true },
+      ...list.map((m) => ({ slot: 'member', label: m.name, note: badge(m) || (m.kind === 'user' ? 'membre' : ''), help: m.dnd ? 'En NPD : ce membre ne sonne pas, l\'appel n\'est pas renvoyé.' : `Membre du groupe (${how}).`, to: null, info: true, npd: m.dnd })),
+    ];
     hub.leaf.how = how;
   }
   hub.leaf.sub = [o.ring_strategy === 'linear' ? 'un par un' : hub.leaf.how, hub.leaf.sub].filter(Boolean).join(' — ');

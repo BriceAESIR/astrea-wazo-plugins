@@ -96,6 +96,10 @@ body.in-portal.ready #workbench { height: 100vh; }
 .cf-ports li.assoc .cf-pl { color: var(--muted); font-weight: 400; font-style: italic; }
 .cf-dot { position: absolute; right: -5px; top: 50%; width: 9px; height: 9px; margin-top: -4.5px; border-radius: 50%; background: var(--c); border: 2px solid var(--panel); }
 .cf-ports li.empty .cf-dot { background: var(--panel); border: 1.5px dashed var(--cf-edge); }
+/* Ligne d'information (bloc des membres d'une stratégie « un à la fois ») : pas de sortie */
+.cf-ports li.info .cf-dot { display: none; }
+.cf-ports li.info .cf-pl { font-weight: 400; }
+.cf-ports li.npd .cf-pl { text-decoration: line-through; color: var(--muted); }
 
 /* Mini-cartes des membres d'un groupe */
 .t-member { --c: var(--cf-user); }
@@ -296,6 +300,11 @@ body.in-portal.ready #workbench { height: 100vh; }
 .cf-ge-l { font-size: .8125rem; font-weight: 600; color: var(--ink); }
 .cf-ge-gap { margin-top: 8px; }
 .cf-ge-note { margin: -8px 0 0; }
+.cf-ge-sub { display: grid; gap: 12px; margin: -4px 0 0 26px; padding-left: 12px; border-left: 2px solid var(--line); }
+.cf-ge-sub[hidden] { display: none; }
+.cf-ge-sub .cf-ge-list { margin: 0; }
+.cf-ge-sub p { margin: 0; }
+.cf-group-ed [hidden] { display: none !important; }
 .cf-ge-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .cf-ge-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
 .cf-ge-b { display: flex; gap: 10px; align-items: flex-start; margin: 0; cursor: pointer; }
