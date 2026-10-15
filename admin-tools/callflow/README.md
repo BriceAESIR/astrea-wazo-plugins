@@ -31,9 +31,11 @@ courant. Cadrage, sources et décisions : `docs/CALLFLOW-MANAGER.md` (dépôt de
   file d'attente, SVI, messagerie, standard, conférence, numéro, fichier son,
   raccrocher, horaire.
 - **Glisser une carte sur une sortie** (✎) : celle de la palette, ou une carte
-  déjà présente dans le graphe. Un dialogue demande l'objet visé et ses
-  options (durée de sonnerie, message d'accueil de la messagerie, tonalité…).
-  **×** sur une sortie la vide.
+  déjà présente dans le graphe, ou **cliquer sur la sortie**. Un même dialogue,
+  en sections dépliables, demande le type, l'objet visé et ses options (durée
+  de sonnerie propre à la sortie, message d'accueil de la messagerie,
+  tonalité…) ; sur une sortie d'horaire, il propose aussi d'en modifier les
+  heures. **×** sur une sortie la vide.
 - **Annuler une erreur** :
   - **↶** sur une sortie modifiée lui rend sa valeur d'origine ;
   - un clic sur le compteur du brouillon liste les modifications, chacune avec son ↶ ;

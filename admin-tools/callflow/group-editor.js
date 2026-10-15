@@ -17,9 +17,10 @@
 //    linéaire ; les utilisateurs sonnent avant les numéros) ;
 //  - une seule extension, contexte internal, dans les group_ranges ; un seul
 //    horaire ; plusieurs autorisations d'appels.
-import { $, esc, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.36.2';
-import { M, STRATEGY, listOf } from './model.js?v=0.36.2';
-import { pickerHtml, bindPicker, readPicker } from './sched-editor.js?v=0.36.2';
+import { $, esc, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.36.3';
+import { M, STRATEGY, listOf } from './model.js?v=0.36.3';
+import { pickerHtml, bindPicker, readPicker } from './sched-editor.js?v=0.36.3';
+import { sec, field } from './ed-ui.js?v=0.36.3';
 
 const STRATS = ['all', 'linear', 'random', 'least_recent', 'fewest_calls', 'memorized_round_robin', 'weight_random'];
 const STRAT_HELP = {
@@ -77,11 +78,6 @@ export function openGroupEditor(g, onSave) {
   const uname = (uuid) => fullName(M.userByUuid.get(uuid)) || uuid;
   const isDnd = (uuid) => !!M.userByUuid.get(uuid)?.services?.dnd?.enabled;
   const ctxName = (n) => M.by.context?.get(n)?.label || n;
-  // Section dépliable : titre, résumé (rempli par recap), aide « ? » facultative.
-  const sec = (id, title, body, { open = false, help = '' } = {}) => `<details class="cf-ge-sec" data-sec="${id}"${open ? ' open' : ''}>
-    <summary><span class="cf-ge-st">${esc(title)}</span><span class="cf-ge-sum" data-sum="${id}"></span></summary>
-    <div class="cf-ge-body">${help ? `<div class="titlerow cf-ge-hrow"><span class="small muted">Aide</span>${helpButton(`ge-h-${id}`, title)}</div>${helpBox(`ge-h-${id}`, help)}` : ''}${body}</div></details>`;
-  const field = (label, input, help) => `<label class="cf-ge-f"><span class="cf-ge-l">${esc(label)}</span>${input}${help ? `<span class="small muted">${esc(help)}</span>` : ''}</label>`;
   const num = (k, label, help, ph) => field(label, `<input type="number" min="0" step="1" data-f="${k}" value="${esc(f[k] ?? '')}" placeholder="${esc(ph || '')}">`, help);
   const bool = (k) => `<label class="cf-ge-b"><input type="checkbox" data-b="${k}"${f[k] ? ' checked' : ''}><span><strong>${esc(BOOL[k][0])}</strong><span class="small muted">${esc(BOOL[k][1])}</span></span></label>`;
   const moves = (p, i, n) => `<button class="icon" data-up="${p}${i}" title="Monter"${i ? '' : ' disabled'}>↑</button><button class="icon" data-down="${p}${i}" title="Descendre"${i < n - 1 ? '' : ' disabled'}>↓</button><button class="icon" data-del="${p}${i}" title="Retirer du groupe">×</button>`;
@@ -96,7 +92,7 @@ export function openGroupEditor(g, onSave) {
   const mohOpts = `<option value="">Aucune : l'appelant entend la sonnerie</option><option value="default"${f.music_on_hold === 'default' ? ' selected' : ''}>Par défaut</option>${(M.lists.moh || []).filter((m) => m.name !== 'default').map((m) => `<option value="${esc(m.name)}"${f.music_on_hold === m.name ? ' selected' : ''}>${esc(m.label || m.name)}</option>`).join('')}${f.music_on_hold && f.music_on_hold !== 'default' && !(M.lists.moh || []).some((m) => m.name === f.music_on_hold) ? `<option value="${esc(f.music_on_hold)}" selected>${esc(f.music_on_hold)} (actuelle)</option>` : ''}`;
   const cidOpts = [['', 'Inchangé : nom de l\'appelant seul'], ['prepend', 'Texte, puis nom de l\'appelant'], ['overwrite', 'Texte seul, à la place du nom'], ['append', 'Nom de l\'appelant, puis texte']].map(([k, l]) => `<option value="${k}"${(f.caller_id_mode || '') === k ? ' selected' : ''}>${esc(l)}</option>`).join('');
 
-  confirmModal(`<div class="cf-group-ed">
+  confirmModal(`<div class="cf-ed cf-group-ed">
     <div class="cf-ge-head"><div><h3>Groupe « ${esc(g.label || g.name)} »</h3><div class="small muted" title="Nom technique, généré par Wazo (nom de la file Asterisk)">${esc(g.name || '')}</div></div>${helpButton('ge-hb', 'Aide')}</div>${helpBox('ge-hb', 'Toutes les options de l\'API Wazo pour un groupe d\'appel, rangées par thème. Cliquez sur un titre pour déplier la section ; le résumé à droite reflète la saisie. Les modifications vont dans le brouillon ; « Appliquer… » relit le groupe et n\'écrit que ce qui change.')}
     ${sec('gen', 'Général', `
       ${field('Nom *', `<input data-f="label" value="${esc(f.label || '')}" maxlength="128">`, 'Lettres sans accent, chiffres, espace, - _ . (contrainte Wazo).')}

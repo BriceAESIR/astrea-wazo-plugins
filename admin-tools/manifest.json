@@ -1,6 +1,6 @@
 {
   "manifestVersion": "0.1",
-  "version": "0.36.2",
+  "version": "0.36.3",
   "id": "astrea-admin-tools",
   "packageName": "io.github.briceaesir.astrea.admintools",
   "productType": "portal",
@@ -24,7 +24,7 @@
       "entityId": "astrea-blf-user",
       "context": ["pbx.users"],
       "name": "Touches",
-      "contentUrl": "./blf/index.html?view=user&v=0.36.2"
+      "contentUrl": "./blf/index.html?view=user&v=0.36.3"
     },
     {
       "entityId": "astrea-blf-overview",
@@ -33,7 +33,7 @@
       "parentIcon": "./menu.svg",
       "name": "BLF Manager",
       "icon": "Dialpad",
-      "contentUrl": "./blf/index.html?view=overview&v=0.36.2"
+      "contentUrl": "./blf/index.html?view=overview&v=0.36.3"
     },
     {
       "entityId": "astrea-phones",
@@ -42,7 +42,7 @@
       "parentIcon": "./menu.svg",
       "name": "Phone Manager",
       "icon": "SettingsPhone",
-      "contentUrl": "./phones/index.html?v=0.36.2"
+      "contentUrl": "./phones/index.html?v=0.36.3"
     },
     {
       "entityId": "astrea-users",
@@ -51,7 +51,7 @@
       "parentIcon": "./menu.svg",
       "name": "User Manager",
       "icon": "Group",
-      "contentUrl": "./users/index.html?v=0.36.2"
+      "contentUrl": "./users/index.html?v=0.36.3"
     },
     {
       "entityId": "astrea-callflow",
@@ -60,7 +60,7 @@
       "parentIcon": "./menu.svg",
       "name": "Call Flow Manager",
       "icon": "AccountTree",
-      "contentUrl": "./callflow/index.html?v=0.36.2"
+      "contentUrl": "./callflow/index.html?v=0.36.3"
     }
   ]
 }

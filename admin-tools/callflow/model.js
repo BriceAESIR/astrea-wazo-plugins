@@ -21,7 +21,7 @@
 // Supposé, à vérifier en réel : les listes (GET /groups, /queues,
 // /switchboards, /schedules) contiennent déjà fallbacks, membres et
 // destinations ; sinon on lit le détail de chaque objet (ensureDetails).
-import { S, api, listAll, fullName } from '../common/core.js?v=0.36.2';
+import { S, api, listAll, fullName } from '../common/core.js?v=0.36.3';
 
 export const M = { lists: {}, by: {}, ext: new Map(), extAny: new Map(), rev: null, warns: [] };
 
@@ -823,7 +823,7 @@ export function facts(k, leafInfo) {
     const m = leafInfo.member || {};
     return [['Membre', m.name], ['Type', m.kind === 'ext' ? `numéro ${m.exten} (${ctxLabel(m.context)})` : m.kind === 'live' ? 'inscrit par la touche de bascule' : 'membre fixe'],
       ...(m.exten && m.kind === 'user' ? [['Numéro', m.exten]] : []),
-      ['Ne pas déranger', m.dnd ? 'oui : ne sonne pas, appel non renvoyé' : 'non'],
+      ['Ne pas déranger', m.dnd ? 'oui : ne sonne pas, appel non renvoyé' : 'non', 'État lu dans Wazo (confd, services.dnd) au chargement de la page : « Recharger » après un changement. NPD activé par la touche du poste Yealink : le poste prévient Wazo (action URL vers wazo-phoned, vérifié dans les plugins provd) seulement si cette URL est dans sa configuration et si le poste joint le serveur ; sinon le NPD reste local au poste, inconnu de Wazo et donc absent ici.'],
       ['Renvois de l\'utilisateur', m.kind === 'ext' ? 'appliqués (le numéro passe par le traitement de l\'utilisateur)' : 'non appliqués dans un groupe (supposé)', 'Déduit du dialplan Wazo (contexte usersharedlines), non testé en réel.']];
   }
   if (leafInfo) return [[TYPES[leafInfo.type]?.label || 'Valeur', [leafInfo.title, leafInfo.sub].filter(Boolean).join(' · ')]];
@@ -843,7 +843,7 @@ export function facts(k, leafInfo) {
       f.push(['Numéros', (o.lines || []).flatMap((l) => (l.extensions || []).map((e) => `${e.exten} (${ctxLabel(e.context)})`)).join(', ') || '—'],
         ['Durée de sonnerie', sec(o.ring_seconds)], ['Appels simultanés', o.simultaneous_calls], ['Messagerie', o.voicemail ? (M.by.voicemail?.get(String(o.voicemail.id))?.number || '') + ' ' + (o.voicemail.name || '') : 'aucune'],
         ['Renvoi immédiat', fw(f2.unconditional)], ['Renvoi si occupé', fw(f2.busy)], ['Renvoi si pas de réponse', fw(f2.noanswer)],
-        ['Ne pas déranger', o.services?.dnd?.enabled ? 'oui (les appels ne sonnent pas)' : 'non'], ['Horaire', scheds], ['Sous-routine', o.preprocess_subroutine]);
+        ['Ne pas déranger', o.services?.dnd?.enabled ? 'oui (les appels ne sonnent pas)' : 'non', 'État lu dans Wazo (confd, services.dnd) au chargement de la page : « Recharger » après un changement. NPD activé par la touche du poste Yealink : le poste prévient Wazo (action URL vers wazo-phoned, vérifié dans les plugins provd) seulement si cette URL est dans sa configuration et si le poste joint le serveur ; sinon le NPD reste local au poste, inconnu de Wazo et donc absent ici.'], ['Horaire', scheds], ['Sous-routine', o.preprocess_subroutine]);
       break;
     }
     case 'group':

@@ -3,12 +3,13 @@
 // déposer (lot 2a, brouillon puis aperçu, sauvegarde, écriture).
 // Cadrage : astrea-wazo-dev/docs/CALLFLOW-MANAGER.md.
 // Modèle (sources confd vérifiées) : model.js ; canevas : canvas.js ; écriture : write.js.
-import { S, $, esc, fullName, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.36.2';
-import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, scanGroupKeys, buildTree, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel, periodText, STRATEGY, baseKey } from './model.js?v=0.36.2';
-import { createCanvas } from './canvas.js?v=0.36.2';
-import { getDest, setDest, sameValue, prepare, execute } from './write.js?v=0.36.2';
-import { openScheduleEditor, fillSoundSelect } from './sched-editor.js?v=0.36.2';
-import { openGroupEditor, groupCfgDiff } from './group-editor.js?v=0.36.2';
+import { S, $, esc, fullName, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.36.3';
+import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, scanGroupKeys, buildTree, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel, periodText, STRATEGY, baseKey } from './model.js?v=0.36.3';
+import { createCanvas } from './canvas.js?v=0.36.3';
+import { getDest, setDest, sameValue, prepare, execute } from './write.js?v=0.36.3';
+import { openScheduleEditor } from './sched-editor.js?v=0.36.3';
+import { openGroupEditor, groupCfgDiff } from './group-editor.js?v=0.36.3';
+import { openDestEditor, ENTITY_DEST } from './dest-editor.js?v=0.36.3';
 
 const TESTED_STACK = ['26.07'];
 const NAV = [
@@ -251,8 +252,6 @@ const PALETTE = [
   ['switchboard', 'Standard'], ['conference', 'Conférence'], ['extension', 'Numéro'], ['sound', 'Fichier son'], ['hangup', 'Raccrocher'],
   ['schedule', 'Horaire'],
 ];
-const ENTITY_DEST = { user: 'user_id', group: 'group_id', queue: 'queue_id', ivr: 'ivr_id', voicemail: 'voicemail_id', conference: 'conference_id', switchboard: 'switchboard_uuid' };
-const RINGS = new Set(['user', 'group', 'queue', 'switchboard']);
 const PAL_HELP = {
   extension: 'Numéro composé dans un contexte (interne, autre site…). Si le numéro correspond à un objet Wazo, le graphe le montre à sa place.',
   sound: 'Joue un fichier son du serveur puis raccroche. Nom du fichier tel que Wazo le stocke (ex. un son importé dans « Sons »).',
@@ -371,63 +370,15 @@ function cardDrop(cardKey, t) {
   if (!ENTITY_DEST[type]) { toast('Cette carte ne peut pas être une destination.'); return; }
   openDest(t, { type, id: entity(k).id });
 }
-// Dialogue : objet visé et options de la destination.
-function openDest(t, preset) {
+// Dialogue de destination (dest-editor.js, norme d'édition) : depuis une carte
+// déposée (type, voire objet, déjà choisis) ou un clic sur la sortie.
+function openDest(t, preset = {}) {
   const r = portOf(t); if (!r) return;
-  const { n, p } = r; const type = preset.type;
-  const cur = getDest(p.w);
-  const same = cur?.type === type ? cur : null;
-  const label = PALETTE.find(([x]) => x === type)?.[1] || type;
-  let body = '';
-  if (ENTITY_DEST[type]) {
-    const items = listOf(type);
-    const sel = preset.id ?? (same ? String(same[ENTITY_DEST[type]]) : '');
-    body += `<label>Rechercher <input id="dd-q" placeholder="Nom, numéro…"></label>
-      <select id="dd-obj" size="8" class="cf-dd-list">${items.map((x) => { const id = x.key.slice(x.key.indexOf(':') + 1); return `<option value="${esc(id)}"${id === String(sel) ? ' selected' : ''}>${esc(x.title)}${x.sub ? ` — ${esc(x.sub)}` : ''}</option>`; }).join('')}</select>`;
-    if (RINGS.has(type)) body += `<label title="Durée pendant laquelle cette destination sonne quand elle est atteinte par cette sortie. Vide : durée réglée sur l'objet lui-même (supposé : ring_time de la destination prime sur celle de l'objet).">Durée de sonnerie (s) <input id="dd-ring" type="number" min="0" placeholder="par défaut" value="${esc(same?.ring_time ?? '')}"></label>`;
-    if (type === 'voicemail') body += `<label>Message d'accueil <select id="dd-greet"><option value="">Par défaut</option><option value="unavailable"${same?.greeting === 'unavailable' ? ' selected' : ''}>Indisponible</option><option value="busy"${same?.greeting === 'busy' ? ' selected' : ''}>Occupé</option></select></label>
-      <label class="inline"><input type="checkbox" id="dd-skip"${same?.skip_instructions ? ' checked' : ''}> Ne pas lire les instructions (bip direct)</label>`;
-  } else if (type === 'extension') {
-    const ctx = (M.lists.context || []).filter((c) => c.type !== 'incall');
-    body += `<label>Numéro <input id="dd-exten" value="${esc(same?.exten || '')}" placeholder="ex. 1001"></label>
-      <label>Contexte <select id="dd-ctx">${ctx.map((c) => `<option value="${esc(c.name)}"${same?.context === c.name ? ' selected' : ''}>${esc(c.label || c.name)} (${esc(c.type)})</option>`).join('')}</select></label>`;
-  } else if (type === 'sound') {
-    body += `<label>Fichier son <select id="dd-file"><option value="">Chargement des sons…</option></select></label>
-      <label class="inline"><input type="checkbox" id="dd-skip"${same?.skip ? ' checked' : ''}> L'appelant peut l'interrompre</label>
-      <label class="inline"><input type="checkbox" id="dd-noans"${same?.no_answer ? ' checked' : ''}> Sans décrocher (pré-décroché)</label>`;
-  } else if (type === 'hangup') {
-    body += `<label>Tonalité <select id="dd-cause"><option value="normal">Normale</option><option value="busy"${same?.cause === 'busy' ? ' selected' : ''}>Occupé</option><option value="congestion"${same?.cause === 'congestion' ? ' selected' : ''}>Encombré</option></select></label>`;
-  }
-  const help = `${p.help || ''} Actuellement : ${destLabel(cur)}. La modification va dans le brouillon ; rien n'est écrit avant « Appliquer… ».`;
-  confirmModal(`<div class="titlerow"><h3>${esc(p.label)} → ${esc(label)}</h3>${helpButton('dd-hb', 'Aide')}</div>${helpBox('dd-hb', help)}
-    <p class="muted small">${esc(ownerTitle(n))} · actuellement : ${esc(destLabel(cur))}</p>${body}<p id="dd-err" class="error small"></p>`, () => {
-    const err = (m) => { $('dd-err').textContent = m; return false; };
-    let d;
-    if (ENTITY_DEST[type]) {
-      const v = $('dd-obj').value; if (!v) return err('Choisissez un objet dans la liste.');
-      d = { type, [ENTITY_DEST[type]]: type === 'switchboard' ? v : Number(v) };
-      const ring = $('dd-ring')?.value; if (ring) d.ring_time = Number(ring);
-      if (type === 'voicemail') { if ($('dd-greet').value) d.greeting = $('dd-greet').value; if ($('dd-skip').checked) d.skip_instructions = true; }
-    } else if (type === 'extension') {
-      const x = $('dd-exten').value.trim(); if (!/^[0-9*#]{1,255}$/.test(x)) return err('Numéro : chiffres, * et # seulement.');
-      d = { type, exten: x, context: $('dd-ctx').value };
-    } else if (type === 'sound') {
-      const f = $('dd-file').value.trim(); if (!f) return err('Choisissez un fichier son.');
-      d = { type, filename: f, skip: $('dd-skip').checked, no_answer: $('dd-noans').checked };
-    } else if (type === 'hangup') d = { type, cause: $('dd-cause').value };
-    addDraft(p.w, d, { where: whereOf(n, p), slot: p.label });
-    return true;
-  }, 'Ajouter au brouillon');
-  if (type === 'sound') fillSoundSelect($('dd-file'), same?.filename);
-  // Filtre de la liste (le dialogue est déjà dans le DOM).
-  const q = $('dd-q'), list = $('dd-obj');
-  if (q && list) {
-    const all = [...list.options].map((o) => [o, o.textContent.toLowerCase()]);
-    q.oninput = () => { const s = q.value.trim().toLowerCase(); for (const [o, txt] of all) o.hidden = !!s && !txt.includes(s); };
-    list.ondblclick = () => $('modal-ok').click();
-    (list.selectedOptions[0] || list).scrollIntoView?.({ block: 'nearest' });
-    q.focus();
-  }
+  const { n, p } = r;
+  const sched = p.periods ? M.by.schedule?.get(String(p.periods)) : null;
+  openDestEditor({ title: p.label, owner: whereOf(n, p), cur: getDest(p.w), type: preset.type, id: preset.id, help: p.help,
+    periods: sched ? { name: sched.name, shared: schedUsage(sched), open: () => openPeriods(sched.id) } : null },
+  (d) => addDraft(p.w, d, { where: whereOf(n, p), slot: p.label }));
 }
 // Libellé d'une valeur du brouillon (destination, horaire associé, plages).
 function valLabel(w, v) {
@@ -464,18 +415,11 @@ const groupOfNode = (n) => { if (!n) return null; if (n.key.startsWith('group:')
 function portClick(nodeKey, portId) {
   const n = C.tree?.nodes.get(nodeKey); const p = n?.ports?.find((x) => x.id === portId); if (!p) return;
   if (p.cfg) { openGroupFor(p.cfg); return; }
-  const types = PALETTE.filter(([t]) => t !== 'schedule');
+  if (p.w) { openDest({ nodeKey, portId }); return; }
+  // Sortie d'horaire sans destination modifiable (« Ouvert ») : seulement les heures.
   const sched = p.periods ? M.by.schedule?.get(String(p.periods)) : null;
-  confirmModal(`<h3>${esc(p.label)} — ${esc(p.w ? whereOf(n, p) : ownerTitle(n))}</h3>
-    ${p.w ? `<p class="small muted">Actuellement : ${esc(destLabel(getDest(p.w)))}. Nouvelle destination :</p><div class="cf-palette cf-choose">${types.map(([t, l]) => `<button class="cf-chip t-${t}" data-choose="${t}"><span class="cf-badge">${esc(TYPES[t]?.badge || '?')}</span>${esc(l)}</button>`).join('')}</div>` : ''}
-    ${sched ? `<p class="small muted">${p.w ? 'Ou bien les heures' : 'Heures'} de l'horaire « ${esc(sched.name)} » : heures d'ouverture, destination si fermé, fermetures exceptionnelles${schedUsage(sched) > 1 ? ` — horaire partagé par ${schedUsage(sched)} objets, tous concernés` : ''}.</p><div class="btnrow"><button id="ch-periods" class="primary">Modifier les heures de « ${esc(sched.name)} »…</button></div>` : ''}`, () => true, 'Fermer');
-  $('modal-body').onclick = (ev) => {
-    const b = ev.target.closest('[data-choose]');
-    if (b) { openDest({ nodeKey, portId }, { type: b.dataset.choose }); return; }
-    if (ev.target.closest('#ch-periods')) openPeriods(sched.id);
-  };
-}
-// Éditeur d'horaire (sched-editor.js) : grille de la semaine à peindre, « si
+  if (sched) openDestEditor({ title: p.label, owner: ownerTitle(n), canDest: false, periods: { name: sched.name, shared: schedUsage(sched), open: () => openPeriods(sched.id) } }, () => {});
+}// Éditeur d'horaire (sched-editor.js) : grille de la semaine à peindre, « si
 // fermé », calendrier annuel des fermetures exceptionnelles + fériés fixes.
 function openPeriods(schedId) {
   const s = M.by.schedule?.get(String(schedId)); if (!s) return;
