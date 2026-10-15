@@ -21,7 +21,7 @@
 // Supposé, à vérifier en réel : les listes (GET /groups, /queues,
 // /switchboards, /schedules) contiennent déjà fallbacks, membres et
 // destinations ; sinon on lit le détail de chaque objet (ensureDetails).
-import { S, api, listAll, fullName } from '../common/core.js?v=0.36.0';
+import { S, api, listAll, fullName } from '../common/core.js?v=0.36.1';
 
 export const M = { lists: {}, by: {}, ext: new Map(), extAny: new Map(), rev: null, warns: [] };
 
@@ -169,7 +169,10 @@ function indexExtensions() {
 const IDKEY = { switchboard: 'uuid', context: 'name', application: 'uuid' };
 export const key = (type, o) => `${type}:${o[IDKEY[type] || 'id']}`;
 // Carte horaire « condition » : clé schedule:<id>@<clé de l'objet gardé>.
+// Carte répétée (même objet atteint par une autre route) : clé « <clé>~N ».
+export const baseKey = (k) => (k || '').replace(/~\d+$/, '');
 export function entity(k) {
+  k = baseKey(k);
   const i = k.indexOf(':'); const t = k.slice(0, i); let id = k.slice(i + 1), owner = null;
   if (t === 'schedule' && id.includes('@')) { owner = id.slice(id.indexOf('@') + 1); id = id.slice(0, id.indexOf('@')); }
   return { type: t, id, owner, obj: M.by[t]?.get(id) || null };
@@ -281,6 +284,7 @@ const fbOut = (k, id, o, slot, extra) => W(out(slot, fb(o, slot), extra), k, id,
 // when (simulation horaire) : sorties d'une carte horaire seulement —
 // 'open' (ouvert), 'closed' (fermé, hors exception), 'exc:i' (exception i).
 export function edgesOf(k) {
+  k = baseKey(k);
   const { type, obj: o, owner } = entity(k);
   if (!o) return [];
   switch (type) {
@@ -570,10 +574,12 @@ export function reverseIndex() {
 }
 
 // ---------------------------------------------------------------------------
-// Arbre affiché : chaque carte une seule fois (première rencontre, en largeur) ;
-// les autres liens vers elle sont des liens croisés.
+// Arbre affiché, en largeur. Un objet atteint par une autre route est répété
+// (clé « ~N ») ; seul un retour vers un objet déjà sur le chemin (boucle) est
+// un lien croisé en pointillé.
 // dir 'out' : où vont les appels ; 'in' : qui arrive ici.
 // ---------------------------------------------------------------------------
+const MAX_NODES = 400; // garde-fou : au-delà, les répétitions deviennent des liens
 export function buildTree(rootKey, dir, { maxDepth = 8, collapsed = new Set(), expanded = new Set(), showEmpty = false } = {}) {
   // Objet gardé par un horaire : en sens « où vont les appels », le parcours
   // commence par la carte horaire (une SDA garde sa carte, l'horaire suit).
@@ -611,23 +617,27 @@ export function buildTree(rootKey, dir, { maxDepth = 8, collapsed = new Set(), e
       // Feuille : clé stable (parent + sortie), pour garder sa position.
       const k = e.to.leaf ? `leaf:${n.key}/${e.id}` : e.to.key;
       // Retour sur la carte elle-même (SVI « touche 9 : réécouter ») : pas de lien, une mention.
-      if (k === n.key) { e.self = true; continue; }
-      if (nodes.has(k)) { cross.push({ from: n.key, port: e.id, to: k, edge: e }); continue; }
-      const child = { key: k, depth: n.depth + 1, kids: [], parent: n.key, port: e.id, edge: e, leaf: e.to.leaf || null };
+      if (baseKey(k) === baseKey(n.key)) { e.self = true; continue; }
+      // Objet déjà affiché : vraie boucle (il est sur le chemin qui mène ici)
+      // → lien en pointillé vers lui ; sinon c'est une autre route → carte
+      // répétée (demande de Brice : chaque fin possible visible, quitte à se
+      // répéter). Au-delà de MAX_NODES cartes, lien en pointillé.
+      let key = k;
+      if (nodes.has(k)) {
+        let a = n; while (a && baseKey(a.key) !== k) a = a.parent ? nodes.get(a.parent) : null;
+        if (a || nodes.size >= MAX_NODES) { cross.push({ from: n.key, port: e.id, to: a ? a.key : k, edge: e, loop: !!a }); continue; }
+        let i = 1; while (nodes.has(`${k}~${i}`)) i++;
+        key = `${k}~${i}`;
+      }
+      const child = { key, copy: key !== k, depth: n.depth + 1, kids: [], parent: n.key, port: e.id, edge: e, leaf: e.to.leaf || null };
       child.info = e.to.leaf ? { ...e.to.leaf, leafType: true } : nodeInfo(k);
-      nodes.set(k, child);
+      nodes.set(key, child);
       n.kids.push(child);
       queue.push(child);
     }
   }
-  // Membres d'un groupe : les mini-cartes (éventail) ou le dernier de la
-  // chaîne (un par un) rejoignent la sortie « pas de réponse » du groupe.
-  for (const n of nodes.values()) {
-    const lf = n.leaf; if (lf?.type !== 'member' || !(lf.fan || lf.last)) continue;
-    const g = nodes.get(lf.group); const p = g?.ports?.find((x) => x.slot === 'noanswer'); if (!p) continue;
-    const t = g.kids.find((c) => c.port === p.id)?.key || cross.find((c) => c.from === g.key && c.port === p.id)?.to;
-    if (t) n.flowTo = t;
-  }
+  // (0.36.1) Plus de liens « membres → pas de réponse » : la durée du groupe
+  // est globale, ce n'est pas un membre qui déborde (retour de Brice).
   // Lien visible horaire → objet gardé (demande de Brice) : la carte horaire
   // dit de quel objet elle est la condition, l'objet affiche son horaire, et
   // la sortie « Ouvert » est marquée « guard » (lien épais).
@@ -638,9 +648,11 @@ export function buildTree(rootKey, dir, { maxDepth = 8, collapsed = new Set(), e
     n.guardOf = owner.startsWith('incall:') ? `la SDA ${oi.title}` : `${TYPES[oi.type]?.label || ''} ${oi.title}`.trim();
     // L'attache relie l'horaire à SON objet : SDA → horaire (la SDA est avant),
     // horaire → objet (Ouvert) pour un utilisateur, un groupe ou une file.
-    if (owner.startsWith('incall:')) { for (const p of nodes.get(owner)?.ports || []) if (p.to?.key === n.key) p.guard = true; }
+    if (owner.startsWith('incall:')) { for (const p of nodes.get(owner)?.ports || []) if (p.to?.key === baseKey(n.key)) p.guard = true; }
     else for (const p of n.ports || []) if (p.slot === 'open') p.guard = true;
-    const target = nodes.get(owner);
+    // Objet gardé : la carte au bout de « Ouvert » (peut être une carte répétée).
+    const op = (n.ports || []).find((p) => p.slot === 'open');
+    const target = (op && n.kids.find((c) => c.port === op.id)) || nodes.get(owner);
     if (target) target.guardedBy = obj?.name || 'Horaire';
   }
   return { root, nodes, cross };
@@ -797,6 +809,7 @@ export function facts(k, leafInfo) {
       ['Renvois de l\'utilisateur', m.kind === 'ext' ? 'appliqués (le numéro passe par le traitement de l\'utilisateur)' : 'non appliqués dans un groupe (supposé)', 'Déduit du dialplan Wazo (contexte usersharedlines), non testé en réel.']];
   }
   if (leafInfo) return [[TYPES[leafInfo.type]?.label || 'Valeur', [leafInfo.title, leafInfo.sub].filter(Boolean).join(' · ')]];
+  k = baseKey(k);
   const { type, obj: o } = entity(k);
   if (!o) return [];
   const f = [];

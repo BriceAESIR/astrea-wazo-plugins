@@ -17,9 +17,9 @@
 //    linéaire ; les utilisateurs sonnent avant les numéros) ;
 //  - une seule extension, contexte internal, dans les group_ranges ; un seul
 //    horaire ; plusieurs autorisations d'appels.
-import { $, esc, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.36.0';
-import { M, STRATEGY, listOf } from './model.js?v=0.36.0';
-import { pickerHtml, bindPicker, readPicker } from './sched-editor.js?v=0.36.0';
+import { $, esc, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.36.1';
+import { M, STRATEGY, listOf } from './model.js?v=0.36.1';
+import { pickerHtml, bindPicker, readPicker } from './sched-editor.js?v=0.36.1';
 
 const STRATS = ['all', 'linear', 'random', 'least_recent', 'fewest_calls', 'memorized_round_robin', 'weight_random'];
 const STRAT_HELP = {
@@ -64,6 +64,9 @@ export function applyGroupCfg(g, v) {
 }
 
 // value pour onSave : { cfg, noanswer, congestion, schedule } (fallbacks et horaire passent par leurs propres entrées de brouillon).
+// Présentation (retour de Brice 15/10/2026 : « trop condensé ») : sections
+// dépliables, une colonne aérée, un résumé de chaque section dans son titre,
+// mis à jour pendant la saisie ; nom technique en petit dans l'en-tête.
 export function openGroupEditor(g, onSave) {
   const v = groupCfgOf(g);
   const f = v.fields;
@@ -72,65 +75,77 @@ export function openGroupEditor(g, onSave) {
   const ctxAll = (M.lists.context || []).filter((c) => c.type !== 'incall');
   const cand = (M.lists.user || []).filter((u) => (u.lines || []).length).sort((a, b) => fullName(a).localeCompare(fullName(b), 'fr'));
   const uname = (uuid) => fullName(M.userByUuid.get(uuid)) || uuid;
-  const sec = (id, title, help) => `<div class="titlerow cf-ge-t"><h4 class="cf-per-t">${esc(title)}</h4>${help ? helpButton(id, title) : ''}</div>${help ? helpBox(id, help) : ''}`;
-  const num = (k, label, help, ph) => `<label title="${esc(help)}">${esc(label)}<input type="number" min="0" step="1" data-f="${k}" value="${esc(f[k] ?? '')}" placeholder="${esc(ph || '')}"><span class="small muted">${esc(help)}</span></label>`;
-  const userRows = () => users.map((m, i) => `<li data-u="${i}"><span class="cf-ge-n">${i + 1}</span>${esc(uname(m.uuid))}${M.userByUuid.get(m.uuid)?.services?.dnd?.enabled ? ' <span class="cf-ge-dnd">NPD : ne sonne pas</span>' : ''}<span class="spacer"></span><button class="icon" data-up="u${i}" title="Monter"${i ? '' : ' disabled'}>↑</button><button class="icon" data-down="u${i}" title="Descendre"${i < users.length - 1 ? '' : ' disabled'}>↓</button><button class="icon" data-del="u${i}" title="Retirer">×</button></li>`).join('') || '<li class="muted">Aucun utilisateur</li>';
-  const extRows = () => exts.map((m, i) => `<li data-e="${i}"><span class="cf-ge-n">${users.length + i + 1}</span>Numéro ${esc(m.exten)} <span class="small muted">(${esc(M.by.context?.get(m.context)?.label || m.context)})</span><span class="spacer"></span><button class="icon" data-up="e${i}" title="Monter"${i ? '' : ' disabled'}>↑</button><button class="icon" data-down="e${i}" title="Descendre"${i < exts.length - 1 ? '' : ' disabled'}>↓</button><button class="icon" data-del="e${i}" title="Retirer">×</button></li>`).join('') || '<li class="muted">Aucun numéro</li>';
+  const isDnd = (uuid) => !!M.userByUuid.get(uuid)?.services?.dnd?.enabled;
+  const ctxName = (n) => M.by.context?.get(n)?.label || n;
+  // Section dépliable : titre, résumé (rempli par recap), aide « ? » facultative.
+  const sec = (id, title, body, { open = false, help = '' } = {}) => `<details class="cf-ge-sec" data-sec="${id}"${open ? ' open' : ''}>
+    <summary><span class="cf-ge-st">${esc(title)}</span><span class="cf-ge-sum" data-sum="${id}"></span></summary>
+    <div class="cf-ge-body">${help ? `<div class="titlerow cf-ge-hrow"><span class="small muted">Aide</span>${helpButton(`ge-h-${id}`, title)}</div>${helpBox(`ge-h-${id}`, help)}` : ''}${body}</div></details>`;
+  const field = (label, input, help) => `<label class="cf-ge-f"><span class="cf-ge-l">${esc(label)}</span>${input}${help ? `<span class="small muted">${esc(help)}</span>` : ''}</label>`;
+  const num = (k, label, help, ph) => field(label, `<input type="number" min="0" step="1" data-f="${k}" value="${esc(f[k] ?? '')}" placeholder="${esc(ph || '')}">`, help);
+  const bool = (k) => `<label class="cf-ge-b"><input type="checkbox" data-b="${k}"${f[k] ? ' checked' : ''}><span><strong>${esc(BOOL[k][0])}</strong><span class="small muted">${esc(BOOL[k][1])}</span></span></label>`;
+  const moves = (p, i, n) => `<button class="icon" data-up="${p}${i}" title="Monter"${i ? '' : ' disabled'}>↑</button><button class="icon" data-down="${p}${i}" title="Descendre"${i < n - 1 ? '' : ' disabled'}>↓</button><button class="icon" data-del="${p}${i}" title="Retirer du groupe">×</button>`;
+  const userRows = () => users.map((m, i) => `<li><span class="cf-ge-n">${i + 1}</span><span>${esc(uname(m.uuid))}</span>${isDnd(m.uuid) ? '<span class="cf-ge-dnd">NPD : ne sonne pas</span>' : ''}<span class="spacer"></span>${moves('u', i, users.length)}</li>`).join('') || '<li class="muted">Aucun utilisateur</li>';
+  const extRows = () => exts.map((m, i) => `<li><span class="cf-ge-n">${users.length + i + 1}</span><span>${esc(m.exten)} <span class="small muted">composé depuis ${esc(ctxName(m.context))}</span></span><span class="spacer"></span>${moves('e', i, exts.length)}</li>`).join('');
   const live = (M.live?.get(g.name) || []).filter((x) => x.dynamic);
   const sched = (g.schedules || [])[0]?.id;
   const fb = g.fallbacks || {};
+  const ctxOpts = (list, cur) => list.map((c) => `<option value="${esc(c.name)}"${cur === c.name ? ' selected' : ''}>${esc(c.label || c.name)}</option>`).join('');
+  const mohOpts = `<option value="">Aucune : l'appelant entend la sonnerie</option><option value="default"${f.music_on_hold === 'default' ? ' selected' : ''}>Par défaut</option>${(M.lists.moh || []).filter((m) => m.name !== 'default').map((m) => `<option value="${esc(m.name)}"${f.music_on_hold === m.name ? ' selected' : ''}>${esc(m.label || m.name)}</option>`).join('')}${f.music_on_hold && f.music_on_hold !== 'default' && !(M.lists.moh || []).some((m) => m.name === f.music_on_hold) ? `<option value="${esc(f.music_on_hold)}" selected>${esc(f.music_on_hold)} (actuelle)</option>` : ''}`;
+  const cidOpts = [['', 'Inchangé : nom de l\'appelant seul'], ['prepend', 'Texte, puis nom de l\'appelant'], ['overwrite', 'Texte seul, à la place du nom'], ['append', 'Nom de l\'appelant, puis texte']].map(([k, l]) => `<option value="${k}"${(f.caller_id_mode || '') === k ? ' selected' : ''}>${esc(l)}</option>`).join('');
 
   confirmModal(`<div class="cf-group-ed">
-    <div class="titlerow"><h3>Groupe « ${esc(g.label || g.name)} »</h3>${helpButton('ge-hb', 'Aide')}</div>${helpBox('ge-hb', 'Toutes les options de l\'API Wazo pour un groupe d\'appel. Les modifications vont dans le brouillon ; « Appliquer… » relit le groupe et n\'écrit que ce qui change (un PUT par partie : réglages, membres, numéro, autorisations).')}
-    ${sec('ge-g', 'Général')}
-    <div class="cf-ge-grid">
-      <label>Nom (label) *<input data-f="label" value="${esc(f.label || '')}" maxlength="128"><span class="small muted">Lettres sans accent, chiffres, espace, - _ . (contrainte Wazo).</span></label>
-      <label>Nom technique<input value="${esc(g.name || '')}" disabled><span class="small muted">Généré par Wazo (nom de la file Asterisk).</span></label>
-      <label>Numéro interne<span class="cf-ge-row"><input data-ext value="${esc(v.extension?.exten || '')}" placeholder="aucun"><select data-extctx>${ctxInt.map((c) => `<option value="${esc(c.name)}"${(v.extension?.context || ctxInt[0]?.name) === c.name ? ' selected' : ''}>${esc(c.label || c.name)}</option>`).join('')}</select></span><span class="small muted">Une seule extension, dans un contexte interne et dans sa plage « groupes ».</span></label>
-    </div>
-    ${sec('ge-p', 'Personnalisation')}
-    <div class="cf-ge-grid">
-      <label>Stratégie de sonnerie *<select data-f="ring_strategy">${STRATS.map((s) => `<option value="${s}"${f.ring_strategy === s ? ' selected' : ''}>${esc(STRATEGY[s] || s)}</option>`).join('')}</select><span class="small muted" id="ge-strat-h">${esc(STRAT_HELP[f.ring_strategy] || '')}</span></label>
-      <label>Musique d'attente<select data-f="music_on_hold"><option value="">— Aucune (tonalité de sonnerie) —</option><option value="default"${f.music_on_hold === 'default' ? ' selected' : ''}>Par défaut</option>${(M.lists.moh || []).filter((m) => m.name !== 'default').map((m) => `<option value="${esc(m.name)}"${f.music_on_hold === m.name ? ' selected' : ''}>${esc(m.label || m.name)}</option>`).join('')}${f.music_on_hold && f.music_on_hold !== 'default' && !(M.lists.moh || []).some((m) => m.name === f.music_on_hold) ? `<option value="${esc(f.music_on_hold)}" selected>${esc(f.music_on_hold)} (actuelle)</option>` : ''}</select><span class="small muted">Ce qu'entend l'appelant pendant que le groupe sonne.</span></label>
-      <label>Identification de l'appelant<select data-f="caller_id_mode"><option value="">— Inchangée —</option><option value="prepend"${f.caller_id_mode === 'prepend' ? ' selected' : ''}>Ajouter avant (« texte - appelant »)</option><option value="overwrite"${f.caller_id_mode === 'overwrite' ? ' selected' : ''}>Remplacer par le texte</option><option value="append"${f.caller_id_mode === 'append' ? ' selected' : ''}>Ajouter après (« appelant - texte »)</option></select><span class="small muted">Nom affiché sur les postes des membres.</span></label>
-      <label>Texte d'identification<input data-f="caller_id_name" value="${esc(f.caller_id_name || '')}" maxlength="80" placeholder="ex. Compta"></label>
-      <label>Sous-routine<input data-f="preprocess_subroutine" value="${esc(f.preprocess_subroutine || '')}" maxlength="79" placeholder="aucune"><span class="small muted">Sous-routine du plan de numérotation Asterisk exécutée avant le groupe.</span></label>
-    </div>
-    <div class="cf-ge-bools">${Object.entries(BOOL).map(([k, [l, h]]) => `<label class="inline" title="${esc(h)}"><input type="checkbox" data-b="${k}"${f[k] ? ' checked' : ''}> ${esc(l)} <span class="small muted">— ${esc(h)}</span></label>`).join('')}</div>
-    ${sec('ge-d', 'Délais', 'Vérifié dans le code Wazo : « sonnerie par membre » = timeout de chaque membre dans la file Asterisk ; « pause » = retry ; « durée totale » = délai de Queue() (ou du Dial en linéaire) avant le débordement « pas de réponse ». Durée totale vide ou 0 : le groupe sonne indéfiniment.')}
-    <div class="cf-ge-grid">
-      ${num('timeout', 'Durée totale avant débordement (s)', 'Vide ou 0 : sonne indéfiniment.', 'illimitée')}
-      ${num('user_timeout', 'Sonnerie par membre (s)', 'Durée de sonnerie de chaque membre.', '15')}
-      ${num('retry_delay', 'Pause avant de recommencer (s)', 'Attente entre deux tours.', '5')}
-    </div>
-    ${sec('ge-m', 'Membres', 'La liste est remplacée en entier à l\'écriture ; l\'ordre sert de priorité (stratégie un par un : les utilisateurs sonnent avant les numéros). Un membre en NPD ne sonne pas et l\'appel n\'est pas renvoyé. Les renvois et le filtrage d\'un utilisateur ne s\'appliquent pas dans un groupe (supposé), sauf s\'il est ajouté comme numéro. Les inscrits par touche de bascule ne se gèrent pas ici : ils n\'existent que dans Asterisk.')}
-    <div class="cf-ge-cols">
-      <div><div class="small muted">Utilisateurs</div><ul class="cf-ge-list" id="ge-users">${userRows()}</ul>
-        <span class="cf-ge-row"><select id="ge-uadd"><option value="">— Ajouter un utilisateur —</option>${cand.map((u) => `<option value="${esc(u.uuid)}">${esc(fullName(u))}</option>`).join('')}</select><button data-add="u">Ajouter</button></span></div>
-      <div><div class="small muted">Numéros (internes ou externes)</div><ul class="cf-ge-list" id="ge-exts">${extRows()}</ul>
-        <span class="cf-ge-row"><input id="ge-eadd" placeholder="numéro"><select id="ge-ectx">${ctxAll.map((c) => `<option value="${esc(c.name)}">${esc(c.label || c.name)}</option>`).join('')}</select><button data-add="e">Ajouter</button></span></div>
-    </div>
-    ${live.length ? `<p class="small muted">Inscrits par touche en ce moment (non modifiables ici) : ${esc(live.map((x) => x.name).join(', '))}</p>` : ''}
-    ${sec('ge-f', 'Débordements')}
-    <div class="cf-ge-fb">
-      <div>Pas de réponse → ${pickerHtml('ge-noans', fb.noanswer_destination)}</div>
-      <label class="cf-ge-inl">Appels maximum<input type="number" min="0" step="1" data-f="max_calls" value="${esc(f.max_calls ?? 0)}"><span class="small muted">0 = illimité ; au-delà, débordement « encombré ».</span></label>
-      <div>Encombré (trop d'appels) → ${pickerHtml('ge-cong', fb.congestion_destination)}</div>
-    </div>
-    ${sec('ge-s', 'Plage horaire')}
-    <label>Horaire<select id="ge-sched"><option value="">— Aucun horaire —</option>${listOf('schedule').map((x) => `<option value="${esc(x.key.slice(9))}"${String(sched) === x.key.slice(9) ? ' selected' : ''}>${esc(x.title)}</option>`).join('')}</select><span class="small muted">Un seul horaire par groupe.</span></label>
-    ${sec('ge-a', 'Autorisations d\'appels')}
-    <div class="cf-ge-perms">${(M.lists.callpermission || []).map((p) => `<label class="inline"><input type="checkbox" data-perm="${p.id}"${v.perms.includes(p.id) ? ' checked' : ''}> ${esc(p.name)}${p.mode ? ` <span class="small muted">(${esc(p.mode === 'deny' ? 'refus' : 'autorisation')})</span>` : ''}</label>`).join('') || '<span class="small muted">Aucune autorisation d\'appel définie (ou liste non lisible).</span>'}</div>
+    <div class="cf-ge-head"><div><h3>Groupe « ${esc(g.label || g.name)} »</h3><div class="small muted" title="Nom technique, généré par Wazo (nom de la file Asterisk)">${esc(g.name || '')}</div></div>${helpButton('ge-hb', 'Aide')}</div>${helpBox('ge-hb', 'Toutes les options de l\'API Wazo pour un groupe d\'appel, rangées par thème. Cliquez sur un titre pour déplier la section ; le résumé à droite reflète la saisie. Les modifications vont dans le brouillon ; « Appliquer… » relit le groupe et n\'écrit que ce qui change.')}
+    ${sec('gen', 'Général', `
+      ${field('Nom *', `<input data-f="label" value="${esc(f.label || '')}" maxlength="128">`, 'Lettres sans accent, chiffres, espace, - _ . (contrainte Wazo).')}
+      <div class="cf-ge-2">
+        ${field('Numéro interne', `<input data-ext value="${esc(v.extension?.exten || '')}" placeholder="aucun">`, 'Le numéro à composer pour joindre le groupe. Vide : pas de numéro.')}
+        ${field('Contexte du numéro', `<select data-extctx>${ctxOpts(ctxInt, v.extension?.context || ctxInt[0]?.name)}</select>`, 'Contexte interne ; le numéro doit être dans sa plage « groupes ».')}
+      </div>
+      ${bool('enabled')}`, { open: true })}
+    ${sec('ring', 'Sonnerie', `
+      ${field('Stratégie *', `<select data-f="ring_strategy">${STRATS.map((s) => `<option value="${s}"${f.ring_strategy === s ? ' selected' : ''}>${esc(STRATEGY[s] || s)}</option>`).join('')}</select>`)}
+      <p class="small muted cf-ge-note" id="ge-strat-h">${esc(STRAT_HELP[f.ring_strategy] || '')}</p>
+      <div class="cf-ge-3">
+        ${num('timeout', 'Durée totale (s)', 'Avant le débordement « pas de réponse ». Vide ou 0 : sonne indéfiniment.', 'illimitée')}
+        ${num('user_timeout', 'Sonnerie par membre (s)', 'Combien de temps chaque membre sonne.', '15')}
+        ${num('retry_delay', 'Pause entre deux tours (s)', 'Attente avant de refaire sonner.', '5')}
+      </div>
+      ${bool('ring_in_use')}`, { help: 'Vérifié dans le code Wazo : « sonnerie par membre » = timeout de chaque membre dans la file Asterisk ; « pause » = retry ; « durée totale » = délai de Queue() (ou du Dial en linéaire) avant le débordement « pas de réponse ».' })}
+    ${sec('mem', 'Membres', `
+      <div class="cf-ge-l">Utilisateurs</div>
+      <ul class="cf-ge-list" id="ge-users">${userRows()}</ul>
+      <div class="cf-ge-row"><select id="ge-uadd"><option value="">Choisir un utilisateur à ajouter…</option>${cand.map((u) => `<option value="${esc(u.uuid)}">${esc(fullName(u))}</option>`).join('')}</select><button data-add="u">Ajouter</button></div>
+      ${live.length ? `<p class="small muted">Inscrits par touche en ce moment (gérés par leur touche, pas ici) : ${esc(live.map((x) => x.name).join(', '))}</p>` : ''}
+      <div class="cf-ge-l cf-ge-gap">Numéros à faire sonner aussi</div>
+      <p class="small muted cf-ge-note">Pour un numéro qui n'est pas un utilisateur Wazo du groupe : un portable, un poste d'un autre site… Le numéro est composé comme si on l'appelait depuis le contexte choisi (il doit donc permettre de sortir vers l'extérieur pour un numéro externe).</p>
+      <ul class="cf-ge-list" id="ge-exts"${exts.length ? '' : ' hidden'}>${extRows()}</ul>
+      <div class="cf-ge-row"><input id="ge-eadd" placeholder="ex. 0612345678"><select id="ge-ectx" title="Contexte depuis lequel le numéro est composé">${ctxOpts(ctxAll, ctxInt[0]?.name)}</select><button data-add="e">Ajouter</button></div>`, { open: true, help: 'La liste est remplacée en entier à l\'écriture ; l\'ordre sert de priorité (stratégie « un par un » : les utilisateurs sonnent avant les numéros). Un membre en NPD ne sonne pas et l\'appel n\'est pas renvoyé. Les renvois et le filtrage d\'un utilisateur ne s\'appliquent pas dans un groupe (supposé), sauf s\'il est ajouté comme numéro.' })}
+    ${sec('fb', 'Débordements', `
+      <div class="cf-ge-f"><span class="cf-ge-l">Si personne ne répond</span>${pickerHtml('ge-noans', fb.noanswer_destination)}</div>
+      ${num('max_calls', 'Appels simultanés maximum', '0 = illimité. Au-delà, les appels suivants partent vers « Si trop d\'appels ».', '0')}
+      <div class="cf-ge-f"><span class="cf-ge-l">Si trop d'appels</span>${pickerHtml('ge-cong', fb.congestion_destination)}</div>`)}
+    ${sec('opt', 'Appelant et options', `
+      ${field('Musique d\'attente', `<select data-f="music_on_hold">${mohOpts}</select>`, 'Ce qu\'entend l\'appelant pendant que le groupe sonne.')}
+      <div class="cf-ge-2">
+        ${field('Nom affiché aux membres', `<select data-f="caller_id_mode">${cidOpts}</select>`)}
+        ${field('Texte', `<input data-f="caller_id_name" value="${esc(f.caller_id_name || '')}" maxlength="80" placeholder="ex. Compta">`, 'Pour savoir que l\'appel vient du groupe.')}
+      </div>
+      ${bool('mark_answered_elsewhere')}${bool('dtmf_record_toggle')}${bool('ignore_forward')}`)}
+    ${sec('sch', 'Horaire', field('Horaire du groupe', `<select id="ge-sched"><option value="">Aucun : toujours ouvert</option>${listOf('schedule').map((x) => `<option value="${esc(x.key.slice(9))}"${String(sched) === x.key.slice(9) ? ' selected' : ''}>${esc(x.title)}</option>`).join('')}</select>`, 'Un seul horaire par groupe.'))}
+    ${sec('perm', 'Autorisations d\'appels', `<div class="cf-ge-perms">${(M.lists.callpermission || []).map((p) => `<label class="inline"><input type="checkbox" data-perm="${p.id}"${v.perms.includes(p.id) ? ' checked' : ''}> ${esc(p.name)}${p.mode ? ` <span class="small muted">(${esc(p.mode === 'deny' ? 'refus' : 'autorisation')})</span>` : ''}</label>`).join('') || '<span class="small muted">Aucune autorisation d\'appel définie (ou liste non lisible).</span>'}</div>`)}
+    ${sec('adv', 'Avancé', field('Sous-routine', `<input data-f="preprocess_subroutine" value="${esc(f.preprocess_subroutine || '')}" maxlength="79" placeholder="aucune">`, 'Sous-routine du plan de numérotation Asterisk exécutée avant le groupe.'))}
     <p id="ge-err" class="error small"></p></div>`, () => {
     const err = (m) => { $('ge-err').textContent = m; return false; };
     const box = $('modal-body');
+    const open = (id) => { const d = box.querySelector(`[data-sec="${id}"]`); if (d) d.open = true; };
     const nf = { ...f };
     nf.label = box.querySelector('[data-f="label"]').value.trim();
-    if (!nf.label || nf.label.length > 128 || !/^[-_.a-zA-Z0-9 ]+$/.test(nf.label)) return err('Nom : obligatoire, sans accents (lettres, chiffres, espace, - _ .).');
+    if (!nf.label || nf.label.length > 128 || !/^[-_.a-zA-Z0-9 ]+$/.test(nf.label)) { open('gen'); return err('Nom : obligatoire, sans accents (lettres, chiffres, espace, - _ .).'); }
     nf.ring_strategy = box.querySelector('[data-f="ring_strategy"]').value;
     for (const k of ['timeout', 'user_timeout', 'retry_delay', 'max_calls']) {
       const s = box.querySelector(`[data-f="${k}"]`).value.trim();
-      if (s === '') nf[k] = k === 'max_calls' ? 0 : null; else if (!/^\d+$/.test(s)) return err('Durées et appels maximum : nombres entiers positifs.'); else nf[k] = Number(s);
+      if (s === '') nf[k] = k === 'max_calls' ? 0 : null; else if (!/^\d+$/.test(s)) { open(k === 'max_calls' ? 'fb' : 'ring'); return err('Durées et appels maximum : nombres entiers positifs.'); } else nf[k] = Number(s);
     }
     nf.music_on_hold = box.querySelector('[data-f="music_on_hold"]').value || null;
     nf.caller_id_mode = box.querySelector('[data-f="caller_id_mode"]').value || null;
@@ -141,14 +156,14 @@ export function openGroupEditor(g, onSave) {
     let extension = null;
     if (ex) {
       const ctx = box.querySelector('[data-extctx]').value;
-      if (!/^[*#0-9]{1,40}$/.test(ex)) return err('Numéro interne : chiffres, * et # seulement.');
+      if (!/^[*#0-9]{1,40}$/.test(ex)) { open('gen'); return err('Numéro interne : chiffres, * et # seulement.'); }
       const c = M.by.context?.get(ctx);
       const inRange = (c?.group_ranges || []).some((r) => ex.length === String(r.start).length && ex >= String(r.start) && ex <= String(r.end));
-      if (c?.group_ranges && !inRange) return err(`Numéro interne ${ex} : hors des plages « groupes » du contexte ${c.label || c.name} (${(c.group_ranges || []).map((r) => `${r.start}-${r.end}`).join(', ') || 'aucune'}).`);
+      if (c?.group_ranges && !inRange) { open('gen'); return err(`Numéro interne ${ex} : hors des plages « groupes » du contexte ${c.label || c.name} (${(c.group_ranges || []).map((r) => `${r.start}-${r.end}`).join(', ') || 'aucune'}).`); }
       extension = { exten: ex, context: ctx };
     }
     let noanswer, congestion;
-    try { noanswer = readPicker('ge-noans'); congestion = readPicker('ge-cong'); } catch (e) { return err(e.message); }
+    try { noanswer = readPicker('ge-noans'); congestion = readPicker('ge-cong'); } catch (e) { open('fb'); return err(e.message); }
     const perms = [...box.querySelectorAll('[data-perm]:checked')].map((c) => Number(c.dataset.perm)).sort((a, b) => a - b);
     const s = $('ge-sched').value;
     onSave({ cfg: { fields: nf, users, exts, extension, perms }, noanswer, congestion, schedule: s ? Number(s) : null });
@@ -157,8 +172,27 @@ export function openGroupEditor(g, onSave) {
 
   ['ge-noans', 'ge-cong'].forEach(bindPicker);
   const box = $('modal-body');
-  const redraw = () => { $('ge-users').innerHTML = userRows(); $('ge-exts').innerHTML = extRows(); };
-  box.onchange = (e) => { if (e.target.matches('[data-f="ring_strategy"]')) $('ge-strat-h').textContent = STRAT_HELP[e.target.value] || ''; };
+  const val = (sel) => box.querySelector(sel)?.value?.trim() || '';
+  const on = (sel) => !!box.querySelector(sel)?.checked;
+  const pick = (id) => { const el = $(id); const t = el?.querySelector('[data-dt]'); if (!t || t.value === 'none') return 'rien'; const o = el.querySelector('[data-do]'); const x = o?.selectedOptions?.[0]?.text; return `${t.selectedOptions[0].text.toLowerCase()}${x && o.value ? ` ${x}` : ''}`; };
+  // Résumés des sections (titres), relus dans le formulaire.
+  const recap = () => {
+    const dnd = users.filter((m) => isDnd(m.uuid)).length;
+    const S = {
+      gen: [val('[data-f="label"]') || '(sans nom)', val('[data-ext]') ? `n° ${val('[data-ext]')}` : 'sans numéro', on('[data-b="enabled"]') ? '' : 'DÉSACTIVÉ'],
+      ring: [STRATEGY[val('[data-f="ring_strategy"]')], Number(val('[data-f="timeout"]')) ? `${val('[data-f="timeout"]')} s au total` : 'sans limite', `${val('[data-f="user_timeout"]') || 15} s par membre`],
+      mem: [`${users.length} utilisateur${users.length > 1 ? 's' : ''}`, exts.length ? `${exts.length} numéro${exts.length > 1 ? 's' : ''}` : '', dnd ? `${dnd} en NPD` : ''],
+      fb: [`sans réponse : ${pick('ge-noans')}`, Number(val('[data-f="max_calls"]')) ? `max ${val('[data-f="max_calls"]')} appels` : ''],
+      opt: [box.querySelector('[data-f="music_on_hold"]')?.selectedOptions[0]?.value ? `musique ${box.querySelector('[data-f="music_on_hold"]').selectedOptions[0].text}` : 'sonnerie', val('[data-f="caller_id_mode"]') ? `nom « ${val('[data-f="caller_id_name"]')} »` : ''],
+      sch: [$('ge-sched')?.value ? $('ge-sched').selectedOptions[0].text : 'aucun'],
+      perm: [((c) => (c ? `${c} autorisation${c > 1 ? 's' : ''}` : 'aucune'))(box.querySelectorAll('[data-perm]:checked').length)],
+      adv: [val('[data-f="preprocess_subroutine"]') || ''],
+    };
+    for (const [k, a] of Object.entries(S)) { const el = box.querySelector(`[data-sum="${k}"]`); if (el) el.textContent = a.filter(Boolean).join(' · '); }
+  };
+  const redraw = () => { $('ge-users').innerHTML = userRows(); $('ge-exts').innerHTML = extRows(); $('ge-exts').hidden = !exts.length; recap(); };
+  box.addEventListener('input', recap);
+  box.addEventListener('change', (e) => { if (e.target.matches('[data-f="ring_strategy"]')) $('ge-strat-h').textContent = STRAT_HELP[e.target.value] || ''; recap(); });
   box.onclick = (e) => {
     const b = e.target.closest('[data-up],[data-down],[data-del],[data-add]'); if (!b) return;
     const ref = b.dataset.up || b.dataset.down || b.dataset.del;
@@ -169,9 +203,10 @@ export function openGroupEditor(g, onSave) {
       if (b.dataset.del) list.splice(i, 1);
       redraw(); return;
     }
-    if (b.dataset.add === 'u') { const uu = $('ge-uadd').value; if (uu && !users.some((m) => m.uuid === uu)) { users.push({ uuid: uu }); redraw(); } }
+    if (b.dataset.add === 'u') { const uu = $('ge-uadd').value; if (uu && !users.some((m) => m.uuid === uu)) { users.push({ uuid: uu }); $('ge-uadd').value = ''; redraw(); } }
     if (b.dataset.add === 'e') { const x = $('ge-eadd').value.trim(); const c = $('ge-ectx').value; if (/^[*#0-9]+$/.test(x) && !exts.some((m) => m.exten === x && m.context === c)) { exts.push({ exten: x, context: c }); $('ge-eadd').value = ''; redraw(); } }
   };
+  recap();
 }
 
 // Libellé court des différences (brouillon, aperçu).

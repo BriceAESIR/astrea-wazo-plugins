@@ -8,9 +8,10 @@ courant. Cadrage, sources et décisions : `docs/CALLFLOW-MANAGER.md` (dépôt de
   groupes, files, SVI, horaires, messageries…) puis un objet.
 - **Où vont les appels** : chaque carte liste ses sorties (débordements,
   touches de SVI, horaire fermé, renvois…), avec les durées (sonnerie,
-  délai du groupe ou de la file). Un lien en pointillé rejoint une carte déjà
-  affichée (boucle, objet partagé). Une destination vers un objet supprimé
-  apparaît en rouge.
+  délai du groupe ou de la file). Chaque route a ses propres cartes : un objet
+  atteint par plusieurs sorties est répété (« ↻ répété »). Seule une boucle
+  (retour vers une carte déjà sur le chemin) est un lien en pointillé. Une
+  destination vers un objet supprimé apparaît en rouge.
 - **Qui arrive ici** : les objets qui envoient des appels vers l'objet choisi.
 - **Fiche** : un clic sur une carte affiche ses réglages et la liste « Arrive
   depuis » (cliquable). Double-clic ou « Partir de cette carte » : la carte

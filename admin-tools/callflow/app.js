@@ -3,12 +3,12 @@
 // déposer (lot 2a, brouillon puis aperçu, sauvegarde, écriture).
 // Cadrage : astrea-wazo-dev/docs/CALLFLOW-MANAGER.md.
 // Modèle (sources confd vérifiées) : model.js ; canevas : canvas.js ; écriture : write.js.
-import { S, $, esc, fullName, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.36.0';
-import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, scanGroupKeys, buildTree, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel, periodText, STRATEGY } from './model.js?v=0.36.0';
-import { createCanvas } from './canvas.js?v=0.36.0';
-import { getDest, setDest, sameValue, prepare, execute } from './write.js?v=0.36.0';
-import { openScheduleEditor, fillSoundSelect } from './sched-editor.js?v=0.36.0';
-import { openGroupEditor, groupCfgDiff } from './group-editor.js?v=0.36.0';
+import { S, $, esc, fullName, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.36.1';
+import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, scanGroupKeys, buildTree, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel, periodText, STRATEGY, baseKey } from './model.js?v=0.36.1';
+import { createCanvas } from './canvas.js?v=0.36.1';
+import { getDest, setDest, sameValue, prepare, execute } from './write.js?v=0.36.1';
+import { openScheduleEditor, fillSoundSelect } from './sched-editor.js?v=0.36.1';
+import { openGroupEditor, groupCfgDiff } from './group-editor.js?v=0.36.1';
 
 const TESTED_STACK = ['26.07'];
 const NAV = [
@@ -109,6 +109,7 @@ function autoScanKeys() {
   scanGroupKeys().then(() => { C.scanning = false; const sel = C.sel; draw(true); const n = sel && C.tree.nodes.get(sel); if (n) { C.canvas.select(sel, false); showDetail(n); } });
 }
 function setRoot(k) {
+  k = baseKey(k);
   if (!k || k.startsWith('leaf:')) return;
   C.root = k; C.collapsed.clear(); C.expanded.clear(); C.sel = null;
   const t = k.slice(0, k.indexOf(':'));
@@ -199,7 +200,7 @@ function showDetail(n) {
   const outs = (n.ports || []).filter((p) => p.to).map((p) => `<dt title="${esc(p.help || '')}">${esc(p.label)}</dt><dd>${esc(p.note || '')}</dd>`).join('');
   let refs = '';
   if (!n.leaf) {
-    const from = reverseIndex().get(n.key) || [];
+    const from = reverseIndex().get(baseKey(n.key)) || [];
     refs = from.length
       ? `<ul class="list cf-refs">${from.map((r) => { const i = nodeInfo(r.from); return `<li data-key="${esc(r.from)}" title="Partir de cette carte"><div><div>${esc(`${TYPES[i.type]?.label || ''} ${i.title}`)}</div><div class="sub">${esc([r.label, r.note].filter(Boolean).join(' · '))}</div></div></li>`; }).join('')}</ul>`
       : '<p class="muted small">Aucun routage lu vers cet objet.</p>';
@@ -218,7 +219,7 @@ function showDetail(n) {
     ${C.edit && n.key.startsWith('schedule:') ? (() => { const sc = entity(n.key).obj; const u = schedUsage(sc); return `<div class="btnrow"><button id="d-periods" class="primary" title="Change les heures d'ouverture, la destination si fermé et les fermetures exceptionnelles de l'horaire « ${esc(sc.name)} ». ${u > 1 ? `Il est utilisé par ${u} objets : tous sont concernés.` : 'Le changement vaut pour tout objet qui utilise cet horaire.'} (brouillon)">Modifier les heures de « ${esc(sc.name)} »…</button></div>${u > 1 ? `<p class="small muted">Horaire partagé par ${u} objets : modifier ses heures les concerne tous.</p>` : ''}`; })() : ''}
     ${C.edit && C.dir === 'out' && !entity(n.key).owner && incomingPort(n) ? `<div class="btnrow"><button id="d-remove" class="danger" title="Vide la sortie « ${esc(incomingPort(n).p.label)} » de ${esc(ownerTitle(incomingPort(n).n))} (brouillon ; touche Suppr)">Retirer de cette sortie</button></div>` : ''}
     ${n.leaf ? '' : `<div class="dsec"><h4>Arrive depuis</h4>${refs}</div>`}
-    ${n.leaf ? '' : `<div class="btnrow">${n.key !== C.root ? '<button id="d-root" class="primary">Partir de cette carte</button>' : ''}<button id="d-in">${C.dir === 'in' && n.key === C.root ? 'Où vont les appels' : 'Qui arrive ici'}</button></div>`}`;
+    ${n.leaf ? '' : `<div class="btnrow">${baseKey(n.key) !== C.root ? '<button id="d-root" class="primary">Partir de cette carte</button>' : ''}<button id="d-in">${C.dir === 'in' && n.key === C.root ? 'Où vont les appels' : 'Qui arrive ici'}</button></div>`}`;
   $('detail').hidden = false;
   $('main').classList.remove('no-detail');
   const r = $('d-root'); if (r) r.onclick = () => setRoot(n.key);
@@ -227,7 +228,7 @@ function showDetail(n) {
   const du = $('d-unsched'); if (du) du.onclick = removeSelected;
   const dp = $('d-periods'); if (dp) dp.onclick = () => openPeriods(entity(n.key).id);
   const dg = $('d-group'); if (dg) dg.onclick = () => openGroupFor(groupOfNode(n));
-  const i = $('d-in'); if (i) i.onclick = () => { if (n.key !== C.root) setRoot(n.key); setDir(C.dir === 'in' && n.key === C.root ? 'out' : 'in'); };
+  const i = $('d-in'); if (i) i.onclick = () => { if (baseKey(n.key) !== C.root) setRoot(n.key); setDir(C.dir === 'in' && baseKey(n.key) === C.root ? 'out' : 'in'); };
   for (const li of $('d-body').querySelectorAll('.cf-refs li')) li.onclick = () => setRoot(li.dataset.key);
   const k = $('d-keys');
   if (k) k.onclick = async () => {
@@ -331,6 +332,7 @@ function incomingPort(n) {
 const SCHED_TYPES = new Set(['incall', 'user', 'group', 'queue']);
 // Objet auquel un horaire peut être associé, depuis une carte (une carte horaire « condition » → son objet).
 function schedOwner(k) {
+  k = baseKey(k);
   const e = entity(k); const o = e.owner || k; const t = o.slice(0, o.indexOf(':'));
   return SCHED_TYPES.has(t) && entity(o).obj ? o : null;
 }
