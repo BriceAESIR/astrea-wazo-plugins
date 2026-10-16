@@ -3,22 +3,22 @@
 // déposer (lot 2a, brouillon puis aperçu, sauvegarde, écriture).
 // Cadrage : astrea-wazo-dev/docs/CALLFLOW-MANAGER.md.
 // Modèle (sources confd vérifiées) : model.js ; canevas : canvas.js ; écriture : write.js.
-import { S, $, esc, fullName, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.39.3';
-import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, loadTrunkOperators, scanGroupKeys, buildTree, landingAt, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel, periodText, STRATEGY, QSTRAT, baseKey, gateOf, loadBlocklist, blockedBy, dialUser } from './model.js?v=0.39.3';
-import { createCanvas } from './canvas.js?v=0.39.3';
-import { getDest, setDest, sameValue, prepare, execute } from './write.js?v=0.39.3';
-import { openScheduleEditor } from './sched-editor.js?v=0.39.3';
-import { openGroupEditor, groupCfgDiff } from './group-editor.js?v=0.39.3';
-import { openQueueEditor, queueCfgDiff, agentName } from './queue-editor.js?v=0.39.3';
-import { openIvrEditor, ivrCfgDiff } from './ivr-editor.js?v=0.39.3';
-import { openSbEditor, sbCfgDiff } from './sb-editor.js?v=0.39.3';
-import { redact } from './ed-ui.js?v=0.39.3';
-import { openRestore } from './restore.js?v=0.39.3';
-import { openIncallEditor, incallCfgDiff, openUserEditor, userCfgDiff, openVmEditor, vmCfgDiff, openConfEditor, confCfgDiff, openSchedGenEditor, schedCfgDiff } from './obj-editors.js?v=0.39.3';
-import { openDestEditor, ENTITY_DEST } from './dest-editor.js?v=0.39.3';
-import { openOutcallEditor, outcallCfgDiff } from './outcall-editor.js?v=0.39.3';
-import { openCreate, CREATABLE } from './create.js?v=0.39.3';
-import { simulate, userContext, simPath } from './dialsim.js?v=0.39.3';
+import { S, $, esc, fullName, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.39.4';
+import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, loadTrunkOperators, scanGroupKeys, buildTree, landingAt, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel, periodText, STRATEGY, QSTRAT, baseKey, gateOf, loadBlocklist, blockedBy, dialUser } from './model.js?v=0.39.4';
+import { createCanvas } from './canvas.js?v=0.39.4';
+import { getDest, setDest, sameValue, prepare, execute } from './write.js?v=0.39.4';
+import { openScheduleEditor } from './sched-editor.js?v=0.39.4';
+import { openGroupEditor, groupCfgDiff } from './group-editor.js?v=0.39.4';
+import { openQueueEditor, queueCfgDiff, agentName } from './queue-editor.js?v=0.39.4';
+import { openIvrEditor, ivrCfgDiff } from './ivr-editor.js?v=0.39.4';
+import { openSbEditor, sbCfgDiff } from './sb-editor.js?v=0.39.4';
+import { redact } from './ed-ui.js?v=0.39.4';
+import { openRestore } from './restore.js?v=0.39.4';
+import { openIncallEditor, incallCfgDiff, openUserEditor, userCfgDiff, openVmEditor, vmCfgDiff, openConfEditor, confCfgDiff, openSchedGenEditor, schedCfgDiff } from './obj-editors.js?v=0.39.4';
+import { openDestEditor, ENTITY_DEST } from './dest-editor.js?v=0.39.4';
+import { openOutcallEditor, outcallCfgDiff } from './outcall-editor.js?v=0.39.4';
+import { openCreate, CREATABLE } from './create.js?v=0.39.4';
+import { simulate, userContext, simPath } from './dialsim.js?v=0.39.4';
 
 const TESTED_STACK = ['26.07'];
 const NAV = [
@@ -175,9 +175,11 @@ const dialOk = () => { const { type, obj } = entity(C.root || ''); return type =
 // Sens de l'arbre affiché : la vue normale (lecture du dialplan) ; en simulation
 // Interne / Sortant (demande de Brice, 16/10/2026 : seulement quand « Suivre
 // un appel » est coché), arbre des appels passés ('dial').
-const TD = () => (C.dir === 'out' && C.sim.on && C.sim.mode !== 'in' && dialOk() ? 'dial' : C.dir);
+// Type d'appel effectif : le choix est gardé d'une carte à l'autre ; une carte qui
+// ne compose pas (trunk, SDA, règle…) est vue en Entrant.
+const simMode = () => (dialOk() ? C.sim.mode : 'in');
+const TD = () => (C.dir === 'out' && C.sim.on && simMode() !== 'in' ? 'dial' : C.dir);
 function syncDir() {
-  if (C.sim.mode !== 'in' && !dialOk()) C.sim.mode = 'in';
   for (const b of document.querySelectorAll('[data-dir]')) b.classList.toggle('active', b.dataset.dir === C.dir);
   $('cf-empty').disabled = TD() !== 'out';
 }
@@ -259,7 +261,7 @@ function renderFollow() {
   $('s-on').checked = C.sim.on; $('s-on').disabled = C.dir === 'in';
   // Type d'appel simulé : Entrant toujours ; Interne / Sortant depuis un utilisateur, un groupe ou un contexte.
   $('s-mode').hidden = !C.sim.on || C.dir !== 'out';
-  for (const b of $('s-mode').querySelectorAll('[data-sm]')) { b.classList.toggle('active', b.dataset.sm === C.sim.mode); b.disabled = b.dataset.sm !== 'in' && !dialOk(); }
+  for (const b of $('s-mode').querySelectorAll('[data-sm]')) { b.classList.toggle('active', b.dataset.sm === simMode()); b.disabled = b.dataset.sm !== 'in' && !dialOk(); }
   // Libellés visibles devant les champs (retour de Brice : le texte indicatif disparaît à la saisie).
   $('s-num-l').hidden = !C.sim.on || !k;
   $('s-num-t').textContent = k === 'in' ? 'Appelé (SDA)' : 'Composé';
@@ -419,7 +421,7 @@ const PAL_HELP = {
   extension: 'Numéro composé dans un contexte (interne, autre site…). Si le numéro correspond à un objet Wazo, le graphe le montre à sa place.',
   sound: 'Joue un fichier son du serveur puis raccroche. Nom du fichier tel que Wazo le stocke (ex. un son importé dans « Sons »).',
   hangup: 'Termine l\'appel avec la tonalité choisie.',
-  schedule: 'À déposer sur une CARTE (SDA, utilisateur, groupe, file d\'attente), pas sur une sortie : associe un horaire à cet objet. Un seul horaire par objet.',
+  schedule: 'À déposer sur une CARTE (SDA, utilisateur, groupe, file d\'attente, règle sortante), pas sur une sortie : associe un horaire à cet objet. Un seul horaire par objet.',
 };
 // Carte grisée : aucun objet de ce type dans le tenant (la poser propose de le créer).
 const paletteEmpty = (t) => (ENTITY_DEST[t] || t === 'schedule') && !listOf(t).length;
@@ -430,7 +432,7 @@ function renderPalette() {
     return `<div class="cf-chip t-${t}${empty ? ' empty' : ''}" data-pal="${t}" title="${esc(tip)}"><span class="cf-badge">${esc(TYPES[t]?.badge || '?')}</span>${esc(l)}</div>`;
   }).join('');
   $('pal-help').innerHTML = helpButton('pal-hb', 'Comment modifier');
-  $('pal-help-box').innerHTML = helpBox('pal-hb', 'Glissez une carte de la palette, ou une carte déjà présente dans le graphe, sur une sortie (Pas de réponse, Touche 1, Destination…) : un dialogue demande l\'objet visé et ses options, puis la modification part dans le brouillon (point orange). × sur une sortie la vide ; ↶ annule une modification (retour à la valeur d\'origine) ; la liste du brouillon (clic sur le compteur) permet aussi d\'annuler ligne par ligne ; une carte sélectionnée se retire de sa sortie par « Retirer de cette sortie » ou la touche Suppr. Rien n\'est écrit avant « Appliquer… », qui montre l\'avant / après, télécharge une sauvegarde JSON, relit chaque objet sur le serveur et n\'écrit que ce qui change, une fois par objet. Horaires : leurs sorties Fermé et Fermetures exceptionnelles se modifient comme les autres ; la carte « Horaire » de la palette se dépose sur une carte (SDA, utilisateur, groupe, file d\'attente) pour lui associer un horaire ; sur une carte horaire sélectionnée, « Retirer l\'horaire » ou Suppr le retire de son objet. Carte grisée : aucun objet de ce type ; la poser ouvre un panneau de création (l\'objet est créé tout de suite dans Wazo, puis branché par le brouillon). Toute carte sélectionnée a un bouton « Régler … » pour toutes ses options.');
+  $('pal-help-box').innerHTML = helpBox('pal-hb', 'Glissez une carte de la palette, ou une carte déjà présente dans le graphe, sur une sortie (Pas de réponse, Touche 1, Destination…) : un dialogue demande l\'objet visé et ses options, puis la modification part dans le brouillon (point orange). × sur une sortie la vide ; ↶ annule une modification (retour à la valeur d\'origine) ; la liste du brouillon (clic sur le compteur) permet aussi d\'annuler ligne par ligne ; une carte sélectionnée se retire de sa sortie par « Retirer de cette sortie » ou la touche Suppr. Rien n\'est écrit avant « Appliquer… », qui montre l\'avant / après, télécharge une sauvegarde JSON, relit chaque objet sur le serveur et n\'écrit que ce qui change, une fois par objet. Horaires : leurs sorties Fermé et Fermetures exceptionnelles se modifient comme les autres ; la carte « Horaire » de la palette se dépose sur une carte (SDA, utilisateur, groupe, file d\'attente, règle sortante) pour lui associer un horaire ; sur une carte horaire sélectionnée, « Retirer l\'horaire » ou Suppr le retire de son objet. Carte grisée : aucun objet de ce type ; la poser ouvre un panneau de création (l\'objet est créé tout de suite dans Wazo, puis branché par le brouillon). Toute carte sélectionnée a un bouton « Régler … » pour toutes ses options.');
 }
 function setEdit(on) {
   if (!on && C.draft.size) {
@@ -497,7 +499,7 @@ function incomingPort(n) {
   return p?.w ? { n: parent, p } : null;
 }
 // ---- Lot 2b : associer / retirer un horaire (un seul par objet, vérifié dans confd) ----
-const SCHED_TYPES = new Set(['incall', 'user', 'group', 'queue']);
+const SCHED_TYPES = new Set(['incall', 'user', 'group', 'queue', 'outcall']);
 // Objet auquel un horaire peut être associé, depuis une carte (une carte horaire « condition » → son objet).
 function schedOwner(k) {
   k = baseKey(k);

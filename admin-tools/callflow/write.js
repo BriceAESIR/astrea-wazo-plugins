@@ -11,14 +11,14 @@
 //  - SVI : choices envoyé en entier (supposé : la liste est remplacée).
 // Toujours : relire juste avant d'écrire, ne rien écrire si c'est identique,
 // une seule écriture par objet.
-import { api } from '../common/core.js?v=0.39.3';
-import { M } from './model.js?v=0.39.3';
-import { groupCfgOf, applyGroupCfg, GROUP_FIELDS } from './group-editor.js?v=0.39.3';
-import { queueCfgOf, applyQueueCfg, QUEUE_FIELDS, optionsList } from './queue-editor.js?v=0.39.3';
-import { ivrCfgOf, applyIvrCfg, IVR_FIELDS } from './ivr-editor.js?v=0.39.3';
-import { sbCfgOf, applySbCfg, SB_FIELDS } from './sb-editor.js?v=0.39.3';
-import { incallCfgOf, applyIncallCfg, INCALL_FIELDS, userCfgOf, applyUserCfg, USER_FIELDS, vmCfgOf, applyVmCfg, VM_FIELDS, confCfgOf, applyConfCfg, CONF_FIELDS, schedCfgOf, applySchedCfg, SCHED_FIELDS } from './obj-editors.js?v=0.39.3';
-import { outcallCfgOf, applyOutcallCfg, OUTCALL_FIELDS } from './outcall-editor.js?v=0.39.3';
+import { api } from '../common/core.js?v=0.39.4';
+import { M } from './model.js?v=0.39.4';
+import { groupCfgOf, applyGroupCfg, GROUP_FIELDS } from './group-editor.js?v=0.39.4';
+import { queueCfgOf, applyQueueCfg, QUEUE_FIELDS, optionsList } from './queue-editor.js?v=0.39.4';
+import { ivrCfgOf, applyIvrCfg, IVR_FIELDS } from './ivr-editor.js?v=0.39.4';
+import { sbCfgOf, applySbCfg, SB_FIELDS } from './sb-editor.js?v=0.39.4';
+import { incallCfgOf, applyIncallCfg, INCALL_FIELDS, userCfgOf, applyUserCfg, USER_FIELDS, vmCfgOf, applyVmCfg, VM_FIELDS, confCfgOf, applyConfCfg, CONF_FIELDS, schedCfgOf, applySchedCfg, SCHED_FIELDS } from './obj-editors.js?v=0.39.4';
+import { outcallCfgOf, applyOutcallCfg, OUTCALL_FIELDS } from './outcall-editor.js?v=0.39.4';
 
 // Réglages « simples » (obj-editors.js) : un PUT partiel des champs modifiés.
 const SIMPLE = {
@@ -58,7 +58,7 @@ export const sameDest = (a, b) => canon(a) === canon(b);
 //   ivr_choice  : /ivr/{id}                choix de touche f (exten)
 //   sched       : /schedules/{id}          closed_destination (lot 2b)
 //   sched_exc   : /schedules/{id}          exceptional_periods[f].destination
-//   sched_assoc : /{incalls|users|groups|queues}/{id}/schedules/{schedule_id}
+//   sched_assoc : /{incalls|users|groups|queues|outcalls}/{id}/schedules/{schedule_id}
 //                 id = clé de l'objet (incall:1, user:5…) ; valeur
 //                 {type: 'schedule', schedule_id} ou null. Vérifié dans
 //                 wazo-confd (user_schedule/validator.py) : un seul horaire

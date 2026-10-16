@@ -12,7 +12,7 @@
 //    « prefix » est lu mais pas appliqué.
 // Supposé : effet exact des autorisations d'appels et d'un horaire sur une
 // règle sortante (affichés à titre indicatif).
-import { M, scheduleState, whenOf, entity } from './model.js?v=0.39.3';
+import { M, scheduleState, whenOf, entity } from './model.js?v=0.39.4';
 
 // Motif → liste d'éléments { set: chaînes de caractères, size } | { dot } | { bang } ; null si numéro exact.
 export function parsePattern(p) {
@@ -250,6 +250,8 @@ export function simPath(tree, w, match, { blocked = null } = {}) {
       else { st.what = n.info.title; end = true; }
     } else switch (type) {
       case 'trunk':
+        // Trunk de passage (départ SDA avec appelant) : vers la SDA.
+        if (P((x) => x.slot === 'via')) { p = P((x) => x.slot === 'via'); st.what = 'appel reçu de l\'opérateur'; break; }
         if (P((x) => x.slot === 'pstn')) { st.what = 'sort vers l\'opérateur'; end = true; R.end = 'l\'appel quitte Wazo par ce trunk'; break; }
         p = P((x) => x.slot === 'context'); st.what = match?.number ? `reçoit ${match.number}` : 'appel reçu';
         if (!r) { end = true; R.end = 'tapez le numéro appelé (SDA)'; }
@@ -259,7 +261,7 @@ export function simPath(tree, w, match, { blocked = null } = {}) {
           if (!r) { end = true; R.end = 'tapez un numéro'; break; }
           if (r.kind === 'incall' && o?.type === 'incall') { p = P((x) => x.slot === 'incall' && x.to?.key === r.key); st.what = r.viaDid ? `SDA reconnue comme ${r.viaDid}` : 'SDA trouvée'; break; }
           if (r.ctx === o?.name && (r.kind === 'internal' || r.kind === 'incall')) { p = P((x) => x.slot === 'internal'); st.what = 'numéro interne trouvé'; break; }
-          if (r.ctx === o?.name && r.kind === 'outcall') { p = P((x) => x.slot === 'outcall' && x.to?.key === `outcall:${r.outcall.id}`); st.what = 'motif trouvé dans ce contexte'; break; }
+          if (r.ctx === o?.name && r.kind === 'outcall') { p = P((x) => x.slot === 'outcall' && (x.to?.key === `outcall:${r.outcall.id}` || x.to?.key?.endsWith(`@outcall:${r.outcall.id}`))); st.what = 'motif trouvé dans ce contexte'; break; }
           // Pas ici : contexte inclus suivant dans l'ordre de recherche (steps de simulate).
           // Aucune correspondance nulle part : on suit quand même les contextes
           // inclus fouillés, pour montrer où Asterisk a cherché (retour de Brice).
@@ -322,8 +324,7 @@ export function simPath(tree, w, match, { blocked = null } = {}) {
         p = P((x) => x.slot === 'pattern' && x.label === r?.dp?.exten);
         st.what = r?.dp ? `motif ${r.dp.exten}` : 'règle sortante';
         if (o?.enabled === false) { st.what += ' · règle désactivée'; st.block = true; end = true; R.end = 'règle sortante désactivée : l\'appel échoue (supposé)'; break; }
-        // Horaire de la règle (supposé : fermé → destination de fermeture de l'horaire, l'appel ne sort pas).
-        if (r?.schedState && !r.schedState.open) { st.what += ` · horaire ${r.sched.name} : ${r.schedState.label}`; st.block = true; end = true; R.end = `horaire « ${r.sched.name} » ${r.schedState.label.toLowerCase()} : l'appel ne sort pas (supposé)`; break; }
+        // Horaire de la règle : carte horaire placée devant elle (suivie comme les autres horaires).
         const cr = r?.rights;
         if (cr?.by) {
           const lvl = { user: 'de l\'utilisateur', group: 'd\'un groupe dont il est membre', outcall: 'de la règle' }[cr.level];

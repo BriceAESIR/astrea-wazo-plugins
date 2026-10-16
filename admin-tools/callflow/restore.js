@@ -7,10 +7,10 @@
 // montrés une seule fois (jamais enregistrés dans un fichier).
 // Non restauré automatiquement : un numéro interne changé (risque de collision
 // si le numéro a été réattribué) — signalé.
-import { S, $, esc, api, toast, confirmModal, downloadJson, fullName } from '../common/core.js?v=0.39.3';
-import { M } from './model.js?v=0.39.3';
-import { cleanDest } from './write.js?v=0.39.3';
-import { redact } from './ed-ui.js?v=0.39.3';
+import { S, $, esc, api, toast, confirmModal, downloadJson, fullName } from '../common/core.js?v=0.39.4';
+import { M } from './model.js?v=0.39.4';
+import { cleanDest } from './write.js?v=0.39.4';
+import { redact } from './ed-ui.js?v=0.39.4';
 
 const HIDDEN = '***';
 const newCode = (n = 4) => { const a = new Uint32Array(n); crypto.getRandomValues(a); return [...a].map((x) => x % 10).join(''); };
@@ -54,7 +54,7 @@ const sub = (path) => {
 function undo(e, secrets) {
   const m = e.method || 'PUT', p = e.path, b = e.before;
   if (e.numero) return { skip: /^\/outcalls\//.test(p) || /^\/extensions\//.test(p) ? 'motif de règle sortante ajouté, retiré ou renommé : à remettre à la main' : 'numéro interne changé : à remettre à la main (l\'ancien numéro a pu être réattribué)' };
-  if (/^\/(incalls|users|groups|queues)\/[^/]+\/schedules\/\d+$/.test(p) || /\/callpermissions\/\d+$/.test(p)) return [{ method: m === 'DELETE' ? 'PUT' : 'DELETE', path: p }];
+  if (/^\/(incalls|users|groups|queues|outcalls)\/[^/]+\/schedules\/\d+$/.test(p) || /\/callpermissions\/\d+$/.test(p)) return [{ method: m === 'DELETE' ? 'PUT' : 'DELETE', path: p }];
   let x;
   if ((x = p.match(/^\/queues\/\d+\/members\/(agents|users)\/([^/]+)$/))) {
     // Retirer, puis remettre tel qu'avant s'il était membre (un PUT seul ne notifie pas Asterisk).

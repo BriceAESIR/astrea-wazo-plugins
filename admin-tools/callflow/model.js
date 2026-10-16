@@ -21,8 +21,8 @@
 // Supposé, à vérifier en réel : les listes (GET /groups, /queues,
 // /switchboards, /schedules) contiennent déjà fallbacks, membres et
 // destinations ; sinon on lit le détail de chaque objet (ensureDetails).
-import { S, api, listAll, fullName } from '../common/core.js?v=0.39.3';
-import { comparePatterns, describePattern, userContext, rightsList } from './dialsim.js?v=0.39.3';
+import { S, api, listAll, fullName } from '../common/core.js?v=0.39.4';
+import { comparePatterns, describePattern, userContext, rightsList } from './dialsim.js?v=0.39.4';
 
 export const M = { lists: {}, by: {}, ext: new Map(), extAny: new Map(), rev: null, warns: [] };
 
@@ -304,7 +304,8 @@ export function entity(k) {
 // plusieurs horaires sur un objet, seul le premier compte.
 export function gateOf(k) {
   const { type, obj } = entity(k);
-  if (!obj || !['user', 'group', 'queue', 'incall'].includes(type)) return null;
+  // Règle sortante comprise (retour de Brice, 16/10/2026 : horaire d'outcall invisible, donc non modifiable).
+  if (!obj || !['user', 'group', 'queue', 'incall', 'outcall'].includes(type)) return null;
   const s = (obj.schedules || []).find((x) => M.by.schedule?.has(String(x.id)));
   return s ? `schedule:${s.id}@${k}` : null;
 }
@@ -512,7 +513,7 @@ function dialEdgesOf(k, hit, scope = '') {
   if (n && scope !== 'out') e.push({ ...link('internals', ''), to: null, info: true, note: `${n} dans ce contexte` });
   if (scope !== 'int') for (const oc of M.lists.outcall || []) {
     const pats = (oc.extensions || []).filter((x) => x.context === o.name).map((x) => x.exten);
-    if (pats.length) e.push({ ...link('outcall', key('outcall', oc)), label: `Règle ${oc.name || oc.label || oc.id}`, note: pats.join(', ') });
+    if (pats.length) e.push({ ...link('outcall', gated(key('outcall', oc))), label: `Règle ${oc.name || oc.label || oc.id}`, note: pats.join(', ') });
   }
   for (const c of o.contexts || []) { const cc = (M.lists.context || []).find((y) => y.id === c.id || y.name === c.name); if (cc) e.push({ ...link('include', key('context', cc)), note: cc.label || cc.name }); }
   return e;
@@ -824,6 +825,22 @@ export function buildTree(rootKey, dir, { maxDepth = 8, collapsed = new Set(), e
     root = { key: 'leaf:caller', depth: 0, kids: [first], leaf: info, info: { ...info, leafType: true }, ports: [port] };
     Object.assign(first, { depth: 1, parent: root.key, port: port.id, edge: port });
     nodes.set(root.key, root);
+    // Départ SDA : le trunk par lequel l'appel arrive s'intercale (retour de Brice,
+    // 16/10/2026) — trunk dont le contexte est celui de la SDA ; plusieurs : le
+    // premier, les autres cités. Carte de passage : une seule sortie, vers la SDA.
+    if (rootKey.startsWith('incall:')) {
+      const ctxs = (entity(rootKey).obj?.extensions || []).map((x) => x.context);
+      const trs = (M.lists.trunk || []).filter((t) => ctxs.includes(t.context));
+      if (trs.length) {
+        const tk = `trunk:${trs[0].id}`;
+        port.label = 'Appelle, arrive par ce trunk'; port.to = { key: tk };
+        const via = { slot: 'via', label: 'Contexte entrant → SDA', note: [ctxLabel(trs[0].context), trs.length > 1 ? `ou par ${trs.slice(1).map((t) => nodeInfo(`trunk:${t.id}`).title).join(', ')}` : ''].filter(Boolean).join(' · '), help: 'Le numéro appelé est cherché parmi les SDA du contexte entrant du trunk.', id: 'via#0', to: { key: rootKey } };
+        const tn = { key: tk, depth: 1, kids: [first], parent: root.key, port: port.id, edge: port, info: nodeInfo(tk), ports: [via] };
+        root.kids = [tn];
+        Object.assign(first, { depth: 2, parent: tk, port: via.id, edge: via });
+        nodes.set(tk, tn);
+      }
+    }
   }
   const queue = [first];
   const rev = dir === 'in' ? reverseIndex() : null;
@@ -856,8 +873,7 @@ export function buildTree(rootKey, dir, { maxDepth = 8, collapsed = new Set(), e
       const oc = entity(n.key).obj; const u = dialUser(rootKey);
       const LV = { user: 'utilisateur', group: 'groupe', outcall: 'règle' };
       const blocks = rightsList(u, oc).map(({ level, p, via }) => ({ slot: 'right', label: `Autorisation « ${p.name} »`, note: [p.mode === 'allow' ? 'autorise' : 'refuse', (p.extensions || []).join(', '), p.password ? 'code' : '', `${LV[level]}${via ? ` ${via}` : ''}`, p.enabled === false ? 'désactivée' : ''].filter(Boolean).join(' · '), help: 'Autorisation d\'appel qui s\'applique à ce chemin (vérifié, wazo-agid : utilisateur, puis ses groupes, puis la règle ; au premier niveau concerné, une « autorise » suffit, sinon refus).', to: null, info: true, npd: p.mode !== 'allow' }));
-      const sc = (oc?.schedules || [])[0] && M.by.schedule?.get(String(oc.schedules[0].id));
-      if (sc) blocks.push({ slot: 'right', label: `Horaire « ${sc.name} »`, note: 'fermé : l\'appel ne sort pas (supposé)', help: 'Horaire associé à la règle sortante.', to: null, info: true });
+      // L'horaire de la règle est une carte à part, devant elle (gateOf), modifiable comme les autres.
       if (oc?.enabled === false) blocks.push({ slot: 'right', label: 'Règle désactivée', note: 'aucun appel ne sort par elle', to: null, info: true, npd: true });
       edges = [...blocks, ...edges];
     }
@@ -1004,7 +1020,9 @@ function targetOf(tree, k, portId) {
 // à sa destination), puis on traverse les cartes horaire par leur sortie
 // active, jusqu'au premier objet qui n'est pas un horaire.
 export function landingAt(tree, w) {
-  let k = tree.root.info?.type === 'caller' ? tree.root.kids[0]?.key : tree.root.key;
+  // Appelant et trunk de passage (simulation) : on part de la carte choisie.
+  let n0 = tree.root; while (n0 && (n0.info?.type === 'caller' || n0.ports?.some((p) => p.slot === 'via'))) n0 = n0.kids[0];
+  let k = n0?.key;
   if (k.startsWith('incall:')) k = targetOf(tree, k, tree.root.ports?.[0]?.id);
   for (let i = 0; k && k.startsWith('schedule:') && i < 12; i++) {
     const n = tree.nodes.get(k); const s = scheduleState(entity(k).obj, w);

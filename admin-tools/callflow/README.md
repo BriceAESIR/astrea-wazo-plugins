@@ -130,7 +130,7 @@ Pour les membres d'un groupe inscrits par la touche « bascule groupe », qui ne
 - `confd.switchboards.{uuid}.fallbacks.update`, `confd.ivr.{id}.update` ;
 - menu des fichiers son : `confd.sounds.read` (supposé) ;
 - horaires : `confd.schedules.{id}.update`, et les associations
-  `confd.{incalls|users|groups|queues}.{id}.schedules.{schedule_id}.update|delete` ;
+  `confd.{incalls|users|groups|queues|outcalls}.{id}.schedules.{schedule_id}.update|delete` ;
 - groupes : `confd.groups.{uuid}.update`, `confd.groups.{uuid}.members.users.update`,
   `confd.groups.{uuid}.members.extensions.update`, `confd.extensions.create`,
   `confd.groups.{uuid}.extensions.{id}.update|delete`,
