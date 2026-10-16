@@ -21,8 +21,8 @@
 // Supposé, à vérifier en réel : les listes (GET /groups, /queues,
 // /switchboards, /schedules) contiennent déjà fallbacks, membres et
 // destinations ; sinon on lit le détail de chaque objet (ensureDetails).
-import { S, api, listAll, fullName } from '../common/core.js?v=0.39.8';
-import { comparePatterns, describePattern, userContext, rightsList } from './dialsim.js?v=0.39.8';
+import { S, api, listAll, fullName } from '../common/core.js?v=0.39.9';
+import { comparePatterns, describePattern, userContext, rightsList } from './dialsim.js?v=0.39.9';
 
 export const M = { lists: {}, by: {}, ext: new Map(), extAny: new Map(), rev: null, warns: [] };
 
@@ -243,6 +243,17 @@ export async function loadBlocklist() {
   try { M.blocklist = await listAll('/users/blocklist/numbers'); } catch (e) { M.blocklist = null; console.warn('[astrea] listes de blocage illisibles', e); }
   return M.blocklist;
 }
+// Numéro français (demande de Brice, 16/10/2026) : les SDA sont souvent saisies en
+// E.164 sans « + » (33…), avec (+33…) ou au format national (0…) ; elles sont
+// affichées au format national, et la fiche donne aussi l'international et
+// l'E.164. Tout le reste (numéros courts de routines, étrangers) : tel quel.
+export function frNumber(n) {
+  const m = String(n || '').replace(/[\s.-]/g, '').match(/^(?:\+33|0033|33|0)([1-9]\d{8})$/);
+  if (!m) return null;
+  const d = m[1]; const rest = d.slice(1).match(/.{2}/g).join(' ');
+  return { national: `0${d[0]} ${rest}`, international: `+33 ${d[0]} ${rest}`, e164: `+33${d}` };
+}
+export const showNum = (n) => frNumber(n)?.national || String(n ?? '');
 // Forme comparable d'un numéro : chiffres, +33 / 0033 → 0 (France ; supposé pour les autres pays).
 export const numKey = (n) => String(n || '').replace(/[^\d+]/g, '').replace(/^(\+|00)33/, '0').replace(/^\+/, '00');
 // Jokers dans les champs Appelant / Appelé (demande de Brice, 16/10/2026 : « *7652
@@ -334,7 +345,8 @@ const after = (n) => (n ? `après ${n} s` : '');
 export function describe(type, o) {
   if (!o) return { title: '?', sub: '' };
   switch (type) {
-    case 'incall': return { title: firstExten(o) || `SDA #${o.id}`, sub: [o.description, ctxLabel(o.extensions?.[0]?.context)].filter(Boolean).join(' · ') };
+    // SDA française affichée au format national ; raw = numéro saisi (recherche).
+    case 'incall': return { title: showNum(firstExten(o)) || `SDA #${o.id}`, raw: firstExten(o), sub: [o.description, ctxLabel(o.extensions?.[0]?.context)].filter(Boolean).join(' · ') };
     case 'user': return { title: fullName(o) || `#${o.id}`, sub: [userExten(o), o.ring_seconds != null ? `sonne ${o.ring_seconds} s` : '', o.services?.dnd?.enabled ? 'ne pas déranger' : ''].filter(Boolean).join(' · ') };
     case 'group': return { title: o.label || o.name, sub: [o.enabled === false ? 'désactivé : l\'appel échoue' : '', firstExten(o), STRATEGY[o.ring_strategy] || o.ring_strategy, o.timeout ? `${o.timeout} s` : 'sans limite'].filter(Boolean).join(' · ') };
     case 'queue': return { title: o.label || o.name, sub: [firstExten(o), o.timeout ? `délai ${o.timeout} s` : ''].filter(Boolean).join(' · ') };
@@ -365,7 +377,7 @@ const target = (t, id) => (M.by[t]?.has(String(id)) ? { key: gated(`${t}:${id}`)
 // Renvoi (numéro libre) : objet interne si le numéro est connu, sinon numéro externe (supposé : même résolution qu'Asterisk).
 function numberTarget(num) {
   const k = M.extAny.get(String(num));
-  return k ? { key: gated(k), note: 'numéro interne' } : leaf('external', String(num || '?'));
+  return k ? { key: gated(k), note: 'numéro interne' } : leaf('external', num ? showNum(num) : '?');
 }
 export function destTarget(d) {
   if (!d || !d.type || d.type === 'none') return null;
@@ -379,7 +391,7 @@ export function destTarget(d) {
     case 'switchboard': return target('switchboard', d.switchboard_uuid);
     case 'schedule': return target('schedule', d.schedule_id); // brouillon d'association (lot 2b), pas une destination confd
     case 'outcall': return { ...target('outcall', d.outcall_id), note: d.exten ? `compose ${d.exten}` : '' };
-    case 'extension': { const k = M.ext.get(`${d.exten}@${d.context}`); return k ? { key: k.startsWith('incall:') ? k : gated(k), note: `via ${d.exten}` } : leaf('extension', d.exten, ctxLabel(d.context)); }
+    case 'extension': { const k = M.ext.get(`${d.exten}@${d.context}`); return k ? { key: k.startsWith('incall:') ? k : gated(k), note: `via ${d.exten}` } : leaf('extension', showNum(d.exten), ctxLabel(d.context)); }
     case 'sound': return leaf('sound', soundName(d.filename) || '?', [d.skip ? 'interruptible' : '', d.no_answer ? 'sans décrocher' : ''].filter(Boolean).join(' · '));
     case 'custom': return leaf('custom', d.command || '');
     case 'hangup': return leaf('hangup', 'Raccrocher', [HANGUP[d.cause] || d.cause, d.timeout ? `${d.timeout} s` : ''].filter(Boolean).join(' · '));
@@ -475,7 +487,7 @@ export function edgesOf(k) {
     case 'trunk': return o.context && M.by.context?.has(o.context) ? [link('context', `context:${o.context}`)] : [];
     case 'context': {
       const e = [];
-      if (o.type === 'incall') for (const ic of M.lists.incall || []) for (const x of ic.extensions || []) if (x.context === o.name) e.push({ ...link('incall', key('incall', ic)), label: x.exten });
+      if (o.type === 'incall') for (const ic of M.lists.incall || []) for (const x of ic.extensions || []) if (x.context === o.name) e.push({ ...link('incall', key('incall', ic)), label: showNum(x.exten) });
       for (const c of o.contexts || []) { const cc = (M.lists.context || []).find((y) => y.id === c.id || y.name === c.name); if (cc) e.push(link('include', key('context', cc))); }
       return e;
     }
@@ -885,7 +897,7 @@ export function buildTree(rootKey, dir, { maxDepth = 8, collapsed = new Set(), e
     }
     for (const s of chain?.steps || []) seq.push({ key: s.key, pass: true, port: { ...s.edge } });
     if (caller) {
-      const info = { type: 'caller', title: caller, sub: 'appelant extérieur' };
+      const info = { type: 'caller', title: isGlob(caller) ? caller : showNum(caller), sub: 'appelant extérieur' };
       seq.unshift({ key: 'leaf:caller', leaf: info, port: { slot: 'calls', label: seq[0]?.key.startsWith('trunk:') || rootKey.startsWith('trunk:') ? 'Appelle, arrive par ce trunk' : 'Appelle ce numéro', note: '', help: 'L\'opérateur présente l\'appel à Wazo.' } });
     }
     let parent = null;
@@ -1151,7 +1163,11 @@ export function facts(k, leafInfo) {
   const exts = (o.extensions || []).map((e) => `${e.exten}${e.context ? ` (${ctxLabel(e.context)})` : ''}`).join(', ');
   const scheds = (o.schedules || []).map((s) => M.by.schedule?.get(String(s.id))?.name || s.name || `#${s.id}`).join(', ');
   switch (type) {
-    case 'incall':
+    case 'incall': {
+      // Aperçu du numéro (demande de Brice, 16/10/2026), comme le portail : national, international, E.164.
+      const fr = frNumber(firstExten(o));
+      if (fr) f.push(['National', `FR ${fr.national}`], ['International', fr.international], ['E.164', fr.e164], ['Saisi dans Wazo', firstExten(o), 'Numéro tel qu\'enregistré dans la SDA (c\'est lui qui est comparé au numéro reçu de l\'opérateur).']);
+    }
       f.push(['Numéro', exts || '—'], ['Description', o.description], ['Horaire', scheds], ['Message d\'accueil', o.greeting_sound], ['Nom appelant', o.caller_id_mode ? `${o.caller_id_mode} « ${o.caller_id_name || ''} »` : ''], ['Sous-routine', o.preprocess_subroutine]);
       break;
     case 'user': {

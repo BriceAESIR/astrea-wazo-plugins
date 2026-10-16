@@ -3,22 +3,22 @@
 // déposer (lot 2a, brouillon puis aperçu, sauvegarde, écriture).
 // Cadrage : astrea-wazo-dev/docs/CALLFLOW-MANAGER.md.
 // Modèle (sources confd vérifiées) : model.js ; canevas : canvas.js ; écriture : write.js.
-import { S, $, esc, fullName, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.39.8';
-import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, loadTrunkOperators, scanGroupKeys, buildTree, landingAt, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel, periodText, STRATEGY, QSTRAT, baseKey, gateOf, loadBlocklist, blockedBy, dialUser, entryChains, isGlob, numMatch } from './model.js?v=0.39.8';
-import { createCanvas } from './canvas.js?v=0.39.8';
-import { getDest, setDest, sameValue, prepare, execute } from './write.js?v=0.39.8';
-import { openScheduleEditor } from './sched-editor.js?v=0.39.8';
-import { openGroupEditor, groupCfgDiff } from './group-editor.js?v=0.39.8';
-import { openQueueEditor, queueCfgDiff, agentName } from './queue-editor.js?v=0.39.8';
-import { openIvrEditor, ivrCfgDiff } from './ivr-editor.js?v=0.39.8';
-import { openSbEditor, sbCfgDiff } from './sb-editor.js?v=0.39.8';
-import { redact } from './ed-ui.js?v=0.39.8';
-import { openRestore } from './restore.js?v=0.39.8';
-import { openIncallEditor, incallCfgDiff, openUserEditor, userCfgDiff, openVmEditor, vmCfgDiff, openConfEditor, confCfgDiff, openSchedGenEditor, schedCfgDiff } from './obj-editors.js?v=0.39.8';
-import { openDestEditor, ENTITY_DEST } from './dest-editor.js?v=0.39.8';
-import { openOutcallEditor, outcallCfgDiff } from './outcall-editor.js?v=0.39.8';
-import { openCreate, CREATABLE } from './create.js?v=0.39.8';
-import { simulate, userContext, simPath } from './dialsim.js?v=0.39.8';
+import { S, $, esc, fullName, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.39.9';
+import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, loadTrunkOperators, scanGroupKeys, buildTree, landingAt, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel, periodText, STRATEGY, QSTRAT, baseKey, gateOf, loadBlocklist, blockedBy, dialUser, entryChains, isGlob, numMatch, showNum } from './model.js?v=0.39.9';
+import { createCanvas } from './canvas.js?v=0.39.9';
+import { getDest, setDest, sameValue, prepare, execute } from './write.js?v=0.39.9';
+import { openScheduleEditor } from './sched-editor.js?v=0.39.9';
+import { openGroupEditor, groupCfgDiff } from './group-editor.js?v=0.39.9';
+import { openQueueEditor, queueCfgDiff, agentName } from './queue-editor.js?v=0.39.9';
+import { openIvrEditor, ivrCfgDiff } from './ivr-editor.js?v=0.39.9';
+import { openSbEditor, sbCfgDiff } from './sb-editor.js?v=0.39.9';
+import { redact } from './ed-ui.js?v=0.39.9';
+import { openRestore } from './restore.js?v=0.39.9';
+import { openIncallEditor, incallCfgDiff, openUserEditor, userCfgDiff, openVmEditor, vmCfgDiff, openConfEditor, confCfgDiff, openSchedGenEditor, schedCfgDiff } from './obj-editors.js?v=0.39.9';
+import { openDestEditor, ENTITY_DEST } from './dest-editor.js?v=0.39.9';
+import { openOutcallEditor, outcallCfgDiff } from './outcall-editor.js?v=0.39.9';
+import { openCreate, CREATABLE } from './create.js?v=0.39.9';
+import { simulate, userContext, simPath } from './dialsim.js?v=0.39.9';
 
 const TESTED_STACK = ['26.07'];
 const NAV = [
@@ -82,7 +82,8 @@ function renderNav() {
 }
 function renderList() {
   const q = $('q').value.trim().toLowerCase();
-  const items = listOf(C.type).filter((x) => !q || `${x.title} ${x.sub}`.toLowerCase().includes(q));
+  // Recherche aussi sur le numéro saisi (33…) et le format national sans espaces.
+  const items = listOf(C.type).filter((x) => !q || `${x.title} ${String(x.title).replace(/\s/g, '')} ${x.raw || ''} ${x.sub}`.toLowerCase().includes(q.replace(/\s/g, '')) || `${x.title} ${x.sub}`.toLowerCase().includes(q));
   $('count').textContent = `${items.length} élément${items.length > 1 ? 's' : ''}`;
   $('list').innerHTML = items.map((x) => `<li data-key="${esc(x.key)}" class="${x.key === C.root ? 'sel' : ''}"><div><div>${esc(x.title)}</div>${x.sub ? `<div class="sub">${esc(x.sub)}</div>` : ''}</div></li>`).join('') || '<li class="muted">Aucun élément</li>';
 }
@@ -332,7 +333,7 @@ function renderFollow() {
   const blk = C.sim.caller.trim() && callerOk() ? (M.blocklist === null ? '<span class="cf-tr-end">liste de blocage des utilisateurs illisible (droit confd.users.blocklist.read) : non vérifiée</span>' : blockedBy(C.sim.caller).size ? `<span class="cf-tr-end">appelant bloqué par ${[...blockedBy(C.sim.caller).keys()].map((u) => esc(fullName(M.userByUuid.get(u)) || u)).join(', ')}</span>` : '') : '';
   if (R.routes) {
     // Routes possibles (numéro appelé vide) : une pastille par SDA → où elle arrive à ce moment.
-    $('s-trame').innerHTML = `<span class="cf-ln">Routes possibles</span><div class="cf-trs">${R.routes.map((x) => `<button type="button" class="cf-tr t-${esc(x.type)}" data-num="${esc(x.exten)}" title="Suivre l'appel vers ${esc(x.exten)}"><b>${esc(x.exten)}</b> → ${esc(x.title)}</button>`).join('')}${R.end ? `<span class="cf-tr-end">${esc(R.end)}</span>` : ''}${blk}</div>`;
+    $('s-trame').innerHTML = `<span class="cf-ln">Routes possibles</span><div class="cf-trs">${R.routes.map((x) => `<button type="button" class="cf-tr t-${esc(x.type)}" data-num="${esc(x.exten)}" title="Suivre l'appel vers ${esc(x.exten)}"><b>${esc(showNum(x.exten))}</b> → ${esc(x.title)}</button>`).join('')}${R.end ? `<span class="cf-tr-end">${esc(R.end)}</span>` : ''}${blk}</div>`;
     return;
   }
   // Trame : une pastille par étape (instant, carte, ce qui se passe), puis la fin.
@@ -344,7 +345,7 @@ function renderFollow() {
   const others = (C.chains || []).filter((c) => c !== C.chain);
   const via = !C.chains ? '' : !C.chains.length
     ? `<span class="cf-tr-warn" role="alert"><strong>Aucune route entrante</strong> : aucune SDA ne mène à ${esc(nodeInfo(C.root).title)}, un appel venant de l'extérieur ne peut pas l'atteindre. Vérifiez le routage (seul un appel interne l'atteint).</span>`
-    : others.length ? `<span class="cf-tr-end">aussi par :</span>${others.map((c) => `<button type="button" class="cf-tr t-incall" data-num="${esc(c.exten)}" title="Suivre l'appel arrivant par cette SDA">SDA ${esc(c.exten)}</button>`).join('')}` : '';
+    : others.length ? `<span class="cf-tr-end">aussi par :</span>${others.map((c) => `<button type="button" class="cf-tr t-incall" data-num="${esc(c.exten)}" title="Suivre l'appel arrivant par cette SDA">SDA ${esc(showNum(c.exten))}</button>`).join('')}` : '';
   $('s-trame').innerHTML = `<span class="cf-ln">Trame</span><div class="cf-trs">${chips.join('<span class="cf-tr-arr">→</span>')}${R.end ? `<span class="cf-tr-end">${esc(R.end)}</span>` : ''}${blk}${via}${C.chains ? '' : hint}</div>`;
   renderElapsed(R);
 }
