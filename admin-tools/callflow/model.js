@@ -21,8 +21,8 @@
 // Supposé, à vérifier en réel : les listes (GET /groups, /queues,
 // /switchboards, /schedules) contiennent déjà fallbacks, membres et
 // destinations ; sinon on lit le détail de chaque objet (ensureDetails).
-import { S, api, listAll, fullName } from '../common/core.js?v=0.40.0';
-import { comparePatterns, describePattern, userContext, rightsList, simulate } from './dialsim.js?v=0.40.0';
+import { S, api, listAll, fullName } from '../common/core.js?v=0.40.1';
+import { comparePatterns, describePattern, userContext, rightsList, simulate, famLabel } from './dialsim.js?v=0.40.1';
 
 export const M = { lists: {}, by: {}, ext: new Map(), extAny: new Map(), rev: null, warns: [] };
 
@@ -494,17 +494,29 @@ export function edgesOf(k) {
       return e;
     }
     case 'outcall': {
-      // Une sortie par motif (vérifié : extensions = dialpatterns), vers une carte
-      // « Envoi » : numéro envoyé (strip_digits, external_prefix ; vérifié dans
-      // wazo-agid) puis trunks dans l'ordre (le suivant si le premier échoue).
+      // Motifs regroupés par transformation (retour de Brice, 16/10/2026 : une
+      // sortie par motif devenait illisible) : une sortie par combinaison
+      // chiffres retirés / préfixe ajouté / numéro présenté, qui liste ses
+      // familles et ses motifs, vers une seule carte « Envoi » (numéro envoyé :
+      // strip_digits, external_prefix, vérifié dans wazo-agid) puis les trunks
+      // dans l'ordre (le suivant si le premier échoue). L'ordre d'essai entre
+      // motifs reste celui d'Asterisk (le plus précis d'abord).
       const trunks = (o.trunks || []).filter((t) => M.by.trunk?.has(String(t.id)));
       const pats = [...(o.extensions || [])].sort((a, b) => comparePatterns(a.exten, b.exten));
-      return pats.map((dp) => {
+      const groups = new Map();
+      for (const dp of pats) {
+        const k = `${dp.strip_digits || 0}|${dp.external_prefix || ''}|${dp.caller_id || ''}`;
+        if (!groups.has(k)) groups.set(k, { dp, list: [] });
+        groups.get(k).list.push(dp.exten);
+      }
+      return [...groups.values()].map(({ dp, list }) => {
         const tr = [dp.strip_digits ? `retire ${dp.strip_digits} chiffre${dp.strip_digits > 1 ? 's' : ''}` : '', dp.external_prefix ? `ajoute ${dp.external_prefix} devant` : ''].filter(Boolean).join(', ');
         const send = leaf('dial', tr ? `Numéro ${tr}` : 'Numéro envoyé tel quel', [dp.caller_id ? `présenté : ${dp.caller_id}` : '', `${trunks.length} trunk${trunks.length > 1 ? 's' : ''}`].filter(Boolean).join(' · '), {
           edges: trunks.map((t, i) => ({ ...link('trunk', `trunk:${t.id}`), label: i ? `${i + 1}. si échec : trunk` : '1. Trunk', note: '' })),
         });
-        return { slot: 'pattern', label: dp.exten, note: describePattern(dp.exten), help: 'Motif de numéros composés qui partent par cette règle (règles d\'Asterisk : _ = motif, X = 0-9, Z = 1-9, N = 2-9, [1-5] = un chiffre parmi, « . » = un ou plusieurs caractères).', to: send };
+        const fams = [...new Set(list.map(famLabel))];
+        const shown = list.length > 6 ? `${list.slice(0, 6).join(', ')} +${list.length - 6}` : list.join(', ');
+        return { slot: 'pattern', pats: list, label: `${fams.join(', ')}`.replace(/^./, (c) => c.toUpperCase()), note: `${shown}${tr ? ` · ${tr}` : ' · tel quel'}`, help: `Motifs qui partent avec la même transformation : ${list.join(', ')}. Règles d'Asterisk : _ = motif, X = 0-9, Z = 1-9, N = 2-9, [1-5] = un chiffre parmi, « . » = un ou plusieurs caractères ; le plus précis est essayé d'abord.`, to: send };
       });
     }
     default: return [];

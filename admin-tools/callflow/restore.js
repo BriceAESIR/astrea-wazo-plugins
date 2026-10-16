@@ -7,10 +7,10 @@
 // montrés une seule fois (jamais enregistrés dans un fichier).
 // Non restauré automatiquement : un numéro interne changé (risque de collision
 // si le numéro a été réattribué) — signalé.
-import { S, $, esc, api, toast, confirmModal, downloadJson, fullName } from '../common/core.js?v=0.40.0';
-import { M } from './model.js?v=0.40.0';
-import { cleanDest } from './write.js?v=0.40.0';
-import { redact } from './ed-ui.js?v=0.40.0';
+import { S, $, esc, api, toast, confirmModal, downloadJson, fullName } from '../common/core.js?v=0.40.1';
+import { M } from './model.js?v=0.40.1';
+import { cleanDest } from './write.js?v=0.40.1';
+import { redact } from './ed-ui.js?v=0.40.1';
 
 const HIDDEN = '***';
 const newCode = (n = 4) => { const a = new Uint32Array(n); crypto.getRandomValues(a); return [...a].map((x) => x % 10).join(''); };

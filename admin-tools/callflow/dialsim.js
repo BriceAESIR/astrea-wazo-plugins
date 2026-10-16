@@ -12,11 +12,13 @@
 //    « prefix » est lu mais pas appliqué.
 // Supposé : effet exact des autorisations d'appels et d'un horaire sur une
 // règle sortante (affichés à titre indicatif).
-import { M, scheduleState, whenOf, entity, groupMemberList } from './model.js?v=0.40.0';
+import { M, scheduleState, whenOf, entity, groupMemberList } from './model.js?v=0.40.1';
 
 // Motif → liste d'éléments { set: chaînes de caractères, size } | { dot } | { bang } ; null si numéro exact.
 export function parsePattern(p) {
-  p = String(p || '').replace(/-/g, '');
+  // « - » ignoré hors des crochets seulement : dedans, c'est un intervalle ([1-5]).
+  // Correctif du 16/10/2026 : tous les « - » étaient retirés, [1-5] était lu [15].
+  p = String(p || '').replace(/\[[^\]]*\]|-/g, (m) => (m === '-' ? '' : m));
   if (!p.startsWith('_')) return null;
   const out = []; const s = p.slice(1);
   for (let i = 0; i < s.length; i++) {
@@ -62,6 +64,16 @@ export function comparePatterns(a, b) {
   return ta.length - tb.length;
 }
 
+// Famille courte d'un motif (titre d'une sortie qui regroupe des motifs) :
+// « urgences », « fixes », « mobiles », « international », « tout le reste »…
+const URG = new Set(['15', '17', '18', '112', '114', '115', '119', '_116XXX']);
+const FAM_SHORT = { 'fixe (01 à 05)': 'fixes', 'mobile (06, 07)': 'mobiles', 'mobile (06)': 'mobiles', 'mobile (07)': 'mobiles', 'numéros spéciaux (08)': 'spéciaux (08)', 'non géographique (09)': '09', 'national (10 chiffres)': 'national', 'international (00…)': 'international', 'international (+…)': 'international', 'urgences et services courts (1x, 11x)': 'urgences', 'services 3xxx': 'courts 3xxx' };
+export function famLabel(p) {
+  if (URG.has(String(p))) return 'urgences';
+  const d = describePattern(p); const f = d.includes(' · ') ? d.split(' · ')[0] : '';
+  if (f) return FAM_SHORT[f] || f;
+  return /^_[XZN]?[.!]$/i.test(String(p)) ? 'tout le reste' : String(p);
+}
 // Description lisible d'un motif (« 10 chiffres, commence par 01 à 05 »), avec
 // les familles françaises courantes reconnues.
 export function describePattern(p) {
@@ -335,7 +347,7 @@ export function simPath(tree, w, match, { blocked = null } = {}) {
       }
       case 'ivr': { const tries = o.max_tries || 1; st.dur = (o.timeout || 0) * tries; st.what = `menu, attend une touche${o.timeout ? ` ${o.timeout} s × ${tries} (supposé)` : ''}`; p = P((x) => x.slot === 'ivr_timeout'); break; }
       case 'outcall': {
-        p = P((x) => x.slot === 'pattern' && x.label === r?.dp?.exten);
+        p = P((x) => x.slot === 'pattern' && (x.pats ? x.pats.includes(r?.dp?.exten) : x.label === r?.dp?.exten));
         st.what = r?.dp ? `motif ${r.dp.exten}` : 'règle sortante';
         if (o?.enabled === false) { st.what += ' · règle désactivée'; st.block = true; end = true; R.end = 'règle sortante désactivée : l\'appel échoue (supposé)'; break; }
         // Horaire de la règle : carte horaire placée devant elle (suivie comme les autres horaires).
