@@ -85,7 +85,12 @@ courant. Cadrage, sources et décisions : `docs/CALLFLOW-MANAGER.md` (dépôt de
   destination de chacune) et les cas sans saisie, invalide, trop d'essais.
 - **Standards (POPC)** : « Régler le standard… » ouvre son nom, ses
   opérateurs, son délai, ses musiques d'attente et son débordement.
-- Pas encore modifiables : renvois d'appel de l'utilisateur.
+- **SDA, utilisateurs, messageries, conférences, horaires** : un bouton
+  « Régler … » dans la fiche ouvre leurs options (pour un utilisateur : sonnerie,
+  appels simultanés, NPD, filtrage, renvois). Codes et mots de passe : portail Wazo.
+- Toute carte reliée par une sortie modifiable : « Remplacer… » choisit une autre
+  destination pour cette sortie.
+- En lecture seule : trunks, contextes, règles sortantes.
 - Tout passe par un **brouillon** : un point orange marque chaque sortie
   modifiée, et rien n'est écrit tant qu'on n'a pas cliqué « Appliquer… ».
 - **Appliquer…** se déroule ainsi :
@@ -123,7 +128,11 @@ Pour les membres d'un groupe inscrits par la touche « bascule groupe », qui ne
 - files : `confd.queues.{id}.update`, `confd.queues.{id}.members.users.{uuid}.update|delete`,
   `confd.queues.{id}.members.agents.{id}.update|delete`, `confd.extensions.create`,
   `confd.queues.{id}.extensions.{id}.update|delete` ; liste `confd.agents.read` ;
-- standards : `confd.switchboards.{uuid}.update`, `confd.switchboards.{uuid}.members.users.update`.
+- standards : `confd.switchboards.{uuid}.update`, `confd.switchboards.{uuid}.members.users.update` ;
+- SDA `confd.incalls.{id}.update` ; utilisateurs `confd.users.{uuid}.update`,
+  `confd.users.{uuid}.services.dnd.update` (même droit pour le filtrage, vérifié),
+  `confd.users.{uuid}.forwards.{type}.update` ; `confd.voicemails.{id}.update` ;
+  `confd.conferences.{id}.update` ; `confd.schedules.{id}.update`.
 
 Ces droits ne sont pas encore vérifiés en réel pour le token du portail. Sans
 l'un d'eux, le graphe s'affiche quand même, sans ce type d'objet, avec un

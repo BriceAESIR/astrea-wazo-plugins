@@ -11,12 +11,23 @@
 //  - SVI : choices envoyé en entier (supposé : la liste est remplacée).
 // Toujours : relire juste avant d'écrire, ne rien écrire si c'est identique,
 // une seule écriture par objet.
-import { api } from '../common/core.js?v=0.37.2';
-import { M } from './model.js?v=0.37.2';
-import { groupCfgOf, applyGroupCfg, GROUP_FIELDS } from './group-editor.js?v=0.37.2';
-import { queueCfgOf, applyQueueCfg, QUEUE_FIELDS, optionsList } from './queue-editor.js?v=0.37.2';
-import { ivrCfgOf, applyIvrCfg, IVR_FIELDS } from './ivr-editor.js?v=0.37.2';
-import { sbCfgOf, applySbCfg, SB_FIELDS } from './sb-editor.js?v=0.37.2';
+import { api } from '../common/core.js?v=0.38.0';
+import { M } from './model.js?v=0.38.0';
+import { groupCfgOf, applyGroupCfg, GROUP_FIELDS } from './group-editor.js?v=0.38.0';
+import { queueCfgOf, applyQueueCfg, QUEUE_FIELDS, optionsList } from './queue-editor.js?v=0.38.0';
+import { ivrCfgOf, applyIvrCfg, IVR_FIELDS } from './ivr-editor.js?v=0.38.0';
+import { sbCfgOf, applySbCfg, SB_FIELDS } from './sb-editor.js?v=0.38.0';
+import { incallCfgOf, applyIncallCfg, INCALL_FIELDS, userCfgOf, applyUserCfg, USER_FIELDS, vmCfgOf, applyVmCfg, VM_FIELDS, confCfgOf, applyConfCfg, CONF_FIELDS, schedCfgOf, applySchedCfg, SCHED_FIELDS } from './obj-editors.js?v=0.38.0';
+
+// Réglages « simples » (obj-editors.js) : un PUT partiel des champs modifiés.
+const SIMPLE = {
+  incall_cfg: { obj: (id) => M.by.incall?.get(String(id)), path: (id) => `/incalls/${id}`, of: incallCfgOf, apply: applyIncallCfg, fields: INCALL_FIELDS },
+  vm_cfg: { obj: (id) => M.by.voicemail?.get(String(id)), path: (id) => `/voicemails/${id}`, of: vmCfgOf, apply: applyVmCfg, fields: VM_FIELDS,
+    // Vérifié (voicemail/schema.py) : delete_messages exige email et attach_audio dans le même envoi.
+    fix: (body, a) => { if (Object.keys(body).length && a.fields.delete_messages) Object.assign(body, { delete_messages: true, email: a.fields.email, attach_audio: a.fields.attach_audio }); } },
+  conf_cfg: { obj: (id) => M.by.conference?.get(String(id)), path: (id) => `/conferences/${id}`, of: confCfgOf, apply: applyConfCfg, fields: CONF_FIELDS },
+  schedgen_cfg: { obj: (id) => M.by.schedule?.get(String(id)), path: (id) => `/schedules/${id}`, of: schedCfgOf, apply: applySchedCfg, fields: SCHED_FIELDS },
+};
 
 // Champs d'entrée de chaque type de destination (le reste est en lecture seule).
 const DEST_KEYS = {
@@ -73,7 +84,7 @@ function holder(w) {
 // Éditeur d'horaire : plages + destination « si fermé » ensemble.
 const periodsOf = (s) => JSON.parse(JSON.stringify({ open_periods: s?.open_periods || [], exceptional_periods: s?.exceptional_periods || [], closed_destination: s?.closed_destination || null }));
 // Égalité d'une valeur du brouillon (destination, horaire associé ou plages).
-const CFG_KINDS = new Set(['sched_periods', 'group_cfg', 'queue_cfg', 'ivr_cfg', 'sb_cfg']);
+const CFG_KINDS = new Set(['sched_periods', 'group_cfg', 'queue_cfg', 'ivr_cfg', 'sb_cfg', 'user_cfg', ...Object.keys(SIMPLE)]);
 // SVI : destinations nettoyées (comparaison et écriture sur les seuls champs d'entrée).
 const normIvr = (v) => v && { ...v, timeout_destination: cleanDest(v.timeout_destination), invalid_destination: cleanDest(v.invalid_destination), abort_destination: cleanDest(v.abort_destination), choices: (v.choices || []).map((c) => ({ exten: String(c.exten), destination: cleanDest(c.destination) })) };
 export const sameValue = (w, a, b) => (w.k === 'ivr_cfg' ? JSON.stringify(normIvr(a)) === JSON.stringify(normIvr(b)) : CFG_KINDS.has(w.k) ? JSON.stringify(a) === JSON.stringify(b) : sameDest(a, b));
@@ -81,6 +92,8 @@ export function getDest(w) {
   // group_cfg (lot 2c) : réglage complet d'un groupe (voir group-editor.js).
   if (w.k === 'group_cfg') return JSON.parse(JSON.stringify(groupCfgOf(M.groupByUuid?.get(w.id) || {})));
   if (w.k === 'queue_cfg') return JSON.parse(JSON.stringify(queueCfgOf(M.by.queue?.get(String(w.id)) || {})));
+  if (SIMPLE[w.k]) return JSON.parse(JSON.stringify(SIMPLE[w.k].of(SIMPLE[w.k].obj(w.id) || {})));
+  if (w.k === 'user_cfg') return JSON.parse(JSON.stringify(userCfgOf(M.userByUuid?.get(w.id) || {})));
   if (w.k === 'sb_cfg') return JSON.parse(JSON.stringify(sbCfgOf(M.by.switchboard?.get(String(w.id)) || {})));
   if (w.k === 'ivr_cfg') return normIvr(JSON.parse(JSON.stringify(ivrCfgOf(M.by.ivr?.get(String(w.id)) || {}))));
   if (w.k === 'sched_periods') return periodsOf(M.by.schedule?.get(String(w.id)));
@@ -91,6 +104,8 @@ export function getDest(w) {
 export function setDest(w, d) {
   if (w.k === 'group_cfg') { const g = M.groupByUuid?.get(w.id); if (g && d) applyGroupCfg(g, JSON.parse(JSON.stringify(d))); return; }
   if (w.k === 'queue_cfg') { const q = M.by.queue?.get(String(w.id)); if (q && d) applyQueueCfg(q, JSON.parse(JSON.stringify(d))); return; }
+  if (SIMPLE[w.k]) { const o = SIMPLE[w.k].obj(w.id); if (o && d) SIMPLE[w.k].apply(o, JSON.parse(JSON.stringify(d))); return; }
+  if (w.k === 'user_cfg') { const u = M.userByUuid?.get(w.id); if (u && d) applyUserCfg(u, JSON.parse(JSON.stringify(d))); return; }
   if (w.k === 'sb_cfg') { const s = M.by.switchboard?.get(String(w.id)); if (s && d) applySbCfg(s, JSON.parse(JSON.stringify(d))); return; }
   if (w.k === 'ivr_cfg') { const o = M.by.ivr?.get(String(w.id)); if (o && d) applyIvrCfg(o, JSON.parse(JSON.stringify(d))); return; }
   if (w.k === 'sched_periods') {
@@ -241,6 +256,24 @@ export async function prepare(entries) {
       }
       for (const id of a.perms.filter((x) => !b.perms.includes(x))) mine.push({ method: 'PUT', path: `${base}/callpermissions/${id}`, before: { call_permissions: before?.call_permissions }, changed: true });
       for (const id of b.perms.filter((x) => !a.perms.includes(x))) mine.push({ method: 'DELETE', path: `${base}/callpermissions/${id}`, before: { call_permissions: before?.call_permissions }, changed: true });
+      out.push(...(mine.length ? mine : [{ path: base, before, changed: false }]));
+    } else if (SIMPLE[op.k]) {
+      const S = SIMPLE[op.k]; const path = S.path(op.id);
+      const before = await api('GET', path);
+      const b = S.of(before || {}), a = op.entries[op.entries.length - 1].after;
+      const body = {}; for (const k of S.fields) if (JSON.stringify(b.fields[k] ?? null) !== JSON.stringify(a.fields[k] ?? null)) body[k] = a.fields[k];
+      S.fix?.(body, a);
+      out.push({ path, before, body, changed: Object.keys(body).length > 0 });
+    } else if (op.k === 'user_cfg') {
+      // Utilisateur (routage) : champs (PUT partiel), services et renvois par leurs routes.
+      const base = `/users/${op.id}`;
+      const before = await api('GET', base);
+      const b = userCfgOf(before || {}), a = op.entries[op.entries.length - 1].after;
+      const mine = [];
+      const body = {}; for (const k of USER_FIELDS) if (JSON.stringify(b.fields[k] ?? null) !== JSON.stringify(a.fields[k] ?? null)) body[k] = a.fields[k];
+      if (Object.keys(body).length) mine.push({ path: base, before, body, changed: true });
+      for (const s of ['dnd', 'incallfilter']) if (b[s] !== a[s]) mine.push({ path: `${base}/services/${s}`, before: before?.services, body: { enabled: a[s] }, changed: true });
+      for (const k of ['unconditional', 'busy', 'noanswer']) if (JSON.stringify(b.forwards[k]) !== JSON.stringify(a.forwards[k])) mine.push({ path: `${base}/forwards/${k}`, before: before?.forwards, body: a.forwards[k], changed: true });
       out.push(...(mine.length ? mine : [{ path: base, before, changed: false }]));
     } else if (op.k === 'sb_cfg') {
       // Standard (sb-editor.js) : PUT partiel des champs modifiés, opérateurs en entier.
