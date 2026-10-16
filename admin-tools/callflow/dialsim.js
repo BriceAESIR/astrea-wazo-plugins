@@ -12,7 +12,7 @@
 //    « prefix » est lu mais pas appliqué.
 // Supposé : effet exact des autorisations d'appels et d'un horaire sur une
 // règle sortante (affichés à titre indicatif).
-import { M, scheduleState, whenOf, entity } from './model.js?v=0.39.9';
+import { M, scheduleState, whenOf, entity, groupMemberList } from './model.js?v=0.40.0';
 
 // Motif → liste d'éléments { set: chaînes de caractères, size } | { dot } | { bang } ; null si numéro exact.
 export function parsePattern(p) {
@@ -229,7 +229,8 @@ const DEFAULT_RING = 30; // ring_seconds par défaut de confd
 // blocked : Map(uuid utilisateur → libellé) des utilisateurs qui bloquent l'appelant.
 export function simPath(tree, w, match, { blocked = null } = {}) {
   const R = { on: new Map(), ports: new Set(), ring: new Map(), steps: [], expand: null, end: '' };
-  const r = match?.result;
+  // r : résultat de la recherche du numéro en cours ; remplacé quand un renvoi ressort vers l'extérieur.
+  let r = match?.result; let twoCh = false;
   const kidOf = (n, p) => { const c = n.kids.find((x) => x.port === p.id); if (c) return c; const x = tree.cross.find((y) => y.from === n.key && y.port === p.id); return x ? tree.nodes.get(x.to) : null; };
   const subtree = (n, f) => { for (const c of n.kids) { f(c); subtree(c, f); } };
   let n = tree.root, t = 0, override = null, memberOf = ''; const seen = new Set();
@@ -247,12 +248,19 @@ export function simPath(tree, w, match, { blocked = null } = {}) {
     } else if (n.leaf) {
       if (type === 'caller') { p = ports[0]; st.what = 'appelle'; }
       else if (type === 'dial') { p = P((x) => x.slot === 'trunk'); st.what = r?.sent ? `envoie ${r.sent}` : 'numéro envoyé'; }
+      // Numéro externe (renvoi, destination Numéro) : il ressort par une règle sortante (outEdges, model.js).
+      else if (P((x) => x.slot === 'dial_out')) {
+        p = P((x) => x.slot === 'dial_out'); r = p.outMatch?.result || r;
+        const ext = r?.kind === 'outcall';
+        if (ext) twoCh = true;
+        st.what = ext ? 'repart vers l\'extérieur : 2 canaux occupés (l\'entrant et le sortant)' : 'numéro interne';
+      } else if (P((x) => x.slot === 'dial_none')) { st.what = n.info.title; end = true; R.end = 'aucune règle sortante ne prend ce numéro : le renvoi échoue (supposé)'; }
       else { st.what = n.info.title; end = true; }
     } else switch (type) {
       case 'trunk':
         // Trunk de passage (départ SDA avec appelant) : vers la SDA.
         if (P((x) => x.slot === 'via')) { p = P((x) => x.slot === 'via'); st.what = 'appel reçu de l\'opérateur'; break; }
-        if (P((x) => x.slot === 'pstn')) { st.what = 'sort vers l\'opérateur'; end = true; R.end = 'l\'appel quitte Wazo par ce trunk'; break; }
+        if (P((x) => x.slot === 'pstn')) { st.what = twoCh ? 'sort vers l\'opérateur · 2e canal' : 'sort vers l\'opérateur'; end = true; R.end = twoCh ? 'le renvoi quitte Wazo par ce trunk ; l\'appel entrant reste ouvert : 2 canaux occupés pendant l\'appel (autorisations : seules celles de la règle sont simulées, supposé)' : 'l\'appel quitte Wazo par ce trunk'; break; }
         p = P((x) => x.slot === 'context'); st.what = match?.number ? `reçoit ${match.number}` : 'appel reçu';
         if (!r) { end = true; R.end = 'tapez le numéro appelé (SDA)'; }
         break;
@@ -306,6 +314,8 @@ export function simPath(tree, w, match, { blocked = null } = {}) {
         const tmax = override || o.timeout || 0;
         st.dur = tmax || Infinity;
         st.what = type === 'queue' ? `attente en file${tmax ? ` ${tmax} s` : ', sans limite'}` : type === 'switchboard' ? `présenté au standard${tmax ? ` ${tmax} s` : ', sans limite'}` : `sonne${tmax ? ` ${tmax} s` : ' sans limite'}`;
+        // Membres « numéro » externes d'un groupe : chacun appelé vers l'extérieur pendant la sonnerie (supposé : un canal sortant chacun).
+        if (type === 'group') { const extN = groupMemberList(o).filter((m) => m.kind === 'ext' && !M.extAny.get(String(m.exten))).length; if (extN) st.what += ` · ${extN} numéro${extN > 1 ? 's' : ''} externe${extN > 1 ? 's' : ''} : un canal sortant chacun pendant la sonnerie (supposé)`; }
         // Membres : toute la branche « sonne » ; en « un par un », créneaux de chacun.
         const mp = P((x) => x.slot === 'members'); const hub = mp && kidOf(n, mp);
         if (mp) R.ports.add(`${n.key}|${mp.id}`);

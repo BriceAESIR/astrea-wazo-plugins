@@ -3,22 +3,22 @@
 // déposer (lot 2a, brouillon puis aperçu, sauvegarde, écriture).
 // Cadrage : astrea-wazo-dev/docs/CALLFLOW-MANAGER.md.
 // Modèle (sources confd vérifiées) : model.js ; canevas : canvas.js ; écriture : write.js.
-import { S, $, esc, fullName, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.39.9';
-import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, loadTrunkOperators, scanGroupKeys, buildTree, landingAt, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel, periodText, STRATEGY, QSTRAT, baseKey, gateOf, loadBlocklist, blockedBy, dialUser, entryChains, isGlob, numMatch, showNum } from './model.js?v=0.39.9';
-import { createCanvas } from './canvas.js?v=0.39.9';
-import { getDest, setDest, sameValue, prepare, execute } from './write.js?v=0.39.9';
-import { openScheduleEditor } from './sched-editor.js?v=0.39.9';
-import { openGroupEditor, groupCfgDiff } from './group-editor.js?v=0.39.9';
-import { openQueueEditor, queueCfgDiff, agentName } from './queue-editor.js?v=0.39.9';
-import { openIvrEditor, ivrCfgDiff } from './ivr-editor.js?v=0.39.9';
-import { openSbEditor, sbCfgDiff } from './sb-editor.js?v=0.39.9';
-import { redact } from './ed-ui.js?v=0.39.9';
-import { openRestore } from './restore.js?v=0.39.9';
-import { openIncallEditor, incallCfgDiff, openUserEditor, userCfgDiff, openVmEditor, vmCfgDiff, openConfEditor, confCfgDiff, openSchedGenEditor, schedCfgDiff } from './obj-editors.js?v=0.39.9';
-import { openDestEditor, ENTITY_DEST } from './dest-editor.js?v=0.39.9';
-import { openOutcallEditor, outcallCfgDiff } from './outcall-editor.js?v=0.39.9';
-import { openCreate, CREATABLE } from './create.js?v=0.39.9';
-import { simulate, userContext, simPath } from './dialsim.js?v=0.39.9';
+import { S, $, esc, fullName, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.40.0';
+import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, loadTrunkOperators, scanGroupKeys, buildTree, landingAt, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel, periodText, STRATEGY, QSTRAT, baseKey, gateOf, loadBlocklist, blockedBy, dialUser, entryChains, isGlob, numMatch, showNum } from './model.js?v=0.40.0';
+import { createCanvas } from './canvas.js?v=0.40.0';
+import { getDest, setDest, sameValue, prepare, execute } from './write.js?v=0.40.0';
+import { openScheduleEditor } from './sched-editor.js?v=0.40.0';
+import { openGroupEditor, groupCfgDiff } from './group-editor.js?v=0.40.0';
+import { openQueueEditor, queueCfgDiff, agentName } from './queue-editor.js?v=0.40.0';
+import { openIvrEditor, ivrCfgDiff } from './ivr-editor.js?v=0.40.0';
+import { openSbEditor, sbCfgDiff } from './sb-editor.js?v=0.40.0';
+import { redact } from './ed-ui.js?v=0.40.0';
+import { openRestore } from './restore.js?v=0.40.0';
+import { openIncallEditor, incallCfgDiff, openUserEditor, userCfgDiff, openVmEditor, vmCfgDiff, openConfEditor, confCfgDiff, openSchedGenEditor, schedCfgDiff } from './obj-editors.js?v=0.40.0';
+import { openDestEditor, ENTITY_DEST } from './dest-editor.js?v=0.40.0';
+import { openOutcallEditor, outcallCfgDiff } from './outcall-editor.js?v=0.40.0';
+import { openCreate, openCreateIncall, CREATABLE } from './create.js?v=0.40.0';
+import { simulate, userContext, simPath } from './dialsim.js?v=0.40.0';
 
 const TESTED_STACK = ['26.07'];
 const NAV = [
@@ -84,6 +84,8 @@ function renderList() {
   const q = $('q').value.trim().toLowerCase();
   // Recherche aussi sur le numéro saisi (33…) et le format national sans espaces.
   const items = listOf(C.type).filter((x) => !q || `${x.title} ${String(x.title).replace(/\s/g, '')} ${x.raw || ''} ${x.sub}`.toLowerCase().includes(q.replace(/\s/g, '')) || `${x.title} ${x.sub}`.toLowerCase().includes(q));
+  // Créer une SDA (liste des SDA, écriture permise).
+  $('list-actions').hidden = C.type !== 'incall' || !!S.readonly;
   $('count').textContent = `${items.length} élément${items.length > 1 ? 's' : ''}`;
   $('list').innerHTML = items.map((x) => `<li data-key="${esc(x.key)}" class="${x.key === C.root ? 'sel' : ''}"><div><div>${esc(x.title)}</div>${x.sub ? `<div class="sub">${esc(x.sub)}</div>` : ''}</div></li>`).join('') || '<li class="muted">Aucun élément</li>';
 }
@@ -110,7 +112,7 @@ function draw(keepView = false) {
   const caller = simActive() && callerOk() && !(C.chains && !chain) ? C.sim.caller.trim() : '';
   if (caller && M.blocklist === undefined) loadBlocklist().then(() => draw(true)); // une fois, en arrière-plan
   const td = TD();
-  const build = () => buildTree(C.root, td, { collapsed: C.collapsed, expanded: C.expanded, showEmpty: (C.showEmpty || C.edit) && td === 'out', caller, chain, trunkPref: C.sim.trunk || '', viaTrunk: simActive() && C.sim.mode === 'in' && entity(C.root).type === 'incall', hit: td === 'dial' && ['internal', 'incall'].includes(match?.result?.kind) ? { ...match.result, number: match.number } : null });
+  const build = () => buildTree(C.root, td, { collapsed: C.collapsed, expanded: C.expanded, showEmpty: (C.showEmpty || C.edit) && td === 'out', caller, chain, trunkPref: C.sim.trunk || '', viaTrunk: simActive() && C.sim.mode === 'in' && entity(C.root).type === 'incall', followOut: simActive() && C.sim.mode === 'in', hit: td === 'dial' && ['internal', 'incall'].includes(match?.result?.kind) ? { ...match.result, number: match.number } : null });
   C.tree = build();
   applyTime(C.tree, timeW());
   // Appel suivi : une branche repliée sur le chemin est dépliée, puis l'arbre refait.
@@ -469,6 +471,7 @@ function showDetail(n) {
     ${C.edit && C.dir === 'out' && cfgOfNode(n) ? `<div class="btnrow"><button id="d-group" class="primary" title="Toutes les options de l'objet, en sections dépliables (brouillon)">${CFG_LABEL[cfgOfNode(n).k]}</button></div>` : ''}
     ${C.edit && n.key.startsWith('schedule:') ? (() => { const sc = entity(n.key).obj; const u = schedUsage(sc); return `<div class="btnrow"><button id="d-periods" class="primary" title="Change les heures d'ouverture, la destination si fermé et les fermetures exceptionnelles de l'horaire « ${esc(sc.name)} ». ${u > 1 ? `Il est utilisé par ${u} objets : tous sont concernés.` : 'Le changement vaut pour tout objet qui utilise cet horaire.'} (brouillon)">Modifier les heures de « ${esc(sc.name)} »…</button></div>${u > 1 ? `<p class="small muted">Horaire partagé par ${u} objets : modifier ses heures les concerne tous.</p>` : ''}`; })() : ''}
     ${C.edit && C.dir === 'out' && !entity(n.key).owner && incomingPort(n) ? `<div class="btnrow"><button id="d-replace" title="Choisir une autre destination pour la sortie « ${esc(incomingPort(n).p.label)} » de ${esc(ownerTitle(incomingPort(n).n))} (brouillon)">Remplacer…</button><button id="d-remove" class="danger" title="Vide la sortie « ${esc(incomingPort(n).p.label)} » de ${esc(ownerTitle(incomingPort(n).n))} (brouillon ; touche Suppr)">Retirer de cette sortie</button></div>` : ''}
+    ${C.edit && !n.leaf && (baseKey(n.key).startsWith('trunk:') || (baseKey(n.key).startsWith('context:') && entity(n.key).obj?.type === 'incall')) ? '<div class="btnrow"><button id="d-newinc" title="Créer une SDA à partir des plages déclarées dans ce contexte entrant (numéros sans SDA)">Créer une SDA dans ce contexte…</button></div>' : ''}
     ${n.leaf ? '' : `<div class="dsec"><h4>Arrive depuis</h4>${refs}</div>`}
     ${n.leaf ? '' : `<div class="btnrow">${baseKey(n.key) !== C.root ? '<button id="d-root" class="primary">Partir de cette carte</button>' : ''}<button id="d-in">${C.dir === 'in' && n.key === C.root ? 'Où vont les appels' : 'Qui arrive ici'}</button></div>`}`;
   $('detail').hidden = false;
@@ -480,6 +483,7 @@ function showDetail(n) {
   const du = $('d-unsched'); if (du) du.onclick = removeSelected;
   const dp = $('d-periods'); if (dp) dp.onclick = () => openPeriods(entity(n.key).id);
   const dg = $('d-group'); if (dg) dg.onclick = () => openCfg(cfgOfNode(n));
+  const dni = $('d-newinc'); if (dni) dni.onclick = () => { const o = entity(n.key).obj; newIncall(o?.type === 'incall' ? o.name : o?.context); };
   const i = $('d-in'); if (i) i.onclick = () => { if (baseKey(n.key) !== C.root) setRoot(n.key); setDir(C.dir === 'in' && baseKey(n.key) === C.root ? 'out' : 'in'); };
   for (const li of $('d-body').querySelectorAll('.cf-refs li')) li.onclick = () => setRoot(li.dataset.key);
   const k = $('d-keys');
@@ -870,7 +874,21 @@ async function applyDraft() {
 // ---------------------------------------------------------------------------
 // Événements
 // ---------------------------------------------------------------------------
-$('cf-edit').onclick = () => setEdit(!C.edit);
+// Créer une SDA (create.js) : puis la SDA devient la carte de départ, en mode édition,
+// et le choix de sa destination s'ouvre (brouillon habituel).
+function newIncall(ctxPref = '') {
+  if (!canWrite()) return;
+  const { type, obj } = entity(C.root || '');
+  const ctx = ctxPref || (type === 'context' && obj?.type === 'incall' ? obj.name : type === 'incall' ? obj?.extensions?.[0]?.context : type === 'trunk' ? obj?.context : '');
+  openCreateIncall((key) => {
+    setRoot(key);
+    if (!C.edit) setEdit(true);
+    const n = C.tree?.root; const n2 = n && [...C.tree.nodes.values()].find((x) => x.key === key);
+    const p = n2?.ports?.find((x) => x.w && x.slot === 'destination');
+    if (p) openDest({ nodeKey: n2.key, portId: p.id });
+  }, reloadKeepDraft, ctx, showNum);
+}
+$('cf-new-incall').onclick = () => newIncall();$('cf-edit').onclick = () => setEdit(!C.edit);
 $('cf-draft-cancel').onclick = () => confirmModal(`<h3>Annuler le brouillon ?</h3><p>Les ${C.draft.size} modification${C.draft.size > 1 ? 's' : ''} non écrite${C.draft.size > 1 ? 's' : ''} sont abandonnée${C.draft.size > 1 ? 's' : ''}.</p>`, () => cancelDraft(), 'Annuler le brouillon');
 $('cf-draft-apply').onclick = applyDraft;
 // Restaurer : seulement brouillon vide (sinon la relecture effacerait le brouillon).

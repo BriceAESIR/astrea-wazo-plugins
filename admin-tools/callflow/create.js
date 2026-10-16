@@ -14,10 +14,10 @@
 //  - horaire : closed_destination obligatoire ; listes de jours / mois non vides.
 // Extension : POST /extensions {exten, context} puis PUT /<objet>/{id}/extensions/{ext}
 // (une seule par objet, contexte internal).
-import { $, esc, api, toast, confirmModal } from '../common/core.js?v=0.39.9';
-import { M } from './model.js?v=0.39.9';
-import { pickerHtml, bindPicker, readPicker, fillSoundSelect } from './sched-editor.js?v=0.39.9';
-import { field, secretField, bindSecrets } from './ed-ui.js?v=0.39.9';
+import { $, esc, api, toast, confirmModal } from '../common/core.js?v=0.40.0';
+import { M } from './model.js?v=0.40.0';
+import { pickerHtml, bindPicker, readPicker, fillSoundSelect } from './sched-editor.js?v=0.40.0';
+import { field, secretField, bindSecrets } from './ed-ui.js?v=0.40.0';
 
 export const CREATABLE = new Set(['group', 'queue', 'ivr', 'switchboard', 'voicemail', 'conference', 'schedule']);
 const LABEL = { group: 'un groupe d\'appel', queue: 'une file d\'attente', ivr: 'un SVI', switchboard: 'un standard', voicemail: 'une messagerie', conference: 'une conférence', schedule: 'un horaire' };
@@ -37,6 +37,76 @@ const PRESETS = {
 const QSTRATS = [['ringall', 'Tous en même temps'], ['linear', 'Un par un, dans l\'ordre'], ['rrmemory', 'Tour de rôle mémorisé'], ['leastrecent', 'Le moins récemment appelé'], ['fewestcalls', 'Le moins d\'appels pris'], ['random', 'Aléatoire']];
 const GSTRATS = [['all', 'Tous en même temps'], ['linear', 'Un par un, dans l\'ordre'], ['random', 'Aléatoire'], ['least_recent', 'Le moins récemment appelé'], ['fewest_calls', 'Le moins d\'appels pris'], ['memorized_round_robin', 'Tour de rôle mémorisé']];
 const opts = (l) => l.map(([k, x]) => `<option value="${k}">${esc(x)}</option>`).join('');
+
+// ---------------------------------------------------------------------------
+// Création d'une SDA (demande de Brice, 16/10/2026 : « des SDA peuvent être
+// déclarées mais non mappées ») : numéros des plages SDA du contexte entrant
+// (incall_ranges) qui n'ont pas encore de SDA, ou saisie libre dans ces plages.
+// Vérifié dans wazo-confd master : POST /incalls — seule « destination » est
+// obligatoire (créée sans destination, {type: 'none'}, puis réglée par le
+// brouillon) ; numéro : POST /extensions {exten, context} puis
+// PUT /incalls/{id}/extensions/{ext} ; le numéro doit être dans les
+// incall_ranges du contexte (did_length n'entre pas dans ce contrôle).
+// ---------------------------------------------------------------------------
+const MAX_FREE = 300; // numéros libres listés par plage (au-delà : saisie libre)
+// Numéros libres d'un contexte entrant : [{ exten, range }].
+export function freeIncalls(ctxName) {
+  const c = M.by.context?.get(ctxName); const out = [];
+  for (const r of c?.incall_ranges || []) {
+    const len = String(r.start).length; let n = BigInt(r.start); const end = BigInt(r.end || r.start);
+    for (let i = 0; n <= end && i < MAX_FREE; n += 1n) {
+      const ex = n.toString().padStart(len, '0');
+      if (!M.ext.has(`${ex}@${ctxName}`)) { out.push({ exten: ex, range: `${r.start}–${r.end || r.start}` }); i++; }
+    }
+  }
+  return out;
+}
+const inIncallRange = (ctx, ex) => (M.by.context?.get(ctx)?.incall_ranges || []).some((r) => ex.length === String(r.start).length && BigInt(ex) >= BigInt(r.start) && BigInt(ex) <= BigInt(r.end || r.start));
+// onCreated(key) : clé de la SDA créée (« incall:id »).
+export function openCreateIncall(onCreated, reload, ctxName = '', showNum = (x) => x) {
+  const ctxs = (M.lists.context || []).filter((c) => c.type === 'incall');
+  if (!ctxs.length) { toast('Aucun contexte entrant : créez-en un dans le portail (Contextes).', 7000); return; }
+  const ctx0 = ctxs.some((c) => c.name === ctxName) ? ctxName : ctxs[0].name;
+  const numOpts = (ctx) => { const l = freeIncalls(ctx); return l.length ? l.map((x) => `<option value="${esc(x.exten)}">${esc(showNum(x.exten))}${showNum(x.exten).replace(/\s/g, '') !== x.exten ? ` · ${esc(x.exten)}` : ''}</option>`).join('') : '<option value="">aucun numéro libre dans les plages</option>'; };
+  const rangesTxt = (ctx) => (M.by.context?.get(ctx)?.incall_ranges || []).map((r) => `${r.start}–${r.end || r.start}`).join(', ') || 'aucune plage SDA déclarée';
+  confirmModal(`<div class="cf-ed">
+    <div class="cf-ge-head"><div><h3>Créer une SDA</h3><div class="small muted">Numéro déclaré dans les plages d'un contexte entrant, sans SDA pour l'instant</div></div></div>
+    <div class="cf-ge-body cf-cr-body">
+      ${field('Contexte entrant', `<select data-c="ctx">${ctxs.map((c) => `<option value="${esc(c.name)}"${c.name === ctx0 ? ' selected' : ''}>${esc(c.label || c.name)}</option>`).join('')}</select>`, '')}
+      <p class="small muted" id="cr-ranges">Plages SDA : ${esc(rangesTxt(ctx0))}</p>
+      ${field('Numéro libre', `<select data-c="free" id="cr-free">${numOpts(ctx0)}</select>`, `Numéros des plages sans SDA (${MAX_FREE} au plus par plage).`)}
+      ${field('ou saisir le numéro', '<input data-c="exten" inputmode="numeric" placeholder="tel que reçu de l\'opérateur, ex. 33978247652">', 'Doit être dans une plage SDA du contexte.')}
+      ${field('Description (facultatif)', '<input data-c="desc" maxlength="255" placeholder="ex. Ligne directe compta">')}
+    </div>
+    <div class="warn"><span>« Créer » enregistre la SDA tout de suite dans Wazo, sans destination ; vous choisissez ensuite sa destination (brouillon, puis « Appliquer… »).</span></div>
+    <p id="cr-err" class="error small"></p></div>`, async () => {
+    const box = $('modal-body');
+    const v = (k) => box.querySelector(`[data-c="${k}"]`)?.value?.trim() ?? '';
+    const err = (m) => { $('cr-err').textContent = m; return false; };
+    const ctx = v('ctx'); const ex = (v('exten') || v('free')).replace(/[\s.-]/g, '');
+    if (!ex) return err('Choisissez un numéro libre ou saisissez-en un.');
+    if (!/^[0-9]{1,16}$/.test(ex)) return err('Numéro : chiffres seulement (16 au plus), tel que reçu de l\'opérateur.');
+    if (M.ext.has(`${ex}@${ctx}`)) return err(`Le numéro ${ex} a déjà une SDA dans ce contexte.`);
+    if (!inIncallRange(ctx, ex)) return err(`Numéro ${ex} hors des plages SDA du contexte (${rangesTxt(ctx)}).`);
+    let inc;
+    try { inc = await api('POST', '/incalls', { destination: { type: 'none' }, ...(v('desc') ? { description: v('desc') } : {}) }); } catch (e) { return err(`Création refusée par Wazo : ${e.message}`); }
+    // Numéro : extension puis association ; échec → SDA et extension retirées (une SDA sans numéro ne sert à rien).
+    try {
+      const e = await api('POST', '/extensions', { exten: ex, context: ctx });
+      try { await api('PUT', `/incalls/${inc.id}/extensions/${e.id}`); } catch (e2) { try { await api('DELETE', `/extensions/${e.id}`); } catch { /* */ } throw e2; }
+    } catch (e) {
+      try { await api('DELETE', `/incalls/${inc.id}`); } catch { /* */ }
+      return err(`Numéro ${ex} refusé par Wazo : ${e.message}. Rien n'a été créé.`);
+    }
+    console.info('[astrea] Call Flow : SDA créée', inc.id, ex, ctx);
+    toast(`SDA ${showNum(ex)} créée dans Wazo. Choisissez maintenant sa destination.`, 6000);
+    await reload?.();
+    setTimeout(() => onCreated?.(`incall:${inc.id}`), 0);
+    return true;
+  }, 'Créer');
+  const box = $('modal-body');
+  box.querySelector('[data-c="ctx"]').onchange = (e) => { $('cr-free').innerHTML = numOpts(e.target.value); $('cr-ranges').textContent = `Plages SDA : ${rangesTxt(e.target.value)}`; };
+}
 
 // onCreated(id) : id de l'objet créé (uuid pour un standard).
 export function openCreate(type, onCreated, reload) {

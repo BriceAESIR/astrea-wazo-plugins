@@ -5,8 +5,8 @@
 // positions manuelles mémorisées donnaient des dispositions bizarres quand le
 // graphe changeait) : une carte déplacée à la main garde sa place seulement
 // tant que la vue montre les mêmes cartes. Plus rien n'est gardé dans le navigateur.
-import { esc } from '../common/core.js?v=0.39.9';
-import { TYPES } from './model.js?v=0.39.9';
+import { esc } from '../common/core.js?v=0.40.0';
+import { TYPES } from './model.js?v=0.40.0';
 
 const W = 236, GAP_X = 104, GAP_Y = 18;
 try { localStorage.removeItem('astrea-callflow-pos-v1'); } catch { /* ancien stockage des positions */ }

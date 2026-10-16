@@ -7,8 +7,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Mulish:wght@300..800&display=swap">
-<link rel="stylesheet" href="../common/style.css?v=0.39.9">
-<link rel="stylesheet" href="./callflow.css?v=0.39.9">
+<link rel="stylesheet" href="../common/style.css?v=0.40.0">
+<link rel="stylesheet" href="./callflow.css?v=0.40.0">
 <script>if (window.parent !== window) document.documentElement.classList.add('framed');</script>
 </head>
 <body>
@@ -36,6 +36,7 @@
       <nav id="nav" class="sidenav"></nav>
       <input id="q" type="search" placeholder="Numéro, nom…">
       <div id="count" class="muted small"></div>
+      <div id="list-actions" class="cf-list-actions" hidden><button type="button" id="cf-new-incall" title="Créer une SDA à partir des plages déclarées dans un contexte entrant (numéros pas encore utilisés)">Créer une SDA…</button></div>
       <ul id="list" class="list"></ul>
     </aside>
 
@@ -134,6 +135,6 @@
     <div class="btnrow right"><button id="modal-cancel">Annuler</button><button id="modal-ok" class="primary">Confirmer</button></div></div></div>
   <div id="toast" class="toast" hidden></div>
 </div>
-<script type="module" src="./app.js?v=0.39.9"></script>
+<script type="module" src="./app.js?v=0.40.0"></script>
 </body>
 </html>

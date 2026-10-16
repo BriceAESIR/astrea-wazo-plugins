@@ -433,3 +433,13 @@ button.cf-tr-end { border: 0; background: none; padding: 0; text-transform: none
 .cf-eb-zero { padding-top: 3px; }
 .cf-eb-scale { display: flex; justify-content: space-between; margin-top: 2px; }
 @media (max-width: 800px) { .cf-elapsed { grid-template-columns: 1fr; } }
+/* Assistant France (motifs sortants) */
+.cf-oe-wiz { margin: 8px 0; padding: 10px 12px; border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line)); border-radius: var(--radius); background: color-mix(in srgb, var(--accent) 5%, var(--panel)); display: grid; gap: 8px; }
+.cf-oe-wiz[hidden] { display: none; }
+.cf-oe-wiz-h { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
+.cf-oe-wiz-f { display: grid; gap: 4px; }
+.cf-oe-wiz-f code { font-size: .75rem; }
+/* Liste des SDA : créer une SDA */
+.cf-list-actions { padding: 6px 0; }
+.cf-list-actions[hidden] { display: none; }
+.cf-list-actions button { width: 100%; }

@@ -10,10 +10,10 @@
 //  - trunks : PUT /outcalls/{id}/trunks {trunks:[{id}]}, ordre = priorité.
 // wazo-agid (outgoingfeatures.py) : seuls strip_digits et external_prefix
 // changent le numéro envoyé ; « prefix » est lu mais pas appliqué.
-import { $, esc, confirmModal, helpButton, helpBox } from '../common/core.js?v=0.39.9';
-import { M, listOf, nodeInfo } from './model.js?v=0.39.9';
-import { sec, field, check, setSums, openSec } from './ed-ui.js?v=0.39.9';
-import { describePattern, comparePatterns, dialedNumber, matches } from './dialsim.js?v=0.39.9';
+import { $, esc, confirmModal, helpButton, helpBox, api, canWrite } from '../common/core.js?v=0.40.0';
+import { M, listOf, nodeInfo } from './model.js?v=0.40.0';
+import { sec, field, check, setSums, openSec } from './ed-ui.js?v=0.40.0';
+import { describePattern, comparePatterns, dialedNumber, matches } from './dialsim.js?v=0.40.0';
 
 export const OUTCALL_FIELDS = ['name', 'description', 'enabled', 'ring_time', 'internal_caller_id', 'preprocess_subroutine'];
 const DP = ['exten', 'strip_digits', 'external_prefix', 'prefix', 'caller_id'];
@@ -33,6 +33,35 @@ export function applyOutcallCfg(o, v) {
   o.call_permissions = v.perms.map((id) => ({ id, name: M.by.callpermission?.get(String(id))?.name || `#${id}` }));
 }
 const trunkName = (id) => nodeInfo(`trunk:${id}`).title || `trunk #${id}`;
+
+// ---------------------------------------------------------------------------
+// Assistant de motifs « France » (choix de Brice, 16/10/2026) : jeu prêt de
+// motifs courants pour un trunk français, numéros envoyés en E.164 sans « + »
+// (33…) par défaut ; urgences et numéros courts envoyés tels quels (supposé :
+// accepté par l'opérateur, à vérifier). Les 118 XXX ne sont pas routés et sont
+// bloqués par une autorisation d'appel en refus (« interdit-118 ») : sans elle,
+// un motif large comme _X. les ferait sortir. Les 08 restent autorisés.
+// ---------------------------------------------------------------------------
+const FR_FAMILIES = [
+  { id: 'urg', label: 'Urgences', note: '15, 17, 18, 112, 114, 115, 119, 116 XXX', pats: ['15', '17', '18', '112', '114', '115', '119', '_116XXX'], kind: 'keep' },
+  { id: 'fix', label: 'Fixes (01 à 05)', pats: ['_0[1-5]XXXXXXXX'], kind: 'nat' },
+  { id: 'mob', label: 'Mobiles (06, 07)', pats: ['_0[67]XXXXXXXX'], kind: 'nat' },
+  { id: 'ng', label: 'Non géographiques (09)', pats: ['_09XXXXXXXX'], kind: 'nat' },
+  { id: 'spe', label: 'Spéciaux (08)', pats: ['_08XXXXXXXX'], kind: 'nat' },
+  { id: 'court', label: 'Courts (3 XXX)', pats: ['_3XXX'], kind: 'keep' },
+  { id: 'intl', label: 'International (00…, +…)', pats: ['_00Z.', '_+Z.'], kind: 'intl' },
+];
+const FR_FORMATS = { 33: 'E.164 sans + (33…)', '+33': 'E.164 avec + (+33…)', nat: 'National, tel que composé (0…)' };
+// Transformation d'un motif de l'assistant selon le format attendu par l'opérateur.
+function frTransform(kind, pat, fmt) {
+  if (kind === 'keep') return { strip_digits: 0, external_prefix: '' };
+  if (kind === 'nat') return fmt === 'nat' ? { strip_digits: 0, external_prefix: '' } : { strip_digits: 1, external_prefix: fmt };
+  if (pat === '_00Z.') return fmt === '33' ? { strip_digits: 2, external_prefix: '' } : fmt === '+33' ? { strip_digits: 2, external_prefix: '+' } : { strip_digits: 0, external_prefix: '' };
+  return fmt === '33' ? { strip_digits: 1, external_prefix: '' } : fmt === '+33' ? { strip_digits: 0, external_prefix: '' } : { strip_digits: 1, external_prefix: '00' };
+}
+// Motif attrape-tout (prend tout ce que les autres ne prennent pas).
+const isCatchAll = (p) => /^_(X|Z|N|)[.!]$/i.test(String(p || ''));
+const BLOCK_118 = '_118XXX';
 
 // onSave({ cfg, schedule })
 export function openOutcallEditor(o, onSave) {
@@ -71,7 +100,8 @@ export function openOutcallEditor(o, onSave) {
       ${check('oe-int', 'Présenter le numéro interne', 'Le correspondant voit le numéro interne de l\'appelant au lieu de son numéro public (rarement utile vers l\'extérieur).', !!f.internal_caller_id)}`, { open: true })}
     ${sec('pat', 'Motifs de numéros', `<div class="cf-oe-head small muted"><span>Ordre</span><span>Motif</span><span>Retirer</span><span>Ajouter devant</span><span>Présenté</span><span></span></div>
       <ul class="cf-ge-list cf-oe-list" id="oe-rows">${listHtml()}</ul>
-      <div class="cf-ge-row"><button type="button" data-addrow>Ajouter un motif</button><span class="spacer"></span><input id="oe-test" inputmode="tel" placeholder="Tester un numéro" autocomplete="off" title="Quel motif de cette règle prend ce numéro"></div>
+      <div id="oe-wiz" class="cf-oe-wiz" hidden></div>
+      <div class="cf-ge-row"><button type="button" data-addrow>Ajouter un motif</button><button type="button" data-wizard title="Ajouter d'un coup les motifs courants pour un trunk français">Assistant France…</button><span class="spacer"></span><input id="oe-test" inputmode="tel" placeholder="Tester un numéro" autocomplete="off" title="Quel motif de cette règle prend ce numéro"></div>
       <div id="oe-test-r" class="small"></div>`, { open: true, help: 'Règles d\'Asterisk : « _ » en tête = motif ; X = un chiffre 0-9, Z = 1-9, N = 2-9, [1-5] = un chiffre parmi, « . » = un ou plusieurs caractères. Ex. _0[1-5]XXXXXXXX = fixe, _0[67]XXXXXXXX = mobile, _00. = international, _X. = tout le reste. Ordre : quand plusieurs motifs correspondent, Asterisk prend le plus précis, position par position (chiffre fixe, puis [ensemble] le plus petit, N, Z, X, puis « . ») ; vérifié dans son code. Cet ordre ne se règle pas (Wazo ne stocke aucune priorité pour les motifs) : la colonne « Ordre » le montre, recalculée à chaque modification. Pour changer la priorité, rendez un motif plus ou moins précis. Le numéro envoyé = numéro composé, moins les chiffres retirés, avec le préfixe ajouté devant (vérifié dans wazo-agid).' })}
     ${sec('trk', 'Trunks', `<ul class="cf-ge-list" id="oe-trunks">${trunkRows()}</ul>
       <div class="cf-ge-row"><select id="oe-tadd">${addT()}</select><button data-tadd>Ajouter</button></div>`, { open: true, help: 'L\'appel part par le premier trunk ; s\'il échoue, par le suivant.' })}
@@ -140,7 +170,58 @@ export function openOutcallEditor(o, onSave) {
   };
   box.addEventListener('input', (e) => { $('oe-err').textContent = ''; recap(); if (e.target.id === 'oe-test' || e.target.dataset.p) testNum(); });
   box.addEventListener('change', (e) => { if (e.target.dataset.p === 'exten') redrawRows(); else recap(); });
+  // --- Assistant France -----------------------------------------------------
+  const permBox = () => box.querySelector('.cf-ge-perms');
+  const find118 = () => (M.lists.callpermission || []).find((p) => p.mode === 'deny' && (p.extensions || []).includes(BLOCK_118));
+  const wizHtml = () => {
+    readRows();
+    const have = new Set(rows.map((r) => r.exten));
+    const catchAll = rows.filter((r) => isCatchAll(r.exten)).map((r) => r.exten);
+    const p118 = find118();
+    return `<div class="cf-oe-wiz-h"><strong>Assistant France</strong><span class="small muted">motifs courants pour un trunk français ; l'ordre d'essai reste celui d'Asterisk (le plus précis d'abord)</span></div>
+      <div class="cf-oe-wiz-f">${FR_FAMILIES.map((fa) => { const all = fa.pats.every((p) => have.has(p)); return `<label class="inline"><input type="checkbox" data-wf="${fa.id}"${all ? ' disabled' : ' checked'}> <strong>${esc(fa.label)}</strong> <code>${esc(fa.note || fa.pats.join(', '))}</code>${all ? ' <span class="small muted">déjà présents</span>' : ''}</label>`; }).join('')}</div>
+      ${field('Format attendu par l\'opérateur', `<select id="oe-wfmt">${Object.entries(FR_FORMATS).map(([k, l]) => `<option value="${k}"${k === '33' ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select>`, 'Fixes, mobiles, 09 et 08 : 0 retiré puis préfixe ; international : 00 ou + retiré. Urgences et numéros courts : envoyés tels quels (supposé accepté par l\'opérateur).')}
+      ${check('oe-w118', 'Bloquer les 118 XXX (renseignements surtaxés)', p118 ? `Autorisation « ${p118.name} » (refus de ${BLOCK_118}) cochée sur cette règle.` : `Crée tout de suite dans Wazo l'autorisation « interdit-118 » (refus de ${BLOCK_118}) et la coche sur cette règle. Sans elle, un motif large comme _X. les ferait sortir.`, true)}
+      ${catchAll.length ? check('oe-wcatch', `Retirer le motif attrape-tout ${catchAll.join(', ')}`, 'Il prend tout numéro qu\'aucun autre motif ne prend (numéros mal composés, services inconnus). Avec l\'assistant, il n\'est plus nécessaire.', false) : ''}
+      <div class="btnrow"><button type="button" data-wapply class="primary">Ajouter à la règle</button><button type="button" data-wclose>Fermer</button></div>
+      <div id="oe-wiz-r" class="small"></div>`;
+  };
+  const wizApply = async () => {
+    readRows();
+    const fmt = $('oe-wfmt').value; const have = new Set(rows.map((r) => r.exten)); let added = 0, kept = 0;
+    for (const fa of FR_FAMILIES) {
+      if (!box.querySelector(`[data-wf="${fa.id}"]`)?.checked) continue;
+      for (const p of fa.pats) {
+        if (have.has(p)) { kept++; continue; }
+        rows.push({ id: null, rid: `p${seq++}`, exten: p, context: outCtx, prefix: '', caller_id: '', ...frTransform(fa.kind, p, fmt) }); have.add(p); added++;
+      }
+    }
+    let removed = 0;
+    if ($('oe-wcatch')?.checked) { const n = rows.length; rows = rows.filter((r) => !isCatchAll(r.exten)); removed = n - rows.length; }
+    redrawRows();
+    const msg = [`${added} motif${added > 1 ? 's' : ''} ajouté${added > 1 ? 's' : ''}`, kept ? `${kept} déjà présent${kept > 1 ? 's' : ''} (gardés tels quels)` : '', removed ? 'attrape-tout retiré' : ''];
+    // Autorisation « interdit-118 » : existante → cochée ; sinon créée (écriture immédiate, comme les créations de la palette).
+    if ($('oe-w118').checked) {
+      let p = find118();
+      if (!p && canWrite()) {
+        try {
+          p = await api('POST', '/callpermissions', { name: 'interdit-118', mode: 'deny', enabled: true, extensions: [BLOCK_118], description: 'Renseignements 118 XXX surtaxés (assistant Call Flow Manager)' });
+          (M.lists.callpermission ||= []).push(p); M.by.callpermission?.set(String(p.id), p);
+          permBox().querySelector('.small.muted')?.remove();
+          permBox().insertAdjacentHTML('beforeend', `<label class="inline"><input type="checkbox" data-perm="${p.id}"> ${esc(p.name)} <span class="small muted">(refus)</span></label>`);
+          msg.push('autorisation « interdit-118 » créée dans Wazo');
+        } catch (e) { msg.push(`autorisation « interdit-118 » non créée : ${e.message || e}`); }
+      }
+      const cb = p && box.querySelector(`[data-perm="${p.id}"]`); if (cb) { cb.checked = true; msg.push(`« ${p.name} » cochée`); }
+    }
+    recap();
+    $('oe-wiz').hidden = true;
+    $('oe-test-r').textContent = `Assistant : ${msg.filter(Boolean).join(' ; ')}. Vérifiez la liste puis « Ajouter au brouillon ».`;
+  };
   box.onclick = (e) => {
+    if (e.target.closest('[data-wizard]')) { const w = $('oe-wiz'); w.hidden = !w.hidden; if (!w.hidden) w.innerHTML = wizHtml(); return; }
+    if (e.target.closest('[data-wclose]')) { $('oe-wiz').hidden = true; return; }
+    if (e.target.closest('[data-wapply]')) { wizApply(); return; }
     if (e.target.closest('[data-addrow]')) { readRows(); const r = { id: null, rid: `p${seq++}`, exten: '_X.', context: outCtx, strip_digits: 0, external_prefix: '', prefix: '', caller_id: '' }; rows.push(r); redrawRows(r.rid); return; }
     const d = e.target.closest('[data-delrow]'); if (d) { readRows(); rows = rows.filter((r) => r.rid !== d.dataset.delrow); redrawRows(); return; }
     const t = e.target.closest('[data-tup],[data-tdown],[data-tdel],[data-tadd]'); if (!t) return;

@@ -21,8 +21,8 @@
 // Supposé, à vérifier en réel : les listes (GET /groups, /queues,
 // /switchboards, /schedules) contiennent déjà fallbacks, membres et
 // destinations ; sinon on lit le détail de chaque objet (ensureDetails).
-import { S, api, listAll, fullName } from '../common/core.js?v=0.39.9';
-import { comparePatterns, describePattern, userContext, rightsList } from './dialsim.js?v=0.39.9';
+import { S, api, listAll, fullName } from '../common/core.js?v=0.40.0';
+import { comparePatterns, describePattern, userContext, rightsList, simulate } from './dialsim.js?v=0.40.0';
 
 export const M = { lists: {}, by: {}, ext: new Map(), extAny: new Map(), rev: null, warns: [] };
 
@@ -375,9 +375,11 @@ export function nodeInfo(k, leaf) {
 const leaf = (type, title, sub = '', extra = {}) => ({ key: null, leaf: { type, title, sub, ...extra } });
 const target = (t, id) => (M.by[t]?.has(String(id)) ? { key: gated(`${t}:${id}`) } : leaf('missing', `${TYPES[t]?.label || t} #${id}`, 'introuvable'));
 // Renvoi (numéro libre) : objet interne si le numéro est connu, sinon numéro externe (supposé : même résolution qu'Asterisk).
-function numberTarget(num) {
+// ctx : contexte où le numéro est composé (renvoi : contexte de l'utilisateur renvoyé,
+// vérifié dans wazo-agid userfeatures.py, main_extension.context) ; sert à suivre la sortie.
+function numberTarget(num, ctx = '') {
   const k = M.extAny.get(String(num));
-  return k ? { key: gated(k), note: 'numéro interne' } : leaf('external', num ? showNum(num) : '?');
+  return k ? { key: gated(k), note: 'numéro interne' } : leaf('external', num ? showNum(num) : '?', '', { num: String(num || ''), ctx });
 }
 export function destTarget(d) {
   if (!d || !d.type || d.type === 'none') return null;
@@ -391,7 +393,7 @@ export function destTarget(d) {
     case 'switchboard': return target('switchboard', d.switchboard_uuid);
     case 'schedule': return target('schedule', d.schedule_id); // brouillon d'association (lot 2b), pas une destination confd
     case 'outcall': return { ...target('outcall', d.outcall_id), note: d.exten ? `compose ${d.exten}` : '' };
-    case 'extension': { const k = M.ext.get(`${d.exten}@${d.context}`); return k ? { key: k.startsWith('incall:') ? k : gated(k), note: `via ${d.exten}` } : leaf('extension', showNum(d.exten), ctxLabel(d.context)); }
+    case 'extension': { const k = M.ext.get(`${d.exten}@${d.context}`); return k ? { key: k.startsWith('incall:') ? k : gated(k), note: `via ${d.exten}` } : leaf('extension', showNum(d.exten), ctxLabel(d.context), { num: String(d.exten || ''), ctx: d.context }); }
     case 'sound': return leaf('sound', soundName(d.filename) || '?', [d.skip ? 'interruptible' : '', d.no_answer ? 'sans décrocher' : ''].filter(Boolean).join(' · '));
     case 'custom': return leaf('custom', d.command || '');
     case 'hangup': return leaf('hangup', 'Raccrocher', [HANGUP[d.cause] || d.cause, d.timeout ? `${d.timeout} s` : ''].filter(Boolean).join(' · '));
@@ -443,9 +445,9 @@ export function edgesOf(k) {
     case 'user': {
       const f = o.forwards || {};
       const e = [];
-      if (f.unconditional?.enabled) e.push({ ...link('fwd_unconditional', ''), to: numberTarget(f.unconditional.destination), note: f.unconditional.destination });
-      if (f.busy?.enabled) e.push({ ...link('fwd_busy', ''), to: numberTarget(f.busy.destination), note: f.busy.destination });
-      if (f.noanswer?.enabled) e.push({ ...link('fwd_noanswer', ''), to: numberTarget(f.noanswer.destination), note: f.noanswer.destination });
+      if (f.unconditional?.enabled) e.push({ ...link('fwd_unconditional', ''), to: numberTarget(f.unconditional.destination, userContext(o)), note: f.unconditional.destination });
+      if (f.busy?.enabled) e.push({ ...link('fwd_busy', ''), to: numberTarget(f.busy.destination, userContext(o)), note: f.busy.destination });
+      if (f.noanswer?.enabled) e.push({ ...link('fwd_noanswer', ''), to: numberTarget(f.noanswer.destination, userContext(o)), note: f.noanswer.destination });
       e.push(fbOut('user_fb', o.uuid, o, 'noanswer', after(o.ring_seconds)), fbOut('user_fb', o.uuid, o, 'busy'), fbOut('user_fb', o.uuid, o, 'congestion'), fbOut('user_fb', o.uuid, o, 'fail'));
       const vmTargeted = e.some((x) => x.to?.key === `voicemail:${o.voicemail?.id}`);
       if (o.voicemail?.id && !vmTargeted && M.by.voicemail?.has(String(o.voicemail.id))) e.push({ ...link('vm_assoc', `voicemail:${o.voicemail.id}`), assoc: true });
@@ -870,8 +872,19 @@ export function entryChains(target) {
   return out.sort((a, b) => a.steps.length - b.steps.length);
 }
 
+// Numéro externe (renvoi, destination Numéro) en simulation entrante (demande de
+// Brice, 16/10/2026) : la sortie qu'il prend, depuis le contexte où il est composé
+// (renvoi : contexte de l'utilisateur renvoyé, vérifié dans wazo-agid). Un appel
+// renvoyé vers l'extérieur occupe 2 canaux : l'entrant reste ouvert pendant le sortant.
+function outEdges(l) {
+  const s = simulate(l.num, l.ctx); const r = s.result;
+  if (r?.kind === 'outcall') return [{ slot: 'dial_out', label: `Ressort par la règle ${r.outcall.name || r.outcall.id}`, note: `motif ${r.dp.exten} · 2 canaux sur le trunk`, help: 'Le numéro est composé dans le contexte de l\'utilisateur renvoyé (vérifié, wazo-agid) : l\'appel repart vers l\'opérateur. L\'appel entrant reste ouvert pendant ce temps : 2 canaux sont occupés (l\'entrant et le sortant).', to: { key: gated(key('outcall', r.outcall)) }, outMatch: s }];
+  if (r?.kind === 'internal' || r?.kind === 'incall') return [{ slot: 'dial_out', label: 'Numéro interne', note: 'l\'appel reste dans Wazo', to: { key: r.key.startsWith('incall:') ? r.key : gated(r.key) }, outMatch: s }];
+  return [{ slot: 'dial_none', label: 'Aucune règle sortante ne prend ce numéro', note: 'le renvoi échoue (supposé)', help: 'Ni numéro interne ni motif de règle sortante dans le contexte où il est composé.', to: null, info: true, npd: true }];
+}
+
 const MAX_NODES = 400; // garde-fou : au-delà, les répétitions deviennent des liens
-export function buildTree(rootKey, dir, { maxDepth = 8, collapsed = new Set(), expanded = new Set(), showEmpty = false, hit = null, caller = '', dialScope = '', chain = null, trunkPref = '', viaTrunk = false } = {}) {
+export function buildTree(rootKey, dir, { maxDepth = 8, collapsed = new Set(), expanded = new Set(), showEmpty = false, hit = null, caller = '', dialScope = '', chain = null, trunkPref = '', viaTrunk = false, followOut = false } = {}) {
   // Objet gardé par un horaire : en sens « où vont les appels », le parcours
   // commence par la carte horaire (une SDA garde sa carte, l'horaire suit).
   if (dir === 'out' && !rootKey.startsWith('incall:')) rootKey = gated(rootKey);
@@ -904,7 +917,7 @@ export function buildTree(rootKey, dir, { maxDepth = 8, collapsed = new Set(), e
     seq.forEach((s, i) => {
       const nextKey = seq[i + 1]?.key || rootKey;
       const port = { ...s.port, id: `${s.port.slot}#pass`, to: { key: nextKey } };
-      const n = { key: s.key, depth: i, kids: [], ports: [port], pass: !!s.pass, leaf: s.leaf || null, info: s.leaf ? { ...s.leaf, leafType: true } : nodeInfo(s.key) };
+      const n = { key: s.key, depth: i, kids: [], ports: [port], pass: !!s.pass, entry: true, leaf: s.leaf || null, info: s.leaf ? { ...s.leaf, leafType: true } : nodeInfo(s.key) };
       if (parent) { Object.assign(n, { parent: parent.key, port: parent.ports[0].id, edge: parent.ports[0] }); parent.kids.push(n); } else root = n;
       nodes.set(s.key, n); parent = n;
     });
@@ -935,6 +948,8 @@ export function buildTree(rootKey, dir, { maxDepth = 8, collapsed = new Set(), e
     // au-delà (règle sortante, objet interne trouvé), les sorties habituelles.
     const dialNode = dir === 'dial' && (n.depth === 0 || n.viaDial);
     let edges = n.leaf ? (n.leaf.edges || []) : dialNode ? dialEdgesOf(n.key, hit, dialScope) : edgesOf(n.key);
+    // Simulation entrante : un numéro externe (renvoi, destination Numéro) continue jusqu'à sa sortie.
+    if (followOut && n.leaf?.num && n.leaf.ctx && (n.leaf.type === 'external' || n.leaf.type === 'extension')) edges = outEdges(n.leaf);
     // Règle sortante en appel passé : ce qui peut bloquer, sur la carte (autorisations
     // de l'appelant, de ses groupes, de la règle ; horaire ; règle désactivée).
     if (dir === 'dial' && !n.leaf && baseKey(n.key).startsWith('outcall:')) {
@@ -969,7 +984,8 @@ export function buildTree(rootKey, dir, { maxDepth = 8, collapsed = new Set(), e
       // répéter). Au-delà de MAX_NODES cartes, lien en pointillé.
       let key = k;
       if (nodes.has(k)) {
-        let a = n; while (a && baseKey(a.key) !== k) a = a.parent ? nodes.get(a.parent) : null;
+        // Cartes d'arrivée (appelant, trunk, chaîne vers la carte choisie) : pas des boucles (ex. renvoi qui ressort par le trunk d'arrivée).
+        let a = n; while (a && (a.entry || baseKey(a.key) !== k)) a = a.parent ? nodes.get(a.parent) : null;
         if (a || nodes.size >= MAX_NODES) { cross.push({ from: n.key, port: e.id, to: a ? a.key : k, edge: e, loop: !!a }); continue; }
         let i = 1; while (nodes.has(`${k}~${i}`)) i++;
         key = `${k}~${i}`;
