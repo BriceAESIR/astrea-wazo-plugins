@@ -17,10 +17,11 @@
 //    linéaire ; les utilisateurs sonnent avant les numéros) ;
 //  - une seule extension, contexte internal, dans les group_ranges ; un seul
 //    horaire ; plusieurs autorisations d'appels.
-import { $, esc, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.40.4';
-import { M, STRATEGY, listOf, linearRound } from './model.js?v=0.40.4';
-import { pickerHtml, bindPicker, readPicker } from './sched-editor.js?v=0.40.4';
-import { sec, field } from './ed-ui.js?v=0.40.4';
+import { $, esc, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.40.5';
+import { M, STRATEGY, listOf, linearRound } from './model.js?v=0.40.5';
+import { pickerHtml, bindPicker, readPicker } from './sched-editor.js?v=0.40.5';
+import { sec, field } from './ed-ui.js?v=0.40.5';
+import { numberFieldHtml, bindNumberField, checkNumber } from './numbers.js?v=0.40.5';
 
 const STRATS = ['all', 'linear', 'random', 'least_recent', 'fewest_calls', 'memorized_round_robin', 'weight_random'];
 const STRAT_HELP = {
@@ -96,10 +97,7 @@ export function openGroupEditor(g, onSave) {
     <div class="cf-ge-head"><div><h3>Groupe « ${esc(g.label || g.name)} »</h3><div class="small muted" title="Nom technique, généré par Wazo (nom de la file Asterisk)">${esc(g.name || '')}</div></div>${helpButton('ge-hb', 'Aide')}</div>${helpBox('ge-hb', 'Toutes les options de l\'API Wazo pour un groupe d\'appel, rangées par thème. Cliquez sur un titre pour déplier la section ; le résumé à droite reflète la saisie. Les modifications vont dans le brouillon ; « Appliquer… » relit le groupe et n\'écrit que ce qui change.')}
     ${sec('gen', 'Général', `
       ${field('Nom *', `<input data-f="label" value="${esc(f.label || '')}" maxlength="128">`, 'Lettres sans accent, chiffres, espace, - _ . (contrainte Wazo).')}
-      <div class="cf-ge-2">
-        ${field('Numéro interne', `<input data-ext value="${esc(v.extension?.exten || '')}" placeholder="aucun">`, 'Le numéro à composer pour joindre le groupe. Vide : pas de numéro.')}
-        ${field('Contexte du numéro', `<select data-extctx>${ctxOpts(ctxInt, v.extension?.context || ctxInt[0]?.name)}</select>`, 'Contexte interne ; le numéro doit être dans sa plage « groupes ».')}
-      </div>
+      ${numberFieldHtml('group', { exten: v.extension?.exten || '', ctx: v.extension?.context || ctxInt[0]?.name, ctxList: ctxInt, field })}
       ${bool('enabled')}`, { open: true })}
     ${sec('ring', 'Sonnerie', `
       ${field('Stratégie *', `<select data-f="ring_strategy">${STRATS.map((s) => `<option value="${s}"${f.ring_strategy === s ? ' selected' : ''}>${esc(STRATEGY[s] || s)}</option>`).join('')}</select>`)}
@@ -158,10 +156,8 @@ export function openGroupEditor(g, onSave) {
     let extension = null;
     if (ex) {
       const ctx = box.querySelector('[data-extctx]').value;
-      if (!/^[*#0-9]{1,40}$/.test(ex)) { open('gen'); return err('Numéro interne : chiffres, * et # seulement.'); }
-      const c = M.by.context?.get(ctx);
-      const inRange = (c?.group_ranges || []).some((r) => ex.length === String(r.start).length && ex >= String(r.start) && ex <= String(r.end));
-      if (c?.group_ranges && !inRange) { open('gen'); return err(`Numéro interne ${ex} : hors des plages « groupes » du contexte ${c.label || c.name} (${(c.group_ranges || []).map((r) => `${r.start}-${r.end}`).join(', ') || 'aucune'}).`); }
+      const bad = checkNumber(ctx, 'group', ex, ctx === g.extensions?.[0]?.context ? g.extensions?.[0]?.exten : '');
+      if (bad) { open('gen'); return err(bad); }
       extension = { exten: ex, context: ctx };
     }
     let noanswer, congestion;
@@ -174,6 +170,7 @@ export function openGroupEditor(g, onSave) {
 
   ['ge-noans', 'ge-cong'].forEach(bindPicker);
   const box = $('modal-body');
+  bindNumberField(box, 'group', { own: g.extensions?.[0]?.exten || '' });
   const val = (sel) => box.querySelector(sel)?.value?.trim() || '';
   const on = (sel) => !!box.querySelector(sel)?.checked;
   const pick = (id) => { const el = $(id); const t = el?.querySelector('[data-dt]'); if (!t || t.value === 'none') return 'rien'; const o = el.querySelector('[data-do]'); const x = o?.selectedOptions?.[0]?.text; return `${t.selectedOptions[0].text.toLowerCase()}${x && o.value ? ` ${x}` : ''}`; };

@@ -3,22 +3,22 @@
 // déposer (lot 2a, brouillon puis aperçu, sauvegarde, écriture).
 // Cadrage : astrea-wazo-dev/docs/CALLFLOW-MANAGER.md.
 // Modèle (sources confd vérifiées) : model.js ; canevas : canvas.js ; écriture : write.js.
-import { S, $, esc, fullName, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.40.4';
-import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, loadTrunkOperators, scanGroupKeys, buildTree, landingAt, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel, periodText, STRATEGY, QSTRAT, baseKey, gateOf, loadBlocklist, blockedBy, dialUser, entryChains, isGlob, numMatch, showNum } from './model.js?v=0.40.4';
-import { createCanvas } from './canvas.js?v=0.40.4';
-import { getDest, setDest, sameValue, prepare, execute } from './write.js?v=0.40.4';
-import { openScheduleEditor } from './sched-editor.js?v=0.40.4';
-import { openGroupEditor, groupCfgDiff } from './group-editor.js?v=0.40.4';
-import { openQueueEditor, queueCfgDiff, agentName } from './queue-editor.js?v=0.40.4';
-import { openIvrEditor, ivrCfgDiff } from './ivr-editor.js?v=0.40.4';
-import { openSbEditor, sbCfgDiff } from './sb-editor.js?v=0.40.4';
-import { redact } from './ed-ui.js?v=0.40.4';
-import { openRestore } from './restore.js?v=0.40.4';
-import { openIncallEditor, incallCfgDiff, openUserEditor, userCfgDiff, openVmEditor, vmCfgDiff, openConfEditor, confCfgDiff, openSchedGenEditor, schedCfgDiff } from './obj-editors.js?v=0.40.4';
-import { openDestEditor, ENTITY_DEST } from './dest-editor.js?v=0.40.4';
-import { openOutcallEditor, outcallCfgDiff } from './outcall-editor.js?v=0.40.4';
-import { openCreate, openCreateIncall, CREATABLE, LABEL } from './create.js?v=0.40.4';
-import { simulate, userContext, simPath } from './dialsim.js?v=0.40.4';
+import { S, $, esc, fullName, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.40.5';
+import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, loadTrunkOperators, scanGroupKeys, buildTree, landingAt, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel, periodText, STRATEGY, QSTRAT, baseKey, gateOf, loadBlocklist, blockedBy, dialUser, entryChains, isGlob, numMatch, showNum } from './model.js?v=0.40.5';
+import { createCanvas } from './canvas.js?v=0.40.5';
+import { getDest, setDest, sameValue, prepare, execute } from './write.js?v=0.40.5';
+import { openScheduleEditor } from './sched-editor.js?v=0.40.5';
+import { openGroupEditor, groupCfgDiff } from './group-editor.js?v=0.40.5';
+import { openQueueEditor, queueCfgDiff, agentName } from './queue-editor.js?v=0.40.5';
+import { openIvrEditor, ivrCfgDiff } from './ivr-editor.js?v=0.40.5';
+import { openSbEditor, sbCfgDiff } from './sb-editor.js?v=0.40.5';
+import { redact } from './ed-ui.js?v=0.40.5';
+import { openRestore } from './restore.js?v=0.40.5';
+import { openIncallEditor, incallCfgDiff, openUserEditor, userCfgDiff, openVmEditor, vmCfgDiff, openConfEditor, confCfgDiff, openSchedGenEditor, schedCfgDiff } from './obj-editors.js?v=0.40.5';
+import { openDestEditor, ENTITY_DEST } from './dest-editor.js?v=0.40.5';
+import { openOutcallEditor, outcallCfgDiff } from './outcall-editor.js?v=0.40.5';
+import { openCreate, openCreateIncall, CREATABLE, LABEL } from './create.js?v=0.40.5';
+import { simulate, userContext, simPath } from './dialsim.js?v=0.40.5';
 
 const TESTED_STACK = ['26.07'];
 const NAV = [
@@ -757,7 +757,13 @@ function openSimpleFor(k, id) {
   const e = entity(`${k}:${id}`); const o = e.obj; if (!o) return;
   const title = nodeInfo(`${k}:${id}`).title;
   const add = (wk, slot) => (v) => addDraft({ k: wk, id, f: 'cfg', key: `${wk}:${id}:cfg` }, v, { where: `${TYPES[k]?.label || k} ${title}`, slot });
-  if (k === 'incall') openIncallEditor(o, title, add('incall_cfg', 'Réglages de la SDA'));
+  // SDA : réglages (+ numéro) dans incall_cfg ; destination et horaire dans leurs entrées habituelles.
+  if (k === 'incall') openIncallEditor(o, title, (r) => {
+    const where = `SDA ${title}`;
+    addDraft({ k: 'incall_cfg', id, f: 'cfg', key: `incall_cfg:${id}:cfg` }, r.cfg, { where, slot: 'Réglages de la SDA' });
+    addDraft({ k: 'incall', id: o.id, f: 'destination', key: `incall:${o.id}:destination` }, r.destination, { where, slot: 'Destination' });
+    addDraft(assocW(`incall:${o.id}`), r.schedule ? { type: 'schedule', schedule_id: r.schedule } : null, { where, slot: 'Horaire' });
+  });
   if (k === 'voicemail') openVmEditor(o, add('vm_cfg', 'Réglages de la messagerie'));
   if (k === 'conference') openConfEditor(o, add('conf_cfg', 'Réglages de la conférence'));
   if (k === 'schedule') openSchedGenEditor(o, schedUsage(o), add('schedgen_cfg', 'Nom, fuseau, activation'), () => openPeriods(o.id));

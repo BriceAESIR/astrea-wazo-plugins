@@ -12,13 +12,13 @@
 // Toujours : relire juste avant d'écrire, ne rien écrire si c'est identique,
 // une seule écriture par objet.
 // Appels liés au tenant des données chargées (tapi, model.js : arrêt si le portail change de tenant).
-import { M, tapi as api } from './model.js?v=0.40.4';
-import { groupCfgOf, applyGroupCfg, GROUP_FIELDS } from './group-editor.js?v=0.40.4';
-import { queueCfgOf, applyQueueCfg, QUEUE_FIELDS, optionsList } from './queue-editor.js?v=0.40.4';
-import { ivrCfgOf, applyIvrCfg, IVR_FIELDS } from './ivr-editor.js?v=0.40.4';
-import { sbCfgOf, applySbCfg, SB_FIELDS } from './sb-editor.js?v=0.40.4';
-import { incallCfgOf, applyIncallCfg, INCALL_FIELDS, userCfgOf, applyUserCfg, USER_FIELDS, vmCfgOf, applyVmCfg, VM_FIELDS, confCfgOf, applyConfCfg, CONF_FIELDS, schedCfgOf, applySchedCfg, SCHED_FIELDS } from './obj-editors.js?v=0.40.4';
-import { outcallCfgOf, applyOutcallCfg, OUTCALL_FIELDS } from './outcall-editor.js?v=0.40.4';
+import { M, tapi as api } from './model.js?v=0.40.5';
+import { groupCfgOf, applyGroupCfg, GROUP_FIELDS } from './group-editor.js?v=0.40.5';
+import { queueCfgOf, applyQueueCfg, QUEUE_FIELDS, optionsList } from './queue-editor.js?v=0.40.5';
+import { ivrCfgOf, applyIvrCfg, IVR_FIELDS } from './ivr-editor.js?v=0.40.5';
+import { sbCfgOf, applySbCfg, SB_FIELDS } from './sb-editor.js?v=0.40.5';
+import { incallCfgOf, applyIncallCfg, INCALL_FIELDS, userCfgOf, applyUserCfg, USER_FIELDS, vmCfgOf, applyVmCfg, VM_FIELDS, confCfgOf, applyConfCfg, CONF_FIELDS, schedCfgOf, applySchedCfg, SCHED_FIELDS } from './obj-editors.js?v=0.40.5';
+import { outcallCfgOf, applyOutcallCfg, OUTCALL_FIELDS } from './outcall-editor.js?v=0.40.5';
 
 // Réglages « simples » (obj-editors.js) : un PUT partiel des champs modifiés.
 const SIMPLE = {
@@ -267,6 +267,11 @@ export async function prepare(entries) {
       const body = {}; for (const k of S.fields) if (JSON.stringify(b.fields[k] ?? null) !== JSON.stringify(a.fields[k] ?? null)) body[k] = a.fields[k];
       S.fix?.(body, a);
       out.push({ path, before, body, changed: Object.keys(body).length > 0 });
+      // SDA : numéro ou motif changé → PUT /extensions/{id} (une seule extension, contexte inchangé).
+      const ex0 = op.k === 'incall_cfg' && before?.extensions?.length === 1 ? before.extensions[0] : null;
+      if (ex0 && a.exten != null && String(ex0.exten) !== a.exten) out.push({ path: `/extensions/${ex0.id}`, before: { extensions: before.extensions }, body: { exten: a.exten, context: ex0.context }, changed: true,
+        // run explicite : marqué « numéro » dans la sauvegarde (restauration à la main, l'ancien numéro a pu être réattribué).
+        run: async () => api('PUT', `/extensions/${ex0.id}`, { exten: a.exten, context: ex0.context }) });
     } else if (op.k === 'outcall_cfg') {
       // Règle sortante (outcall-editor.js) : relire, puis une écriture par partie modifiée.
       const base = `/outcalls/${op.id}`;

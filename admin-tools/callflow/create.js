@@ -14,19 +14,17 @@
 //  - horaire : closed_destination obligatoire ; listes de jours / mois non vides.
 // Extension : POST /extensions {exten, context} puis PUT /<objet>/{id}/extensions/{ext}
 // (une seule par objet, contexte internal).
-import { $, esc, toast, confirmModal } from '../common/core.js?v=0.40.4';
+import { $, esc, toast, confirmModal } from '../common/core.js?v=0.40.5';
 // Créations liées au tenant des données chargées (tapi, model.js).
-import { M, tapi as api } from './model.js?v=0.40.4';
-import { pickerHtml, bindPicker, readPicker, fillSoundSelect } from './sched-editor.js?v=0.40.4';
-import { field, secretField, bindSecrets } from './ed-ui.js?v=0.40.4';
+import { M, tapi as api } from './model.js?v=0.40.5';
+import { pickerHtml, bindPicker, readPicker, fillSoundSelect } from './sched-editor.js?v=0.40.5';
+import { field, secretField, bindSecrets } from './ed-ui.js?v=0.40.5';
+import { RANGE_KEY as RANGE, numberFieldHtml, bindNumberField, checkNumber, incallNumberHtml, bindIncallNumber, readIncallNumber, checkIncallNumber } from './numbers.js?v=0.40.5';
 
 export const CREATABLE = new Set(['group', 'queue', 'ivr', 'switchboard', 'voicemail', 'conference', 'schedule', 'outcall']);
 export const LABEL = { group: 'un groupe d\'appel', queue: 'une file d\'attente', ivr: 'un SVI', switchboard: 'un standard', voicemail: 'une messagerie', conference: 'une conférence', schedule: 'un horaire', outcall: 'une règle sortante' };
-const RANGE = { group: 'group_ranges', queue: 'queue_ranges', conference: 'conference_room_ranges' };
 const internal = () => (M.lists.context || []).filter((c) => c.type === 'internal');
 const ctxSel = (attr) => `<select ${attr}>${internal().map((c) => `<option value="${esc(c.name)}">${esc(c.label || c.name)}</option>`).join('')}</select>`;
-const inRange = (ctx, ex, key) => { const c = M.by.context?.get(ctx); if (!c?.[key]) return true; return c[key].some((r) => ex.length === String(r.start).length && ex >= String(r.start) && ex <= String(r.end)); };
-const ranges = (ctx, key) => (M.by.context?.get(ctx)?.[key] || []).map((r) => `${r.start}-${r.end}`).join(', ') || 'aucune';
 const ALL7 = [1, 2, 3, 4, 5, 6, 7], ALL31 = Array.from({ length: 31 }, (_, i) => i + 1), ALL12 = Array.from({ length: 12 }, (_, i) => i + 1);
 const per = (days, a, b) => ({ hours_start: a, hours_end: b, week_days: days, month_days: ALL31, months: ALL12 });
 const PRESETS = {
@@ -42,55 +40,55 @@ const opts = (l) => l.map(([k, x]) => `<option value="${k}">${esc(x)}</option>`)
 // ---------------------------------------------------------------------------
 // Création d'une SDA (demande de Brice, 16/10/2026 : « des SDA peuvent être
 // déclarées mais non mappées ») : numéros des plages SDA du contexte entrant
-// (incall_ranges) qui n'ont pas encore de SDA, ou saisie libre dans ces plages.
+// (incall_ranges) qui n'ont pas encore de SDA (numbers.js), ou un motif.
 // Vérifié dans wazo-confd master : POST /incalls — seule « destination » est
 // obligatoire (créée sans destination, {type: 'none'}, puis réglée par le
 // brouillon) ; numéro : POST /extensions {exten, context} puis
 // PUT /incalls/{id}/extensions/{ext} ; le numéro doit être dans les
-// incall_ranges du contexte (did_length n'entre pas dans ce contrôle).
-// ---------------------------------------------------------------------------
-const MAX_FREE = 300; // numéros libres listés par plage (au-delà : saisie libre)
-// Numéros libres d'un contexte entrant : [{ exten, range }].
-export function freeIncalls(ctxName) {
-  const c = M.by.context?.get(ctxName); const out = [];
-  for (const r of c?.incall_ranges || []) {
-    const len = String(r.start).length; let n = BigInt(r.start); const end = BigInt(r.end || r.start);
-    for (let i = 0; n <= end && i < MAX_FREE; n += 1n) {
-      const ex = n.toString().padStart(len, '0');
-      if (!M.ext.has(`${ex}@${ctxName}`)) { out.push({ exten: ex, range: `${r.start}–${r.end || r.start}` }); i++; }
-    }
-  }
-  return out;
-}
-const inIncallRange = (ctx, ex) => (M.by.context?.get(ctx)?.incall_ranges || []).some((r) => ex.length === String(r.start).length && BigInt(ex) >= BigInt(r.start) && BigInt(ex) <= BigInt(r.end || r.start));
+// PUT /incalls/{id}/extensions/{ext} ; un numéro doit être dans les
+// incall_ranges du contexte, un motif « _… » non (vérifié, numbers.js).
+const CID = [['', 'Inchangé : nom de l\'appelant seul'], ['prepend', 'Texte, puis nom de l\'appelant'], ['overwrite', 'Texte seul, à la place du nom'], ['append', 'Nom de l\'appelant, puis texte']];
+// Mêmes options que le formulaire « Appels entrants » du portail (retour de
+// Brice, 17/10/2026) : numéro ou motif, destination, pré-décroché, horaire,
+// nom affiché, sous-routine. Tout est envoyé à la création.
 // onCreated(key) : clé de la SDA créée (« incall:id »).
 export function openCreateIncall(onCreated, reload, ctxName = '', showNum = (x) => x) {
   const ctxs = (M.lists.context || []).filter((c) => c.type === 'incall');
   if (!ctxs.length) { toast('Aucun contexte entrant : créez-en un dans le portail (Contextes).', 7000); return; }
   const ctx0 = ctxs.some((c) => c.name === ctxName) ? ctxName : ctxs[0].name;
-  const numOpts = (ctx) => { const l = freeIncalls(ctx); return l.length ? l.map((x) => `<option value="${esc(x.exten)}">${esc(showNum(x.exten))}${showNum(x.exten).replace(/\s/g, '') !== x.exten ? ` · ${esc(x.exten)}` : ''}</option>`).join('') : '<option value="">aucun numéro libre dans les plages</option>'; };
-  const rangesTxt = (ctx) => (M.by.context?.get(ctx)?.incall_ranges || []).map((r) => `${r.start}–${r.end || r.start}`).join(', ') || 'aucune plage SDA déclarée';
   confirmModal(`<div class="cf-ed">
-    <div class="cf-ge-head"><div><h3>Créer une SDA</h3><div class="small muted">Numéro déclaré dans les plages d'un contexte entrant, sans SDA pour l'instant</div></div></div>
+    <div class="cf-ge-head"><div><h3>Créer une SDA</h3><div class="small muted">Comme « Appels entrants » dans le portail ; les numéros proposés sont ceux des plages sans SDA</div></div></div>
     <div class="cf-ge-body cf-cr-body">
       ${field('Contexte entrant', `<select data-c="ctx">${ctxs.map((c) => `<option value="${esc(c.name)}"${c.name === ctx0 ? ' selected' : ''}>${esc(c.label || c.name)}</option>`).join('')}</select>`, '')}
-      <p class="small muted" id="cr-ranges">Plages SDA : ${esc(rangesTxt(ctx0))}</p>
-      ${field('Numéro libre', `<select data-c="free" id="cr-free">${numOpts(ctx0)}</select>`, `Numéros des plages sans SDA (${MAX_FREE} au plus par plage).`)}
-      ${field('ou saisir le numéro', '<input data-c="exten" inputmode="numeric" placeholder="tel que reçu de l\'opérateur, ex. 33978247652">', 'Doit être dans une plage SDA du contexte.')}
-      ${field('Description (facultatif)', '<input data-c="desc" maxlength="255" placeholder="ex. Ligne directe compta">')}
+      ${incallNumberHtml({ field })}
+      <div class="cf-ge-f"><span class="cf-ge-l">Destination</span>${pickerHtml('cr-dest', null)}</div>
+      ${field('Pré-décroché (message d\'accueil)', '<select data-c="greet" id="cr-greet"><option value="">Chargement des sons…</option></select>', 'Joué à l\'appelant avant de l\'envoyer vers la destination.')}
+      ${field('Horaire', `<select data-c="sched"><option value="">Aucun : toujours ouvert</option>${(M.lists.schedule || []).map((s) => `<option value="${s.id}">${esc(s.name || `#${s.id}`)}</option>`).join('')}</select>`, 'Hors horaire : destination « fermé » de l\'horaire.')}
+      <div class="cf-ge-2">
+        ${field('Nom affiché à l\'appelé', `<select data-c="cidm">${opts(CID)}</select>`)}
+        ${field('Texte du nom', '<input data-c="cidn" maxlength="80" placeholder="ex. Accueil">', 'Si le nom affiché n\'est pas « Inchangé ».')}
+      </div>
+      <div class="cf-ge-2">
+        ${field('Description (facultatif)', '<input data-c="desc" maxlength="255" placeholder="ex. Ligne directe compta">')}
+        ${field('Sous-routine de pré-traitement', '<input data-c="sub" maxlength="79" placeholder="aucune">', 'Sous-routine Asterisk exécutée avant de recevoir l\'appel.')}
+      </div>
     </div>
-    <div class="warn"><span>« Créer » enregistre la SDA tout de suite dans Wazo, sans destination ; vous choisissez ensuite sa destination (brouillon, puis « Appliquer… »).</span></div>
+    <div class="warn"><span>« Créer » enregistre la SDA tout de suite dans Wazo.</span></div>
     <p id="cr-err" class="error small"></p></div>`, async () => {
     const box = $('modal-body');
     const v = (k) => box.querySelector(`[data-c="${k}"]`)?.value?.trim() ?? '';
     const err = (m) => { $('cr-err').textContent = m; return false; };
-    const ctx = v('ctx'); const ex = (v('exten') || v('free')).replace(/[\s.-]/g, '');
-    if (!ex) return err('Choisissez un numéro libre ou saisissez-en un.');
-    if (!/^[0-9]{1,16}$/.test(ex)) return err('Numéro : chiffres seulement (16 au plus), tel que reçu de l\'opérateur.');
-    if (M.ext.has(`${ex}@${ctx}`)) return err(`Le numéro ${ex} a déjà une SDA dans ce contexte.`);
-    if (!inIncallRange(ctx, ex)) return err(`Numéro ${ex} hors des plages SDA du contexte (${rangesTxt(ctx)}).`);
+    const ctx = v('ctx'); const ex = readIncallNumber(box);
+    const bad = checkIncallNumber(ctx, ex); if (bad) return err(bad);
+    if (v('cidm') && !v('cidn')) return err('Nom affiché : saisissez le texte, ou choisissez « Inchangé ».');
+    let dest; try { dest = readPicker('cr-dest'); } catch (e) { return err(e.message); }
+    const body = { destination: dest || { type: 'none' } };
+    if (v('desc')) body.description = v('desc');
+    if (v('greet')) body.greeting_sound = v('greet');
+    if (v('cidm')) Object.assign(body, { caller_id_mode: v('cidm'), caller_id_name: v('cidn') });
+    if (v('sub')) body.preprocess_subroutine = v('sub');
     let inc;
-    try { inc = await api('POST', '/incalls', { destination: { type: 'none' }, ...(v('desc') ? { description: v('desc') } : {}) }); } catch (e) { return err(`Création refusée par Wazo : ${e.message}`); }
+    try { inc = await api('POST', '/incalls', body); } catch (e) { return err(`Création refusée par Wazo : ${e.message}`); }
     // Numéro : extension puis association ; échec → SDA et extension retirées (une SDA sans numéro ne sert à rien).
     try {
       const e = await api('POST', '/extensions', { exten: ex, context: ctx });
@@ -99,27 +97,31 @@ export function openCreateIncall(onCreated, reload, ctxName = '', showNum = (x) 
       try { await api('DELETE', `/incalls/${inc.id}`); } catch { /* */ }
       return err(`Numéro ${ex} refusé par Wazo : ${e.message}. Rien n'a été créé.`);
     }
+    // Horaire : association (un seul par SDA, vérifié) ; échec signalé, la SDA reste.
+    if (v('sched')) { try { await api('PUT', `/incalls/${inc.id}/schedules/${v('sched')}`); } catch (e) { toast(`SDA créée, mais horaire refusé : ${e.message}`, 9000); } }
     console.info('[astrea] Call Flow : SDA créée', inc.id, ex, ctx);
-    toast(`SDA ${showNum(ex)} créée dans Wazo. Choisissez maintenant sa destination.`, 6000);
+    toast(`SDA ${ex.startsWith('_') ? ex : showNum(ex)} créée dans Wazo.${dest ? '' : ' Choisissez maintenant sa destination.'}`, 6000);
     await reload?.();
     setTimeout(() => onCreated?.(`incall:${inc.id}`), 0);
     return true;
   }, 'Créer');
   const box = $('modal-body');
-  box.querySelector('[data-c="ctx"]').onchange = (e) => { $('cr-free').innerHTML = numOpts(e.target.value); $('cr-ranges').textContent = `Plages SDA : ${rangesTxt(e.target.value)}`; };
+  bindPicker('cr-dest');
+  bindIncallNumber(box, () => box.querySelector('[data-c="ctx"]').value);
+  fillSoundSelect($('cr-greet'), '').then(() => { const s = $('cr-greet'); if (s?.options[0] && !s.options[0].value) s.options[0].textContent = 'Aucun'; });
 }
-
 // onCreated(id) : id de l'objet créé (uuid pour un standard).
 // fromList : création depuis la colonne de gauche (pas depuis une sortie du graphe).
 export function openCreate(type, onCreated, reload, fromList = false) {
   if (!CREATABLE.has(type)) return;
-  const num = RANGE[type] ? `<div class="cf-ge-2">${field('Numéro interne (facultatif)', '<input data-c="exten" placeholder="aucun" inputmode="numeric">', 'Pour l\'appeler directement.')}${field('Contexte du numéro', ctxSel('data-c="ctx"'))}</div>` : '';
+  const NA = { ext: 'data-c="exten"', ctx: 'data-c="ctx"' };
+  const num = RANGE[type] ? numberFieldHtml(type, { ctxList: internal(), attrs: NA, prefill: true, field }) : '';
   const forms = {
     group: () => `${field('Nom *', '<input data-c="label" maxlength="128" placeholder="ex. Accueil">', 'Lettres sans accent, chiffres, espace, - _ .')}${field('Stratégie', `<select data-c="strategy">${opts(GSTRATS)}</select>`)}${num}`,
     queue: () => `<div class="cf-ge-2">${field('Nom affiché', '<input data-c="label" maxlength="128" placeholder="ex. Support">')}${field('Nom technique *', '<input data-c="name" maxlength="128" placeholder="ex. support">', 'Sans espace ni accent : lettres, chiffres, - _ .')}</div>${field('Stratégie', `<select data-c="strategy">${opts(QSTRATS)}</select>`)}${num}`,
     ivr: () => `${field('Nom *', '<input data-c="name" maxlength="128" placeholder="ex. Menu principal">')}${field('Message du menu *', '<select data-c="menu" id="cr-menu"><option value="">Chargement des sons…</option></select>', '« Tapez 1 pour… ». Les touches se règlent ensuite (« Régler le SVI… »).')}`,
     switchboard: () => field('Nom *', '<input data-c="name" maxlength="128" placeholder="ex. Standard">', 'Opérateurs, délai et débordement : « Régler le standard… » ensuite.'),
-    voicemail: () => `${field('Nom *', '<input data-c="name" maxlength="80" placeholder="ex. Messagerie accueil">')}<div class="cf-ge-2">${field('Numéro *', '<input data-c="number" inputmode="numeric" placeholder="ex. 8000">', 'Pour consulter la boîte.')}${field('Contexte *', ctxSel('data-c="ctx"'))}</div>${field('E-mail (facultatif)', '<input type="email" data-c="email" placeholder="aucun">')}${secretField('data-c="password"', 'Code (facultatif)', '', 'Chiffres. Masqué partout, jamais dans une sauvegarde.')}`,
+    voicemail: () => `${field('Nom *', '<input data-c="name" maxlength="80" placeholder="ex. Messagerie accueil">')}<div class="cf-ge-2">${field('Numéro *', '<input data-c="number" inputmode="numeric" placeholder="ex. 8000">', 'Numéro de la boîte, souvent celui du poste. Pas de plage à respecter, mais unique dans le contexte.')}${field('Contexte *', ctxSel('data-c="ctx"'))}</div>${field('E-mail (facultatif)', '<input type="email" data-c="email" placeholder="aucun">')}${secretField('data-c="password"', 'Code (facultatif)', '', 'Chiffres. Masqué partout, jamais dans une sauvegarde.')}`,
     conference: () => `${field('Nom', '<input data-c="name" maxlength="128" placeholder="ex. Réunion">')}${num}`,
     // Règle sortante (vérifié, confd outcall/schema.py : seul name est obligatoire) ; motifs et trunks ensuite (« Régler la règle sortante… », assistant France).
     outcall: () => field('Nom *', '<input data-c="name" maxlength="128" placeholder="ex. Sortie Unyc">', 'Motifs (assistant France), trunks, horaire et autorisations : dans le réglage complet, ouvert juste après.'),
@@ -135,8 +137,7 @@ export function openCreate(type, onCreated, reload, fromList = false) {
     const err = (m) => { $('cr-err').textContent = m; return false; };
     // Numéro facultatif : contrôlé avant toute création.
     const ex = v('exten'), ctx = v('ctx');
-    if (ex && !/^[0-9*#]{1,40}$/.test(ex)) return err('Numéro interne : chiffres, * et # seulement.');
-    if (ex && RANGE[type] && !inRange(ctx, ex, RANGE[type])) return err(`Numéro ${ex} hors des plages du contexte (${ranges(ctx, RANGE[type])}).`);
+    if (RANGE[type] && checkNumber(ctx, type, ex)) return err(checkNumber(ctx, type, ex));
     let body, path;
     if (type === 'group') { if (!/^[-_.a-zA-Z0-9 ]{1,128}$/.test(v('label'))) return err('Nom : obligatoire, sans accents (lettres, chiffres, espace, - _ .).'); body = { label: v('label'), ring_strategy: v('strategy') }; path = '/groups'; }
     if (type === 'queue') {
@@ -148,6 +149,7 @@ export function openCreate(type, onCreated, reload, fromList = false) {
     if (type === 'switchboard') { if (!v('name')) return err('Nom obligatoire.'); body = { name: v('name') }; path = '/switchboards'; }
     if (type === 'voicemail') {
       if (!v('name')) return err('Nom obligatoire.'); if (!/^[0-9]{1,40}$/.test(v('number'))) return err('Numéro : chiffres seulement.');
+      if ((M.lists.voicemail || []).some((x) => String(x.number) === v('number') && x.context === ctx)) return err(`Une messagerie porte déjà le numéro ${v('number')} dans ce contexte.`);
       if (v('password') && !/^[0-9]{1,80}$/.test(v('password'))) return err('Code : chiffres seulement.');
       body = { name: v('name'), number: v('number'), context: ctx, ...(v('email') ? { email: v('email') } : {}), ...(v('password') ? { password: v('password') } : {}) }; path = '/voicemails';
     }
@@ -177,5 +179,6 @@ export function openCreate(type, onCreated, reload, fromList = false) {
   if (type === 'ivr') fillSoundSelect($('cr-menu'), '');
   if (type === 'schedule') bindPicker('cr-closed');
   if (type === 'voicemail') bindSecrets(box);
+  if (RANGE[type]) bindNumberField(box, type, { attrs: NA });
   box.querySelector('input')?.focus();
 }

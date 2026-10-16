@@ -10,10 +10,11 @@
 // Codes (messagerie, conférence) : champ masqué avec « Afficher » / « Générer » ;
 // jamais en clair dans le brouillon, l'aperçu ni la sauvegarde JSON (redact).
 // Le mot de passe de connexion d'un utilisateur reste dans User Manager.
-import { $, esc, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.40.4';
-import { M } from './model.js?v=0.40.4';
-import { fillSoundSelect } from './sched-editor.js?v=0.40.4';
-import { sec, field, check, setSums, openSec, secretField, bindSecrets } from './ed-ui.js?v=0.40.4';
+import { $, esc, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.40.5';
+import { M } from './model.js?v=0.40.5';
+import { fillSoundSelect, pickerHtml, bindPicker, readPicker } from './sched-editor.js?v=0.40.5';
+import { incallNumberHtml, bindIncallNumber, readIncallNumber, checkIncallNumber } from './numbers.js?v=0.40.5';
+import { sec, field, check, setSums, openSec, secretField, bindSecrets } from './ed-ui.js?v=0.40.5';
 
 const pickFields = (o, keys) => { const f = {}; for (const k of keys) f[k] = o?.[k] ?? null; return f; };
 const diffKeys = (a, b, keys, L) => keys.filter((k) => JSON.stringify(a?.fields?.[k] ?? null) !== JSON.stringify(b?.fields?.[k] ?? null)).map((k) => L[k] || k);
@@ -27,39 +28,62 @@ const zones = () => { try { return Intl.supportedValuesOf('timeZone'); } catch {
 const tzSelect = (attr, cur) => `<select ${attr}><option value="">Fuseau du serveur</option>${zones().map((z) => `<option value="${esc(z)}"${cur === z ? ' selected' : ''}>${esc(z)}</option>`).join('')}${cur && !zones().includes(cur) ? `<option value="${esc(cur)}" selected>${esc(cur)}</option>` : ''}</select>`;
 
 // ---------------------------------------------------------------------------
-// SDA (destination et horaire : entrées habituelles du brouillon)
+// SDA : mêmes options que le formulaire du portail (retour de Brice,
+// 17/10/2026) : numéro ou motif, destination, horaire, message d'accueil,
+// nom affiché, sous-routine. Destination et horaire vont dans leurs entrées
+// habituelles du brouillon (incall, sched_assoc) ; le numéro dans incall_cfg
+// (PUT /extensions/{id}, une seule extension modifiable ici).
 // ---------------------------------------------------------------------------
 export const INCALL_FIELDS = ['description', 'caller_id_mode', 'caller_id_name', 'greeting_sound', 'preprocess_subroutine'];
-export const incallCfgOf = (o) => ({ fields: pickFields(o, INCALL_FIELDS) });
-export const applyIncallCfg = (o, v) => Object.assign(o, v.fields);
+export const incallCfgOf = (o) => ({ fields: pickFields(o, INCALL_FIELDS), exten: o?.extensions?.length === 1 ? String(o.extensions[0].exten) : null });
+export const applyIncallCfg = (o, v) => { Object.assign(o, v.fields); if (v.exten != null && o.extensions?.length === 1) o.extensions[0].exten = v.exten; };
 export function openIncallEditor(o, num, onSave) {
   const f = incallCfgOf(o).fields;
+  const ext = o.extensions?.length === 1 ? o.extensions[0] : null;
+  const isPat = !!ext && String(ext.exten).startsWith('_');
+  const sched = (o.schedules || [])[0]?.id;
   confirmModal(`<div class="cf-ed">
-    ${head('ie2-hb', `SDA ${num}`, o.description || '', 'Options de l\'API Wazo pour une SDA. La destination se change sur la sortie « Destination », l\'horaire sur la carte horaire.')}
-    ${sec('gen', 'Général', field('Description', `<input data-f="description" value="${esc(f.description || '')}" placeholder="ex. Standard">`), { open: true })}
+    ${head('ie2-hb', `SDA ${num}`, o.description || '', 'Options de l\'API Wazo pour une SDA, comme dans le portail.')}
+    ${sec('gen', 'Numéro et description', `
+      ${ext ? `${incallNumberHtml({ exten: String(ext.exten), pattern: isPat, field })}
+      <p class="small muted">Contexte : ${esc(M.by.context?.get(ext.context)?.label || ext.context)} (non modifiable ici).</p>` : `<p class="small muted">${(o.extensions || []).length ? 'Plusieurs numéros : à modifier dans le portail.' : 'Aucun numéro.'}</p>`}
+      ${field('Description', `<input data-f="description" value="${esc(f.description || '')}" placeholder="ex. Standard">`)}`, { open: true })}
+    ${sec('dest', 'Destination', `<div class="cf-ge-f"><span class="cf-ge-l">Destination *</span>${pickerHtml('ice-dest', o.destination)}</div>`, { open: true })}
     ${sec('call', 'Appel entrant', `
-      ${field('Message d\'accueil', '<select data-f="greeting_sound" id="ice-greet"><option value="">Chargement des sons…</option></select>', 'Joué à l\'appelant avant la destination.')}
+      ${field('Pré-décroché (message d\'accueil)', '<select data-f="greeting_sound" id="ice-greet"><option value="">Chargement des sons…</option></select>', 'Joué à l\'appelant avant de l\'envoyer vers la destination.')}
+      ${field('Horaire', `<select id="ice-sched"><option value="">Aucun : toujours ouvert</option>${(M.lists.schedule || []).map((s) => `<option value="${s.id}"${String(sched) === String(s.id) ? ' selected' : ''}>${esc(s.name || `#${s.id}`)}</option>`).join('')}</select>`, 'Quand la SDA envoie vers sa destination ; hors horaire : destination « fermé » de l\'horaire.')}
       <div class="cf-ge-2">
         ${field('Nom affiché à l\'appelé', `<select data-f="caller_id_mode">${cidOpts(f.caller_id_mode)}</select>`)}
         <span id="ice-cidtxt"${f.caller_id_mode ? '' : ' hidden'}>${field('Texte', `<input data-f="caller_id_name" value="${esc(f.caller_id_name || '')}" maxlength="80" placeholder="ex. Accueil">`, 'Pour savoir par quel numéro l\'appel est arrivé.')}</span>
       </div>`, { open: true })}
-    ${sec('adv', 'Avancé', field('Sous-routine', `<input data-f="preprocess_subroutine" value="${esc(f.preprocess_subroutine || '')}" maxlength="79" placeholder="aucune">`))}
+    ${sec('adv', 'Avancé', field('Sous-routine de pré-traitement', `<input data-f="preprocess_subroutine" value="${esc(f.preprocess_subroutine || '')}" maxlength="79" placeholder="aucune">`, 'Sous-routine Asterisk exécutée avant de recevoir l\'appel.'))}
     <p id="ice-err" class="error small"></p></div>`, () => {
     const box = $('modal-body');
+    const err = (m, s) => { if (s) openSec(box, s); $('ice-err').textContent = m; return false; };
     const nf = { ...f };
     nf.description = val(box, '[data-f="description"]') || null;
     nf.greeting_sound = box.querySelector('[data-f="greeting_sound"]').value || null;
     nf.caller_id_mode = box.querySelector('[data-f="caller_id_mode"]').value || null;
     nf.caller_id_name = nf.caller_id_mode ? val(box, '[data-f="caller_id_name"]') || null : null;
-    if (nf.caller_id_mode && !nf.caller_id_name) { openSec(box, 'call'); $('ice-err').textContent = 'Nom affiché : saisissez le texte, ou choisissez « Inchangé ».'; return false; }
+    if (nf.caller_id_mode && !nf.caller_id_name) return err('Nom affiché : saisissez le texte, ou choisissez « Inchangé ».', 'call');
     nf.preprocess_subroutine = val(box, '[data-f="preprocess_subroutine"]') || null;
-    onSave({ fields: nf });
+    let exten = ext ? String(ext.exten) : null;
+    if (ext) {
+      exten = readIncallNumber(box);
+      const bad = checkIncallNumber(ext.context, exten, String(ext.exten));
+      if (bad) return err(bad, 'gen');
+    }
+    let destination; try { destination = readPicker('ice-dest'); } catch (e) { return err(e.message, 'dest'); }
+    const s = $('ice-sched').value;
+    onSave({ cfg: { fields: nf, exten }, destination, schedule: s ? Number(s) : null });
     return true;
   }, 'Ajouter au brouillon');
   const box = $('modal-body');
+  bindPicker('ice-dest');
+  if (ext) bindIncallNumber(box, ext.context, String(ext.exten));
   const recap = () => setSums(box, {
-    gen: [val(box, '[data-f="description"]') || 'sans description'],
-    call: [box.querySelector('#ice-greet')?.value ? 'avec accueil' : 'sans accueil', val(box, '[data-f="caller_id_mode"]') ? `nom « ${val(box, '[data-f="caller_id_name"]')} »` : ''],
+    gen: [ext ? readIncallNumber(box) : '', val(box, '[data-f="description"]')],
+    call: [box.querySelector('#ice-greet')?.value ? 'avec accueil' : 'sans accueil', $('ice-sched')?.value ? `horaire ${$('ice-sched').selectedOptions[0].text}` : 'sans horaire', val(box, '[data-f="caller_id_mode"]') ? `nom « ${val(box, '[data-f="caller_id_name"]')} »` : ''],
     adv: [val(box, '[data-f="preprocess_subroutine"]')],
   });
   fillSoundSelect($('ice-greet'), f.greeting_sound || '').then(() => { const s = $('ice-greet'); if (s?.options[0] && !s.options[0].value) s.options[0].textContent = 'Aucun'; recap(); });
@@ -67,8 +91,7 @@ export function openIncallEditor(o, num, onSave) {
   box.addEventListener('change', (e) => { if (e.target.matches('[data-f="caller_id_mode"]')) $('ice-cidtxt').hidden = !e.target.value; recap(); });
   recap();
 }
-export const incallCfgDiff = (a, b) => diffKeys(a, b, INCALL_FIELDS, { description: 'description', caller_id_mode: 'nom affiché', caller_id_name: 'texte du nom', greeting_sound: 'accueil', preprocess_subroutine: 'sous-routine' }).join(', ');
-
+export const incallCfgDiff = (a, b) => [...diffKeys(a, b, INCALL_FIELDS, { description: 'description', caller_id_mode: 'nom affiché', caller_id_name: 'texte du nom', greeting_sound: 'accueil', preprocess_subroutine: 'sous-routine' }), ...((a?.exten ?? null) !== (b?.exten ?? null) ? [`numéro ${a?.exten ?? '—'} → ${b?.exten ?? '—'}`] : [])].join(', ');
 // ---------------------------------------------------------------------------
 // Utilisateur : réglages de routage seulement (le reste : User Manager).
 // Débordements et horaire : entrées habituelles du brouillon.

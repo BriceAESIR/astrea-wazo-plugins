@@ -18,10 +18,11 @@
 //    présent sort sans notifier Asterisk : pour changer priorité ou pénalité,
 //    write.js retire puis rajoute le membre ;
 //  - une seule extension, contexte internal, dans les queue_ranges.
-import { $, esc, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.40.4';
-import { M, listOf, QSTRAT } from './model.js?v=0.40.4';
-import { pickerHtml, bindPicker, readPicker, fillSoundSelect } from './sched-editor.js?v=0.40.4';
-import { sec, field, setSums, openSec } from './ed-ui.js?v=0.40.4';
+import { $, esc, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.40.5';
+import { M, listOf, QSTRAT } from './model.js?v=0.40.5';
+import { pickerHtml, bindPicker, readPicker, fillSoundSelect } from './sched-editor.js?v=0.40.5';
+import { sec, field, setSums, openSec } from './ed-ui.js?v=0.40.5';
+import { numberFieldHtml, bindNumberField, checkNumber } from './numbers.js?v=0.40.5';
 
 const QSTRAT_HELP = {
   ringall: 'Tous les agents disponibles sonnent ensemble ; le premier qui décroche prend l\'appel.',
@@ -112,10 +113,10 @@ export function openQueueEditor(q, onSave) {
     <div class="cf-ge-head"><div><h3>File d'attente « ${esc(q.label || q.name)} »</h3><div class="small muted" title="Nom technique (file Asterisk), non modifiable">${esc(q.name || '')}</div></div>${helpButton('qe-hb', 'Aide')}</div>${helpBox('qe-hb', 'Toutes les options de l\'API Wazo pour une file d\'attente, rangées par thème, y compris les options Asterisk (stratégie, sonnerie par agent, pause…). Les modifications vont dans le brouillon ; « Appliquer… » relit la file et n\'écrit que ce qui change.')}
     ${sec('gen', 'Général', `
       ${field('Nom affiché', `<input data-f="label" value="${esc(f.label || '')}" maxlength="128">`)}
-      <div class="cf-ge-2">
-        ${field('Numéro interne', `<input data-ext value="${esc(v.extension?.exten || '')}" placeholder="aucun">`, 'Le numéro à composer pour joindre la file. Vide : pas de numéro.')}
-        ${field('Contexte du numéro', `<select data-extctx>${ctxInt.map((c) => `<option value="${esc(c.name)}"${(v.extension?.context || ctxInt[0]?.name) === c.name ? ' selected' : ''}>${esc(c.label || c.name)}</option>`).join('')}</select>`, 'Contexte interne ; le numéro doit être dans sa plage « files d\'attente ».')}
-      </div>
+      ${numberFieldHtml('queue', { exten: v.extension?.exten || '', ctx: v.extension?.context || ctxInt[0]?.name, ctxList: ctxInt, field })}
+
+
+
       ${bool('enabled')}`, { open: true })}
     ${sec('ring', 'Distribution des appels', `
       ${osel('strategy', 'Stratégie', Object.entries(QSTRAT), '')}
@@ -212,10 +213,10 @@ export function openQueueEditor(q, onSave) {
     let extension = null;
     if (ex) {
       const ctx = box.querySelector('[data-extctx]').value;
-      if (!/^[*#0-9]{1,40}$/.test(ex)) return err('Numéro interne : chiffres, * et # seulement.', 'gen');
-      const c = M.by.context?.get(ctx);
-      const inRange = (c?.queue_ranges || []).some((r) => ex.length === String(r.start).length && ex >= String(r.start) && ex <= String(r.end));
-      if (c?.queue_ranges && !inRange) return err(`Numéro interne ${ex} : hors des plages « files d'attente » du contexte ${c.label || c.name} (${(c.queue_ranges || []).map((r) => `${r.start}-${r.end}`).join(', ') || 'aucune'}).`, 'gen');
+      const bad = checkNumber(ctx, 'queue', ex, ctx === q.extensions?.[0]?.context ? q.extensions?.[0]?.exten : '');
+      if (bad) return err(bad, 'gen');
+
+
       extension = { exten: ex, context: ctx };
     }
     for (const a of agents) if (!(Number.isInteger(a.penalty) && a.penalty >= 0)) return err('Pénalité des agents : nombre entier positif.', 'mem');
@@ -232,6 +233,7 @@ export function openQueueEditor(q, onSave) {
   ['qe-noans', 'qe-busy', 'qe-cong', 'qe-fail', 'qe-wtime', 'qe-wratio'].forEach(bindPicker);
   fillSoundSelect($('qe-pann'), o['periodic-announce'] || '').then(() => { const s = $('qe-pann'); if (s?.options[0]) s.options[0].textContent = s.options[0].value ? s.options[0].textContent : 'Aucun'; recap(); });
   const box = $('modal-body');
+  bindNumberField(box, 'queue', { own: q.extensions?.[0]?.exten || '' });
   const val = (sel) => box.querySelector(sel)?.value?.trim() || '';
   const txt = (sel) => { const e = box.querySelector(sel); return e?.value ? e.selectedOptions[0]?.text : ''; };
   const pick = (id) => { const el = $(id); const t = el?.querySelector('[data-dt]'); if (!t || t.value === 'none') return 'rien'; const x = el.querySelector('[data-do]'); return `${t.selectedOptions[0].text.toLowerCase()}${x?.value ? ` ${x.selectedOptions[0].text.split(' — ')[0]}` : ''}`; };
