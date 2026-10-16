@@ -17,10 +17,10 @@
 //    linéaire ; les utilisateurs sonnent avant les numéros) ;
 //  - une seule extension, contexte internal, dans les group_ranges ; un seul
 //    horaire ; plusieurs autorisations d'appels.
-import { $, esc, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.39.5';
-import { M, STRATEGY, listOf, linearRound } from './model.js?v=0.39.5';
-import { pickerHtml, bindPicker, readPicker } from './sched-editor.js?v=0.39.5';
-import { sec, field } from './ed-ui.js?v=0.39.5';
+import { $, esc, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.39.6';
+import { M, STRATEGY, listOf, linearRound } from './model.js?v=0.39.6';
+import { pickerHtml, bindPicker, readPicker } from './sched-editor.js?v=0.39.6';
+import { sec, field } from './ed-ui.js?v=0.39.6';
 
 const STRATS = ['all', 'linear', 'random', 'least_recent', 'fewest_calls', 'memorized_round_robin', 'weight_random'];
 const STRAT_HELP = {

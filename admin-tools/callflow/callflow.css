@@ -173,6 +173,7 @@ body.in-portal.ready #workbench { height: 100vh; }
 .cf-slider input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 4px; height: 16px; margin-top: -6px; border-radius: 2px; background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
 .cf-slider input[type="range"]::-moz-range-thumb { width: 4px; height: 16px; border: 0; border-radius: 2px; background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
 .cf-slider input[type="range"]:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 35%, transparent); }
+.cf-time.nolanes .cf-lanes { display: none; }
 .cf-time.off .cf-lanes, .cf-time.off .cf-slider, .cf-time.off .cf-date, .cf-time.off .cf-clock strong { opacity: .45; }
 @media (max-width: 800px) { .cf-lane { grid-template-columns: 90px minmax(0, 1fr); } }
 #t-help-box .helpbox { margin: 0 0 8px; }

@@ -3,22 +3,22 @@
 // déposer (lot 2a, brouillon puis aperçu, sauvegarde, écriture).
 // Cadrage : astrea-wazo-dev/docs/CALLFLOW-MANAGER.md.
 // Modèle (sources confd vérifiées) : model.js ; canevas : canvas.js ; écriture : write.js.
-import { S, $, esc, fullName, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.39.5';
-import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, loadTrunkOperators, scanGroupKeys, buildTree, landingAt, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel, periodText, STRATEGY, QSTRAT, baseKey, gateOf, loadBlocklist, blockedBy, dialUser, entryChains } from './model.js?v=0.39.5';
-import { createCanvas } from './canvas.js?v=0.39.5';
-import { getDest, setDest, sameValue, prepare, execute } from './write.js?v=0.39.5';
-import { openScheduleEditor } from './sched-editor.js?v=0.39.5';
-import { openGroupEditor, groupCfgDiff } from './group-editor.js?v=0.39.5';
-import { openQueueEditor, queueCfgDiff, agentName } from './queue-editor.js?v=0.39.5';
-import { openIvrEditor, ivrCfgDiff } from './ivr-editor.js?v=0.39.5';
-import { openSbEditor, sbCfgDiff } from './sb-editor.js?v=0.39.5';
-import { redact } from './ed-ui.js?v=0.39.5';
-import { openRestore } from './restore.js?v=0.39.5';
-import { openIncallEditor, incallCfgDiff, openUserEditor, userCfgDiff, openVmEditor, vmCfgDiff, openConfEditor, confCfgDiff, openSchedGenEditor, schedCfgDiff } from './obj-editors.js?v=0.39.5';
-import { openDestEditor, ENTITY_DEST } from './dest-editor.js?v=0.39.5';
-import { openOutcallEditor, outcallCfgDiff } from './outcall-editor.js?v=0.39.5';
-import { openCreate, CREATABLE } from './create.js?v=0.39.5';
-import { simulate, userContext, simPath } from './dialsim.js?v=0.39.5';
+import { S, $, esc, fullName, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.39.6';
+import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, loadTrunkOperators, scanGroupKeys, buildTree, landingAt, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel, periodText, STRATEGY, QSTRAT, baseKey, gateOf, loadBlocklist, blockedBy, dialUser, entryChains } from './model.js?v=0.39.6';
+import { createCanvas } from './canvas.js?v=0.39.6';
+import { getDest, setDest, sameValue, prepare, execute } from './write.js?v=0.39.6';
+import { openScheduleEditor } from './sched-editor.js?v=0.39.6';
+import { openGroupEditor, groupCfgDiff } from './group-editor.js?v=0.39.6';
+import { openQueueEditor, queueCfgDiff, agentName } from './queue-editor.js?v=0.39.6';
+import { openIvrEditor, ivrCfgDiff } from './ivr-editor.js?v=0.39.6';
+import { openSbEditor, sbCfgDiff } from './sb-editor.js?v=0.39.6';
+import { redact } from './ed-ui.js?v=0.39.6';
+import { openRestore } from './restore.js?v=0.39.6';
+import { openIncallEditor, incallCfgDiff, openUserEditor, userCfgDiff, openVmEditor, vmCfgDiff, openConfEditor, confCfgDiff, openSchedGenEditor, schedCfgDiff } from './obj-editors.js?v=0.39.6';
+import { openDestEditor, ENTITY_DEST } from './dest-editor.js?v=0.39.6';
+import { openOutcallEditor, outcallCfgDiff } from './outcall-editor.js?v=0.39.6';
+import { openCreate, CREATABLE } from './create.js?v=0.39.6';
+import { simulate, userContext, simPath } from './dialsim.js?v=0.39.6';
 
 const TESTED_STACK = ['26.07'];
 const NAV = [
@@ -359,6 +359,7 @@ function renderTime() {
   $('t-min').value = C.time.min;
   $('t-label').textContent = `${hhmm(C.time.min)} · ${d.toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' })}`;
   $('cf-time').classList.toggle('off', (!C.time.on && !simActive()) || C.dir === 'in');
+  $('cf-time').classList.toggle('nolanes', !C.time.on); // « Afficher la vue chronologique » décoché : bandes masquées
   renderLanes();
   for (const c of $('t-lanes').querySelectorAll('.cf-cursor')) c.style.left = `${((C.time.min + 0.5) / 1440) * 100}%`;
   if (C.dir === 'in') { $('t-state').textContent = 'Simulation : sens « où vont les appels » ou « numéros composés »'; return; }
@@ -861,7 +862,7 @@ const setSimMode = (m) => { if (m !== C.sim.mode) C.sim.num = ''; C.sim.mode = m
 $('s-dir').onchange = () => setSimMode($('s-dir').value);
 $('s-from').onchange = () => { if ($('s-from').value) setRoot($('s-from').value); };
 $('s-trame').onclick = (e) => { if (e.target.closest('[data-godial]')) { setSimMode('out'); return; } const u = e.target.closest('[data-num]'); if (u) { C.sim.num = u.dataset.num; draw(true); return; } const b = e.target.closest('[data-key]'); if (!b) return; const n = C.tree?.nodes.get(b.dataset.key); if (n) { C.canvas.select(n.key, false); C.canvas.focus(n.key); showDetail(n); } };
-$('t-help').innerHTML = helpButton('t-hb', 'Simulation de la date et de l\'heure');
+$('t-help').innerHTML = helpButton('t-hb', 'Vue chronologique');
 $('t-help-box').innerHTML = helpBox('t-hb', 'Choisissez un jour et une heure : les branches qui ne s\'appliquent pas à ce moment sont atténuées (ouvert → sorties normales de la SDA, de l\'utilisateur, du groupe… ; fermé → destination de fermeture ; fermeture exceptionnelle → sa destination, prioritaire). Règles lues dans le code de Wazo : fermetures exceptionnelles d\'abord, puis plages d\'ouverture, sinon fermé ; bornes horaires incluses à la minute (une plage 09:00–12:30 couvre 12:30). L\'heure est celle du site (fuseau de l\'horaire). Le bandeau montre la journée choisie : la ligne « Résultat » indique où arrive l\'appel une fois tous les horaires franchis (couleur de la carte d\'arrivée), puis une ligne par horaire du parcours (vert ouvert, gris fermé, rouge fermeture exceptionnelle). Survolez une tranche pour ses heures exactes.');
 // Le canevas reprend sa taille avec la fenêtre (cadre du portail redimensionné).
 window.addEventListener('resize', () => { clearTimeout(window.__cfR); window.__cfR = setTimeout(() => C.canvas?.fit(), 200); });

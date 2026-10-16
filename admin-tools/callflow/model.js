@@ -21,8 +21,8 @@
 // Supposé, à vérifier en réel : les listes (GET /groups, /queues,
 // /switchboards, /schedules) contiennent déjà fallbacks, membres et
 // destinations ; sinon on lit le détail de chaque objet (ensureDetails).
-import { S, api, listAll, fullName } from '../common/core.js?v=0.39.5';
-import { comparePatterns, describePattern, userContext, rightsList } from './dialsim.js?v=0.39.5';
+import { S, api, listAll, fullName } from '../common/core.js?v=0.39.6';
+import { comparePatterns, describePattern, userContext, rightsList } from './dialsim.js?v=0.39.6';
 
 export const M = { lists: {}, by: {}, ext: new Map(), extAny: new Map(), rev: null, warns: [] };
 
