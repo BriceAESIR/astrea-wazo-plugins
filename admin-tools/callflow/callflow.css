@@ -323,11 +323,29 @@ body.in-portal.ready #workbench { height: 100vh; }
 .cf-oe-list li.cf-oe-pat { display: grid; gap: 8px; padding: 10px 12px; }
 .cf-oe-pat [data-p="exten"] { font-family: ui-monospace, Consolas, monospace; max-width: 200px; flex: none !important; }
 .cf-oe-desc { flex: 1; }
-/* Simulateur de numéro */
-.cf-sim-res { display: grid; gap: 10px; margin-top: 8px; }
-.cf-sim-step { display: grid; grid-template-columns: 150px 1fr; gap: 8px; font-size: .875rem; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
-.cf-sim-step code { font-size: .8125rem; }
-@media (max-width: 700px) { .cf-sim-step { grid-template-columns: 1fr; } }
+/* Suivre un appel : commandes du bandeau, trame, chemin allumé dans le graphe */
+.cf-follow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.t-caller { --c: var(--cf-entry); }
+.cf-follow input[type="search"] { width: 190px; padding: 4px 8px; font-variant-numeric: tabular-nums; }
+.cf-trame { display: grid; grid-template-columns: 150px minmax(0, 1fr); align-items: start; gap: 8px; margin: 2px 0 8px; }
+.cf-trame .cf-ln { padding-top: 5px; color: var(--ink); font-weight: 600; }
+.cf-trs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.cf-tr { display: inline-flex; align-items: baseline; gap: 4px; padding: 2px 8px; border-radius: 12px; font-size: .75rem; text-transform: none; letter-spacing: 0; border: 1px solid color-mix(in srgb, var(--c, var(--line)) 60%, var(--line)); background: color-mix(in srgb, var(--c, var(--muted)) 14%, var(--panel)); color: var(--ink); cursor: pointer; }
+.cf-tr b { font-variant-numeric: tabular-nums; }
+.cf-tr-arr { color: var(--muted); font-size: .75rem; }
+.cf-tr-end { margin-left: 6px; font-size: .75rem; color: var(--muted); font-style: italic; }
+@media (max-width: 800px) { .cf-trame { grid-template-columns: 1fr; } .cf-trame .cf-ln { text-align: left; } }
+.cf-view.simming .cf-node:not(.onpath):not(.ringing) { opacity: .28; }
+.cf-view.simming .cf-node:not(.onpath):not(.ringing):hover { opacity: .7; }
+.cf-view.simming .cf-node.onpath { box-shadow: 0 0 0 2px var(--accent), 0 4px 14px color-mix(in srgb, var(--accent) 25%, transparent); opacity: 1; }
+.cf-view.simming .cf-node.ringing { box-shadow: 0 0 0 2px color-mix(in srgb, var(--cf-ring) 70%, transparent); opacity: 1; }
+.cf-view.simming .cf-node.onpath .cf-ports li:not(.taken) { opacity: .4; }
+.cf-ports li.taken .cf-pl { font-weight: 700; }
+.cf-ports li.taken .cf-dot { background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent); }
+.cf-view.simming .cf-edge { opacity: .25; }
+.cf-view.simming .cf-edge.sim { opacity: 1; stroke: var(--accent); stroke-width: 3; }
+.cf-simt { margin-top: 3px; padding: 1px 6px; border-radius: 4px; font-size: .6875rem; line-height: 1.4; background: color-mix(in srgb, var(--accent) 14%, var(--panel)); color: var(--ink); }
+.cf-node.ringing .cf-simt { background: color-mix(in srgb, var(--cf-ring) 18%, var(--panel)); }
 /* « Un par un » : durée d'un tour complet proposée */
 .cf-ge-tour { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: var(--radius); background: color-mix(in srgb, var(--accent) 7%, var(--panel)); border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--panel)); font-size: .875rem; }
 .cf-ge-tour > div { flex: 1; display: grid; gap: 2px; }

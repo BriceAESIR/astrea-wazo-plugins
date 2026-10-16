@@ -12,7 +12,7 @@
 //    « prefix » est lu mais pas appliqué.
 // Supposé : effet exact des autorisations d'appels et d'un horaire sur une
 // règle sortante (affichés à titre indicatif).
-import { M, scheduleState, whenOf } from './model.js?v=0.39.0';
+import { M, scheduleState, whenOf, entity } from './model.js?v=0.39.1';
 
 // Motif → liste d'éléments { set: chaînes de caractères, size } | { dot } | { bang } ; null si numéro exact.
 export function parsePattern(p) {
@@ -138,6 +138,139 @@ export function simulate(number, fromCtx, user = null, when = null) {
   };
   const result = search(fromCtx, 0) || { kind: 'none' };
   return { steps, result, number: n };
+}
+// Contextes entrants où un numéro reçu correspond à une SDA (trunk non choisi).
+export function findIncall(number) {
+  for (const c of (M.lists.context || []).filter((x) => x.type === 'incall')) {
+    const r = simulate(number, c.name);
+    if (r.result?.kind === 'incall') return r;
+  }
+  return null;
+}
+
+// « Suivre un appel » dans le graphe affiché (demande de Brice, 16/10/2026 :
+// pas de fenêtre en plus, le chemin se voit sur les cartes). On part de la
+// carte de départ (choisie à gauche) et on suit, carte par carte, la sortie
+// prise si personne ne décroche, en cumulant les durées :
+//  - trunk → contexte → la SDA qui correspond au numéro reçu (match) ;
+//  - « Numéros composés » : contextes de recherche → numéro interne ou règle
+//    sortante → motif retenu → envoi → 1er trunk → opérateur ;
+//  - horaire : sortie active au moment w ; utilisateur, groupe, file, standard :
+//    « pas de réponse » après leur durée ; SVI : « sans saisie ».
+// Vérifié : durées confd (ring_seconds, timeout, user_timeout, retry_delay),
+// chaîne group-linear (sonnerie + pause après chaque membre), NPD sauté en
+// linéaire. Supposé : ring_time d'une destination remplace la durée de
+// l'objet ; utilisateur en NPD → sortie « occupé » ; SVI : délai × essais puis
+// « sans saisie » ; sans débordement réglé, l'appel se termine.
+// Résultat : { on: Map(clé → {t, dur, what}), ports: Set(« clé|port »),
+//   ring: Map(clé → texte), steps: [{key, t, dur, what}], expand: clé repliée
+//   à déplier, end: texte de fin }.
+const DEFAULT_RING = 30; // ring_seconds par défaut de confd
+// blocked : Map(uuid utilisateur → libellé) des utilisateurs qui bloquent l'appelant.
+export function simPath(tree, w, match, { blocked = null } = {}) {
+  const R = { on: new Map(), ports: new Set(), ring: new Map(), steps: [], expand: null, end: '' };
+  const r = match?.result;
+  const kidOf = (n, p) => { const c = n.kids.find((x) => x.port === p.id); if (c) return c; const x = tree.cross.find((y) => y.from === n.key && y.port === p.id); return x ? tree.nodes.get(x.to) : null; };
+  const subtree = (n, f) => { for (const c of n.kids) { f(c); subtree(c, f); } };
+  let n = tree.root, t = 0, override = null; const seen = new Set();
+  for (let i = 0; i < 60 && n; i++) {
+    if (seen.has(n.key)) { R.end = 'boucle : l\'appel repasse par les mêmes cartes jusqu\'à ce que l\'appelant raccroche'; break; }
+    seen.add(n.key);
+    const ports = n.ports || []; const P = (f) => ports.find(f);
+    const type = n.info?.type; const { obj: o, owner } = n.leaf ? {} : entity(n.key);
+    const st = { key: n.key, t, dur: 0, what: '' };
+    let p = null, end = false;
+    if (n.leaf) {
+      if (type === 'caller') { p = ports[0]; st.what = 'appelle'; }
+      else if (type === 'dial') { p = P((x) => x.slot === 'trunk'); st.what = r?.sent ? `envoie ${r.sent}` : 'numéro envoyé'; }
+      else { st.what = n.info.title; end = true; }
+    } else switch (type) {
+      case 'trunk':
+        if (P((x) => x.slot === 'pstn')) { st.what = 'sort vers l\'opérateur'; end = true; R.end = 'l\'appel quitte Wazo par ce trunk'; break; }
+        p = P((x) => x.slot === 'context'); st.what = match?.number ? `reçoit ${match.number}` : 'appel reçu';
+        if (!r) { end = true; R.end = 'tapez le numéro appelé (SDA)'; }
+        break;
+      case 'context':
+        if (n.depth === 0 || n.viaDial || o?.type === 'incall') {
+          if (!r) { end = true; R.end = 'tapez un numéro'; break; }
+          if (r.kind === 'incall' && o?.type === 'incall') { p = P((x) => x.slot === 'incall' && x.to?.key === r.key); st.what = r.viaDid ? `SDA reconnue comme ${r.viaDid}` : 'SDA trouvée'; break; }
+          if (r.ctx === o?.name && (r.kind === 'internal' || r.kind === 'incall')) { p = P((x) => x.slot === 'internal'); st.what = 'numéro interne trouvé'; break; }
+          if (r.ctx === o?.name && r.kind === 'outcall') { p = P((x) => x.slot === 'outcall' && x.to?.key === `outcall:${r.outcall.id}`); st.what = 'motif trouvé dans ce contexte'; break; }
+          // Pas ici : contexte inclus suivant dans l'ordre de recherche (steps de simulate).
+          const idx = (match.steps || []).findIndex((s) => s.ctx === o?.name);
+          const next = idx >= 0 ? match.steps[idx + 1] : null;
+          if (next && r.kind !== 'none') { p = P((x) => x.slot === 'include' && x.to?.key === `context:${next.ctx}`); st.what = 'rien ici, contexte inclus suivant'; break; }
+          end = true; R.end = r.kind === 'none' ? (o?.type === 'incall' ? `aucune SDA ${match.number} : l'opérateur reçoit un refus (numéro non attribué)` : `aucune correspondance pour ${match.number} : l'appel échoue`) : r.kind === 'feature' ? r.note : '';
+          st.what = 'aucune correspondance';
+          break;
+        }
+        end = true; st.what = 'contexte'; break;
+      case 'user':
+        if (tree.root === n && n.ports?.some((x) => x.slot === 'dial_from')) {
+          p = P((x) => x.slot === 'dial_from' && x.to); st.what = match?.number ? `compose ${match.number}` : 'compose un numéro';
+          if (!r) { end = true; R.end = 'tapez le numéro composé'; }
+          break;
+        }
+        {
+          // Liste de blocage (vérifié : elle existe dans confd ; supposé : appel rejeté, sans sonnerie ni débordement).
+          if (blocked?.has(o.uuid)) { st.what = `bloque cet appelant${blocked.get(o.uuid) ? ` (« ${blocked.get(o.uuid)} »)` : ''}`; end = true; R.end = 'numéro dans la liste de blocage de l\'utilisateur : l\'appel est rejeté (supposé)'; break; }
+          const f = o.forwards || {};
+          if (f.unconditional?.enabled) { p = P((x) => x.slot === 'fwd_unconditional'); st.what = `renvoi immédiat vers ${f.unconditional.destination}`; break; }
+          if (o.services?.dnd?.enabled) { p = P((x) => x.slot === 'fwd_busy' && x.to) || P((x) => x.slot === 'busy'); st.what = 'en NPD : ne sonne pas, sortie « occupé » (supposé)'; break; }
+          const ring = override || o.ring_seconds || DEFAULT_RING;
+          st.dur = ring; st.what = `sonne ${ring} s${override ? ' (durée de la destination)' : ''}`;
+          p = P((x) => x.slot === 'fwd_noanswer' && x.to) || P((x) => x.slot === 'noanswer');
+        }
+        break;
+      case 'incall': p = ports[0]; st.what = 'SDA reçue'; break;
+      case 'schedule': {
+        const s = scheduleState(o, w);
+        p = P((x) => (x.when === 'open' && s.open) || (x.when === 'closed' && !s.open && s.exc < 0) || x.when === `exc:${s.exc}`);
+        st.what = s.label; break;
+      }
+      case 'group': case 'queue': case 'switchboard': {
+        const tmax = override || o.timeout || 0;
+        st.dur = tmax || Infinity;
+        st.what = type === 'queue' ? `attente en file${tmax ? ` ${tmax} s` : ', sans limite'}` : type === 'switchboard' ? `présenté au standard${tmax ? ` ${tmax} s` : ', sans limite'}` : `sonne${tmax ? ` ${tmax} s` : ' sans limite'}`;
+        // Membres : toute la branche « sonne » ; en « un par un », créneaux de chacun.
+        const mp = P((x) => x.slot === 'members'); const hub = mp && kidOf(n, mp);
+        if (mp) R.ports.add(`${n.key}|${mp.id}`);
+        if (hub) {
+          R.ring.set(hub.key, '');
+          const chain = []; subtree(hub, (c) => { R.ring.set(c.key, ''); if (c.info?.member && !c.info.member.dnd) chain.push(c); });
+          if (type === 'group' && o.ring_strategy === 'linear' && chain.length) {
+            const ut = o.user_timeout ?? 15, rd = o.retry_delay ?? 0, lim = tmax || chain.length * (ut + rd);
+            for (let j = 0, s = 0; s < lim && j < 60; j++, s += ut + rd) {
+              const c = chain[j % chain.length]; const prev = R.ring.get(c.key);
+              R.ring.set(c.key, `${prev ? `${prev}, ` : ''}${t + s}→${t + Math.min(s + ut, lim)} s`);
+            }
+          } else for (const c of chain) R.ring.set(c.key, tmax ? `${t}→${t + tmax} s` : `dès ${t} s`);
+        }
+        if (tmax) p = P((x) => x.slot === 'noanswer'); else { end = true; R.end = 'sonne sans fin (durée totale vide) jusqu\'à ce que l\'appelant raccroche'; }
+        break;
+      }
+      case 'ivr': { const tries = o.max_tries || 1; st.dur = (o.timeout || 0) * tries; st.what = `menu, attend une touche${o.timeout ? ` ${o.timeout} s × ${tries} (supposé)` : ''}`; p = P((x) => x.slot === 'ivr_timeout'); break; }
+      case 'outcall': p = P((x) => x.slot === 'pattern' && x.label === r?.dp?.exten); st.what = r?.dp ? `motif ${r.dp.exten}` : 'règle sortante'; break;
+      case 'voicemail': st.what = 'l\'appelant laisse un message'; end = true; break;
+      case 'conference': st.what = 'entre dans la conférence'; end = true; break;
+      default: st.what = n.info?.title || ''; end = true;
+    }
+    R.on.set(n.key, st); R.steps.push(st);
+    if (end) break;
+    t += Number.isFinite(st.dur) ? st.dur : 0;
+    if (!p) { R.end = R.end || 'sortie non réglée : l\'appel se termine (supposé)'; break; }
+    R.ports.add(`${n.key}|${p.id}`);
+    override = p.dest?.ring_time || null;
+    const next = p.to ? kidOf(n, p) : null;
+    if (!next) {
+      if (p.to && n.folded) R.expand = n.key; // branche repliée : l'appli la déplie et recalcule
+      else if (p.self) R.end = 'revient sur la même carte (le menu est rejoué)';
+      else if (!p.to) R.end = 'sortie non réglée : l\'appel se termine (supposé)';
+      break;
+    }
+    n = next;
+  }
+  return R;
 }
 // Contexte d'appel d'un utilisateur : celui de sa première ligne.
 export const userContext = (u) => u?.lines?.[0]?.extensions?.[0]?.context || u?.lines?.[0]?.context || null;

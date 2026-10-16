@@ -2,8 +2,8 @@
 // une carte mentale), cartes HTML, liens SVG, déplacement du canevas, zoom,
 // déplacement des cartes (avec leur sous-arbre), repli des branches.
 // Positions manuelles gardées dans le navigateur (localStorage, try/catch).
-import { esc } from '../common/core.js?v=0.39.0';
-import { TYPES } from './model.js?v=0.39.0';
+import { esc } from '../common/core.js?v=0.39.1';
+import { TYPES } from './model.js?v=0.39.1';
 
 const W = 236, GAP_X = 104, GAP_Y = 18;
 const POS_KEY = 'astrea-callflow-pos-v1';
@@ -27,7 +27,7 @@ export function createCanvas(viewport, { onSelect, onOpen, onFold, onClear, onUn
   const stage = viewport.querySelector('.cf-stage');
   const g = viewport.querySelector('.cf-links g');
   const cards = viewport.querySelector('.cf-cards');
-  const V = { tx: 40, ty: 40, s: 1, tree: null, dir: 'out', pos: {}, manual: {}, storeKey: '', sel: null, edit: false, changed: new Set() };
+  const V = { tx: 40, ty: 40, s: 1, tree: null, dir: 'out', pos: {}, manual: {}, storeKey: '', sel: null, edit: false, changed: new Set(), sim: null };
 
   const apply = () => { stage.style.transform = `translate(${V.tx}px, ${V.ty}px) scale(${V.s})`; viewport.style.setProperty('--cf-scale', V.s); };
   const el = (k) => cards.querySelector(`.cf-node[data-key="${CSS.escape(k)}"]`);
@@ -48,15 +48,16 @@ export function createCanvas(viewport, { onSelect, onOpen, onFold, onClear, onUn
       return `<li data-port="${esc(p.id)}"${ed ? ` data-w="${esc(p.w.key)}"` : ''} class="${cls}" title="${esc(clk ? `${p.help || ''} — cliquez pour modifier${ed ? ', ou déposez une carte ici' : ''}.` : p.help || '')}"><span class="cf-pl">${esc(p.label)}</span>${p.note ? `<span class="cf-pn">${esc(p.note)}</span>` : ''}${p.to || p.info ? '' : '<span class="cf-pn">non réglé</span>'}${ed && V.changed.has(p.w.key) ? '<button class="cf-x cf-undo" data-undo title="Annuler cette modification : la sortie reprend sa valeur d\'origine">↶</button>' : ''}${ed && p.to ? '<button class="cf-x" data-clear title="Vider cette sortie (aucune destination ; modification du brouillon)">×</button>' : ''}${p.self ? '<span class="cf-pn cf-self">↺ revient ici</span>' : '<i class="cf-dot"></i>'}</li>`;
     }).join('');
     return `<div class="cf-node t-${esc(n.info.type)}${n.depth === 0 ? ' root' : ''}${n.key === V.sel ? ' sel' : ''}${n.dim ? ' dim' : ''}${n.info.dnd ? ' npd' : ''}${n.info.type === 'member' ? ' mini' : ''}" data-key="${esc(n.key)}" style="width:${n.info.type === 'member' ? 170 : W}px">
-      <div class="cf-head" title="${esc(t.help || '')}"><span class="cf-badge">${esc(t.badge)}</span><div class="cf-txt"><div class="cf-type">${esc(t.label)}${n.key.startsWith('schedule:') ? `<span class="cf-state${n.timeOpen ? ' open' : ''}">${esc(n.timeLabel || '')}</span>` : ''}${n.copy ? '<span class="cf-rep" title="Même objet que sur une autre branche : il est répété pour montrer cette route jusqu\'au bout. Une modification de ses réglages vaut pour toutes ses cartes.">répété</span>' : ''}${n.guardedBy ? `<span class="cf-gpill" title="Cet objet est gardé par l'horaire « ${esc(n.guardedBy)} » (carte précédente) : il n'est atteint que si l'horaire est ouvert.">Horaire ${esc(n.guardedBy)}</span>` : ''}</div><div class="cf-title">${esc(n.info.title)}</div>${n.info.sub ? `<div class="cf-sub">${esc(n.info.sub)}</div>` : ''}</div>${n.info.type === 'trunk' && n.info.obj?.operator?.logo ? `<img class="cf-oplogo" src="${esc(n.info.obj.operator.logo)}" alt="${esc(n.info.obj.operator.name)}" title="Opérateur ${esc(n.info.obj.operator.name)} (logo du modèle d'interconnexion Wazo)" loading="lazy" referrerpolicy="no-referrer">` : ''}${fold}</div>
+      <div class="cf-head" title="${esc(t.help || '')}"><span class="cf-badge">${esc(t.badge)}</span><div class="cf-txt"><div class="cf-type">${esc(t.label)}${n.key.startsWith('schedule:') ? `<span class="cf-state${n.timeOpen ? ' open' : ''}">${esc(n.timeLabel || '')}</span>` : ''}${n.copy ? '<span class="cf-rep" title="Même objet que sur une autre branche : il est répété pour montrer cette route jusqu\'au bout. Une modification de ses réglages vaut pour toutes ses cartes.">répété</span>' : ''}${n.guardedBy ? `<span class="cf-gpill" title="Cet objet est gardé par l'horaire « ${esc(n.guardedBy)} » (carte précédente) : il n'est atteint que si l'horaire est ouvert.">Horaire ${esc(n.guardedBy)}</span>` : ''}</div><div class="cf-title">${esc(n.info.title)}</div><div class="cf-simt" hidden></div>${n.info.sub ? `<div class="cf-sub">${esc(n.info.sub)}</div>` : ''}</div>${n.info.type === 'trunk' && n.info.obj?.operator?.logo ? `<img class="cf-oplogo" src="${esc(n.info.obj.operator.logo)}" alt="${esc(n.info.obj.operator.name)}" title="Opérateur ${esc(n.info.obj.operator.name)} (logo du modèle d'interconnexion Wazo)" loading="lazy" referrerpolicy="no-referrer">` : ''}${fold}</div>
       ${n.guardOf ? `<div class="cf-guard" title="Horaire vérifié avant cet objet : ouvert → l'appel continue vers lui ; sinon → fermeture ou fermeture exceptionnelle.">Condition de : <strong>${esc(n.guardOf)}</strong></div>` : ''}
       ${ports ? `<ul class="cf-ports">${ports}</ul>` : ''}<i class="cf-in"></i></div>`;
   }
-  function render(tree, dir, storeKey, { keepView = false, edit = false, changed = new Set() } = {}) {
-    V.tree = tree; V.dir = dir; V.storeKey = storeKey; V.edit = edit; V.changed = changed;
+  function render(tree, dir, storeKey, { keepView = false, edit = false, changed = new Set(), sim = null } = {}) {
+    V.tree = tree; V.dir = dir; V.storeKey = storeKey; V.edit = edit; V.changed = changed; V.sim = sim;
     viewport.classList.toggle('editing', edit);
     V.manual = loadPos(storeKey);
     cards.innerHTML = [...tree.nodes.values()].map(cardHtml).join('');
+    simDecor();
     layout();
     draw();
     if (!keepView) fit();
@@ -107,7 +108,7 @@ export function createCanvas(viewport, { onSelect, onOpen, onFold, onClear, onUn
     // Lien inactif (simulation horaire) : sortie inactive ou carte d'origine atténuée.
     const off = (k, port) => { const n = V.tree.nodes.get(k); return !!(n?.dim || n?.ports?.find((p) => p.id === port)?.inactive); };
     // Sortie « Ouvert » d'un horaire vers l'objet qu'il garde : lien épais (attache).
-    const guard = (k, port) => (V.tree.nodes.get(k)?.ports?.find((p) => p.id === port)?.guard ? ' guard' : '');
+    const guard = (k, port) => (V.tree.nodes.get(k)?.ports?.find((p) => p.id === port)?.guard ? ' guard' : '') + (V.sim?.ports.has(`${k}|${port}`) ? ' sim' : '');
     for (const n of V.tree.nodes.values()) {
       if (!n.parent) continue;
       // Sens « où vont les appels » : sortie du parent → entrée de l'enfant ;
@@ -123,9 +124,29 @@ export function createCanvas(viewport, { onSelect, onOpen, onFold, onClear, onUn
     }
     g.innerHTML = out.join('');
   }
+  // Appel suivi (« Suivre un appel ») : cartes du chemin avec instant et durée,
+  // sortie prise, membres qui sonnent (avec leurs créneaux).
+  const fmt = (s) => (s >= 60 ? `${Math.floor(s / 60)} min${s % 60 ? ` ${s % 60} s` : ''}` : `${s} s`);
+  function simDecor() {
+    const S = V.sim;
+    viewport.classList.toggle('simming', !!S);
+    for (const n of V.tree.nodes.values()) {
+      const e = el(n.key); if (!e) continue;
+      const on = S?.on.get(n.key); const ring = S?.ring.has(n.key) ? S.ring.get(n.key) : null;
+      e.classList.toggle('onpath', !!on); e.classList.toggle('ringing', ring != null);
+      const b = e.querySelector('.cf-simt');
+      if (b) {
+        const txt = on ? [`à ${fmt(on.t)}`, on.what, on.dur ? (Number.isFinite(on.dur) ? fmt(on.dur) : 'sans fin') : ''].filter(Boolean).join(' · ') : ring || '';
+        b.textContent = txt; b.hidden = !txt;
+      }
+      for (const li of e.querySelectorAll('li[data-port]')) li.classList.toggle('taken', !!S?.ports.has(`${n.key}|${li.dataset.port}`));
+    }
+  }
   // Simulation horaire : met à jour les classes sans refaire la disposition.
-  function refreshTime() {
+  // sim (facultatif) : nouvel appel suivi.
+  function refreshTime(sim) {
     if (!V.tree) return;
+    if (sim !== undefined) { V.sim = sim; simDecor(); }
     for (const n of V.tree.nodes.values()) {
       const e = el(n.key); if (!e) continue;
       e.classList.toggle('dim', !!n.dim);
@@ -138,13 +159,14 @@ export function createCanvas(viewport, { onSelect, onOpen, onFold, onClear, onUn
   // -------------------------------------------------------------------------
   // Vue : ajuster, zoom
   // -------------------------------------------------------------------------
-  function bbox() {
+  function bbox(keys) {
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-    for (const [k, p] of Object.entries(V.pos)) { const e = el(k); if (!e) continue; x0 = Math.min(x0, p[0]); y0 = Math.min(y0, p[1]); x1 = Math.max(x1, p[0] + e.offsetWidth); y1 = Math.max(y1, p[1] + e.offsetHeight); }
+    for (const [k, p] of Object.entries(V.pos)) { const e = el(k); if (!e || (keys && !keys.has(k))) continue; x0 = Math.min(x0, p[0]); y0 = Math.min(y0, p[1]); x1 = Math.max(x1, p[0] + e.offsetWidth); y1 = Math.max(y1, p[1] + e.offsetHeight); }
     return Number.isFinite(x0) ? { x0, y0, x1, y1 } : { x0: 0, y0: 0, x1: W, y1: 60 };
   }
-  function fit() {
-    const b = bbox(), vw = viewport.clientWidth || 800, vh = viewport.clientHeight || 600;
+  // keys (facultatif) : cadrer seulement ces cartes (chemin de l'appel suivi).
+  function fit(keys) {
+    const b = bbox(keys instanceof Set && keys.size ? keys : null), vw = viewport.clientWidth || 800, vh = viewport.clientHeight || 600;
     V.s = Math.max(0.3, Math.min(1, (vw - 48) / (b.x1 - b.x0), (vh - 48) / (b.y1 - b.y0)));
     V.tx = (vw - (b.x1 - b.x0) * V.s) / 2 - b.x0 * V.s;
     V.ty = Math.max(24, (vh - (b.y1 - b.y0) * V.s) / 2) - b.y0 * V.s;

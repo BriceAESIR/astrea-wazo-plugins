@@ -7,8 +7,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Mulish:wght@300..800&display=swap">
-<link rel="stylesheet" href="../common/style.css?v=0.39.0">
-<link rel="stylesheet" href="./callflow.css?v=0.39.0">
+<link rel="stylesheet" href="../common/style.css?v=0.39.1">
+<link rel="stylesheet" href="./callflow.css?v=0.39.1">
 <script>if (window.parent !== window) document.documentElement.classList.add('framed');</script>
 </head>
 <body>
@@ -51,6 +51,7 @@
           <div class="cf-seg" role="group" aria-label="Sens">
             <button data-dir="out" class="active" title="Où vont les appels qui arrivent sur l'objet choisi">Où vont les appels</button>
             <button data-dir="in" title="Quels objets envoient des appels vers l'objet choisi">Qui arrive ici</button>
+            <button data-dir="dial" title="Utilisateur ou contexte : par où passe un numéro qu'il compose (numéros internes, règles sortantes, motifs, trunks, opérateur)">Numéros composés</button>
           </div>
           <label class="inline small" title="Afficher aussi les sorties non réglées (débordements vides…)"><input type="checkbox" id="cf-empty"> Sorties vides</label>
           <button id="cf-out" class="icon zoom" title="Zoom arrière">−</button>
@@ -58,7 +59,6 @@
           <button id="cf-fit" title="Tout afficher">Ajuster</button>
           <button id="cf-reset" title="Revenir à la disposition automatique (les cartes déplacées reprennent leur place)">Réorganiser</button>
           <button id="cf-reload" title="Relire la configuration du serveur">Recharger</button>
-          <button id="cf-dialsim" title="Taper un numéro et voir où il part : poste interne, règle sortante, motif, numéro envoyé, trunks">Simuler un numéro…</button>
           <button id="cf-edit" class="primary" title="Mode édition : modifier les destinations et les horaires en glissant des cartes sur les sorties (brouillon, rien n'est écrit avant « Appliquer »)">Mode édition</button>
         </div>
       </div>
@@ -73,11 +73,18 @@
             <button id="t-next" class="icon" title="Jour suivant">›</button>
           </div>
           <div class="cf-clock"><strong id="t-label">--:--</strong><span id="t-state" class="muted small"></span></div>
+          <!-- Suivre un appel dans le graphe (demande de Brice 16/10/2026, sans fenêtre) -->
+          <div class="cf-follow">
+            <label class="inline small" title="Allume dans le graphe le chemin d'un appel si personne ne décroche, avec l'instant de chaque étape (à la date et l'heure choisies) ; le reste est atténué"><input type="checkbox" id="s-on"> Suivre un appel</label>
+            <input type="search" id="s-caller" inputmode="tel" autocomplete="off" placeholder="Appelant (ex. 0612345678)" title="Numéro de la personne qui appelle : carte en tête du graphe, et contrôle des listes de blocage des utilisateurs" hidden>
+            <input type="search" id="s-num" inputmode="tel" autocomplete="off" hidden>
+          </div>
           <span class="spacer"></span>
           <button id="t-now" title="Revenir à la date et l'heure actuelles">Maintenant</button>
           <span id="t-help"></span>
         </div>
         <!-- Une ligne « Résultat » (où arrive l'appel) puis une ligne par horaire du parcours ; le curseur est en dessous, aligné. -->
+        <div id="s-trame" class="cf-trame" hidden></div>
         <div id="t-lanes" class="cf-lanes" aria-hidden="true"></div>
         <div class="cf-lane cf-slider">
           <span class="cf-ln"></span>
@@ -113,6 +120,6 @@
     <div class="btnrow right"><button id="modal-cancel">Annuler</button><button id="modal-ok" class="primary">Confirmer</button></div></div></div>
   <div id="toast" class="toast" hidden></div>
 </div>
-<script type="module" src="./app.js?v=0.39.0"></script>
+<script type="module" src="./app.js?v=0.39.1"></script>
 </body>
 </html>

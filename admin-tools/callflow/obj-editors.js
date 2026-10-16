@@ -10,10 +10,10 @@
 // Codes (messagerie, conférence) : champ masqué avec « Afficher » / « Générer » ;
 // jamais en clair dans le brouillon, l'aperçu ni la sauvegarde JSON (redact).
 // Le mot de passe de connexion d'un utilisateur reste dans User Manager.
-import { $, esc, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.39.0';
-import { M } from './model.js?v=0.39.0';
-import { fillSoundSelect } from './sched-editor.js?v=0.39.0';
-import { sec, field, check, setSums, openSec, secretField, bindSecrets } from './ed-ui.js?v=0.39.0';
+import { $, esc, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.39.1';
+import { M } from './model.js?v=0.39.1';
+import { fillSoundSelect } from './sched-editor.js?v=0.39.1';
+import { sec, field, check, setSums, openSec, secretField, bindSecrets } from './ed-ui.js?v=0.39.1';
 
 const pickFields = (o, keys) => { const f = {}; for (const k of keys) f[k] = o?.[k] ?? null; return f; };
 const diffKeys = (a, b, keys, L) => keys.filter((k) => JSON.stringify(a?.fields?.[k] ?? null) !== JSON.stringify(b?.fields?.[k] ?? null)).map((k) => L[k] || k);

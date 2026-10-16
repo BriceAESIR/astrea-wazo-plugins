@@ -21,8 +21,8 @@
 // Supposé, à vérifier en réel : les listes (GET /groups, /queues,
 // /switchboards, /schedules) contiennent déjà fallbacks, membres et
 // destinations ; sinon on lit le détail de chaque objet (ensureDetails).
-import { S, api, listAll, fullName } from '../common/core.js?v=0.39.0';
-import { comparePatterns, describePattern } from './dialsim.js?v=0.39.0';
+import { S, api, listAll, fullName } from '../common/core.js?v=0.39.1';
+import { comparePatterns, describePattern, userContext } from './dialsim.js?v=0.39.1';
 
 export const M = { lists: {}, by: {}, ext: new Map(), extAny: new Map(), rev: null, warns: [] };
 
@@ -30,6 +30,7 @@ export const M = { lists: {}, by: {}, ext: new Map(), extAny: new Map(), rev: nu
 // Catalogue des types de cartes (aide : norme Astrea 3bis)
 // ---------------------------------------------------------------------------
 export const TYPES = {
+  caller: { label: 'Appelant', badge: 'APP', help: 'Numéro de la personne qui appelle (« Suivre un appel »). Wazo route un appel entrant selon le numéro appelé (SDA) et l\'heure ; le numéro de l\'appelant ne compte que pour la liste de blocage des utilisateurs.' },
   incall: { label: 'SDA', badge: 'SDA', help: 'Numéro entrant (SDA) : appel reçu d\'un opérateur sur un trunk. Il part vers une seule destination ; un horaire associé est vérifié avant (fermé → destination de fermeture).' },
   trunk: { label: 'Trunk', badge: 'TRK', help: 'Liaison opérateur. Les appels entrants arrivent dans le contexte du trunk ; le numéro composé y est cherché parmi les SDA de ce contexte. Wazo n\'a pas de lien direct trunk → SDA : il passe par le contexte.' },
   context: { label: 'Contexte', badge: 'CTX', help: 'Contexte Asterisk : ensemble de numéros joignables. Type incall pour les SDA, internal pour les numéros internes, outcall pour les règles de sortie. Un contexte interne inclut en général le contexte sortant.' },
@@ -82,6 +83,10 @@ export const SLOTS = {
   incall: { label: 'SDA', help: 'SDA de ce contexte.' },
   include: { label: 'Inclut', help: 'Contexte inclus : ses numéros sont joignables depuis celui-ci.' },
   trunk: { label: 'Trunk', help: 'Trunk utilisé par la règle sortante, dans l\'ordre.' },
+  dial_from: { label: 'Compose depuis', help: 'Contexte de la ligne de l\'utilisateur : c\'est là qu\'Asterisk cherche le numéro composé, puis dans les contextes inclus, dans l\'ordre.' },
+  outcall: { label: 'Règle sortante', help: 'Règle sortante dont au moins un motif est déclaré dans ce contexte. Asterisk cherche dans le contexte lui-même (numéro exact d\'abord, puis le motif le plus précis) avant les contextes inclus.' },
+  internal: { label: 'Numéro interne', help: 'Le numéro composé existe dans ce contexte (poste, groupe, file…) : l\'appel reste dans Wazo.' },
+  internals: { label: 'Numéros internes', help: 'Postes, groupes, files… joignables dans ce contexte. Un numéro exact passe avant tout motif de règle sortante.' },
 };
 
 export const STRATEGY = { all: 'Tous en même temps', linear: 'Un par un, dans l\'ordre', random: 'Aléatoire', least_recent: 'Le moins récemment appelé', fewest_calls: 'Le moins d\'appels pris', memorized_round_robin: 'Tour de rôle mémorisé', weight_random: 'Aléatoire pondéré', ringall: 'Tous en même temps' };
@@ -161,13 +166,51 @@ export async function loadProviders() {
   try { const r = await fetch(PROVIDERS_URL); M.providers = r.ok ? ((await r.json())?.items || []) : []; } catch (e) { M.providers = []; console.warn('[astrea] modèles d\'opérateurs illisibles', e); }
   return M.providers;
 }
-export function trunkOperator(tplLabels, host) {
-  // Liste du portail d'abord : nom ou slug (sans « v1 ») dans un modèle hérité ou dans l'hôte.
-  for (const p of M.providers || []) {
-    const keys = [norm(p.name), norm(String(p.slug || '').replace(/v\d+$/, ''))].filter((k) => k.length >= 3);
-    if (keys.some((k) => tplLabels.some((l) => norm(l).includes(k)) || norm(host).includes(k))) return { name: p.name, known: true, logo: /^https:\/\/raw\.githubusercontent\.com\//.test(p.logo || '') ? p.logo : null, color: p.mainColor || null };
+// Serveurs déclarés par chaque modèle du portail (indication de Brice,
+// 16/10/2026) : plugins/sip/<slug>/endpoint/variables.json, valeurs par défaut
+// et choix des variables. Ex. Unyc : domain pbx.vcore.eqinoxe.com ou
+// pbx.eqinoxe.com, authentification sippbx.eqinoxe.com. Lus une seule fois, et
+// seulement si un trunk n'est pas reconnu autrement.
+const PLUGINS_BASE = 'https://raw.githubusercontent.com/wazo-communication/portal-plugins/master/plugins/sip';
+async function loadProviderHosts() {
+  if (M.providerHosts) return M.providerHosts;
+  M.providerHosts = new Map();
+  await Promise.all((M.providers || []).filter((p) => /^[a-z0-9_-]+$/i.test(p.slug || '')).map(async (p) => {
+    try {
+      const r = await fetch(`${PLUGINS_BASE}/${p.slug}/endpoint/variables.json`); if (!r.ok) return;
+      for (const x of (await r.json())?.variables || []) for (const v of [x.default, ...(Array.isArray(x.choices) ? x.choices : [])]) {
+        if (typeof v === 'string' && /^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(v)) M.providerHosts.set(v.toLowerCase(), p);
+      }
+    } catch { /* modèle illisible : ignoré */ }
+  }));
+  return M.providerHosts;
+}
+// Hôte du trunk → modèle du portail : serveur identique, sinon même domaine (eqinoxe.com).
+function providerByHost(host) {
+  const h = String(host || '').toLowerCase(); if (!h || !M.providerHosts) return null;
+  if (M.providerHosts.has(h)) return M.providerHosts.get(h);
+  const dom = h.split('.').slice(-2).join('.');
+  for (const [k, p] of M.providerHosts) if (k.split('.').slice(-2).join('.') === dom) return p;
+  return null;
+}
+const provOp = (p) => ({ name: p.name, known: true, logo: /^https:\/\/raw\.githubusercontent\.com\//.test(p.logo || '') ? p.logo : null, color: p.mainColor || null });
+// Recherche, dans l'ordre : modèles hérités, serveur déclaré par un modèle du
+// portail, nom du trunk (trunk créé avec des modèles génériques, retour de
+// Brice 16/10/2026), puis nom contenu dans l'hôte.
+export function trunkOperator(tplLabels, host, names = []) {
+  const h = norm(host);
+  const srcs = [tplLabels.map(norm), names.map(norm), [h]];
+  const hit = (keys) => srcs.some((src) => src.some((s) => keys.some((k) => s.includes(k))));
+  const byHost = providerByHost(host);
+  // Liste du portail d'abord : nom ou slug (sans « v1 »).
+  for (const [i, src] of srcs.entries()) {
+    if (i === 1 && byHost) return provOp(byHost);
+    for (const p of M.providers || []) {
+      const keys = [norm(p.name), norm(String(p.slug || '').replace(/v\d+$/, ''))].filter((k) => k.length >= 3);
+      if (src.some((s) => keys.some((k) => s.includes(k)))) return provOp(p);
+    }
   }
-  for (const [name, keys] of OPERATORS) if (keys.some((k) => tplLabels.some((l) => norm(l).includes(k)) || norm(host).includes(k))) return { name, known: true };
+  for (const [name, keys] of OPERATORS) if (hit(keys)) return { name, known: true };
   const other = tplLabels.find((l) => l && !GENERIC_TPL.test(l));
   return other ? { name: other, known: false } : host ? { name: host, known: false } : null;
 }
@@ -181,10 +224,33 @@ export async function loadTrunkOperators() {
       const tpl = (ep?.templates || []).map((x) => x.label).filter(Boolean);
       const contact = (ep?.aor_section_options || []).find(([k]) => k === 'contact')?.[1] || '';
       const host = (contact.match(/^sips?:(?:[^@]*@)?([^:;>]+)/) || [])[1] || '';
-      t.operator = trunkOperator(tpl, host); t.sipTemplates = tpl; t.sipHost = host;
+      t.sipNames = [t.endpoint_sip?.label, ep?.label].filter(Boolean);
+      t.operator = trunkOperator(tpl, host, t.sipNames); t.sipTemplates = tpl; t.sipHost = host;
     } catch (e) { t.operator = null; console.warn('[astrea] trunk', t.id, e); }
   }));
+  // Trunk non reconnu (ou reconnu par son seul nom) : serveurs des modèles du portail, puis nouvel essai.
+  const redo = (M.lists.trunk || []).filter((t) => t.sipHost && (!t.operator?.known || !t.operator.logo));
+  if (!redo.length) return;
+  await loadProviderHosts();
+  for (const t of redo) t.operator = trunkOperator(t.sipTemplates || [], t.sipHost, t.sipNames || []);
 }
+// Listes de blocage des utilisateurs (vérifié : wazo-confd user_blocklist,
+// GET /users/blocklist/numbers, droit confd.users.blocklist.read ; numéros
+// « idéalement » en E.164). Lues une fois, à la première saisie d'un appelant.
+// null = illisible (droit refusé ou stack plus ancienne).
+export async function loadBlocklist() {
+  if (M.blocklist !== undefined) return M.blocklist;
+  try { M.blocklist = await listAll('/users/blocklist/numbers'); } catch (e) { M.blocklist = null; console.warn('[astrea] listes de blocage illisibles', e); }
+  return M.blocklist;
+}
+// Forme comparable d'un numéro : chiffres, +33 / 0033 → 0 (France ; supposé pour les autres pays).
+export const numKey = (n) => String(n || '').replace(/[^\d+]/g, '').replace(/^(\+|00)33/, '0').replace(/^\+/, '00');
+// Utilisateurs (uuid) qui bloquent cet appelant.
+export function blockedBy(caller) {
+  const k = numKey(caller); if (!k || !M.blocklist) return new Map();
+  return new Map(M.blocklist.filter((b) => numKey(b.number) === k).map((b) => [b.user_uuid, b.label || '']));
+}
+
 // Détails absents des listes (supposé) : relus un par un, une seule fois.
 const DETAIL = { group: ['fallbacks', (g) => `/groups/${g.uuid}`], queue: ['fallbacks', (q) => `/queues/${q.id}`], switchboard: ['fallbacks', (s) => `/switchboards/${s.uuid}/fallbacks`, true], schedule: ['closed_destination', (s) => `/schedules/${s.id}`], ivr: ['choices', (i) => `/ivr/${i.id}`] };
 export async function ensureDetail(type, obj) {
@@ -416,6 +482,31 @@ export function edgesOf(k) {
     default: return [];
   }
 }
+// Sens « Numéros composés » (dir 'dial', demande de Brice 16/10/2026) : depuis
+// un utilisateur (contexte de sa ligne) ou un contexte, tout ce par où un
+// numéro composé peut passer : numéros internes et règles sortantes du
+// contexte, puis contextes inclus, dans l'ordre de recherche d'Asterisk.
+// hit = résultat de simulate() : son numéro interne trouvé devient une sortie.
+function dialEdgesOf(k, hit) {
+  const { type, obj: o } = entity(k);
+  if (!o) return [];
+  if (type === 'user') {
+    const c = userContext(o);
+    return c && M.by.context?.has(c) ? [{ ...link('dial_from', `context:${c}`), note: ctxLabel(c) }] : [{ slot: 'dial_from', label: 'Compose depuis', note: 'aucune ligne : ne peut pas appeler', info: true, to: null }];
+  }
+  if (type !== 'context') return edgesOf(k);
+  const e = [];
+  if (hit?.ctx === o.name && hit.key) e.push({ ...link('internal', hit.key.startsWith('incall:') ? hit.key : gated(hit.key)), label: `${hit.number} : numéro interne`, note: 'l\'appel reste dans Wazo' });
+  const n = [...M.ext.keys()].filter((x) => x.endsWith(`@${o.name}`) && !M.ext.get(x).startsWith('incall:')).length;
+  if (n) e.push({ ...link('internals', ''), to: null, info: true, note: `${n} dans ce contexte` });
+  for (const oc of M.lists.outcall || []) {
+    const pats = (oc.extensions || []).filter((x) => x.context === o.name).map((x) => x.exten);
+    if (pats.length) e.push({ ...link('outcall', key('outcall', oc)), label: `Règle ${oc.name || oc.label || oc.id}`, note: pats.join(', ') });
+  }
+  for (const c of o.contexts || []) { const cc = (M.lists.context || []).find((y) => y.id === c.id || y.name === c.name); if (cc) e.push({ ...link('include', key('context', cc)), note: cc.label || cc.name }); }
+  return e;
+}
+
 // Membres (users et extensions ; agents pour les files) → noms.
 function members(m) {
   if (!m) return [];
@@ -706,14 +797,24 @@ export function reverseIndex() {
 // dir 'out' : où vont les appels ; 'in' : qui arrive ici.
 // ---------------------------------------------------------------------------
 const MAX_NODES = 400; // garde-fou : au-delà, les répétitions deviennent des liens
-export function buildTree(rootKey, dir, { maxDepth = 8, collapsed = new Set(), expanded = new Set(), showEmpty = false } = {}) {
+export function buildTree(rootKey, dir, { maxDepth = 8, collapsed = new Set(), expanded = new Set(), showEmpty = false, hit = null, caller = '' } = {}) {
   // Objet gardé par un horaire : en sens « où vont les appels », le parcours
   // commence par la carte horaire (une SDA garde sa carte, l'horaire suit).
   if (dir === 'out' && !rootKey.startsWith('incall:')) rootKey = gated(rootKey);
   const nodes = new Map(); const cross = [];
-  const root = { key: rootKey, depth: 0, kids: [], info: nodeInfo(rootKey), ports: [] };
-  nodes.set(rootKey, root);
-  const queue = [root];
+  const first = { key: rootKey, depth: 0, kids: [], info: nodeInfo(rootKey), ports: [] };
+  let root = first;
+  nodes.set(rootKey, first);
+  // Appelant (« Suivre un appel », demande de Brice 16/10/2026) : carte en tête,
+  // l'objet choisi à gauche devient sa suite.
+  if (caller && dir === 'out') {
+    const port = { slot: 'calls', label: rootKey.startsWith('trunk:') ? 'Appelle, arrive par ce trunk' : 'Appelle ce numéro', note: '', help: 'L\'opérateur présente l\'appel à Wazo.', id: 'calls#0', to: { key: rootKey } };
+    const info = { type: 'caller', title: caller, sub: 'appelant extérieur' };
+    root = { key: 'leaf:caller', depth: 0, kids: [first], leaf: info, info: { ...info, leafType: true }, ports: [port] };
+    Object.assign(first, { depth: 1, parent: root.key, port: port.id, edge: port });
+    nodes.set(root.key, root);
+  }
+  const queue = [first];
   const rev = dir === 'in' ? reverseIndex() : null;
   while (queue.length) {
     const n = queue.shift();
@@ -734,7 +835,10 @@ export function buildTree(rootKey, dir, { maxDepth = 8, collapsed = new Set(), e
       continue;
     }
     // Une feuille peut porter ses propres sorties (membres d'un groupe).
-    let edges = n.leaf ? (n.leaf.edges || []) : edgesOf(n.key);
+    // Sens « Numéros composés » : l'utilisateur de départ et les contextes de la chaîne de recherche ;
+    // au-delà (règle sortante, objet interne trouvé), les sorties habituelles.
+    const dialNode = dir === 'dial' && (n.depth === 0 || n.viaDial);
+    let edges = n.leaf ? (n.leaf.edges || []) : dialNode ? dialEdgesOf(n.key, hit) : edgesOf(n.key);
     // Trunk atteint par une règle sortante : l'appel sort vers l'opérateur, fin
     // du parcours dans Wazo. Sans ça, le graphe enchaînait sur le contexte
     // entrant du trunk (mêmes trunks dans les deux sens) : boucle juste pour
@@ -764,7 +868,7 @@ export function buildTree(rootKey, dir, { maxDepth = 8, collapsed = new Set(), e
         let i = 1; while (nodes.has(`${k}~${i}`)) i++;
         key = `${k}~${i}`;
       }
-      const child = { key, copy: key !== k, depth: n.depth + 1, kids: [], parent: n.key, port: e.id, edge: e, leaf: e.to.leaf || null };
+      const child = { key, copy: key !== k, depth: n.depth + 1, kids: [], parent: n.key, port: e.id, edge: e, leaf: e.to.leaf || null, viaDial: dialNode && (e.slot === 'dial_from' || e.slot === 'include') };
       child.info = e.to.leaf ? { ...e.to.leaf, leafType: true } : nodeInfo(k);
       nodes.set(key, child);
       n.kids.push(child);
@@ -878,7 +982,7 @@ function targetOf(tree, k, portId) {
 // à sa destination), puis on traverse les cartes horaire par leur sortie
 // active, jusqu'au premier objet qui n'est pas un horaire.
 export function landingAt(tree, w) {
-  let k = tree.root.key;
+  let k = tree.root.info?.type === 'caller' ? tree.root.kids[0]?.key : tree.root.key;
   if (k.startsWith('incall:')) k = targetOf(tree, k, tree.root.ports?.[0]?.id);
   for (let i = 0; k && k.startsWith('schedule:') && i < 12; i++) {
     const n = tree.nodes.get(k); const s = scheduleState(entity(k).obj, w);
@@ -985,7 +1089,7 @@ export function facts(k, leafInfo) {
     case 'conference': f.push(['Numéro', exts], ['Participants max', o.max_users || '—'], ['Code PIN', o.pin ? 'oui' : 'non']); break;
     case 'switchboard': f.push(['Numéro', exts], ['Délai', sec(o.timeout)]); break;
     case 'context': f.push(['Nom technique', o.name], ['Type', o.type], ['SDA (plages)', (o.incall_ranges || []).map((r) => `${r.start}–${r.end}`).join(', ')], ['Utilisateurs (plages)', (o.user_ranges || []).map((r) => `${r.start}–${r.end}`).join(', ')], ['Inclut', (o.contexts || []).map((c) => c.label || c.name).join(', ')]); break;
-    case 'trunk': { const ep = o.endpoint_sip ? 'SIP' : o.endpoint_iax ? 'IAX' : o.endpoint_custom ? 'personnalisé' : '—'; f.push(['Type', ep], ['Opérateur', o.operator ? `${o.operator.name}${o.operator.known ? '' : ' (déduit du modèle ou de l\'hôte)'}` : o.operator === null ? 'non reconnu' : 'non lu', 'Lu sur la fiche SIP du trunk : modèles hérités (posés par l\'assistant d\'interconnexion du portail) puis hôte de l\'opérateur.'], ['Modèles SIP', (o.sipTemplates || []).join(', ') || '—'], ['Hôte', o.sipHost || '—'], ['Contexte', ctxLabel(o.context)], ['Format du numéro présenté', o.outgoing_caller_id_format], ['Règles sortantes', (o.outcalls || []).map((x) => x.name).join(', ')]); break; }
+    case 'trunk': { const ep = o.endpoint_sip ? 'SIP' : o.endpoint_iax ? 'IAX' : o.endpoint_custom ? 'personnalisé' : '—'; f.push(['Type', ep], ['Opérateur', o.operator ? `${o.operator.name}${o.operator.known ? '' : ' (non reconnu : modèle ou hôte affiché tel quel)'}` : o.operator === null ? 'non reconnu' : 'non lu', 'Lu sur la fiche SIP du trunk : modèles hérités (posés par l\'assistant d\'interconnexion du portail) puis hôte de l\'opérateur.'], ['Modèles SIP', (o.sipTemplates || []).join(', ') || '—'], ['Hôte', o.sipHost || '—'], ['Contexte', ctxLabel(o.context)], ['Format du numéro présenté', o.outgoing_caller_id_format], ['Règles sortantes', (o.outcalls || []).map((x) => x.name).join(', ')]); break; }
     case 'outcall': f.push(['Motifs', (o.extensions || []).map((e) => `${e.exten}${e.strip_digits ? ` (−${e.strip_digits})` : ''}${e.prefix ? ` (+${e.prefix})` : ''}`).join(', ')], ['Nom appelant interne', o.internal_caller_id ? 'oui' : 'non'], ['Sonnerie', sec(o.ring_time)], ['Actif', o.enabled === false ? 'non' : 'oui']); break;
     default: break;
   }
