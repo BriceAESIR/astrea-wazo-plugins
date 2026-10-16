@@ -18,11 +18,12 @@
 //    présent sort sans notifier Asterisk : pour changer priorité ou pénalité,
 //    write.js retire puis rajoute le membre ;
 //  - une seule extension, contexte internal, dans les queue_ranges.
-import { $, esc, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.40.5';
-import { M, listOf, QSTRAT } from './model.js?v=0.40.5';
-import { pickerHtml, bindPicker, readPicker, fillSoundSelect } from './sched-editor.js?v=0.40.5';
-import { sec, field, setSums, openSec } from './ed-ui.js?v=0.40.5';
-import { numberFieldHtml, bindNumberField, checkNumber } from './numbers.js?v=0.40.5';
+import { $, esc, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.40.6';
+import { M, listOf, QSTRAT } from './model.js?v=0.40.6';
+import { pickerHtml, bindPicker, readPicker, fillSoundSelect } from './sched-editor.js?v=0.40.6';
+import { sec, field, setSums, openSec } from './ed-ui.js?v=0.40.6';
+import { bindNewSchedule, schedValue } from './create.js?v=0.40.6';
+import { numberFieldHtml, bindNumberField, checkNumber } from './numbers.js?v=0.40.6';
 
 const QSTRAT_HELP = {
   ringall: 'Tous les agents disponibles sonnent ensemble ; le premier qui décroche prend l\'appel.',
@@ -225,7 +226,7 @@ export function openQueueEditor(q, onSave) {
       fbv = { noanswer: readPicker('qe-noans'), busy: readPicker('qe-busy'), congestion: readPicker('qe-cong'), fail: readPicker('qe-fail') };
       wait = { time: readPicker('qe-wtime'), ratio: readPicker('qe-wratio') };
     } catch (e) { return err(e.message, 'fb'); }
-    const s = $('qe-sched').value;
+    const s = schedValue($('qe-sched'));
     onSave({ cfg: { fields: nf, opts: no, users, agents, extension }, fb: fbv, wait, schedule: s ? Number(s) : null });
     return true;
   }, 'Ajouter au brouillon');
@@ -234,6 +235,7 @@ export function openQueueEditor(q, onSave) {
   fillSoundSelect($('qe-pann'), o['periodic-announce'] || '').then(() => { const s = $('qe-pann'); if (s?.options[0]) s.options[0].textContent = s.options[0].value ? s.options[0].textContent : 'Aucun'; recap(); });
   const box = $('modal-body');
   bindNumberField(box, 'queue', { own: q.extensions?.[0]?.exten || '' });
+  bindNewSchedule($('qe-sched'));
   const val = (sel) => box.querySelector(sel)?.value?.trim() || '';
   const txt = (sel) => { const e = box.querySelector(sel); return e?.value ? e.selectedOptions[0]?.text : ''; };
   const pick = (id) => { const el = $(id); const t = el?.querySelector('[data-dt]'); if (!t || t.value === 'none') return 'rien'; const x = el.querySelector('[data-do]'); return `${t.selectedOptions[0].text.toLowerCase()}${x?.value ? ` ${x.selectedOptions[0].text.split(' — ')[0]}` : ''}`; };
@@ -253,7 +255,7 @@ export function openQueueEditor(q, onSave) {
       ann: ann(),
       opt: [val('[data-f="music_on_hold"]') ? `musique ${txt('[data-f="music_on_hold"]')}` : 'sans musique', val('[data-f="caller_id_mode"]') ? `nom « ${val('[data-f="caller_id_name"]')} »` : ''],
       dtmf: [`${box.querySelectorAll('[data-sec="dtmf"] input:checked').length} activée(s)`],
-      sch: [$('qe-sched')?.value ? $('qe-sched').selectedOptions[0].text : 'aucun'],
+      sch: [schedValue($('qe-sched')) ? $('qe-sched').selectedOptions[0].text : 'aucun'],
       adv: [others().length ? `${others().length} autre${others().length > 1 ? 's' : ''} option${others().length > 1 ? 's' : ''}` : ''],
     });
     tourBox(strat);

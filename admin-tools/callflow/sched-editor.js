@@ -21,8 +21,9 @@
 //    modifiable (15/10/2026) ;
 //  - fermeture liée à un jour de semaine ou valable tous les mois : conservée
 //    telle quelle et listée (supprimable).
-import { $, esc, confirmModal, helpButton, helpBox } from '../common/core.js?v=0.40.5';
-import { M, listOf, destLabel, loadSounds, soundName } from './model.js?v=0.40.5';
+import { $, esc, confirmModal, helpButton, helpBox } from '../common/core.js?v=0.40.6';
+import { M, listOf, destLabel, loadSounds, soundName } from './model.js?v=0.40.6';
+import { attachPlay } from './sound-play.js?v=0.40.6';
 
 const SLOT = 15, N = 96;
 const DAYS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
@@ -151,11 +152,16 @@ export async function fillSoundSelect(sel, current) {
   const known = cats.some((c) => c.files.some((f) => f.value === cur));
   sel.innerHTML = `${cur && !known ? `<option value="${esc(cur)}" selected>${esc(soundName(cur))} (actuel)</option>` : ''}${!cats.length ? '<option value="">Aucun son lisible (droit confd.sounds.read ?)</option>' : '<option value="">— Choisir un son —</option>'}`
     + cats.map((c) => `<optgroup label="${esc(c.system ? 'Sons système (Asterisk)' : `Sons du tenant · ${c.category}`)}">${c.files.map((f) => `<option value="${esc(f.value)}"${f.value === cur ? ' selected' : ''}>${esc(f.label)}</option>`).join('')}</optgroup>`).join('');
+  attachPlay(sel);
+  sel.dispatchEvent(new Event('change'));
 }
+// Accroche posée par create.js : « Créer … » sur la liste d'objets (sans import circulaire).
+let objSelectHook = null;
+export const setObjSelectHook = (fn) => { objSelectHook = fn; };
 export function bindPicker(id) {
   const el = $(id); if (!el) return;
-  const fill = () => { const s = el.querySelector('[data-df]'); if (s) fillSoundSelect(s, s.dataset.cur); };
-  el.querySelector('[data-dt]').onchange = (e) => { el.querySelector('[data-dx]').innerHTML = pickerExtra(e.target.value, null); fill(); };
+  const fill = () => { const s = el.querySelector('[data-df]'); if (s) fillSoundSelect(s, s.dataset.cur); const o = el.querySelector('[data-do]'); if (o) objSelectHook?.(o, el.querySelector('[data-dt]').value); };
+  el.querySelector('[data-dt]').onchange = (e) => { el.querySelector('[data-dx]').innerHTML = pickerExtra(e.target.value, null); el.parentElement?.querySelectorAll(':scope > .cf-sch-new').forEach((b) => b.remove()); fill(); };
   fill();
 }
 export function readPicker(id) {
@@ -164,7 +170,7 @@ export function readPicker(id) {
   if (t === 'keep') return orig;
   if (t === 'none') return null;
   let d = null;
-  if (IDF[t]) { const v = el.querySelector('[data-do]')?.value; if (!v) throw new Error('Choisissez un objet pour la destination.'); d = { type: t, [IDF[t]]: t === 'switchboard' ? v : Number(v) }; }
+  if (IDF[t]) { const v = el.querySelector('[data-do]')?.value; if (!v || v === 'new') throw new Error('Choisissez un objet pour la destination.'); d = { type: t, [IDF[t]]: t === 'switchboard' ? v : Number(v) }; }
   if (t === 'hangup') d = { type: t, cause: el.querySelector('[data-dc]').value };
   if (t === 'sound') { const f = el.querySelector('[data-df]').value; if (!f) throw new Error('Choisissez un fichier son.'); d = { type: t, filename: f }; }
   if (t === 'extension') { const x = el.querySelector('[data-de]').value.trim(); if (!/^[0-9*#]+$/.test(x)) throw new Error('Numéro : chiffres, * et #.'); d = { type: t, exten: x, context: el.querySelector('[data-dctx]').value }; }

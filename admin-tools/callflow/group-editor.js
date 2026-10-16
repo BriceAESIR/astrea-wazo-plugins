@@ -17,11 +17,12 @@
 //    linéaire ; les utilisateurs sonnent avant les numéros) ;
 //  - une seule extension, contexte internal, dans les group_ranges ; un seul
 //    horaire ; plusieurs autorisations d'appels.
-import { $, esc, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.40.5';
-import { M, STRATEGY, listOf, linearRound } from './model.js?v=0.40.5';
-import { pickerHtml, bindPicker, readPicker } from './sched-editor.js?v=0.40.5';
-import { sec, field } from './ed-ui.js?v=0.40.5';
-import { numberFieldHtml, bindNumberField, checkNumber } from './numbers.js?v=0.40.5';
+import { $, esc, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.40.6';
+import { M, STRATEGY, listOf, linearRound } from './model.js?v=0.40.6';
+import { pickerHtml, bindPicker, readPicker } from './sched-editor.js?v=0.40.6';
+import { sec, field } from './ed-ui.js?v=0.40.6';
+import { bindNewSchedule, schedValue } from './create.js?v=0.40.6';
+import { numberFieldHtml, bindNumberField, checkNumber } from './numbers.js?v=0.40.6';
 
 const STRATS = ['all', 'linear', 'random', 'least_recent', 'fewest_calls', 'memorized_round_robin', 'weight_random'];
 const STRAT_HELP = {
@@ -163,7 +164,7 @@ export function openGroupEditor(g, onSave) {
     let noanswer, congestion;
     try { noanswer = readPicker('ge-noans'); congestion = readPicker('ge-cong'); } catch (e) { open('fb'); return err(e.message); }
     const perms = [...box.querySelectorAll('[data-perm]:checked')].map((c) => Number(c.dataset.perm)).sort((a, b) => a - b);
-    const s = $('ge-sched').value;
+    const s = schedValue($('ge-sched'));
     onSave({ cfg: { fields: nf, users, exts: $('ge-exton').checked ? exts : [], extension, perms }, noanswer, congestion, schedule: s ? Number(s) : null });
     return true;
   }, 'Ajouter au brouillon');
@@ -171,6 +172,7 @@ export function openGroupEditor(g, onSave) {
   ['ge-noans', 'ge-cong'].forEach(bindPicker);
   const box = $('modal-body');
   bindNumberField(box, 'group', { own: g.extensions?.[0]?.exten || '' });
+  bindNewSchedule($('ge-sched'));
   const val = (sel) => box.querySelector(sel)?.value?.trim() || '';
   const on = (sel) => !!box.querySelector(sel)?.checked;
   const pick = (id) => { const el = $(id); const t = el?.querySelector('[data-dt]'); if (!t || t.value === 'none') return 'rien'; const o = el.querySelector('[data-do]'); const x = o?.selectedOptions?.[0]?.text; return `${t.selectedOptions[0].text.toLowerCase()}${x && o.value ? ` ${x}` : ''}`; };
@@ -183,7 +185,7 @@ export function openGroupEditor(g, onSave) {
       mem: [`${users.length} utilisateur${users.length > 1 ? 's' : ''}`, exts.length && $('ge-exton')?.checked ? `${exts.length} numéro${exts.length > 1 ? 's' : ''}` : '', dnd ? `${dnd} en NPD` : ''],
       fb: [`sans réponse : ${pick('ge-noans')}`, Number(val('[data-f="max_calls"]')) ? `max ${val('[data-f="max_calls"]')} appels` : ''],
       opt: [box.querySelector('[data-f="music_on_hold"]')?.selectedOptions[0]?.value ? `musique ${box.querySelector('[data-f="music_on_hold"]').selectedOptions[0].text}` : 'sonnerie', val('[data-f="caller_id_mode"]') ? `nom « ${val('[data-f="caller_id_name"]')} »` : ''],
-      sch: [$('ge-sched')?.value ? $('ge-sched').selectedOptions[0].text : 'aucun'],
+      sch: [schedValue($('ge-sched')) ? $('ge-sched').selectedOptions[0].text : 'aucun'],
       perm: [((c) => (c ? `${c} autorisation${c > 1 ? 's' : ''}` : 'aucune'))(box.querySelectorAll('[data-perm]:checked').length)],
       adv: [val('[data-f="preprocess_subroutine"]') || ''],
     };

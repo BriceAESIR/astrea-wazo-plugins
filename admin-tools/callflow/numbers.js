@@ -8,8 +8,8 @@
 // Même champ partout (création et éditeurs complets) : liste des numéros
 // libres, plages du contexte choisi et premier numéro libre, mis à jour au
 // changement de contexte.
-import { esc } from '../common/core.js?v=0.40.5';
-import { M } from './model.js?v=0.40.5';
+import { esc } from '../common/core.js?v=0.40.6';
+import { M } from './model.js?v=0.40.6';
 
 export const RANGE_KEY = { group: 'group_ranges', queue: 'queue_ranges', conference: 'conference_room_ranges' };
 const RANGE_NAME = { group: 'groupes', queue: 'files d\'attente', conference: 'conférences' };
@@ -59,19 +59,19 @@ function hint(ctx, kind, own) {
 
 // Champ numéro + contexte + plages. attrs : { ext, ctx } (attributs data-* des deux champs).
 // prefill : propose le premier numéro libre (création).
-export function numberFieldHtml(kind, { exten = '', ctx = '', ctxList = [], attrs = { ext: 'data-ext', ctx: 'data-extctx' }, prefill = false, field }) {
+export function numberFieldHtml(kind, { exten = '', ctx = '', ctxList = [], attrs = { ext: 'data-ext', ctx: 'data-extctx' }, prefill = false, field, pfx = 'nf' }) {
   const c0 = ctxList.some((c) => c.name === ctx) ? ctx : ctxList[0]?.name || '';
   const val = exten || (prefill ? freeNumbers(c0, kind)[0] || '' : '');
-  const id = `nf-${kind}`;
+  const id = `${pfx}-${kind}`;
   return `<div class="cf-ge-2">
     ${field('Numéro interne', `<input ${attrs.ext} value="${esc(val)}" placeholder="aucun" inputmode="numeric" list="${id}-l" autocomplete="off"><datalist id="${id}-l"></datalist>`, `Facultatif : sans numéro, ${WHAT[kind]} n'est joignable que par une SDA, un SVI, un débordement… Avec un numéro, on peut l'appeler ou y transférer depuis un poste.`)}
     ${field('Contexte du numéro', `<select ${attrs.ctx}>${ctxList.map((c) => `<option value="${esc(c.name)}"${c.name === c0 ? ' selected' : ''}>${esc(c.label || c.name)}</option>`).join('')}</select>`)}
   </div><p class="small muted cf-nf-hint" id="${id}-h"></p>`;
 }
 
-export function bindNumberField(box, kind, { attrs = { ext: 'data-ext', ctx: 'data-extctx' }, own = '' } = {}) {
+export function bindNumberField(box, kind, { attrs = { ext: 'data-ext', ctx: 'data-extctx' }, own = '', pfx = 'nf' } = {}) {
   const sel = box.querySelector(`[${attrs.ctx}]`);
-  const id = `nf-${kind}`;
+  const id = `${pfx}-${kind}`;
   const upd = () => {
     const ctx = sel?.value || '';
     const dl = box.querySelector(`#${id}-l`); const h = box.querySelector(`#${id}-h`);

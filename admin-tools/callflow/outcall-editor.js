@@ -10,11 +10,12 @@
 //  - trunks : PUT /outcalls/{id}/trunks {trunks:[{id}]}, ordre = priorité.
 // wazo-agid (outgoingfeatures.py) : seuls strip_digits et external_prefix
 // changent le numéro envoyé ; « prefix » est lu mais pas appliqué.
-import { $, esc, confirmModal, helpButton, helpBox, canWrite } from '../common/core.js?v=0.40.5';
+import { $, esc, confirmModal, helpButton, helpBox, canWrite } from '../common/core.js?v=0.40.6';
 // Création de l'autorisation « interdit-118 » liée au tenant des données chargées (tapi, model.js).
-import { M, listOf, nodeInfo, tapi as api } from './model.js?v=0.40.5';
-import { sec, field, check, setSums, openSec } from './ed-ui.js?v=0.40.5';
-import { describePattern, comparePatterns, dialedNumber, matches, famLabel } from './dialsim.js?v=0.40.5';
+import { M, listOf, nodeInfo, tapi as api } from './model.js?v=0.40.6';
+import { sec, field, check, setSums, openSec } from './ed-ui.js?v=0.40.6';
+import { bindNewSchedule, schedValue } from './create.js?v=0.40.6';
+import { describePattern, comparePatterns, dialedNumber, matches, famLabel } from './dialsim.js?v=0.40.6';
 
 export const OUTCALL_FIELDS = ['name', 'description', 'enabled', 'ring_time', 'internal_caller_id', 'preprocess_subroutine'];
 const DP = ['exten', 'strip_digits', 'external_prefix', 'prefix', 'caller_id'];
@@ -140,18 +141,19 @@ export function openOutcallEditor(o, onSave) {
     }
     if (patterns.some((p) => !p.context)) return err('Aucun contexte « sortant » trouvé pour un nouveau motif.', 'pat');
     const perms = [...box.querySelectorAll('[data-perm]:checked')].map((c) => Number(c.dataset.perm)).sort((a, b) => a - b);
-    const s = $('oe-sched').value;
+    const s = schedValue($('oe-sched'));
     onSave({ cfg: { fields: nf, patterns: patterns.sort((a, b) => comparePatterns(a.exten, b.exten)), trunks: [...trunks], perms }, schedule: s ? Number(s) : null });
     return true;
   }, 'Ajouter au brouillon');
 
   const box = $('modal-body');
+  bindNewSchedule($('oe-sched'));
   const recap = () => {
     setSums(box, {
       gen: [box.querySelector('[data-f="name"]').value.trim(), $('oe-en').checked ? '' : 'DÉSACTIVÉE'],
       pat: [`${rows.length} motif${rows.length > 1 ? 's' : ''}`, `${new Set(rows.map(tkey)).size} groupe${new Set(rows.map(tkey)).size > 1 ? 's' : ''}`],
       trk: [trunks.length ? trunks.map(trunkName).join(' puis ') : 'aucun trunk'],
-      sch: [$('oe-sched').value ? $('oe-sched').selectedOptions[0].text : 'aucun'],
+      sch: [schedValue($('oe-sched')) ? $('oe-sched').selectedOptions[0].text : 'aucun'],
       perm: [`${box.querySelectorAll('[data-perm]:checked').length || 'aucune'}`],
       adv: [box.querySelector('[data-f="preprocess_subroutine"]').value.trim()],
     });

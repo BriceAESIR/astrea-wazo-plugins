@@ -468,3 +468,12 @@ button.cf-tr-end { border: 0; background: none; padding: 0; text-transform: none
 .cf-type { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; min-width: 0; }
 .cf-type .cf-state, .cf-type .cf-rep, .cf-type .cf-gpill { margin-left: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cf-head > .cf-oplogo, .cf-head > .cf-fold { flex: none; }
+
+/* « Créer un horaire… » dans une liste d'horaires (create.js, bindNewSchedule) */
+.cf-sch-new { display: grid; gap: 10px; margin: 8px 0; padding: 12px; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 6px; }
+.cf-sch-new .error:empty { display: none; }
+
+/* Bouton « Écouter » à côté d'une liste de sons (sound-play.js) */
+.cf-play-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.cf-play-row > select { flex: 1; min-width: 0; }
+.cf-play { flex: none; white-space: nowrap; }

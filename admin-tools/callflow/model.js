@@ -21,8 +21,8 @@
 // Supposé, à vérifier en réel : les listes (GET /groups, /queues,
 // /switchboards, /schedules) contiennent déjà fallbacks, membres et
 // destinations ; sinon on lit le détail de chaque objet (ensureDetails).
-import { S, api, listAll, fullName } from '../common/core.js?v=0.40.5';
-import { comparePatterns, describePattern, userContext, rightsList, simulate, famLabel } from './dialsim.js?v=0.40.5';
+import { S, api, listAll, fullName } from '../common/core.js?v=0.40.6';
+import { comparePatterns, describePattern, userContext, rightsList, simulate, famLabel } from './dialsim.js?v=0.40.6';
 
 export const M = { lists: {}, by: {}, ext: new Map(), extAny: new Map(), rev: null, warns: [] };
 
@@ -805,6 +805,8 @@ export async function loadLiveMembers() {
 export async function loadSounds() {
   if (M.sounds) return M.sounds;
   const out = [];
+  // Catégorie, nom et formats de chaque fichier : écoute (sound-play.js).
+  const meta = new Map();
   try {
     const cats = await listAll('/sounds');
     const tenant = cats.filter((c) => c.name !== 'system'), sys = cats.find((c) => c.name === 'system');
@@ -812,11 +814,12 @@ export async function loadSounds() {
       try {
         const d = await api('GET', `/sounds/${encodeURIComponent(c.name)}`);
         const files = (d?.files || []).map((f) => ({ label: f.name, value: c.name === 'system' ? f.name : (f.formats || []).find((x) => x.path)?.path || f.name }));
+        (d?.files || []).forEach((f, i) => meta.set(files[i].value, { category: c.name, name: f.name, formats: (f.formats || []).map((x) => ({ format: x.format, language: x.language || '' })) }));
         if (files.length) out.push({ category: c.name, system: c.name === 'system', files: files.sort((a, b) => a.label.localeCompare(b.label, 'fr')) });
       } catch (e) { console.warn('[astrea] sons', c.name, e); }
     }
   } catch (e) { console.warn('[astrea] sons', e); }
-  M.sounds = out;
+  M.sounds = out; M.soundMeta = meta;
   return out;
 }
 // Libellé lisible d'un fichier son (destination) : nom du fichier, sans le chemin du tenant.

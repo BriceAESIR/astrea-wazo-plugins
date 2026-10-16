@@ -3,22 +3,22 @@
 // déposer (lot 2a, brouillon puis aperçu, sauvegarde, écriture).
 // Cadrage : astrea-wazo-dev/docs/CALLFLOW-MANAGER.md.
 // Modèle (sources confd vérifiées) : model.js ; canevas : canvas.js ; écriture : write.js.
-import { S, $, esc, fullName, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.40.5';
-import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, loadTrunkOperators, scanGroupKeys, buildTree, landingAt, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel, periodText, STRATEGY, QSTRAT, baseKey, gateOf, loadBlocklist, blockedBy, dialUser, entryChains, isGlob, numMatch, showNum } from './model.js?v=0.40.5';
-import { createCanvas } from './canvas.js?v=0.40.5';
-import { getDest, setDest, sameValue, prepare, execute } from './write.js?v=0.40.5';
-import { openScheduleEditor } from './sched-editor.js?v=0.40.5';
-import { openGroupEditor, groupCfgDiff } from './group-editor.js?v=0.40.5';
-import { openQueueEditor, queueCfgDiff, agentName } from './queue-editor.js?v=0.40.5';
-import { openIvrEditor, ivrCfgDiff } from './ivr-editor.js?v=0.40.5';
-import { openSbEditor, sbCfgDiff } from './sb-editor.js?v=0.40.5';
-import { redact } from './ed-ui.js?v=0.40.5';
-import { openRestore } from './restore.js?v=0.40.5';
-import { openIncallEditor, incallCfgDiff, openUserEditor, userCfgDiff, openVmEditor, vmCfgDiff, openConfEditor, confCfgDiff, openSchedGenEditor, schedCfgDiff } from './obj-editors.js?v=0.40.5';
-import { openDestEditor, ENTITY_DEST } from './dest-editor.js?v=0.40.5';
-import { openOutcallEditor, outcallCfgDiff } from './outcall-editor.js?v=0.40.5';
-import { openCreate, openCreateIncall, CREATABLE, LABEL } from './create.js?v=0.40.5';
-import { simulate, userContext, simPath } from './dialsim.js?v=0.40.5';
+import { S, $, esc, fullName, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.40.6';
+import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, loadTrunkOperators, scanGroupKeys, buildTree, landingAt, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel, periodText, STRATEGY, QSTRAT, baseKey, gateOf, loadBlocklist, blockedBy, dialUser, entryChains, isGlob, numMatch, showNum } from './model.js?v=0.40.6';
+import { createCanvas } from './canvas.js?v=0.40.6';
+import { getDest, setDest, sameValue, prepare, execute } from './write.js?v=0.40.6';
+import { openScheduleEditor } from './sched-editor.js?v=0.40.6';
+import { openGroupEditor, groupCfgDiff } from './group-editor.js?v=0.40.6';
+import { openQueueEditor, queueCfgDiff, agentName } from './queue-editor.js?v=0.40.6';
+import { openIvrEditor, ivrCfgDiff } from './ivr-editor.js?v=0.40.6';
+import { openSbEditor, sbCfgDiff } from './sb-editor.js?v=0.40.6';
+import { redact } from './ed-ui.js?v=0.40.6';
+import { openRestore } from './restore.js?v=0.40.6';
+import { openIncallEditor, incallCfgDiff, openUserEditor, userCfgDiff, openVmEditor, vmCfgDiff, openConfEditor, confCfgDiff, openSchedGenEditor, schedCfgDiff } from './obj-editors.js?v=0.40.6';
+import { openDestEditor, ENTITY_DEST } from './dest-editor.js?v=0.40.6';
+import { openOutcallEditor, outcallCfgDiff } from './outcall-editor.js?v=0.40.6';
+import { openCreate, openCreateIncall, CREATABLE, LABEL, bindNewSchedule, schedValue } from './create.js?v=0.40.6';
+import { simulate, userContext, simPath } from './dialsim.js?v=0.40.6';
 
 const TESTED_STACK = ['26.07'];
 const NAV = [
@@ -620,11 +620,12 @@ function openSchedule(owner) {
   confirmModal(`<div class="titlerow"><h3>Horaire de ${esc(title)}</h3>${helpButton('ds-hb', 'Aide')}</div>${helpBox('ds-hb', 'L\'horaire est vérifié avant l\'objet : ouvert → l\'appel continue vers lui ; fermé → destination de fermeture de l\'horaire ; fermeture exceptionnelle → sa destination. Wazo n\'accepte qu\'un horaire par objet : en changer retire l\'ancien puis associe le nouveau (deux écritures). Rien n\'est écrit avant « Appliquer… ».')}
     <p class="muted small">Actuellement : ${esc(destLabel(cur))}</p>
     <label>Horaire <select id="ds-obj" size="8" class="cf-dd-list"><option value="">— Aucun horaire —</option>${items.map((x) => { const id = x.key.slice(9); return `<option value="${esc(id)}"${cur && String(cur.schedule_id) === id ? ' selected' : ''}>${esc(x.title)}${x.sub ? ` — ${esc(x.sub)}` : ''}</option>`; }).join('')}</select></label>`, () => {
-    const v = $('ds-obj').value;
+    const v = schedValue($('ds-obj'));
     addDraft(w, v ? { type: 'schedule', schedule_id: Number(v) } : null, { where: title, slot: 'Horaire' });
     return true;
   }, 'Ajouter au brouillon');
   $('ds-obj').ondblclick = () => $('modal-ok').click();
+  bindNewSchedule($('ds-obj'));
 }
 function removeSelected() {
   const n = C.sel && C.tree?.nodes.get(C.sel);

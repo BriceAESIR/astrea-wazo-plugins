@@ -10,11 +10,12 @@
 // Codes (messagerie, conférence) : champ masqué avec « Afficher » / « Générer » ;
 // jamais en clair dans le brouillon, l'aperçu ni la sauvegarde JSON (redact).
 // Le mot de passe de connexion d'un utilisateur reste dans User Manager.
-import { $, esc, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.40.5';
-import { M } from './model.js?v=0.40.5';
-import { fillSoundSelect, pickerHtml, bindPicker, readPicker } from './sched-editor.js?v=0.40.5';
-import { incallNumberHtml, bindIncallNumber, readIncallNumber, checkIncallNumber } from './numbers.js?v=0.40.5';
-import { sec, field, check, setSums, openSec, secretField, bindSecrets } from './ed-ui.js?v=0.40.5';
+import { $, esc, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.40.6';
+import { M } from './model.js?v=0.40.6';
+import { fillSoundSelect, pickerHtml, bindPicker, readPicker } from './sched-editor.js?v=0.40.6';
+import { incallNumberHtml, bindIncallNumber, readIncallNumber, checkIncallNumber } from './numbers.js?v=0.40.6';
+import { sec, field, check, setSums, openSec, secretField, bindSecrets } from './ed-ui.js?v=0.40.6';
+import { bindNewSchedule, schedValue } from './create.js?v=0.40.6';
 
 const pickFields = (o, keys) => { const f = {}; for (const k of keys) f[k] = o?.[k] ?? null; return f; };
 const diffKeys = (a, b, keys, L) => keys.filter((k) => JSON.stringify(a?.fields?.[k] ?? null) !== JSON.stringify(b?.fields?.[k] ?? null)).map((k) => L[k] || k);
@@ -74,16 +75,17 @@ export function openIncallEditor(o, num, onSave) {
       if (bad) return err(bad, 'gen');
     }
     let destination; try { destination = readPicker('ice-dest'); } catch (e) { return err(e.message, 'dest'); }
-    const s = $('ice-sched').value;
+    const s = schedValue($('ice-sched'));
     onSave({ cfg: { fields: nf, exten }, destination, schedule: s ? Number(s) : null });
     return true;
   }, 'Ajouter au brouillon');
   const box = $('modal-body');
   bindPicker('ice-dest');
+  bindNewSchedule($('ice-sched'));
   if (ext) bindIncallNumber(box, ext.context, String(ext.exten));
   const recap = () => setSums(box, {
     gen: [ext ? readIncallNumber(box) : '', val(box, '[data-f="description"]')],
-    call: [box.querySelector('#ice-greet')?.value ? 'avec accueil' : 'sans accueil', $('ice-sched')?.value ? `horaire ${$('ice-sched').selectedOptions[0].text}` : 'sans horaire', val(box, '[data-f="caller_id_mode"]') ? `nom « ${val(box, '[data-f="caller_id_name"]')} »` : ''],
+    call: [box.querySelector('#ice-greet')?.value ? 'avec accueil' : 'sans accueil', schedValue($('ice-sched')) ? `horaire ${$('ice-sched').selectedOptions[0].text}` : 'sans horaire', val(box, '[data-f="caller_id_mode"]') ? `nom « ${val(box, '[data-f="caller_id_name"]')} »` : ''],
     adv: [val(box, '[data-f="preprocess_subroutine"]')],
   });
   fillSoundSelect($('ice-greet'), f.greeting_sound || '').then(() => { const s = $('ice-greet'); if (s?.options[0] && !s.options[0].value) s.options[0].textContent = 'Aucun'; recap(); });
