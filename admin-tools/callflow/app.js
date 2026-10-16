@@ -3,15 +3,16 @@
 // déposer (lot 2a, brouillon puis aperçu, sauvegarde, écriture).
 // Cadrage : astrea-wazo-dev/docs/CALLFLOW-MANAGER.md.
 // Modèle (sources confd vérifiées) : model.js ; canevas : canvas.js ; écriture : write.js.
-import { S, $, esc, fullName, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.37.1';
-import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, scanGroupKeys, buildTree, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel, periodText, STRATEGY, QSTRAT, baseKey } from './model.js?v=0.37.1';
-import { createCanvas } from './canvas.js?v=0.37.1';
-import { getDest, setDest, sameValue, prepare, execute } from './write.js?v=0.37.1';
-import { openScheduleEditor } from './sched-editor.js?v=0.37.1';
-import { openGroupEditor, groupCfgDiff } from './group-editor.js?v=0.37.1';
-import { openQueueEditor, queueCfgDiff, agentName } from './queue-editor.js?v=0.37.1';
-import { openIvrEditor, ivrCfgDiff } from './ivr-editor.js?v=0.37.1';
-import { openDestEditor, ENTITY_DEST } from './dest-editor.js?v=0.37.1';
+import { S, $, esc, fullName, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.37.2';
+import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, scanGroupKeys, buildTree, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel, periodText, STRATEGY, QSTRAT, baseKey } from './model.js?v=0.37.2';
+import { createCanvas } from './canvas.js?v=0.37.2';
+import { getDest, setDest, sameValue, prepare, execute } from './write.js?v=0.37.2';
+import { openScheduleEditor } from './sched-editor.js?v=0.37.2';
+import { openGroupEditor, groupCfgDiff } from './group-editor.js?v=0.37.2';
+import { openQueueEditor, queueCfgDiff, agentName } from './queue-editor.js?v=0.37.2';
+import { openIvrEditor, ivrCfgDiff } from './ivr-editor.js?v=0.37.2';
+import { openSbEditor, sbCfgDiff } from './sb-editor.js?v=0.37.2';
+import { openDestEditor, ENTITY_DEST } from './dest-editor.js?v=0.37.2';
 
 const TESTED_STACK = ['26.07'];
 const NAV = [
@@ -400,6 +401,11 @@ function valLabel(w, v) {
       `${(v?.users || []).length} utilisateur(s)${(v?.users || []).length ? ` : ${v.users.map((m) => fullName(M.userByUuid.get(m.uuid)) || m.uuid).join(', ')}` : ''}`,
       v?.extension ? `n° ${v.extension.exten}` : 'sans numéro', `${Object.keys(o).length} option(s) Asterisk`].filter(Boolean).join(' · ');
   }
+  if (w.k === 'sb_cfg') {
+    const f = v?.fields || {};
+    return [`« ${f.name || '?'} »`, f.timeout ? `${f.timeout} s avant débordement` : 'sans limite', `${(v?.users || []).length} opérateur(s)${(v?.users || []).length ? ` : ${v.users.map((m) => fullName(M.userByUuid.get(m.uuid)) || m.uuid).join(', ')}` : ''}`,
+      f.queue_music_on_hold ? `musique ${f.queue_music_on_hold}` : ''].filter(Boolean).join(' · ');
+  }
   if (w.k === 'ivr_cfg') {
     const f = v?.fields || {};
     return [`« ${f.name || '?'} »`, `${f.timeout ?? '?'} s`, `${f.max_tries ?? '?'} essais`, `touches : ${(v?.choices || []).map((c) => `${c.exten} → ${destLabel(c.destination)}`).join(' ; ') || 'aucune'}`,
@@ -446,9 +452,18 @@ function openIvrFor(id) {
   if ([...C.draft.keys()].some((k) => k.startsWith(`ivr:${id}:`) || k.startsWith(`ivr_choice:${id}:`))) { toast('Appliquez ou annulez d\'abord les sorties de ce SVI modifiées dans le brouillon, puis rouvrez son réglage.', 7000); return; }
   openIvrEditor(o, (cfg) => addDraft({ k: 'ivr_cfg', id: o.id, f: 'cfg', key: `ivr_cfg:${o.id}:cfg` }, cfg, { where: `SVI ${o.name}`, slot: 'Réglages du SVI' }));
 }
-const CFG_LABEL = { group: 'Régler le groupe…', queue: 'Régler la file d\'attente…', ivr: 'Régler le SVI…' };
-const CFG_DIFF = { group_cfg: groupCfgDiff, queue_cfg: queueCfgDiff, ivr_cfg: ivrCfgDiff };
-const openCfg = (c) => { if (!c) return; if (c.k === 'group') openGroupFor(c.id); else if (c.k === 'queue') openQueueFor(c.id); else if (c.k === 'ivr') openIvrFor(c.id); };
+// Réglage d'un standard (sb-editor.js) : « sb_cfg » + débordement (sb_fb).
+function openSbFor(uuid) {
+  const s = M.by.switchboard?.get(String(uuid)); if (!s) return;
+  openSbEditor(s, (r) => {
+    const where = `Standard ${s.name}`;
+    addDraft({ k: 'sb_cfg', id: s.uuid, f: 'cfg', key: `sb_cfg:${s.uuid}:cfg` }, r.cfg, { where, slot: 'Réglages du standard' });
+    addDraft({ k: 'sb_fb', id: s.uuid, f: 'noanswer', key: `sb_fb:${s.uuid}:noanswer` }, r.noanswer, { where, slot: 'Pas de réponse' });
+  });
+}
+const CFG_LABEL = { group: 'Régler le groupe…', queue: 'Régler la file d\'attente…', ivr: 'Régler le SVI…', switchboard: 'Régler le standard…' };
+const CFG_DIFF = { group_cfg: groupCfgDiff, queue_cfg: queueCfgDiff, ivr_cfg: ivrCfgDiff, sb_cfg: sbCfgDiff };
+const openCfg = (c) => { if (!c) return; if (c.k === 'group') openGroupFor(c.id); else if (c.k === 'queue') openQueueFor(c.id); else if (c.k === 'ivr') openIvrFor(c.id); else if (c.k === 'switchboard') openSbFor(c.id); };
 // Objet réglable concerné par une carte : le groupe / la file / le SVI, leur
 // carte « membres » ou une mini-carte membre.
 const cfgOfNode = (n) => {
@@ -457,6 +472,7 @@ const cfgOfNode = (n) => {
   if (k?.startsWith('group:')) return { k: 'group', id: entity(k).obj?.uuid };
   if (k?.startsWith('queue:')) return { k: 'queue', id: entity(k).obj?.id };
   if (k?.startsWith('ivr:')) return { k: 'ivr', id: entity(k).obj?.id };
+  if (k?.startsWith('switchboard:')) return { k: 'switchboard', id: entity(k).obj?.uuid };
   const lf = n.leaf;
   if (lf?.type === 'member') return { k: 'group', id: entity(lf.group).obj?.uuid };
   if (lf?.ownerType === 'group' && n.parent?.startsWith('group:')) return { k: 'group', id: entity(n.parent).obj?.uuid };
