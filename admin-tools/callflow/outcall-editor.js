@@ -10,10 +10,10 @@
 //  - trunks : PUT /outcalls/{id}/trunks {trunks:[{id}]}, ordre = priorité.
 // wazo-agid (outgoingfeatures.py) : seuls strip_digits et external_prefix
 // changent le numéro envoyé ; « prefix » est lu mais pas appliqué.
-import { $, esc, confirmModal, helpButton, helpBox } from '../common/core.js?v=0.39.7';
-import { M, listOf, nodeInfo } from './model.js?v=0.39.7';
-import { sec, field, check, setSums, openSec } from './ed-ui.js?v=0.39.7';
-import { describePattern, comparePatterns, dialedNumber, matches } from './dialsim.js?v=0.39.7';
+import { $, esc, confirmModal, helpButton, helpBox } from '../common/core.js?v=0.39.8';
+import { M, listOf, nodeInfo } from './model.js?v=0.39.8';
+import { sec, field, check, setSums, openSec } from './ed-ui.js?v=0.39.8';
+import { describePattern, comparePatterns, dialedNumber, matches } from './dialsim.js?v=0.39.8';
 
 export const OUTCALL_FIELDS = ['name', 'description', 'enabled', 'ring_time', 'internal_caller_id', 'preprocess_subroutine'];
 const DP = ['exten', 'strip_digits', 'external_prefix', 'prefix', 'caller_id'];

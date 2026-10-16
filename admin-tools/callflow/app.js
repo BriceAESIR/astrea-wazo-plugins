@@ -3,22 +3,22 @@
 // déposer (lot 2a, brouillon puis aperçu, sauvegarde, écriture).
 // Cadrage : astrea-wazo-dev/docs/CALLFLOW-MANAGER.md.
 // Modèle (sources confd vérifiées) : model.js ; canevas : canvas.js ; écriture : write.js.
-import { S, $, esc, fullName, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.39.7';
-import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, loadTrunkOperators, scanGroupKeys, buildTree, landingAt, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel, periodText, STRATEGY, QSTRAT, baseKey, gateOf, loadBlocklist, blockedBy, dialUser, entryChains, isGlob, numMatch } from './model.js?v=0.39.7';
-import { createCanvas } from './canvas.js?v=0.39.7';
-import { getDest, setDest, sameValue, prepare, execute } from './write.js?v=0.39.7';
-import { openScheduleEditor } from './sched-editor.js?v=0.39.7';
-import { openGroupEditor, groupCfgDiff } from './group-editor.js?v=0.39.7';
-import { openQueueEditor, queueCfgDiff, agentName } from './queue-editor.js?v=0.39.7';
-import { openIvrEditor, ivrCfgDiff } from './ivr-editor.js?v=0.39.7';
-import { openSbEditor, sbCfgDiff } from './sb-editor.js?v=0.39.7';
-import { redact } from './ed-ui.js?v=0.39.7';
-import { openRestore } from './restore.js?v=0.39.7';
-import { openIncallEditor, incallCfgDiff, openUserEditor, userCfgDiff, openVmEditor, vmCfgDiff, openConfEditor, confCfgDiff, openSchedGenEditor, schedCfgDiff } from './obj-editors.js?v=0.39.7';
-import { openDestEditor, ENTITY_DEST } from './dest-editor.js?v=0.39.7';
-import { openOutcallEditor, outcallCfgDiff } from './outcall-editor.js?v=0.39.7';
-import { openCreate, CREATABLE } from './create.js?v=0.39.7';
-import { simulate, userContext, simPath } from './dialsim.js?v=0.39.7';
+import { S, $, esc, fullName, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.39.8';
+import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, loadTrunkOperators, scanGroupKeys, buildTree, landingAt, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel, periodText, STRATEGY, QSTRAT, baseKey, gateOf, loadBlocklist, blockedBy, dialUser, entryChains, isGlob, numMatch } from './model.js?v=0.39.8';
+import { createCanvas } from './canvas.js?v=0.39.8';
+import { getDest, setDest, sameValue, prepare, execute } from './write.js?v=0.39.8';
+import { openScheduleEditor } from './sched-editor.js?v=0.39.8';
+import { openGroupEditor, groupCfgDiff } from './group-editor.js?v=0.39.8';
+import { openQueueEditor, queueCfgDiff, agentName } from './queue-editor.js?v=0.39.8';
+import { openIvrEditor, ivrCfgDiff } from './ivr-editor.js?v=0.39.8';
+import { openSbEditor, sbCfgDiff } from './sb-editor.js?v=0.39.8';
+import { redact } from './ed-ui.js?v=0.39.8';
+import { openRestore } from './restore.js?v=0.39.8';
+import { openIncallEditor, incallCfgDiff, openUserEditor, userCfgDiff, openVmEditor, vmCfgDiff, openConfEditor, confCfgDiff, openSchedGenEditor, schedCfgDiff } from './obj-editors.js?v=0.39.8';
+import { openDestEditor, ENTITY_DEST } from './dest-editor.js?v=0.39.8';
+import { openOutcallEditor, outcallCfgDiff } from './outcall-editor.js?v=0.39.8';
+import { openCreate, CREATABLE } from './create.js?v=0.39.8';
+import { simulate, userContext, simPath } from './dialsim.js?v=0.39.8';
 
 const TESTED_STACK = ['26.07'];
 const NAV = [
@@ -365,7 +365,11 @@ function renderElapsed(R) {
   }).join('');
   const endTxt = open ? 'sans fin (jusqu\'à ce que l\'appelant raccroche)' : `${fmtS(total)}${ln && !timed.some((s) => s.key === last.key) ? ` → ${cardTitle(ln)}` : ''}`;
   $('s-elapsed').hidden = false;
-  $('s-elapsed').innerHTML = `<span class="cf-ln" title="Temps écoulé depuis le début de l'appel, si personne ne décroche">Temps écoulé</span><div class="cf-eb-wrap"><div class="cf-eb">${segs || '<i class="t-none" style="width:100%"><span>immédiat : aucune carte ne sonne ni n\'attend</span></i>'}</div><div class="cf-eb-scale small muted"><span>0 s</span><span>${esc(endTxt)}</span></div></div>`;
+  // Rien ne sonne ni n'attend : une seule mention, « 0 s → arrivée » (retour de Brice : rester simple).
+  const body = segs
+    ? `<div class="cf-eb">${segs}</div><div class="cf-eb-scale small muted"><span>0 s</span><span>${esc(endTxt)}</span></div>`
+    : `<div class="cf-eb-zero small">0 s${ln ? ` → ${esc(cardTitle(ln))}` : ''}</div>`;
+  $('s-elapsed').innerHTML = `<span class="cf-ln" title="Temps écoulé depuis le début de l'appel, si personne ne décroche">Temps écoulé</span><div class="cf-eb-wrap">${body}</div>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -538,7 +542,6 @@ function renderDraft() {
   $('cf-draft-n').classList.toggle('cf-link', !!n);
   $('cf-draft-cancel').disabled = !n;
   $('cf-draft-apply').disabled = !n;
-  $('cf-edit-count').textContent = n ? `${n} modification${n > 1 ? 's' : ''} dans le brouillon` : 'Aucune modification';
   const sel = C.sel && C.tree?.nodes.get(C.sel); if (sel) showDetail(sel); // fiche à jour du brouillon
 }
 // Sortie visée (nœud + port) → objet du port, s'il est modifiable.
@@ -866,8 +869,7 @@ async function applyDraft() {
 // ---------------------------------------------------------------------------
 // Événements
 // ---------------------------------------------------------------------------
-$('cf-edit').onclick = () => setEdit(!C.edit);
-$('cf-edit-quit').onclick = () => setEdit(false);
+$('cf-edit').onclick = () => setEdit(!C.edit);
 $('cf-draft-cancel').onclick = () => confirmModal(`<h3>Annuler le brouillon ?</h3><p>Les ${C.draft.size} modification${C.draft.size > 1 ? 's' : ''} non écrite${C.draft.size > 1 ? 's' : ''} sont abandonnée${C.draft.size > 1 ? 's' : ''}.</p>`, () => cancelDraft(), 'Annuler le brouillon');
 $('cf-draft-apply').onclick = applyDraft;
 // Restaurer : seulement brouillon vide (sinon la relecture effacerait le brouillon).
