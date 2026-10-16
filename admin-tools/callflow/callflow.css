@@ -484,3 +484,9 @@ button.cf-tr-end { border: 0; background: none; padding: 0; text-transform: none
 .cf-vm-greet .cf-ge-l { min-width: 9em; margin: 0; }
 .cf-vm-greet [data-gs] { flex: 1; min-width: 12em; }
 .cf-vm-greet [data-gconf] { flex-basis: 100%; }
+
+/* Encart d'information (accent de la charte) et résultat d'un envoi */
+.cf-info { display: flex; gap: 12px; align-items: flex-start; background: color-mix(in srgb, var(--accent) 10%, var(--panel)); color: var(--ink); border-left: 3px solid var(--accent); padding: 8px 14px; border-radius: var(--radius); margin: 4px 0 8px; font-size: .875rem; line-height: 1.43; }
+.cf-vm-res { flex-basis: 100%; }
+.cf-vm-res.ok { color: var(--ok); }
+.cf-vm-res.ko { color: var(--danger); }

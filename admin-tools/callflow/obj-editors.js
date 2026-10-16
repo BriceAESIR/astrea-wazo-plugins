@@ -10,13 +10,13 @@
 // Codes (messagerie, conférence) : champ masqué avec « Afficher » / « Générer » ;
 // jamais en clair dans le brouillon, l'aperçu ni la sauvegarde JSON (redact).
 // Le mot de passe de connexion d'un utilisateur reste dans User Manager.
-import { $, esc, toast, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.40.7';
-import { M } from './model.js?v=0.40.7';
-import { fillSoundSelect, pickerHtml, bindPicker, readPicker } from './sched-editor.js?v=0.40.7';
-import { GREETINGS, greetingExists, playGreeting, saveGreeting, deleteGreeting, toWav8k } from './sound-play.js?v=0.40.7';
-import { incallNumberHtml, bindIncallNumber, readIncallNumber, checkIncallNumber } from './numbers.js?v=0.40.7';
-import { sec, field, check, setSums, openSec, secretField, bindSecrets } from './ed-ui.js?v=0.40.7';
-import { bindNewSchedule, schedValue } from './create.js?v=0.40.7';
+import { $, esc, toast, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.40.8';
+import { M } from './model.js?v=0.40.8';
+import { fillSoundSelect, pickerHtml, bindPicker, readPicker } from './sched-editor.js?v=0.40.8';
+import { GREETINGS, greetingExists, playGreeting, saveGreeting, deleteGreeting, toWav8k, moTxt } from './sound-play.js?v=0.40.8';
+import { incallNumberHtml, bindIncallNumber, readIncallNumber, checkIncallNumber } from './numbers.js?v=0.40.8';
+import { sec, field, check, setSums, openSec, secretField, bindSecrets } from './ed-ui.js?v=0.40.8';
+import { bindNewSchedule, schedValue } from './create.js?v=0.40.8';
 
 const pickFields = (o, keys) => { const f = {}; for (const k of keys) f[k] = o?.[k] ?? null; return f; };
 const diffKeys = (a, b, keys, L) => keys.filter((k) => JSON.stringify(a?.fields?.[k] ?? null) !== JSON.stringify(b?.fields?.[k] ?? null)).map((k) => L[k] || k);
@@ -195,8 +195,9 @@ export function openVmEditor(o, onSave) {
       <div class="cf-ge-row"><select id="vme-uadd"></select><button type="button" id="vme-uaddb">Ajouter</button></div>
       <p class="warn small" id="vme-glob" hidden><span>Messagerie partagée : les utilisateurs seront retirés à l'écriture.</span></p>`)}
     ${sec('greet', 'Messages d\'accueil', `
-      <p class="small muted">Sons joués à l'appelant selon le statut de l'appelé. Envoi et suppression <strong>immédiats</strong> dans Wazo (hors brouillon). Tout fichier audio est accepté : il est converti en WAV 8 kHz, 16 bits, mono (format Wazo).</p>
-      ${GREETINGS.map(([g, l]) => `<div class="cf-vm-greet" data-g="${g}"><span class="cf-ge-l">${esc(l)}</span><span class="small muted" data-gs>…</span><span class="cf-ge-row"><button type="button" data-gplay hidden>Écouter</button><button type="button" data-gup>Envoyer un fichier…</button><button type="button" data-gdel hidden>Supprimer</button></span><input type="file" accept="audio/*,.wav,.mp3" data-gfile hidden><span class="cf-ge-row" data-gconf hidden></span></div>`).join('')}`)}
+      <p class="small muted">Sons joués à l'appelant selon le statut de l'appelé. Envoi et suppression <strong>immédiats</strong> dans Wazo (hors brouillon).</p>
+      <div class="cf-info"><span><strong>Limites de Wazo : 2 Mo envoyés, 90 secondes au plus.</strong> Tout fichier audio est accepté (wav, mp3…) : il est converti en WAV 8 kHz, 16 bits, mono. Après chaque envoi, le module relit Wazo et indique sur la ligne si le message est bien enregistré.</span></div>
+      ${GREETINGS.map(([g, l]) => `<div class="cf-vm-greet" data-g="${g}"><span class="cf-ge-l">${esc(l)}</span><span class="small muted" data-gs>…</span><span class="cf-ge-row"><button type="button" data-gplay hidden>Écouter</button><button type="button" data-gup>Envoyer un fichier…</button><button type="button" data-gdel hidden>Supprimer</button></span><input type="file" accept="audio/*,.wav,.mp3" data-gfile hidden><span class="cf-ge-row" data-gconf hidden></span><span class="small cf-vm-res" data-gres hidden></span></div>`).join('')}`)}
     ${sec('mail', 'Messages par e-mail', `
       ${field('E-mail', `<input type="email" data-f="email" value="${esc(f.email || '')}" maxlength="80" placeholder="aucun">`, 'Chaque nouveau message y est signalé.')}
       ${b('attach_audio', 'Joindre le message audio', '')}
@@ -248,18 +249,25 @@ export function openVmEditor(o, onSave) {
   // Messages d'accueil : état lu sur Wazo (HEAD), écoute, envoi, suppression immédiats.
   for (const row of box.querySelectorAll('.cf-vm-greet')) {
     const g = row.dataset.g; let exists = false;
-    const st = row.querySelector('[data-gs]'), play = row.querySelector('[data-gplay]'), del = row.querySelector('[data-gdel]'), up = row.querySelector('[data-gup]'), file = row.querySelector('[data-gfile]'), conf = row.querySelector('[data-gconf]');
+    const st = row.querySelector('[data-gs]'), play = row.querySelector('[data-gplay]'), del = row.querySelector('[data-gdel]'), up = row.querySelector('[data-gup]'), file = row.querySelector('[data-gfile]'), conf = row.querySelector('[data-gconf]'), res = row.querySelector('[data-gres]');
+    const hm = () => new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+    const result = (ok, msg) => { res.hidden = false; res.className = `small cf-vm-res ${ok ? 'ok' : 'ko'}`; res.textContent = msg; };
     const show = (s) => { exists = s; st.textContent = s ? 'Enregistré' : 'Aucun (message par défaut de Wazo)'; play.hidden = !s; del.hidden = !s; up.textContent = s ? 'Remplacer…' : 'Envoyer un fichier…'; };
-    const ask = (html, onYes) => { conf.innerHTML = `${html}<button type="button" class="primary" data-y>Confirmer</button><button type="button" data-n>Annuler</button>`; conf.hidden = false; conf.querySelector('[data-n]').onclick = () => { conf.hidden = true; }; conf.querySelector('[data-y]').onclick = async (e) => { e.target.disabled = true; try { await onYes(); conf.hidden = true; } catch (x) { conf.hidden = true; toast(`Refusé par Wazo : ${x.message}`, 8000); } }; };
+    const ask = (html, onYes) => { conf.innerHTML = `${html}<button type="button" class="primary" data-y>Confirmer</button><button type="button" data-n>Annuler</button>`; conf.hidden = false; conf.querySelector('[data-n]').onclick = () => { conf.hidden = true; }; conf.querySelector('[data-y]').onclick = async (e) => { e.target.disabled = true; try { await onYes(); conf.hidden = true; } catch (x) { conf.hidden = true; result(false, `Échec (${hm()}) : ${x.message}`); } }; };
     greetingExists(o.id, g).then(show).catch((e) => { st.textContent = `Illisible : ${e.message}`; up.disabled = true; });
     play.onclick = () => playGreeting(o.id, g, play);
     up.onclick = () => file.click();
     file.onchange = async () => {
       const fl = file.files?.[0]; file.value = ''; if (!fl) return;
-      let w; try { w = await toWav8k(fl); } catch (e) { toast(`Fichier refusé : ${e.message}`, 7000); return; }
-      ask(`<span class="small">${esc(fl.name)} · ${w.seconds} s, converti en WAV 8 kHz. ${exists ? 'Remplacer' : 'Envoyer'} maintenant ?</span>`, async () => { await saveGreeting(o.id, g, w.blob, exists); show(true); toast('Message d\'accueil enregistré dans Wazo.', 5000); });
+      res.hidden = true;
+      let w; try { w = await toWav8k(fl); } catch (e) { result(false, `Fichier refusé, rien n'a été envoyé : ${e.message}`); return; }
+      ask(`<span class="small">${esc(fl.name)} · ${w.seconds} s · ${moTxt(w.sent)} envoyés (2 Mo max). ${exists ? 'Remplacer' : 'Envoyer'} maintenant ?</span>`, async () => {
+        result(true, 'Envoi en cours…');
+        await saveGreeting(o.id, g, w.blob, exists, () => result(true, 'Envoyé, vérification dans Wazo…'));
+        show(true); result(true, `Téléversement vérifié (${hm()}) : le message est bien enregistré dans Wazo (${w.seconds} s).`);
+      });
     };
-    del.onclick = () => ask('<span class="small">Supprimer ce message maintenant ? Wazo rejouera son message par défaut.</span>', async () => { await deleteGreeting(o.id, g); show(false); toast('Message d\'accueil supprimé.', 5000); });
+    del.onclick = () => ask('<span class="small">Supprimer ce message maintenant ? Wazo rejouera son message par défaut.</span>', async () => { await deleteGreeting(o.id, g); const still = await greetingExists(o.id, g); show(still); if (still) throw new Error('Wazo a répondu OK mais le message est toujours présent.'); result(true, `Suppression vérifiée (${hm()}) : Wazo rejouera son message par défaut.`); });
   }
   const recap = () => setSums(box, {
     gen: [val(box, '[data-f="name"]'), val(box, '[data-f="number"]') ? `n° ${val(box, '[data-f="number"]')}` : '', box.querySelector('[data-f="accesstype"]').value === 'global' ? 'partagée' : '', box.querySelector('[data-b="enabled"]').checked ? '' : 'DÉSACTIVÉE'],

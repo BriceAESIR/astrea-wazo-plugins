@@ -10,8 +10,8 @@
 // PCM. Les autres (gsm, g722…) ne sont pas lisibles : message, pas d'erreur
 // silencieuse. Supposé : un son système dans un sous-dossier (« digits/1 »)
 // passe encodé (%2F) dans l'URL — à tester en réel.
-import { S, toast } from '../common/core.js?v=0.40.7';
-import { M, sameTenant } from './model.js?v=0.40.7';
+import { S, toast } from '../common/core.js?v=0.40.8';
+import { M, sameTenant } from './model.js?v=0.40.8';
 
 let audio = null, playing = null, url = null;
 function stop() {
@@ -93,25 +93,32 @@ function play(value, btn) {
 // Écriture IMMÉDIATE (hors brouillon : un fichier audio n'a pas sa place dans
 // la sauvegarde JSON), avec confirmation dans l'éditeur.
 // ---------------------------------------------------------------------------
+export const MAX_GREETING_S = 90;
+const MAX_SENT = 2097152; // MAX_CONTENT_LENGTH du patch Asterisk de Wazo
+export const moTxt = (n) => `${(n / 1048576).toLocaleString('fr-FR', { maximumFractionDigits: 2 })} Mo`;
 export const GREETINGS = [['name', 'Prénom et nom'], ['unavailable', 'Indisponible'], ['busy', 'Occupé']];
 const gUrl = (vm, g) => `${S.base}/api/calld/1.0/voicemails/${encodeURIComponent(vm)}/greetings/${g}`;
 const tenantGuard = (t) => { if (!sameTenant(t)) throw new Error('Le tenant a changé dans le portail : opération arrêtée.'); };
 export async function greetingExists(vm, g) {
-  const r = await fetch(gUrl(vm, g), { method: 'HEAD', headers: headers() });
+  const r = await fetch(gUrl(vm, g), { method: 'HEAD', headers: headers(), cache: 'no-store' });
   if (r.status === 404) return false;
   if (!r.ok) throw httpErr(r, `calld.voicemails.${vm}.greetings.${g}.read`);
   return true;
 }
 export const playGreeting = (vm, g, btn) => playFrom(btn, async () => {
-  const r = await fetch(gUrl(vm, g), { headers: headers({ Accept: 'audio/wav' }) });
+  const r = await fetch(gUrl(vm, g), { headers: headers({ Accept: 'audio/wav' }), cache: 'no-store' });
   if (!r.ok) throw httpErr(r, `calld.voicemails.${vm}.greetings.${g}.read`);
   return new Blob([await r.blob()], { type: 'audio/wav' });
 });
-export async function saveGreeting(vm, g, blob, exists) {
+export async function saveGreeting(vm, g, blob, exists, onVerify) {
   const t = M.tenant; tenantGuard(t);
   if (S.readonly) throw new Error(`Lecture seule : ${S.readonly}`);
   const r = await fetch(gUrl(vm, g), { method: exists ? 'PUT' : 'POST', headers: headers({ 'Content-Type': 'audio/wav' }), body: blob });
   if (!r.ok) throw httpErr(r, `calld.voicemails.${vm}.greetings.${g}.${exists ? 'update' : 'create'}`);
+  // Vérifié (wazo-calld services.py) : une erreur d'Asterisk autre que 400 est
+  // ignorée et calld répond quand même 204 → relecture pour confirmer.
+  onVerify?.();
+  if (!(await greetingExists(vm, g))) throw new Error('Wazo a répondu OK mais le message n\'est pas enregistré (fichier refusé par Asterisk ; trop long ?)');
   console.info('[astrea] Call Flow : message d\'accueil enregistré', vm, g);
 }
 export async function deleteGreeting(vm, g) {
@@ -130,12 +137,19 @@ export async function toWav8k(file) {
   const ctx = new Ctx();
   let src;
   try { src = await ctx.decodeAudioData(buf); } catch { throw new Error('fichier audio illisible par le navigateur'); } finally { ctx.close?.(); }
-  if (src.duration > 600) throw new Error('fichier trop long (10 minutes au plus)');
+  // Vérifié (patch Wazo d'Asterisk wazo_ari_expose_voicemail_functions) : corps
+  // HTTP limité à 2 Mio (MAX_CONTENT_LENGTH 2097152), fichier envoyé en base64
+  // → environ 95 s de WAV 8 kHz 16 bits. Marge prise : 90 s.
+  if (src.duration > MAX_GREETING_S) throw new Error(`fichier trop long (${Math.round(src.duration)} s) : Wazo accepte ${MAX_GREETING_S} s au plus pour un message d'accueil`);
   const off = new OfflineAudioContext(1, Math.max(1, Math.ceil(src.duration * 8000)), 8000);
   const node = off.createBufferSource(); node.buffer = src; node.connect(off.destination); node.start();
   const out = (await off.startRendering()).getChannelData(0);
   const pcm = Int16Array.from(out, (x) => Math.max(-32768, Math.min(32767, Math.round(x * 32767))));
-  return { blob: wav(pcm, 8000), seconds: Math.round(src.duration) };
+  const blob = wav(pcm, 8000);
+  // Taille réellement envoyée à Asterisk : base64 du fichier + enveloppe JSON de calld (~100 octets).
+  const sent = Math.ceil(blob.size / 3) * 4 + 100;
+  if (sent > MAX_SENT) throw new Error(`trop gros une fois converti (${moTxt(sent)}) : Wazo accepte 2 Mo au plus`);
+  return { blob, seconds: Math.round(src.duration), sent };
 }
 // Bouton « Écouter » à côté d'une liste de sons (une seule fois par liste).
 export function attachPlay(sel) {
