@@ -10,10 +10,10 @@
 //  - trunks : PUT /outcalls/{id}/trunks {trunks:[{id}]}, ordre = priorité.
 // wazo-agid (outgoingfeatures.py) : seuls strip_digits et external_prefix
 // changent le numéro envoyé ; « prefix » est lu mais pas appliqué.
-import { $, esc, confirmModal, helpButton, helpBox } from '../common/core.js?v=0.39.2';
-import { M, listOf, nodeInfo } from './model.js?v=0.39.2';
-import { sec, field, check, setSums, openSec } from './ed-ui.js?v=0.39.2';
-import { describePattern, comparePatterns, dialedNumber } from './dialsim.js?v=0.39.2';
+import { $, esc, confirmModal, helpButton, helpBox } from '../common/core.js?v=0.39.3';
+import { M, listOf, nodeInfo } from './model.js?v=0.39.3';
+import { sec, field, check, setSums, openSec } from './ed-ui.js?v=0.39.3';
+import { describePattern, comparePatterns, dialedNumber, matches } from './dialsim.js?v=0.39.3';
 
 export const OUTCALL_FIELDS = ['name', 'description', 'enabled', 'ring_time', 'internal_caller_id', 'preprocess_subroutine'];
 const DP = ['exten', 'strip_digits', 'external_prefix', 'prefix', 'caller_id'];
@@ -42,14 +42,22 @@ export function openOutcallEditor(o, onSave) {
   let trunks = [...v.trunks];
   const outCtx = rows[0]?.context || (M.lists.context || []).find((c) => c.type === 'outcall')?.name || '';
   const sched = (o.schedules || [])[0]?.id;
-  const rowHtml = (r) => `<li class="cf-oe-pat" data-row="${r.rid}">
-    <div class="cf-ge-row"><input data-p="exten" value="${esc(r.exten)}" placeholder="_0XXXXXXXXX" spellcheck="false"><span class="small muted cf-oe-desc" data-desc="${r.rid}">${esc(describePattern(r.exten))}</span><button class="icon" data-delrow="${r.rid}" title="Retirer ce motif">×</button></div>
-    <div class="cf-ge-3">
-      ${field('Retirer en tête', `<input type="number" min="0" step="1" data-p="strip_digits" value="${esc(r.strip_digits)}">`, 'chiffres')}
-      ${field('Ajouter devant', `<input data-p="external_prefix" value="${esc(r.external_prefix)}" placeholder="rien">`, 'avant l\'envoi au trunk')}
-      ${field('Numéro présenté', `<input data-p="caller_id" value="${esc(r.caller_id)}" placeholder="celui de l'appelant">`)}
-    </div>
-    <div class="small muted" data-ex="${r.rid}"></div></li>`;
+  // Une ligne compacte par motif (retour de Brice, 16/10/2026 : liste pénible à
+  // faire défiler). Ordre affiché = ordre d'essai d'Asterisk (le plus précis
+  // d'abord, vérifié dans pbx.c) : il ne se règle pas, Wazo ne stocke aucun ordre
+  // pour les motifs ; il est recalculé quand un motif change.
+  const rowHtml = (r, i) => `<li class="cf-oe-pat" data-row="${r.rid}">
+    <span class="cf-ge-n" title="Essayé en ${i + 1}${i ? 'e' : 'er'} par Asterisk">${i + 1}</span>
+    <input data-p="exten" value="${esc(r.exten)}" placeholder="_0XXXXXXXXX" spellcheck="false" aria-label="Motif">
+    <input type="number" min="0" step="1" data-p="strip_digits" value="${esc(r.strip_digits)}" aria-label="Chiffres retirés en tête" title="Chiffres retirés en tête">
+    <input data-p="external_prefix" value="${esc(r.external_prefix)}" placeholder="rien" aria-label="Ajouté devant" title="Ajouté devant, avant l'envoi au trunk">
+    <input data-p="caller_id" value="${esc(r.caller_id)}" placeholder="de l'appelant" aria-label="Numéro présenté" title="Numéro présenté">
+    <button type="button" class="icon" data-delrow="${r.rid}" title="Retirer ce motif">×</button>
+    <div class="small muted cf-oe-info"><span data-desc="${r.rid}">${esc(describePattern(r.exten))}</span> · <span data-ex="${r.rid}"></span></div></li>`;
+  const sortRows = () => rows.sort((a, b) => comparePatterns(a.exten, b.exten));
+  // Valeurs saisies → rows (avant de redessiner la liste).
+  const readRows = () => { for (const r of rows) { const li = $('modal-body').querySelector(`[data-row="${r.rid}"]`); if (!li) continue; for (const k of ['exten', 'strip_digits', 'external_prefix', 'caller_id']) r[k] = li.querySelector(`[data-p="${k}"]`).value.trim(); } };
+  const listHtml = () => { sortRows(); return rows.map(rowHtml).join('') || '<li class="muted">Aucun motif : aucun numéro ne part par cette règle</li>'; };
   const trunkRows = () => trunks.map((id, i) => `<li><span class="cf-ge-n">${i + 1}</span><span>${esc(trunkName(id))}</span><span class="small muted">${i ? 'si le précédent échoue' : 'en premier'}</span><span class="spacer"></span><button class="icon" data-tup="${i}"${i ? '' : ' disabled'}>↑</button><button class="icon" data-tdown="${i}"${i < trunks.length - 1 ? '' : ' disabled'}>↓</button><button class="icon" data-tdel="${i}" title="Retirer ce trunk">×</button></li>`).join('') || '<li class="muted">Aucun trunk : les appels ne peuvent pas sortir</li>';
   const addT = () => `<option value="">Choisir un trunk à ajouter…</option>${(M.lists.trunk || []).filter((t) => !trunks.includes(t.id)).map((t) => `<option value="${t.id}">${esc(trunkName(t.id))}</option>`).join('')}`;
 
@@ -61,8 +69,10 @@ export function openOutcallEditor(o, onSave) {
       ${field('Durée de sonnerie (s)', `<input type="number" min="0" step="1" data-f="ring_time" value="${esc(f.ring_time ?? '')}" placeholder="défaut">`, 'Avant d\'abandonner l\'appel sortant.')}
       ${check('oe-en', 'Règle activée', '', f.enabled !== false)}
       ${check('oe-int', 'Présenter le numéro interne', 'Le correspondant voit le numéro interne de l\'appelant au lieu de son numéro public (rarement utile vers l\'extérieur).', !!f.internal_caller_id)}`, { open: true })}
-    ${sec('pat', 'Motifs de numéros', `<ul class="cf-ge-list cf-oe-list" id="oe-rows">${rows.map(rowHtml).join('')}</ul>
-      <div class="btnrow"><button type="button" data-addrow>Ajouter un motif</button></div>`, { open: true, help: 'Règles d\'Asterisk : « _ » en tête = motif ; X = un chiffre 0-9, Z = 1-9, N = 2-9, [1-5] = un chiffre parmi, « . » = un ou plusieurs caractères. Ex. _0[1-5]XXXXXXXX = fixe, _0[67]XXXXXXXX = mobile, _00. = international. Quand plusieurs motifs correspondent, Asterisk prend le plus précis (vérifié dans son code). Le numéro envoyé = numéro composé, moins les chiffres retirés, avec le préfixe ajouté devant (vérifié dans wazo-agid).' })}
+    ${sec('pat', 'Motifs de numéros', `<div class="cf-oe-head small muted"><span>Ordre</span><span>Motif</span><span>Retirer</span><span>Ajouter devant</span><span>Présenté</span><span></span></div>
+      <ul class="cf-ge-list cf-oe-list" id="oe-rows">${listHtml()}</ul>
+      <div class="cf-ge-row"><button type="button" data-addrow>Ajouter un motif</button><span class="spacer"></span><input id="oe-test" inputmode="tel" placeholder="Tester un numéro" autocomplete="off" title="Quel motif de cette règle prend ce numéro"></div>
+      <div id="oe-test-r" class="small"></div>`, { open: true, help: 'Règles d\'Asterisk : « _ » en tête = motif ; X = un chiffre 0-9, Z = 1-9, N = 2-9, [1-5] = un chiffre parmi, « . » = un ou plusieurs caractères. Ex. _0[1-5]XXXXXXXX = fixe, _0[67]XXXXXXXX = mobile, _00. = international, _X. = tout le reste. Ordre : quand plusieurs motifs correspondent, Asterisk prend le plus précis, position par position (chiffre fixe, puis [ensemble] le plus petit, N, Z, X, puis « . ») ; vérifié dans son code. Cet ordre ne se règle pas (Wazo ne stocke aucune priorité pour les motifs) : la colonne « Ordre » le montre, recalculée à chaque modification. Pour changer la priorité, rendez un motif plus ou moins précis. Le numéro envoyé = numéro composé, moins les chiffres retirés, avec le préfixe ajouté devant (vérifié dans wazo-agid).' })}
     ${sec('trk', 'Trunks', `<ul class="cf-ge-list" id="oe-trunks">${trunkRows()}</ul>
       <div class="cf-ge-row"><select id="oe-tadd">${addT()}</select><button data-tadd>Ajouter</button></div>`, { open: true, help: 'L\'appel part par le premier trunk ; s\'il échoue, par le suivant.' })}
     ${sec('sch', 'Horaire', field('Horaire de la règle', `<select id="oe-sched"><option value="">Aucun : toujours ouverte</option>${listOf('schedule').map((x) => `<option value="${esc(x.key.slice(9))}"${String(sched) === x.key.slice(9) ? ' selected' : ''}>${esc(x.title)}</option>`).join('')}</select>`))}
@@ -104,7 +114,7 @@ export function openOutcallEditor(o, onSave) {
       const g = (k) => li.querySelector(`[data-p="${k}"]`).value.trim();
       const ex = example(g('exten'));
       box.querySelector(`[data-desc="${r.rid}"]`).textContent = describePattern(g('exten'));
-      box.querySelector(`[data-ex="${r.rid}"]`).textContent = ex ? `Ex. composé ${ex} → envoyé ${dialedNumber(ex, { strip_digits: Number(g('strip_digits') || 0), external_prefix: g('external_prefix') })}${g('caller_id') ? `, présenté ${g('caller_id')}` : ''}` : '';
+      box.querySelector(`[data-ex="${r.rid}"]`).textContent = ex ? `ex. ${ex} → envoyé ${dialedNumber(ex, { strip_digits: Number(g('strip_digits') || 0), external_prefix: g('external_prefix') })}${g('caller_id') ? `, présenté ${g('caller_id')}` : ''}` : '';
     }
     setSums(box, {
       gen: [box.querySelector('[data-f="name"]').value.trim(), $('oe-en').checked ? '' : 'DÉSACTIVÉE'],
@@ -116,11 +126,23 @@ export function openOutcallEditor(o, onSave) {
     });
   };
   const redrawT = () => { $('oe-trunks').innerHTML = trunkRows(); $('oe-tadd').innerHTML = addT(); recap(); };
-  box.addEventListener('input', () => { $('oe-err').textContent = ''; recap(); });
-  box.addEventListener('change', recap);
+  // Liste redessinée dans l'ordre d'Asterisk (après saisie d'un motif, ajout, retrait).
+  const redrawRows = (focusRid) => { readRows(); $('oe-rows').innerHTML = listHtml(); recap(); testNum(); if (focusRid) box.querySelector(`[data-row="${focusRid}"] [data-p="exten"]`)?.select(); };
+  // Tester un numéro : motif retenu parmi ceux de la règle (règles d'Asterisk), numéro envoyé.
+  const testNum = () => {
+    const n = $('oe-test').value.replace(/[\s.()-]/g, ''); const out = $('oe-test-r');
+    for (const li of box.querySelectorAll('.cf-oe-pat')) li.classList.remove('hit');
+    if (!n) { out.textContent = ''; return; }
+    readRows(); const i = [...rows].sort((a, b) => comparePatterns(a.exten, b.exten)).findIndex((r) => matches(r.exten, n));
+    if (i < 0) { out.innerHTML = `<span class="cf-ge-dnd">Aucun motif de cette règle ne prend ${esc(n)}</span>`; return; }
+    const r = rows[i]; box.querySelector(`[data-row="${r.rid}"]`)?.classList.add('hit');
+    out.textContent = `${n} → motif n° ${i + 1} ${r.exten} → envoyé ${dialedNumber(n, { strip_digits: Number(r.strip_digits || 0), external_prefix: r.external_prefix })} (dans cette règle ; une autre règle ou un numéro interne du contexte peut passer avant)`;
+  };
+  box.addEventListener('input', (e) => { $('oe-err').textContent = ''; recap(); if (e.target.id === 'oe-test' || e.target.dataset.p) testNum(); });
+  box.addEventListener('change', (e) => { if (e.target.dataset.p === 'exten') redrawRows(); else recap(); });
   box.onclick = (e) => {
-    if (e.target.closest('[data-addrow]')) { const r = { id: null, rid: `p${seq++}`, exten: '_0XXXXXXXXX', context: outCtx, strip_digits: 0, external_prefix: '', prefix: '', caller_id: '' }; rows.push(r); $('oe-rows').insertAdjacentHTML('beforeend', rowHtml(r)); recap(); return; }
-    const d = e.target.closest('[data-delrow]'); if (d) { rows = rows.filter((r) => r.rid !== d.dataset.delrow); box.querySelector(`[data-row="${d.dataset.delrow}"]`)?.remove(); recap(); return; }
+    if (e.target.closest('[data-addrow]')) { readRows(); const r = { id: null, rid: `p${seq++}`, exten: '_X.', context: outCtx, strip_digits: 0, external_prefix: '', prefix: '', caller_id: '' }; rows.push(r); redrawRows(r.rid); return; }
+    const d = e.target.closest('[data-delrow]'); if (d) { readRows(); rows = rows.filter((r) => r.rid !== d.dataset.delrow); redrawRows(); return; }
     const t = e.target.closest('[data-tup],[data-tdown],[data-tdel],[data-tadd]'); if (!t) return;
     if (t.dataset.tadd != null) { const id = Number($('oe-tadd').value); if (id) trunks.push(id); }
     const i = Number(t.dataset.tup ?? t.dataset.tdown ?? t.dataset.tdel);

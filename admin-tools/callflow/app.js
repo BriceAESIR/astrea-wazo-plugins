@@ -3,27 +3,30 @@
 // déposer (lot 2a, brouillon puis aperçu, sauvegarde, écriture).
 // Cadrage : astrea-wazo-dev/docs/CALLFLOW-MANAGER.md.
 // Modèle (sources confd vérifiées) : model.js ; canevas : canvas.js ; écriture : write.js.
-import { S, $, esc, fullName, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.39.2';
-import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, loadTrunkOperators, scanGroupKeys, buildTree, landingAt, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel, periodText, STRATEGY, QSTRAT, baseKey, gateOf, loadBlocklist, blockedBy, dialUser } from './model.js?v=0.39.2';
-import { createCanvas } from './canvas.js?v=0.39.2';
-import { getDest, setDest, sameValue, prepare, execute } from './write.js?v=0.39.2';
-import { openScheduleEditor } from './sched-editor.js?v=0.39.2';
-import { openGroupEditor, groupCfgDiff } from './group-editor.js?v=0.39.2';
-import { openQueueEditor, queueCfgDiff, agentName } from './queue-editor.js?v=0.39.2';
-import { openIvrEditor, ivrCfgDiff } from './ivr-editor.js?v=0.39.2';
-import { openSbEditor, sbCfgDiff } from './sb-editor.js?v=0.39.2';
-import { redact } from './ed-ui.js?v=0.39.2';
-import { openRestore } from './restore.js?v=0.39.2';
-import { openIncallEditor, incallCfgDiff, openUserEditor, userCfgDiff, openVmEditor, vmCfgDiff, openConfEditor, confCfgDiff, openSchedGenEditor, schedCfgDiff } from './obj-editors.js?v=0.39.2';
-import { openDestEditor, ENTITY_DEST } from './dest-editor.js?v=0.39.2';
-import { openOutcallEditor, outcallCfgDiff } from './outcall-editor.js?v=0.39.2';
-import { openCreate, CREATABLE } from './create.js?v=0.39.2';
-import { simulate, userContext, simPath } from './dialsim.js?v=0.39.2';
+import { S, $, esc, fullName, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.39.3';
+import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, loadTrunkOperators, scanGroupKeys, buildTree, landingAt, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel, periodText, STRATEGY, QSTRAT, baseKey, gateOf, loadBlocklist, blockedBy, dialUser } from './model.js?v=0.39.3';
+import { createCanvas } from './canvas.js?v=0.39.3';
+import { getDest, setDest, sameValue, prepare, execute } from './write.js?v=0.39.3';
+import { openScheduleEditor } from './sched-editor.js?v=0.39.3';
+import { openGroupEditor, groupCfgDiff } from './group-editor.js?v=0.39.3';
+import { openQueueEditor, queueCfgDiff, agentName } from './queue-editor.js?v=0.39.3';
+import { openIvrEditor, ivrCfgDiff } from './ivr-editor.js?v=0.39.3';
+import { openSbEditor, sbCfgDiff } from './sb-editor.js?v=0.39.3';
+import { redact } from './ed-ui.js?v=0.39.3';
+import { openRestore } from './restore.js?v=0.39.3';
+import { openIncallEditor, incallCfgDiff, openUserEditor, userCfgDiff, openVmEditor, vmCfgDiff, openConfEditor, confCfgDiff, openSchedGenEditor, schedCfgDiff } from './obj-editors.js?v=0.39.3';
+import { openDestEditor, ENTITY_DEST } from './dest-editor.js?v=0.39.3';
+import { openOutcallEditor, outcallCfgDiff } from './outcall-editor.js?v=0.39.3';
+import { openCreate, CREATABLE } from './create.js?v=0.39.3';
+import { simulate, userContext, simPath } from './dialsim.js?v=0.39.3';
 
 const TESTED_STACK = ['26.07'];
 const NAV = [
   ['incall', 'SDA'], ['trunk', 'Trunks'], ['user', 'Utilisateurs'], ['group', 'Groupes'], ['queue', 'Files d\'attente'], ['ivr', 'SVI'],
-  ['schedule', 'Horaires'], ['voicemail', 'Messageries'], ['conference', 'Conférences'], ['switchboard', 'Standards'], ['outcall', 'Règles sortantes'], ['context', 'Contextes'],
+  // Horaires et messageries retirés de la colonne (retour de Brice, 16/10/2026 :
+  // ils dépendent d'une carte parente) ; toujours atteignables depuis le graphe
+  // (double-clic sur une carte : partir de cette carte ; « Qui arrive ici »).
+  ['conference', 'Conférences'], ['switchboard', 'Standards'], ['outcall', 'Règles sortantes'], ['context', 'Contextes'],
 ];
 const C = { edit: false, draft: new Map(), time: { on: true, date: null, min: 0 }, type: 'incall', root: null, dir: 'out', collapsed: new Set(), expanded: new Set(), showEmpty: false, scope: null, canvas: null, tree: null, sel: null, sim: { on: false, num: '', caller: '', mode: 'in' }, simR: null };
 

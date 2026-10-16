@@ -12,7 +12,7 @@
 //    « prefix » est lu mais pas appliqué.
 // Supposé : effet exact des autorisations d'appels et d'un horaire sur une
 // règle sortante (affichés à titre indicatif).
-import { M, scheduleState, whenOf, entity } from './model.js?v=0.39.2';
+import { M, scheduleState, whenOf, entity } from './model.js?v=0.39.3';
 
 // Motif → liste d'éléments { set: chaînes de caractères, size } | { dot } | { bang } ; null si numéro exact.
 export function parsePattern(p) {
@@ -261,10 +261,19 @@ export function simPath(tree, w, match, { blocked = null } = {}) {
           if (r.ctx === o?.name && (r.kind === 'internal' || r.kind === 'incall')) { p = P((x) => x.slot === 'internal'); st.what = 'numéro interne trouvé'; break; }
           if (r.ctx === o?.name && r.kind === 'outcall') { p = P((x) => x.slot === 'outcall' && x.to?.key === `outcall:${r.outcall.id}`); st.what = 'motif trouvé dans ce contexte'; break; }
           // Pas ici : contexte inclus suivant dans l'ordre de recherche (steps de simulate).
+          // Aucune correspondance nulle part : on suit quand même les contextes
+          // inclus fouillés, pour montrer où Asterisk a cherché (retour de Brice).
           const idx = (match.steps || []).findIndex((s) => s.ctx === o?.name);
           const next = idx >= 0 ? match.steps[idx + 1] : null;
-          if (next && r.kind !== 'none') { p = P((x) => x.slot === 'include' && x.to?.key === `context:${next.ctx}`); st.what = 'rien ici, contexte inclus suivant'; break; }
-          end = true; R.end = r.kind === 'none' ? (o?.type === 'incall' ? `aucune SDA ${match.number} : l'opérateur reçoit un refus (numéro non attribué)` : `aucune correspondance pour ${match.number} : l'appel échoue`) : r.kind === 'feature' ? r.note : '';
+          const inc = next && r.kind !== 'feature' ? P((x) => x.slot === 'include' && x.to?.key === `context:${next.ctx}`) : null;
+          if (inc) { p = inc; st.what = 'rien ici, contexte inclus suivant'; break; }
+          end = true;
+          if (r.kind === 'none' && o?.type === 'incall') R.end = `aucune SDA ${match.number} : l'opérateur reçoit un refus (numéro non attribué)`;
+          else if (r.kind === 'none') {
+            // Motifs des règles sortantes rencontrées : pourquoi aucun ne convient.
+            const pats = (M.lists.outcall || []).flatMap((oc) => (oc.extensions || []).filter((x) => (match.steps || []).some((s) => s.ctx === x.context)).map((x) => x.exten));
+            R.end = `aucune correspondance pour ${match.number} : ni numéro interne, ni motif de règle sortante${pats.length ? ` (motifs disponibles : ${pats.join(', ')})` : ''} ; Asterisk ne trouve pas le numéro, l'appel échoue`;
+          } else R.end = r.kind === 'feature' ? r.note : '';
           st.what = 'aucune correspondance';
           break;
         }

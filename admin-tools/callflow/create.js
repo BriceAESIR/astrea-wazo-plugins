@@ -14,10 +14,10 @@
 //  - horaire : closed_destination obligatoire ; listes de jours / mois non vides.
 // Extension : POST /extensions {exten, context} puis PUT /<objet>/{id}/extensions/{ext}
 // (une seule par objet, contexte internal).
-import { $, esc, api, toast, confirmModal } from '../common/core.js?v=0.39.2';
-import { M } from './model.js?v=0.39.2';
-import { pickerHtml, bindPicker, readPicker, fillSoundSelect } from './sched-editor.js?v=0.39.2';
-import { field, secretField, bindSecrets } from './ed-ui.js?v=0.39.2';
+import { $, esc, api, toast, confirmModal } from '../common/core.js?v=0.39.3';
+import { M } from './model.js?v=0.39.3';
+import { pickerHtml, bindPicker, readPicker, fillSoundSelect } from './sched-editor.js?v=0.39.3';
+import { field, secretField, bindSecrets } from './ed-ui.js?v=0.39.3';
 
 export const CREATABLE = new Set(['group', 'queue', 'ivr', 'switchboard', 'voicemail', 'conference', 'schedule']);
 const LABEL = { group: 'un groupe d\'appel', queue: 'une file d\'attente', ivr: 'un SVI', switchboard: 'un standard', voicemail: 'une messagerie', conference: 'une conférence', schedule: 'un horaire' };

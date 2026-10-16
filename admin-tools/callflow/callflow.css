@@ -319,10 +319,16 @@ body.in-portal.ready #workbench { height: 100vh; }
 .cf-chip.empty { opacity: .5; border-style: dashed; }
 .cf-chip.empty:hover { opacity: .8; }
 .cf-cr-body { padding: 0; margin-bottom: 12px; }
-/* Règle sortante : un bloc par motif */
-.cf-oe-list li.cf-oe-pat { display: grid; gap: 8px; padding: 10px 12px; }
-.cf-oe-pat [data-p="exten"] { font-family: ui-monospace, Consolas, monospace; max-width: 200px; flex: none !important; }
-.cf-oe-desc { flex: 1; }
+/* Règle sortante : une ligne compacte par motif, dans l'ordre d'Asterisk, sans défilement interne */
+.cf-oe-head, .cf-oe-list li.cf-oe-pat { display: grid; grid-template-columns: 28px minmax(110px, 1.4fr) 64px minmax(70px, 1fr) minmax(90px, 1.2fr) 28px; gap: 4px 8px; align-items: center; }
+.cf-oe-head { padding: 0 12px 4px; }
+.cf-ge-list.cf-oe-list { max-height: none; overflow: visible; margin-top: 0; }
+.cf-oe-list li.cf-oe-pat { padding: 6px 12px; }
+.cf-oe-list li.cf-oe-pat input { min-width: 0; width: 100%; padding: 4px 6px; }
+.cf-oe-pat [data-p="exten"] { font-family: ui-monospace, Consolas, monospace; }
+.cf-oe-info { grid-column: 2 / -1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cf-oe-list li.cf-oe-pat.hit { background: color-mix(in srgb, var(--accent) 12%, var(--panel)); }
+@media (max-width: 640px) { .cf-oe-head { display: none; } .cf-oe-head, .cf-oe-list li.cf-oe-pat { grid-template-columns: 28px 1fr 1fr 28px; } .cf-oe-info { white-space: normal; } }
 /* Suivre un appel : commandes du bandeau, trame, chemin allumé dans le graphe */
 .cf-follow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .t-caller { --c: var(--cf-entry); }
@@ -341,14 +347,16 @@ button.cf-tr-end { border: 0; background: none; padding: 0; text-transform: none
 @media (max-width: 800px) { .cf-trame { grid-template-columns: 1fr; } .cf-trame .cf-ln { text-align: left; } }
 .cf-view.simming .cf-node:not(.onpath):not(.ringing) { opacity: .28; }
 .cf-view.simming .cf-node:not(.onpath):not(.ringing):hover { opacity: .7; }
-.cf-view.simming .cf-node.onpath { box-shadow: 0 0 0 2px var(--accent), 0 4px 14px color-mix(in srgb, var(--accent) 25%, transparent); opacity: 1; }
+/* Chemin suivi : graphite neutre (retour de Brice : le bleu se confondait avec les cartes déjà bleues) */
+:root { --cf-sim: color-mix(in srgb, var(--ink) 78%, var(--panel)); }
+.cf-view.simming .cf-node.onpath { box-shadow: 0 0 0 2px var(--cf-sim), 0 4px 14px color-mix(in srgb, var(--ink) 18%, transparent); opacity: 1; }
 .cf-view.simming .cf-node.ringing { box-shadow: 0 0 0 2px color-mix(in srgb, var(--cf-ring) 70%, transparent); opacity: 1; }
 .cf-view.simming .cf-node.onpath .cf-ports li:not(.taken) { opacity: .4; }
 .cf-ports li.taken .cf-pl { font-weight: 700; }
-.cf-ports li.taken .cf-dot { background: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent); }
+.cf-ports li.taken .cf-dot { background: var(--cf-sim); box-shadow: 0 0 0 3px color-mix(in srgb, var(--cf-sim) 25%, transparent); }
 .cf-view.simming .cf-edge { opacity: .25; }
-.cf-view.simming .cf-edge.sim { opacity: 1; stroke: var(--accent); stroke-width: 3; }
-.cf-simt { margin-top: 3px; padding: 1px 6px; border-radius: 4px; font-size: .6875rem; line-height: 1.4; background: color-mix(in srgb, var(--accent) 14%, var(--panel)); color: var(--ink); }
+.cf-view.simming .cf-edge.sim { opacity: 1; stroke: var(--cf-sim); stroke-width: 3; }
+.cf-simt { margin-top: 3px; padding: 1px 6px; border-radius: 4px; font-size: .6875rem; line-height: 1.4; background: color-mix(in srgb, var(--ink) 9%, var(--panel)); color: var(--ink); }
 .cf-node.ringing .cf-simt { background: color-mix(in srgb, var(--cf-ring) 18%, var(--panel)); }
 /* « Un par un » : durée d'un tour complet proposée */
 .cf-ge-tour { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: var(--radius); background: color-mix(in srgb, var(--accent) 7%, var(--panel)); border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--panel)); font-size: .875rem; }
