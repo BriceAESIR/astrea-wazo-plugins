@@ -10,12 +10,13 @@
 // Codes (messagerie, conférence) : champ masqué avec « Afficher » / « Générer » ;
 // jamais en clair dans le brouillon, l'aperçu ni la sauvegarde JSON (redact).
 // Le mot de passe de connexion d'un utilisateur reste dans User Manager.
-import { $, esc, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.40.6';
-import { M } from './model.js?v=0.40.6';
-import { fillSoundSelect, pickerHtml, bindPicker, readPicker } from './sched-editor.js?v=0.40.6';
-import { incallNumberHtml, bindIncallNumber, readIncallNumber, checkIncallNumber } from './numbers.js?v=0.40.6';
-import { sec, field, check, setSums, openSec, secretField, bindSecrets } from './ed-ui.js?v=0.40.6';
-import { bindNewSchedule, schedValue } from './create.js?v=0.40.6';
+import { $, esc, toast, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.40.7';
+import { M } from './model.js?v=0.40.7';
+import { fillSoundSelect, pickerHtml, bindPicker, readPicker } from './sched-editor.js?v=0.40.7';
+import { GREETINGS, greetingExists, playGreeting, saveGreeting, deleteGreeting, toWav8k } from './sound-play.js?v=0.40.7';
+import { incallNumberHtml, bindIncallNumber, readIncallNumber, checkIncallNumber } from './numbers.js?v=0.40.7';
+import { sec, field, check, setSums, openSec, secretField, bindSecrets } from './ed-ui.js?v=0.40.7';
+import { bindNewSchedule, schedValue } from './create.js?v=0.40.7';
 
 const pickFields = (o, keys) => { const f = {}; for (const k of keys) f[k] = o?.[k] ?? null; return f; };
 const diffKeys = (a, b, keys, L) => keys.filter((k) => JSON.stringify(a?.fields?.[k] ?? null) !== JSON.stringify(b?.fields?.[k] ?? null)).map((k) => L[k] || k);
@@ -157,17 +158,27 @@ export function userCfgDiff(a, b) {
 }
 
 // ---------------------------------------------------------------------------
-// Messagerie (le code d'accès n'est pas modifiable ici)
+// Messagerie : réglages, utilisateurs associés (brouillon) et messages
+// d'accueil (écriture immédiate, sound-play.js) — onglets du portail.
 // ---------------------------------------------------------------------------
-export const VM_FIELDS = ['name', 'number', 'context', 'email', 'language', 'timezone', 'pager', 'max_messages', 'attach_audio', 'delete_messages', 'ask_password', 'enabled', 'password'];
-export const vmCfgOf = (o) => ({ fields: pickFields(o, VM_FIELDS) });
-export const applyVmCfg = (o, v) => Object.assign(o, v.fields);
+export const VM_FIELDS = ['name', 'number', 'context', 'accesstype', 'email', 'language', 'timezone', 'pager', 'max_messages', 'attach_audio', 'delete_messages', 'ask_password', 'enabled', 'password'];
+export const vmCfgOf = (o) => ({ fields: pickFields(o, VM_FIELDS), users: (o?.users || []).map((u) => u.uuid).sort() });
+// Utilisateurs : une seule messagerie par utilisateur (vérifié) → retiré des autres boîtes du module.
+export const applyVmCfg = (o, v) => {
+  Object.assign(o, v.fields);
+  if (!Array.isArray(v.users)) return;
+  for (const x of M.lists.voicemail || []) if (x !== o) x.users = (x.users || []).filter((u) => !v.users.includes(u.uuid));
+  o.users = v.users.map((uuid) => { const u = M.userByUuid?.get(uuid); return { uuid, firstname: u?.firstname || '', lastname: u?.lastname || '' }; });
+};
 const LANGS = [['fr_FR', 'Français (France)'], ['fr_CA', 'Français (Canada)'], ['en_US', 'Anglais (États-Unis)'], ['en_GB', 'Anglais (Royaume-Uni)'], ['de_DE', 'Allemand'], ['es_ES', 'Espagnol'], ['it_IT', 'Italien'], ['nl_NL', 'Néerlandais']];
 export function openVmEditor(o, onSave) {
   const f = vmCfgOf(o).fields;
   const ctx = (M.lists.context || []).filter((c) => c.type === 'internal');
   const users = (o.users || []).map((u) => fullName(u)).filter(Boolean);
   const b = (k, l, h) => check(`vme-${k}`, l, h, !!f[k], `data-b="${k}"`);
+  let vu = [...vmCfgOf(o).users];
+  // Messagerie actuelle de chaque utilisateur (listes du module, brouillon compris).
+  const vmOf = new Map(); for (const x of M.lists.voicemail || []) for (const u of x.users || []) vmOf.set(u.uuid, x);
   confirmModal(`<div class="cf-ed">
     ${head('vme-hb', `Messagerie « ${o.name} »`, users.length ? `Utilisée par ${users.join(', ')}` : (o.accesstype === 'global' ? 'Messagerie partagée' : ''), 'Options de l\'API Wazo pour une boîte vocale. Le code est masqué dans le brouillon, l\'aperçu et la sauvegarde JSON.')}
     ${sec('gen', 'Général', `
@@ -176,7 +187,16 @@ export function openVmEditor(o, onSave) {
         ${field('Numéro *', `<input data-f="number" value="${esc(f.number || '')}">`, 'Pour consulter la boîte.')}
         ${field('Contexte *', `<select data-f="context">${ctx.map((c) => `<option value="${esc(c.name)}"${f.context === c.name ? ' selected' : ''}>${esc(c.label || c.name)}</option>`).join('')}${f.context && !ctx.some((c) => c.name === f.context) ? `<option value="${esc(f.context)}" selected>${esc(f.context)}</option>` : ''}</select>`)}
       </div>
+      ${field('Type', `<select data-f="accesstype"><option value="personal"${f.accesstype !== 'global' ? ' selected' : ''}>Personnelle : associée à des utilisateurs</option><option value="global"${f.accesstype === 'global' ? ' selected' : ''}>Partagée (globale) : sans utilisateur associé</option></select>`, 'Wazo refuse d\'associer un utilisateur à une messagerie partagée.')}
       ${b('enabled', 'Messagerie activée', '')}`, { open: true })}
+    ${sec('users', 'Utilisateurs', `
+      <p class="small muted">Utilisateurs qui consultent cette boîte depuis leur poste. Un utilisateur n'a qu'une messagerie : en ajouter un qui en a déjà une la lui retire (à l'écriture).</p>
+      <ul class="cf-ge-list" id="vme-users"></ul>
+      <div class="cf-ge-row"><select id="vme-uadd"></select><button type="button" id="vme-uaddb">Ajouter</button></div>
+      <p class="warn small" id="vme-glob" hidden><span>Messagerie partagée : les utilisateurs seront retirés à l'écriture.</span></p>`)}
+    ${sec('greet', 'Messages d\'accueil', `
+      <p class="small muted">Sons joués à l'appelant selon le statut de l'appelé. Envoi et suppression <strong>immédiats</strong> dans Wazo (hors brouillon). Tout fichier audio est accepté : il est converti en WAV 8 kHz, 16 bits, mono (format Wazo).</p>
+      ${GREETINGS.map(([g, l]) => `<div class="cf-vm-greet" data-g="${g}"><span class="cf-ge-l">${esc(l)}</span><span class="small muted" data-gs>…</span><span class="cf-ge-row"><button type="button" data-gplay hidden>Écouter</button><button type="button" data-gup>Envoyer un fichier…</button><button type="button" data-gdel hidden>Supprimer</button></span><input type="file" accept="audio/*,.wav,.mp3" data-gfile hidden><span class="cf-ge-row" data-gconf hidden></span></div>`).join('')}`)}
     ${sec('mail', 'Messages par e-mail', `
       ${field('E-mail', `<input type="email" data-f="email" value="${esc(f.email || '')}" maxlength="80" placeholder="aucun">`, 'Chaque nouveau message y est signalé.')}
       ${b('attach_audio', 'Joindre le message audio', '')}
@@ -197,6 +217,7 @@ export function openVmEditor(o, onSave) {
     nf.name = val(box, '[data-f="name"]'); if (!nf.name) return err('Nom obligatoire.', 'gen');
     nf.number = val(box, '[data-f="number"]'); if (!/^[0-9]{1,40}$/.test(nf.number)) return err('Numéro : chiffres seulement.', 'gen');
     nf.context = box.querySelector('[data-f="context"]').value;
+    nf.accesstype = box.querySelector('[data-f="accesstype"]').value;
     nf.email = val(box, '[data-f="email"]') || null; if (nf.email && !/^[^@\s]+@[^@\s]+$/.test(nf.email)) return err('E-mail invalide.', 'mail');
     nf.pager = val(box, '[data-f="pager"]') || null;
     nf.language = box.querySelector('[data-f="language"]').value || null;
@@ -206,12 +227,43 @@ export function openVmEditor(o, onSave) {
     // Case non lue (valeur absente) et laissée décochée : rien n'est écrit.
     for (const el of box.querySelectorAll('[data-b]')) nf[el.dataset.b] = f[el.dataset.b] == null && !el.checked ? f[el.dataset.b] : el.checked;
     if (nf.delete_messages && (!nf.email || !nf.attach_audio)) return err('« Supprimer après l\'envoi » exige un e-mail et la pièce jointe audio.', 'mail');
-    onSave({ fields: nf });
+    // Partagée : aucun utilisateur (refusé par Wazo). Partagée → personnelle : retirer d'abord serait inutile.
+    onSave({ fields: nf, users: nf.accesstype === 'global' ? [] : [...vu].sort() });
     return true;
   }, 'Ajouter au brouillon');
   const box = $('modal-body');
+  // Utilisateurs associés.
+  const uname = (uuid) => { const u = M.userByUuid?.get(uuid) || (o.users || []).find((x) => x.uuid === uuid); return fullName(u) || uuid; };
+  const drawUsers = () => {
+    const glob = box.querySelector('[data-f="accesstype"]').value === 'global';
+    $('vme-glob').hidden = !(glob && vu.length);
+    $('vme-users').innerHTML = vu.map((uuid) => `<li><span>${esc(uname(uuid))}</span><span class="spacer"></span><button type="button" class="icon" data-urm="${esc(uuid)}" title="Retirer de cette messagerie">×</button></li>`).join('') || '<li class="small muted">Aucun utilisateur.</li>';
+    $('vme-uadd').innerHTML = `<option value="">Choisir un utilisateur…</option>${(M.lists.user || []).filter((u) => !vu.includes(u.uuid)).sort((a, c) => fullName(a).localeCompare(fullName(c), 'fr')).map((u) => { const cur = vmOf.get(u.uuid); return `<option value="${esc(u.uuid)}">${esc(fullName(u))}${cur && cur !== o ? ` (a « ${esc(cur.name)} » : elle lui sera retirée)` : ''}</option>`; }).join('')}`;
+    $('vme-uadd').disabled = glob; $('vme-uaddb').disabled = glob;
+  };
+  $('vme-uaddb').onclick = () => { const u = $('vme-uadd').value; if (u && !vu.includes(u)) { vu.push(u); drawUsers(); recap(); } };
+  $('vme-users').onclick = (e) => { const x = e.target.closest('[data-urm]'); if (x) { vu = vu.filter((u) => u !== x.dataset.urm); drawUsers(); recap(); } };
+  box.querySelector('[data-f="accesstype"]').addEventListener('change', drawUsers);
+  drawUsers();
+  // Messages d'accueil : état lu sur Wazo (HEAD), écoute, envoi, suppression immédiats.
+  for (const row of box.querySelectorAll('.cf-vm-greet')) {
+    const g = row.dataset.g; let exists = false;
+    const st = row.querySelector('[data-gs]'), play = row.querySelector('[data-gplay]'), del = row.querySelector('[data-gdel]'), up = row.querySelector('[data-gup]'), file = row.querySelector('[data-gfile]'), conf = row.querySelector('[data-gconf]');
+    const show = (s) => { exists = s; st.textContent = s ? 'Enregistré' : 'Aucun (message par défaut de Wazo)'; play.hidden = !s; del.hidden = !s; up.textContent = s ? 'Remplacer…' : 'Envoyer un fichier…'; };
+    const ask = (html, onYes) => { conf.innerHTML = `${html}<button type="button" class="primary" data-y>Confirmer</button><button type="button" data-n>Annuler</button>`; conf.hidden = false; conf.querySelector('[data-n]').onclick = () => { conf.hidden = true; }; conf.querySelector('[data-y]').onclick = async (e) => { e.target.disabled = true; try { await onYes(); conf.hidden = true; } catch (x) { conf.hidden = true; toast(`Refusé par Wazo : ${x.message}`, 8000); } }; };
+    greetingExists(o.id, g).then(show).catch((e) => { st.textContent = `Illisible : ${e.message}`; up.disabled = true; });
+    play.onclick = () => playGreeting(o.id, g, play);
+    up.onclick = () => file.click();
+    file.onchange = async () => {
+      const fl = file.files?.[0]; file.value = ''; if (!fl) return;
+      let w; try { w = await toWav8k(fl); } catch (e) { toast(`Fichier refusé : ${e.message}`, 7000); return; }
+      ask(`<span class="small">${esc(fl.name)} · ${w.seconds} s, converti en WAV 8 kHz. ${exists ? 'Remplacer' : 'Envoyer'} maintenant ?</span>`, async () => { await saveGreeting(o.id, g, w.blob, exists); show(true); toast('Message d\'accueil enregistré dans Wazo.', 5000); });
+    };
+    del.onclick = () => ask('<span class="small">Supprimer ce message maintenant ? Wazo rejouera son message par défaut.</span>', async () => { await deleteGreeting(o.id, g); show(false); toast('Message d\'accueil supprimé.', 5000); });
+  }
   const recap = () => setSums(box, {
-    gen: [val(box, '[data-f="name"]'), val(box, '[data-f="number"]') ? `n° ${val(box, '[data-f="number"]')}` : '', box.querySelector('[data-b="enabled"]').checked ? '' : 'DÉSACTIVÉE'],
+    gen: [val(box, '[data-f="name"]'), val(box, '[data-f="number"]') ? `n° ${val(box, '[data-f="number"]')}` : '', box.querySelector('[data-f="accesstype"]').value === 'global' ? 'partagée' : '', box.querySelector('[data-b="enabled"]').checked ? '' : 'DÉSACTIVÉE'],
+    users: [vu.length ? vu.map(uname).join(', ') : 'aucun'],
     mail: [val(box, '[data-f="email"]') || 'pas d\'e-mail', box.querySelector('[data-b="attach_audio"]').checked ? 'avec audio' : ''],
     opt: [box.querySelector('[data-f="language"]').selectedOptions[0]?.text, val(box, '[data-f="max_messages"]') ? `${val(box, '[data-f="max_messages"]')} messages max.` : ''],
   });
@@ -220,7 +272,7 @@ export function openVmEditor(o, onSave) {
   box.addEventListener('change', recap);
   recap();
 }
-export const vmCfgDiff = (a, b) => diffKeys(a, b, VM_FIELDS, { name: 'nom', number: 'numéro', context: 'contexte', email: 'e-mail', language: 'langue', timezone: 'fuseau', pager: 'pager', max_messages: 'messages max.', attach_audio: 'pièce jointe', delete_messages: 'suppression après envoi', ask_password: 'demande du code', enabled: 'activée', password: 'code' }).join(', ');
+export const vmCfgDiff = (a, b) => [...diffKeys(a, b, VM_FIELDS, { name: 'nom', number: 'numéro', context: 'contexte', accesstype: 'type', email: 'e-mail', language: 'langue', timezone: 'fuseau', pager: 'pager', max_messages: 'messages max.', attach_audio: 'pièce jointe', delete_messages: 'suppression après envoi', ask_password: 'demande du code', enabled: 'activée', password: 'code' }), ...(JSON.stringify(a?.users || []) !== JSON.stringify(b?.users || []) ? ['utilisateurs'] : [])].join(', ');
 
 // ---------------------------------------------------------------------------
 // Conférence

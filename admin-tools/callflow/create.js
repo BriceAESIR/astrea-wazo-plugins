@@ -14,12 +14,12 @@
 //  - horaire : closed_destination obligatoire ; listes de jours / mois non vides.
 // Extension : POST /extensions {exten, context} puis PUT /<objet>/{id}/extensions/{ext}
 // (une seule par objet, contexte internal).
-import { $, esc, toast, confirmModal } from '../common/core.js?v=0.40.6';
+import { $, esc, toast, confirmModal } from '../common/core.js?v=0.40.7';
 // Créations liées au tenant des données chargées (tapi, model.js).
-import { M, tapi as api } from './model.js?v=0.40.6';
-import { pickerHtml, bindPicker, readPicker, fillSoundSelect, setObjSelectHook } from './sched-editor.js?v=0.40.6';
-import { field, secretField, bindSecrets } from './ed-ui.js?v=0.40.6';
-import { RANGE_KEY as RANGE, numberFieldHtml, bindNumberField, checkNumber, incallNumberHtml, bindIncallNumber, readIncallNumber, checkIncallNumber } from './numbers.js?v=0.40.6';
+import { M, tapi as api } from './model.js?v=0.40.7';
+import { pickerHtml, bindPicker, readPicker, fillSoundSelect, setObjSelectHook } from './sched-editor.js?v=0.40.7';
+import { field, secretField, bindSecrets } from './ed-ui.js?v=0.40.7';
+import { RANGE_KEY as RANGE, numberFieldHtml, bindNumberField, checkNumber, incallNumberHtml, bindIncallNumber, readIncallNumber, checkIncallNumber } from './numbers.js?v=0.40.7';
 
 export const CREATABLE = new Set(['group', 'queue', 'ivr', 'switchboard', 'voicemail', 'conference', 'schedule', 'outcall']);
 export const LABEL = { group: 'un groupe d\'appel', queue: 'une file d\'attente', ivr: 'un SVI', switchboard: 'un standard', voicemail: 'une messagerie', conference: 'une conférence', schedule: 'un horaire', outcall: 'une règle sortante' };
@@ -35,6 +35,7 @@ const PRESETS = {
 };
 const QSTRATS = [['ringall', 'Tous en même temps'], ['linear', 'Un par un, dans l\'ordre'], ['rrmemory', 'Tour de rôle mémorisé'], ['leastrecent', 'Le moins récemment appelé'], ['fewestcalls', 'Le moins d\'appels pris'], ['random', 'Aléatoire']];
 const GSTRATS = [['all', 'Tous en même temps'], ['linear', 'Un par un, dans l\'ordre'], ['random', 'Aléatoire'], ['least_recent', 'Le moins récemment appelé'], ['fewest_calls', 'Le moins d\'appels pris'], ['memorized_round_robin', 'Tour de rôle mémorisé']];
+const userName = (u) => [u?.firstname, u?.lastname].filter(Boolean).join(' ') || u?.username || u?.uuid || '';
 const opts = (l) => l.map(([k, x]) => `<option value="${k}">${esc(x)}</option>`).join('');
 
 // ---------------------------------------------------------------------------
@@ -186,7 +187,7 @@ function formHtml(type, pfx) {
     queue: () => `<div class="cf-ge-2">${field('Nom affiché', '<input data-c="label" maxlength="128" placeholder="ex. Support">')}${field('Nom technique *', '<input data-c="name" maxlength="128" placeholder="ex. support">', 'Sans espace ni accent : lettres, chiffres, - _ .')}</div>${field('Stratégie', `<select data-c="strategy">${opts(QSTRATS)}</select>`)}${num}`,
     ivr: () => `${field('Nom *', '<input data-c="name" maxlength="128" placeholder="ex. Menu principal">')}${field('Message du menu *', `<select data-c="menu" id="${pfx}-menu"><option value="">Chargement des sons…</option></select>`, '« Tapez 1 pour… ». Les touches se règlent ensuite (« Régler le SVI… »).')}`,
     switchboard: () => field('Nom *', '<input data-c="name" maxlength="128" placeholder="ex. Standard">', 'Opérateurs, délai et débordement : « Régler le standard… » ensuite.'),
-    voicemail: () => `${field('Nom *', '<input data-c="name" maxlength="80" placeholder="ex. Messagerie accueil">')}<div class="cf-ge-2">${field('Numéro *', '<input data-c="number" inputmode="numeric" placeholder="ex. 8000">', 'Numéro de la boîte, souvent celui du poste. Pas de plage à respecter, mais unique dans le contexte.')}${field('Contexte *', ctxSel('data-c="ctx"'))}</div>${field('E-mail (facultatif)', '<input type="email" data-c="email" placeholder="aucun">')}${secretField('data-c="password"', 'Code (facultatif)', '', 'Chiffres. Masqué partout, jamais dans une sauvegarde.')}`,
+    voicemail: () => `${field('Nom *', '<input data-c="name" maxlength="80" placeholder="ex. Messagerie accueil">')}<div class="cf-ge-2">${field('Numéro *', '<input data-c="number" inputmode="numeric" placeholder="ex. 8000">', 'Numéro de la boîte, souvent celui du poste. Pas de plage à respecter, mais unique dans le contexte.')}${field('Contexte *', ctxSel('data-c="ctx"'))}</div>${field('Utilisateur associé (facultatif)', `<select data-c="vmuser"><option value="">Aucun</option>${(M.lists.user || []).slice().sort((a, b) => userName(a).localeCompare(userName(b), 'fr')).map((u) => { const cur = (M.lists.voicemail || []).find((x) => (x.users || []).some((y) => y.uuid === u.uuid)); return `<option value="${esc(u.uuid)}">${esc(userName(u))}${cur ? ` (a « ${esc(cur.name)} » : elle lui sera retirée)` : ''}</option>`; }).join('')}</select>`, 'Pour consulter la boîte depuis son poste. Autres utilisateurs et messages d\'accueil : dans le réglage de la messagerie (carte, mode édition).')}${field('E-mail (facultatif)', '<input type="email" data-c="email" placeholder="aucun">')}${secretField('data-c="password"', 'Code (facultatif)', '', 'Chiffres. Masqué partout, jamais dans une sauvegarde.')}`,
     conference: () => `${field('Nom', '<input data-c="name" maxlength="128" placeholder="ex. Réunion">')}${num}`,
     // Règle sortante (vérifié, confd outcall/schema.py : seul name est obligatoire) ; motifs et trunks ensuite (« Régler la règle sortante… », assistant France).
     outcall: () => field('Nom *', '<input data-c="name" maxlength="128" placeholder="ex. Sortie Unyc">', 'Motifs (assistant France), trunks, horaire et autorisations : dans le réglage complet, ouvert juste après.'),
@@ -233,6 +234,17 @@ async function submitForm(type, root, pfx) {
   }
   let created;
   try { created = await api('POST', path, body); } catch (e) { return err(`Création refusée par Wazo : ${e.message}`); }
+  // Messagerie : utilisateur associé (vérifié, confd user_voicemail : une seule par utilisateur → l'ancienne lui est retirée). Échec signalé, la boîte reste.
+  if (type === 'voicemail' && v('vmuser')) {
+    const uuid = v('vmuser');
+    try {
+      const cur = await api('GET', `/users/${uuid}/voicemails`);
+      if ((cur?.items || []).length) await api('DELETE', `/users/${uuid}/voicemails`);
+      await api('PUT', `/users/${uuid}/voicemails/${created.id}`);
+      for (const x of M.lists.voicemail || []) x.users = (x.users || []).filter((y) => y.uuid !== uuid);
+      const u = M.userByUuid?.get(uuid); created.users = [{ uuid, firstname: u?.firstname || '', lastname: u?.lastname || '' }];
+    } catch (e) { toast(`Messagerie créée, mais utilisateur non associé : ${e.message}`, 9000); }
+  }
   if (ex) {
     // Numéro : extension puis association ; en cas d'échec, l'objet reste créé (signalé).
     const base = type === 'group' ? `/groups/${created.uuid}` : type === 'queue' ? `/queues/${created.id}` : `/conferences/${created.id}`;

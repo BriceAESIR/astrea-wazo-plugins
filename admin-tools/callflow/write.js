@@ -12,13 +12,13 @@
 // Toujours : relire juste avant d'écrire, ne rien écrire si c'est identique,
 // une seule écriture par objet.
 // Appels liés au tenant des données chargées (tapi, model.js : arrêt si le portail change de tenant).
-import { M, tapi as api } from './model.js?v=0.40.6';
-import { groupCfgOf, applyGroupCfg, GROUP_FIELDS } from './group-editor.js?v=0.40.6';
-import { queueCfgOf, applyQueueCfg, QUEUE_FIELDS, optionsList } from './queue-editor.js?v=0.40.6';
-import { ivrCfgOf, applyIvrCfg, IVR_FIELDS } from './ivr-editor.js?v=0.40.6';
-import { sbCfgOf, applySbCfg, SB_FIELDS } from './sb-editor.js?v=0.40.6';
-import { incallCfgOf, applyIncallCfg, INCALL_FIELDS, userCfgOf, applyUserCfg, USER_FIELDS, vmCfgOf, applyVmCfg, VM_FIELDS, confCfgOf, applyConfCfg, CONF_FIELDS, schedCfgOf, applySchedCfg, SCHED_FIELDS } from './obj-editors.js?v=0.40.6';
-import { outcallCfgOf, applyOutcallCfg, OUTCALL_FIELDS } from './outcall-editor.js?v=0.40.6';
+import { M, tapi as api } from './model.js?v=0.40.7';
+import { groupCfgOf, applyGroupCfg, GROUP_FIELDS } from './group-editor.js?v=0.40.7';
+import { queueCfgOf, applyQueueCfg, QUEUE_FIELDS, optionsList } from './queue-editor.js?v=0.40.7';
+import { ivrCfgOf, applyIvrCfg, IVR_FIELDS } from './ivr-editor.js?v=0.40.7';
+import { sbCfgOf, applySbCfg, SB_FIELDS } from './sb-editor.js?v=0.40.7';
+import { incallCfgOf, applyIncallCfg, INCALL_FIELDS, userCfgOf, applyUserCfg, USER_FIELDS, vmCfgOf, applyVmCfg, VM_FIELDS, confCfgOf, applyConfCfg, CONF_FIELDS, schedCfgOf, applySchedCfg, SCHED_FIELDS } from './obj-editors.js?v=0.40.7';
+import { outcallCfgOf, applyOutcallCfg, OUTCALL_FIELDS } from './outcall-editor.js?v=0.40.7';
 
 // Réglages « simples » (obj-editors.js) : un PUT partiel des champs modifiés.
 const SIMPLE = {
@@ -272,6 +272,21 @@ export async function prepare(entries) {
       if (ex0 && a.exten != null && String(ex0.exten) !== a.exten) out.push({ path: `/extensions/${ex0.id}`, before: { extensions: before.extensions }, body: { exten: a.exten, context: ex0.context }, changed: true,
         // run explicite : marqué « numéro » dans la sauvegarde (restauration à la main, l'ancien numéro a pu être réattribué).
         run: async () => api('PUT', `/extensions/${ex0.id}`, { exten: a.exten, context: ex0.context }) });
+      // Messagerie : utilisateurs associés (vérifié, confd user_voicemail : une
+      // seule messagerie par utilisateur → celle qu'il a est d'abord retirée ;
+      // DELETE /users/{uuid}/voicemails dissocie). run explicite : marqué dans
+      // la sauvegarde (restauration à la main).
+      if (op.k === 'vm_cfg' && Array.isArray(a.users)) {
+        const bu = (before?.users || []).map((u) => u.uuid);
+        // Retraits AVANT les réglages (passage en « partagée » : plus aucun utilisateur), ajouts après.
+        const at = out.length - 1;
+        for (const uuid of bu.filter((x) => !a.users.includes(x)).reverse()) out.splice(at, 0, { method: 'DELETE', path: `/users/${uuid}/voicemails`, before: { users: before.users }, changed: true, run: async () => api('DELETE', `/users/${uuid}/voicemails`) });
+        for (const uuid of a.users.filter((x) => !bu.includes(x))) out.push({ path: `/users/${uuid}/voicemails/${op.id}`, before: { users: before?.users || [] }, changed: true, run: async () => {
+          const cur = await api('GET', `/users/${uuid}/voicemails`);
+          if ((cur?.items || []).some((v) => String(v.id) !== String(op.id))) await api('DELETE', `/users/${uuid}/voicemails`);
+          if (!(cur?.items || []).some((v) => String(v.id) === String(op.id))) await api('PUT', `/users/${uuid}/voicemails/${op.id}`);
+        } });
+      }
     } else if (op.k === 'outcall_cfg') {
       // Règle sortante (outcall-editor.js) : relire, puis une écriture par partie modifiée.
       const base = `/outcalls/${op.id}`;

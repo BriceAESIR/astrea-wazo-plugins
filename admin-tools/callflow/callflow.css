@@ -477,3 +477,10 @@ button.cf-tr-end { border: 0; background: none; padding: 0; text-transform: none
 .cf-play-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .cf-play-row > select { flex: 1; min-width: 0; }
 .cf-play { flex: none; white-space: nowrap; }
+.cf-play.cf-play-off { opacity: .55; }
+
+/* Messages d'accueil d'une messagerie (obj-editors.js) */
+.cf-vm-greet { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 10px 0; border-top: 1px solid var(--line); }
+.cf-vm-greet .cf-ge-l { min-width: 9em; margin: 0; }
+.cf-vm-greet [data-gs] { flex: 1; min-width: 12em; }
+.cf-vm-greet [data-gconf] { flex-basis: 100%; }
