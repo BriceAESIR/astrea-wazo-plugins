@@ -1,23 +1,15 @@
 // Call Flow Manager — canevas : disposition en arbre (gauche → droite, comme
 // une carte mentale), cartes HTML, liens SVG, déplacement du canevas, zoom,
 // déplacement des cartes (avec leur sous-arbre), repli des branches.
-// Positions manuelles gardées dans le navigateur (localStorage, try/catch).
-import { esc } from '../common/core.js?v=0.39.4';
-import { TYPES } from './model.js?v=0.39.4';
+// Disposition automatique à chaque affichage (retour de Brice, 16/10/2026 : les
+// positions manuelles mémorisées donnaient des dispositions bizarres quand le
+// graphe changeait) : une carte déplacée à la main garde sa place seulement
+// tant que la vue montre les mêmes cartes. Plus rien n'est gardé dans le navigateur.
+import { esc } from '../common/core.js?v=0.39.5';
+import { TYPES } from './model.js?v=0.39.5';
 
 const W = 236, GAP_X = 104, GAP_Y = 18;
-const POS_KEY = 'astrea-callflow-pos-v1';
-
-function loadPos(k) { try { return JSON.parse(localStorage.getItem(POS_KEY) || '{}')[k] || {}; } catch { return {}; } }
-function savePos(k, pos) {
-  try {
-    const all = JSON.parse(localStorage.getItem(POS_KEY) || '{}');
-    if (Object.keys(pos).length) all[k] = pos; else delete all[k];
-    // Garde-fou : 200 vues au plus (les plus anciennes sont retirées).
-    const keys = Object.keys(all); for (const x of keys.slice(0, Math.max(0, keys.length - 200))) delete all[x];
-    localStorage.setItem(POS_KEY, JSON.stringify(all));
-  } catch { /* stockage indisponible */ }
-}
+try { localStorage.removeItem('astrea-callflow-pos-v1'); } catch { /* ancien stockage des positions */ }
 
 export function createCanvas(viewport, { onSelect, onOpen, onFold, onClear, onUndo, onCardDrop, onPortClick }) {
   // Pointes de flèche en unités du dessin (userSpaceOnUse) : elles ne grossissent
@@ -55,7 +47,10 @@ export function createCanvas(viewport, { onSelect, onOpen, onFold, onClear, onUn
   function render(tree, dir, storeKey, { keepView = false, edit = false, changed = new Set(), sim = null } = {}) {
     V.tree = tree; V.dir = dir; V.storeKey = storeKey; V.edit = edit; V.changed = changed; V.sim = sim;
     viewport.classList.toggle('editing', edit);
-    V.manual = loadPos(storeKey);
+    // Mêmes cartes dans la même vue : les déplacements manuels restent ; sinon disposition automatique.
+    const sig = `${storeKey}|${[...tree.nodes.keys()].join(',')}`;
+    if (sig !== V.sig) V.manual = {};
+    V.sig = sig;
     cards.innerHTML = [...tree.nodes.values()].map(cardHtml).join('');
     simDecor();
     layout();
@@ -124,7 +119,7 @@ export function createCanvas(viewport, { onSelect, onOpen, onFold, onClear, onUn
     }
     g.innerHTML = out.join('');
   }
-  // Appel suivi (« Suivre un appel ») : cartes du chemin avec instant et durée,
+  // Appel suivi (« Simulation d'appel ») : cartes du chemin avec instant et durée,
   // sortie prise, membres qui sonnent (avec leurs créneaux).
   const fmt = (s) => (s >= 60 ? `${Math.floor(s / 60)} min${s % 60 ? ` ${s % 60} s` : ''}` : `${s} s`);
   function simDecor() {
@@ -146,7 +141,8 @@ export function createCanvas(viewport, { onSelect, onOpen, onFold, onClear, onUn
   // sim (facultatif) : nouvel appel suivi.
   function refreshTime(sim) {
     if (!V.tree) return;
-    if (sim !== undefined) { V.sim = sim; simDecor(); }
+    // Les pastilles de l'appel suivi changent la hauteur des cartes : disposition recalculée.
+    if (sim !== undefined) { V.sim = sim; simDecor(); layout(); }
     for (const n of V.tree.nodes.values()) {
       const e = el(n.key); if (!e) continue;
       e.classList.toggle('dim', !!n.dim);
@@ -228,7 +224,7 @@ export function createCanvas(viewport, { onSelect, onOpen, onFold, onClear, onUn
       onCardDrop?.(d.card, target);
       return;
     }
-    if (d.card && d.moved) { for (const [k] of d.keys) V.manual[k] = V.pos[k]; savePos(V.storeKey, V.manual); }
+    if (d.card && d.moved) { for (const [k] of d.keys) V.manual[k] = V.pos[k]; }
     else if (!d.moved) select(d.card, true);
   };
   // Sortie modifiable sous le pointeur (coordonnées écran).
@@ -270,7 +266,7 @@ export function createCanvas(viewport, { onSelect, onOpen, onFold, onClear, onUn
     if (k) el(k)?.classList.add('sel');
     if (notify) onSelect?.(k ? V.tree.nodes.get(k) : null);
   }
-  function resetLayout() { V.manual = {}; savePos(V.storeKey, {}); layout(); draw(); fit(); }
+  function resetLayout() { V.manual = {}; layout(); draw(); fit(); }
   // Recentrer sur une carte (sans changer le zoom).
   function focus(k) { const p = V.pos[k], e = el(k); if (!p || !e) return; V.tx = viewport.clientWidth / 2 - (p[0] + e.offsetWidth / 2) * V.s; V.ty = viewport.clientHeight / 3 - p[1] * V.s; apply(); }
   apply();

@@ -21,8 +21,8 @@
 // Supposé, à vérifier en réel : les listes (GET /groups, /queues,
 // /switchboards, /schedules) contiennent déjà fallbacks, membres et
 // destinations ; sinon on lit le détail de chaque objet (ensureDetails).
-import { S, api, listAll, fullName } from '../common/core.js?v=0.39.4';
-import { comparePatterns, describePattern, userContext, rightsList } from './dialsim.js?v=0.39.4';
+import { S, api, listAll, fullName } from '../common/core.js?v=0.39.5';
+import { comparePatterns, describePattern, userContext, rightsList } from './dialsim.js?v=0.39.5';
 
 export const M = { lists: {}, by: {}, ext: new Map(), extAny: new Map(), rev: null, warns: [] };
 
@@ -30,7 +30,7 @@ export const M = { lists: {}, by: {}, ext: new Map(), extAny: new Map(), rev: nu
 // Catalogue des types de cartes (aide : norme Astrea 3bis)
 // ---------------------------------------------------------------------------
 export const TYPES = {
-  caller: { label: 'Appelant', badge: 'APP', help: 'Numéro de la personne qui appelle (« Suivre un appel »). Wazo route un appel entrant selon le numéro appelé (SDA) et l\'heure ; le numéro de l\'appelant ne compte que pour la liste de blocage des utilisateurs.' },
+  caller: { label: 'Appelant', badge: 'APP', help: 'Numéro de la personne qui appelle (« Simulation d\'appel »). Wazo route un appel entrant selon le numéro appelé (SDA) et l\'heure ; le numéro de l\'appelant ne compte que pour la liste de blocage des utilisateurs.' },
   incall: { label: 'SDA', badge: 'SDA', help: 'Numéro entrant (SDA) : appel reçu d\'un opérateur sur un trunk. Il part vers une seule destination ; un horaire associé est vérifié avant (fermé → destination de fermeture).' },
   trunk: { label: 'Trunk', badge: 'TRK', help: 'Liaison opérateur. Les appels entrants arrivent dans le contexte du trunk ; le numéro composé y est cherché parmi les SDA de ce contexte. Wazo n\'a pas de lien direct trunk → SDA : il passe par le contexte.' },
   context: { label: 'Contexte', badge: 'CTX', help: 'Contexte Asterisk : ensemble de numéros joignables. Type incall pour les SDA, internal pour les numéros internes, outcall pour les règles de sortie. Un contexte interne inclut en général le contexte sortant.' },
@@ -808,8 +808,45 @@ export function reverseIndex() {
 // un lien croisé en pointillé.
 // dir 'out' : où vont les appels ; 'in' : qui arrive ici.
 // ---------------------------------------------------------------------------
+// Comment un appel extérieur arrive jusqu'à un objet (simulation, départ
+// utilisateur, groupe, SVI… ; demande de Brice, 16/10/2026) : pour chaque SDA,
+// le plus court chemin par les sorties réelles (toutes heures confondues :
+// l'horaire est vérifié ensuite par la simulation) jusqu'à la carte de départ
+// (son horaire compris). Un utilisateur est aussi atteint comme membre d'un
+// groupe ou d'une file. → [{ sda, exten, steps: [{ key, edge }] }], plus court d'abord.
+export function entryChains(target) {
+  const T = gated(baseKey(target)); const tObj = entity(baseKey(target));
+  const isMember = (k) => {
+    if (tObj.type !== 'user' || !tObj.obj) return false;
+    const { type, obj } = entity(k);
+    if (type === 'group') return groupMemberList(obj).some((m) => m.uuid === tObj.obj.uuid);
+    if (type === 'queue') return (obj.members?.users || []).some((m) => m.uuid === tObj.obj.uuid);
+    return false;
+  };
+  const out = [];
+  for (const ic of M.lists.incall || []) {
+    const start = key('incall', ic);
+    const prev = new Map([[start, null]]); const q = [start]; let end = null;
+    while (q.length && !end && prev.size < 600) {
+      const k = q.shift();
+      if (isMember(k) && T === baseKey(target)) { end = { k, edge: { slot: 'members', label: SLOTS.members.label, note: `dont ${nodeInfo(T).title}`, help: SLOTS.members.help, to: { key: T } } }; break; }
+      for (const e of edgesOf(k)) {
+        const to = e.to?.key; if (!to || e.assoc) continue;
+        const b = baseKey(to);
+        if (b === T) { end = { k, edge: e }; break; }
+        if (!prev.has(b) && !b.startsWith('leaf:')) { prev.set(b, { from: k, edge: e }); q.push(b); }
+      }
+    }
+    if (!end) continue;
+    const steps = [{ key: end.k, edge: end.edge }];
+    for (let k = end.k; prev.get(k); k = prev.get(k).from) steps.unshift({ key: prev.get(k).from, edge: prev.get(k).edge });
+    out.push({ sda: start, exten: ic.extensions?.[0]?.exten || '', steps });
+  }
+  return out.sort((a, b) => a.steps.length - b.steps.length);
+}
+
 const MAX_NODES = 400; // garde-fou : au-delà, les répétitions deviennent des liens
-export function buildTree(rootKey, dir, { maxDepth = 8, collapsed = new Set(), expanded = new Set(), showEmpty = false, hit = null, caller = '', dialScope = '' } = {}) {
+export function buildTree(rootKey, dir, { maxDepth = 8, collapsed = new Set(), expanded = new Set(), showEmpty = false, hit = null, caller = '', dialScope = '', chain = null } = {}) {
   // Objet gardé par un horaire : en sens « où vont les appels », le parcours
   // commence par la carte horaire (une SDA garde sa carte, l'horaire suit).
   if (dir === 'out' && !rootKey.startsWith('incall:')) rootKey = gated(rootKey);
@@ -817,30 +854,34 @@ export function buildTree(rootKey, dir, { maxDepth = 8, collapsed = new Set(), e
   const first = { key: rootKey, depth: 0, kids: [], info: nodeInfo(rootKey), ports: [] };
   let root = first;
   nodes.set(rootKey, first);
-  // Appelant (« Suivre un appel », demande de Brice 16/10/2026) : carte en tête,
-  // l'objet choisi à gauche devient sa suite.
-  if (caller && dir === 'out') {
-    const port = { slot: 'calls', label: rootKey.startsWith('trunk:') ? 'Appelle, arrive par ce trunk' : 'Appelle ce numéro', note: '', help: 'L\'opérateur présente l\'appel à Wazo.', id: 'calls#0', to: { key: rootKey } };
-    const info = { type: 'caller', title: caller, sub: 'appelant extérieur' };
-    root = { key: 'leaf:caller', depth: 0, kids: [first], leaf: info, info: { ...info, leafType: true }, ports: [port] };
-    Object.assign(first, { depth: 1, parent: root.key, port: port.id, edge: port });
-    nodes.set(root.key, root);
-    // Départ SDA : le trunk par lequel l'appel arrive s'intercale (retour de Brice,
-    // 16/10/2026) — trunk dont le contexte est celui de la SDA ; plusieurs : le
-    // premier, les autres cités. Carte de passage : une seule sortie, vers la SDA.
-    if (rootKey.startsWith('incall:')) {
-      const ctxs = (entity(rootKey).obj?.extensions || []).map((x) => x.context);
+  // Arrivée de l'appel simulé (demande de Brice, 16/10/2026), cartes de passage
+  // en tête, une seule sortie chacune, puis l'objet choisi à gauche :
+  //  Appelant (si saisi) → Trunk (contexte de la SDA) → SDA → [chain : cartes
+  //  entre la SDA et l'objet, voir entryChains] → objet.
+  // chain = { sda, steps: [{ key, edge }] } (départ autre qu'un trunk ou une SDA).
+  if (dir === 'out' && (caller || chain)) {
+    const seq = [];
+    const sda = rootKey.startsWith('incall:') ? rootKey : chain?.sda || null;
+    if (sda) {
+      // Trunk dont le contexte est celui de la SDA ; plusieurs : le premier, les autres cités.
+      const ctxs = (entity(sda).obj?.extensions || []).map((x) => x.context);
       const trs = (M.lists.trunk || []).filter((t) => ctxs.includes(t.context));
-      if (trs.length) {
-        const tk = `trunk:${trs[0].id}`;
-        port.label = 'Appelle, arrive par ce trunk'; port.to = { key: tk };
-        const via = { slot: 'via', label: 'Contexte entrant → SDA', note: [ctxLabel(trs[0].context), trs.length > 1 ? `ou par ${trs.slice(1).map((t) => nodeInfo(`trunk:${t.id}`).title).join(', ')}` : ''].filter(Boolean).join(' · '), help: 'Le numéro appelé est cherché parmi les SDA du contexte entrant du trunk.', id: 'via#0', to: { key: rootKey } };
-        const tn = { key: tk, depth: 1, kids: [first], parent: root.key, port: port.id, edge: port, info: nodeInfo(tk), ports: [via] };
-        root.kids = [tn];
-        Object.assign(first, { depth: 2, parent: tk, port: via.id, edge: via });
-        nodes.set(tk, tn);
-      }
+      if (trs.length) seq.push({ key: `trunk:${trs[0].id}`, port: { slot: 'via', label: 'Contexte entrant → SDA', note: [ctxLabel(trs[0].context), trs.length > 1 ? `ou par ${trs.slice(1).map((t) => nodeInfo(`trunk:${t.id}`).title).join(', ')}` : ''].filter(Boolean).join(' · '), help: 'Le numéro appelé est cherché parmi les SDA du contexte entrant du trunk.' } });
     }
+    for (const s of chain?.steps || []) seq.push({ key: s.key, pass: true, port: { ...s.edge } });
+    if (caller) {
+      const info = { type: 'caller', title: caller, sub: 'appelant extérieur' };
+      seq.unshift({ key: 'leaf:caller', leaf: info, port: { slot: 'calls', label: seq[0]?.key.startsWith('trunk:') || rootKey.startsWith('trunk:') ? 'Appelle, arrive par ce trunk' : 'Appelle ce numéro', note: '', help: 'L\'opérateur présente l\'appel à Wazo.' } });
+    }
+    let parent = null;
+    seq.forEach((s, i) => {
+      const nextKey = seq[i + 1]?.key || rootKey;
+      const port = { ...s.port, id: `${s.port.slot}#pass`, to: { key: nextKey } };
+      const n = { key: s.key, depth: i, kids: [], ports: [port], pass: !!s.pass, leaf: s.leaf || null, info: s.leaf ? { ...s.leaf, leafType: true } : nodeInfo(s.key) };
+      if (parent) { Object.assign(n, { parent: parent.key, port: parent.ports[0].id, edge: parent.ports[0] }); parent.kids.push(n); } else root = n;
+      nodes.set(s.key, n); parent = n;
+    });
+    if (parent) { Object.assign(first, { depth: seq.length, parent: parent.key, port: parent.ports[0].id, edge: parent.ports[0] }); parent.kids.push(first); maxDepth += seq.length; }
   }
   const queue = [first];
   const rev = dir === 'in' ? reverseIndex() : null;
@@ -1021,7 +1062,7 @@ function targetOf(tree, k, portId) {
 // active, jusqu'au premier objet qui n'est pas un horaire.
 export function landingAt(tree, w) {
   // Appelant et trunk de passage (simulation) : on part de la carte choisie.
-  let n0 = tree.root; while (n0 && (n0.info?.type === 'caller' || n0.ports?.some((p) => p.slot === 'via'))) n0 = n0.kids[0];
+  let n0 = tree.root; while (n0 && (n0.info?.type === 'caller' || n0.pass || n0.ports?.some((p) => p.slot === 'via'))) n0 = n0.kids[0];
   let k = n0?.key;
   if (k.startsWith('incall:')) k = targetOf(tree, k, tree.root.ports?.[0]?.id);
   for (let i = 0; k && k.startsWith('schedule:') && i < 12; i++) {

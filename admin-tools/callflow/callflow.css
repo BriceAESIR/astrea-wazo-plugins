@@ -329,7 +329,7 @@ body.in-portal.ready #workbench { height: 100vh; }
 .cf-oe-info { grid-column: 2 / -1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cf-oe-list li.cf-oe-pat.hit { background: color-mix(in srgb, var(--accent) 12%, var(--panel)); }
 @media (max-width: 640px) { .cf-oe-head { display: none; } .cf-oe-head, .cf-oe-list li.cf-oe-pat { grid-template-columns: 28px 1fr 1fr 28px; } .cf-oe-info { white-space: normal; } }
-/* Suivre un appel : commandes du bandeau, trame, chemin allumé dans le graphe */
+/* Simulation d'appel : commandes du bandeau, trame, chemin allumé dans le graphe */
 .cf-follow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .t-caller { --c: var(--cf-entry); }
 .cf-sf { display: inline-flex; align-items: center; gap: 6px; }
@@ -343,6 +343,7 @@ button.cf-tr-end { border: 0; background: none; padding: 0; text-transform: none
 .cf-tr { display: inline-flex; align-items: baseline; gap: 4px; padding: 2px 8px; border-radius: 12px; font-size: .75rem; text-transform: none; letter-spacing: 0; border: 1px solid color-mix(in srgb, var(--c, var(--line)) 60%, var(--line)); background: color-mix(in srgb, var(--c, var(--muted)) 14%, var(--panel)); color: var(--ink); cursor: pointer; }
 .cf-tr b { font-variant-numeric: tabular-nums; }
 .cf-tr-arr { color: var(--muted); font-size: .75rem; }
+.cf-tr-warn { flex-basis: 100%; margin-top: 4px; padding: 6px 10px; border-radius: var(--radius); font-size: .8125rem; background: color-mix(in srgb, var(--warn) 16%, var(--panel)); border: 1px solid color-mix(in srgb, var(--warn) 45%, var(--panel)); color: var(--ink); }
 .cf-tr-end { margin-left: 6px; font-size: .75rem; color: var(--muted); font-style: italic; }
 @media (max-width: 800px) { .cf-trame { grid-template-columns: 1fr; } .cf-trame .cf-ln { text-align: left; } }
 .cf-view.simming .cf-node:not(.onpath):not(.ringing) { opacity: .28; }

@@ -7,8 +7,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Mulish:wght@300..800&display=swap">
-<link rel="stylesheet" href="../common/style.css?v=0.39.4">
-<link rel="stylesheet" href="./callflow.css?v=0.39.4">
+<link rel="stylesheet" href="../common/style.css?v=0.39.5">
+<link rel="stylesheet" href="./callflow.css?v=0.39.5">
 <script>if (window.parent !== window) document.documentElement.classList.add('framed');</script>
 </head>
 <body>
@@ -71,14 +71,11 @@
             <button id="t-next" class="icon" title="Jour suivant">›</button>
           </div>
           <div class="cf-clock"><strong id="t-label">--:--</strong><span id="t-state" class="muted small"></span></div>
-          <!-- Suivre un appel dans le graphe (demande de Brice 16/10/2026, sans fenêtre) -->
+          <!-- Simulation d'appel dans le graphe (demande de Brice 16/10/2026, sans fenêtre) -->
           <div class="cf-follow">
-            <label class="inline small" title="Allume dans le graphe le chemin d'un appel si personne ne décroche, avec l'instant de chaque étape (à la date et l'heure choisies) ; le reste est atténué"><input type="checkbox" id="s-on"> Suivre un appel</label>
-            <div class="cf-seg cf-smode" id="s-mode" role="group" aria-label="Type d'appel" hidden>
-              <button type="button" data-sm="in" title="Appel reçu par la carte choisie à gauche (depuis un trunk : numéro appelé, appelant)">Entrant</button>
-              <button type="button" data-sm="int" title="Appel passé vers un numéro interne depuis la carte choisie (utilisateur, groupe : un de ses membres, contexte)">Interne</button>
-              <button type="button" data-sm="out" title="Appel passé vers l'extérieur depuis la carte choisie : contexte, règle sortante, ce qui peut bloquer, motif, trunk, opérateur">Sortant</button>
-            </div>
+            <label class="inline small" title="Allume dans le graphe le chemin d'un appel si personne ne décroche, avec l'instant de chaque étape (à la date et l'heure choisies) ; le reste est atténué"><input type="checkbox" id="s-on"> Simulation d'appel</label>
+            <label class="cf-sf small" id="s-dir-l" title="Entrant : un appel venant de l'extérieur, jusqu'à la carte de départ et au-delà. Sortant : un utilisateur compose un numéro (poste interne ou extérieur)." hidden><span>Sens</span><select id="s-dir"><option value="in">Entrant</option><option value="out">Sortant</option></select></label>
+            <label class="cf-sf small" id="s-from-l" title="Carte de départ de la simulation (la même que dans la colonne de gauche)" hidden><span>Départ</span><select id="s-from"></select></label>
             <label class="cf-sf small" id="s-caller-l" title="Numéro de la personne qui appelle : carte en tête du graphe, et contrôle des listes de blocage des utilisateurs" hidden><span>Appelant</span><input type="search" id="s-caller" inputmode="tel" autocomplete="off" placeholder="ex. 0612345678"></label>
             <label class="cf-sf small" id="s-num-l" hidden><span id="s-num-t">Appelé</span><input type="search" id="s-num" inputmode="tel" autocomplete="off"></label>
           </div>
@@ -123,6 +120,6 @@
     <div class="btnrow right"><button id="modal-cancel">Annuler</button><button id="modal-ok" class="primary">Confirmer</button></div></div></div>
   <div id="toast" class="toast" hidden></div>
 </div>
-<script type="module" src="./app.js?v=0.39.4"></script>
+<script type="module" src="./app.js?v=0.39.5"></script>
 </body>
 </html>

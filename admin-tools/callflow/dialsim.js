@@ -12,7 +12,7 @@
 //    « prefix » est lu mais pas appliqué.
 // Supposé : effet exact des autorisations d'appels et d'un horaire sur une
 // règle sortante (affichés à titre indicatif).
-import { M, scheduleState, whenOf, entity } from './model.js?v=0.39.4';
+import { M, scheduleState, whenOf, entity } from './model.js?v=0.39.5';
 
 // Motif → liste d'éléments { set: chaînes de caractères, size } | { dot } | { bang } ; null si numéro exact.
 export function parsePattern(p) {
@@ -208,7 +208,7 @@ export function findIncall(number) {
   return null;
 }
 
-// « Suivre un appel » dans le graphe affiché (demande de Brice, 16/10/2026 :
+// « Simulation d'appel » dans le graphe affiché (demande de Brice, 16/10/2026 :
 // pas de fenêtre en plus, le chemin se voit sur les cartes). On part de la
 // carte de départ (choisie à gauche) et on suit, carte par carte, la sortie
 // prise si personne ne décroche, en cumulant les durées :
@@ -232,7 +232,7 @@ export function simPath(tree, w, match, { blocked = null } = {}) {
   const r = match?.result;
   const kidOf = (n, p) => { const c = n.kids.find((x) => x.port === p.id); if (c) return c; const x = tree.cross.find((y) => y.from === n.key && y.port === p.id); return x ? tree.nodes.get(x.to) : null; };
   const subtree = (n, f) => { for (const c of n.kids) { f(c); subtree(c, f); } };
-  let n = tree.root, t = 0, override = null; const seen = new Set();
+  let n = tree.root, t = 0, override = null, memberOf = ''; const seen = new Set();
   for (let i = 0; i < 60 && n; i++) {
     if (seen.has(n.key)) { R.end = 'boucle : l\'appel repasse par les mêmes cartes jusqu\'à ce que l\'appelant raccroche'; break; }
     seen.add(n.key);
@@ -281,6 +281,10 @@ export function simPath(tree, w, match, { blocked = null } = {}) {
         }
         end = true; st.what = 'contexte'; break;
       case 'user':
+        // Atteint comme membre d'un groupe ou d'une file : il sonne dans ce cadre ;
+        // ses renvois et débordements personnels ne s'appliquent pas (déduit du
+        // dialplan, non testé). Le groupe continue s'il ne répond pas.
+        if (memberOf) { st.what = `sonne comme membre de ${memberOf}`; end = true; R.end = `${n.info.title} sonne comme membre de ${memberOf} ; s'il ne répond pas, c'est le groupe ou la file qui continue (ses débordements personnels ne s'appliquent pas, déduit)`; break; }
         {
           // Liste de blocage (vérifié : elle existe dans confd ; supposé : appel rejeté, sans sonnerie ni débordement).
           if (blocked?.has(o.uuid)) { st.what = `bloque cet appelant${blocked.get(o.uuid) ? ` (« ${blocked.get(o.uuid)} »)` : ''}`; end = true; R.end = 'numéro dans la liste de blocage de l\'utilisateur : l\'appel est rejeté (supposé)'; break; }
@@ -337,6 +341,19 @@ export function simPath(tree, w, match, { blocked = null } = {}) {
       case 'voicemail': st.what = 'l\'appelant laisse un message'; end = true; break;
       case 'conference': st.what = 'entre dans la conférence'; end = true; break;
       default: st.what = n.info?.title || ''; end = true;
+    }
+    // Carte de passage (arrivée vers la carte choisie, entryChains) : une seule
+    // sortie, celle qui mène à la carte choisie. Un horaire sur une autre sortie
+    // à ce moment = l'appel ne passe pas par là.
+    memberOf = '';
+    if (n.pass) {
+      const pp = ports[0];
+      // Les membres sonnent dès l'entrée dans le groupe ou la file : pas de délai avant eux.
+      if (pp.slot === 'members') { p = pp; end = false; R.end = ''; st.what = `fait sonner ses membres, ${pp.note}${Number.isFinite(st.dur) && st.dur ? ` (jusqu'à ${st.dur} s)` : ''}`; st.dur = 0; memberOf = n.info.title; }
+      else if (!p || p.id !== pp.id) {
+        if (type === 'schedule') { end = true; R.end = `${n.info.title} : ${st.what.toLowerCase()} à ce moment, l'appel ne prend pas ce chemin (choisissez un autre moment ou une autre SDA)`; }
+        else if (!end) { p = pp; if (type === 'ivr') { st.what = `l'appelant choisit « ${pp.label} »`; st.dur = 0; } }
+      }
     }
     R.on.set(n.key, st); R.steps.push(st);
     if (end) break;

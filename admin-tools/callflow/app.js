@@ -3,22 +3,22 @@
 // déposer (lot 2a, brouillon puis aperçu, sauvegarde, écriture).
 // Cadrage : astrea-wazo-dev/docs/CALLFLOW-MANAGER.md.
 // Modèle (sources confd vérifiées) : model.js ; canevas : canvas.js ; écriture : write.js.
-import { S, $, esc, fullName, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.39.4';
-import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, loadTrunkOperators, scanGroupKeys, buildTree, landingAt, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel, periodText, STRATEGY, QSTRAT, baseKey, gateOf, loadBlocklist, blockedBy, dialUser } from './model.js?v=0.39.4';
-import { createCanvas } from './canvas.js?v=0.39.4';
-import { getDest, setDest, sameValue, prepare, execute } from './write.js?v=0.39.4';
-import { openScheduleEditor } from './sched-editor.js?v=0.39.4';
-import { openGroupEditor, groupCfgDiff } from './group-editor.js?v=0.39.4';
-import { openQueueEditor, queueCfgDiff, agentName } from './queue-editor.js?v=0.39.4';
-import { openIvrEditor, ivrCfgDiff } from './ivr-editor.js?v=0.39.4';
-import { openSbEditor, sbCfgDiff } from './sb-editor.js?v=0.39.4';
-import { redact } from './ed-ui.js?v=0.39.4';
-import { openRestore } from './restore.js?v=0.39.4';
-import { openIncallEditor, incallCfgDiff, openUserEditor, userCfgDiff, openVmEditor, vmCfgDiff, openConfEditor, confCfgDiff, openSchedGenEditor, schedCfgDiff } from './obj-editors.js?v=0.39.4';
-import { openDestEditor, ENTITY_DEST } from './dest-editor.js?v=0.39.4';
-import { openOutcallEditor, outcallCfgDiff } from './outcall-editor.js?v=0.39.4';
-import { openCreate, CREATABLE } from './create.js?v=0.39.4';
-import { simulate, userContext, simPath } from './dialsim.js?v=0.39.4';
+import { S, $, esc, fullName, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.39.5';
+import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, loadTrunkOperators, scanGroupKeys, buildTree, landingAt, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel, periodText, STRATEGY, QSTRAT, baseKey, gateOf, loadBlocklist, blockedBy, dialUser, entryChains } from './model.js?v=0.39.5';
+import { createCanvas } from './canvas.js?v=0.39.5';
+import { getDest, setDest, sameValue, prepare, execute } from './write.js?v=0.39.5';
+import { openScheduleEditor } from './sched-editor.js?v=0.39.5';
+import { openGroupEditor, groupCfgDiff } from './group-editor.js?v=0.39.5';
+import { openQueueEditor, queueCfgDiff, agentName } from './queue-editor.js?v=0.39.5';
+import { openIvrEditor, ivrCfgDiff } from './ivr-editor.js?v=0.39.5';
+import { openSbEditor, sbCfgDiff } from './sb-editor.js?v=0.39.5';
+import { redact } from './ed-ui.js?v=0.39.5';
+import { openRestore } from './restore.js?v=0.39.5';
+import { openIncallEditor, incallCfgDiff, openUserEditor, userCfgDiff, openVmEditor, vmCfgDiff, openConfEditor, confCfgDiff, openSchedGenEditor, schedCfgDiff } from './obj-editors.js?v=0.39.5';
+import { openDestEditor, ENTITY_DEST } from './dest-editor.js?v=0.39.5';
+import { openOutcallEditor, outcallCfgDiff } from './outcall-editor.js?v=0.39.5';
+import { openCreate, CREATABLE } from './create.js?v=0.39.5';
+import { simulate, userContext, simPath } from './dialsim.js?v=0.39.5';
 
 const TESTED_STACK = ['26.07'];
 const NAV = [
@@ -95,12 +95,17 @@ function draw(keepView = false) {
   if (!C.root) { $('cf-title').textContent = 'Parcours des appels'; $('cf-view').classList.add('empty'); return; }
   $('cf-view').classList.remove('empty');
   syncDir();
+  // Appel entrant vers l'objet choisi : SDA qui y mènent ; la SDA saisie, sinon la plus directe.
+  C.chains = needChain() ? entryChains(C.root) : null;
+  const chain = C.chains ? (C.chains.find((c) => c.exten === C.sim.num.trim()) || C.chains[0] || null) : null;
+  C.chain = chain;
   const match = simMatch();
   // Mode Modifier : les sorties vides sont affichées (ce sont des cibles de dépôt).
-  const caller = simActive() && callerOk() ? C.sim.caller.trim() : '';
+  // Pas de carte « Appelant » si aucune SDA ne mène à la carte choisie.
+  const caller = simActive() && callerOk() && !(C.chains && !chain) ? C.sim.caller.trim() : '';
   if (caller && M.blocklist === undefined) loadBlocklist().then(() => draw(true)); // une fois, en arrière-plan
   const td = TD();
-  const build = () => buildTree(C.root, td, { collapsed: C.collapsed, expanded: C.expanded, showEmpty: (C.showEmpty || C.edit) && td === 'out', caller, dialScope: C.sim.mode, hit: td === 'dial' && ['internal', 'incall'].includes(match?.result?.kind) ? { ...match.result, number: match.number } : null });
+  const build = () => buildTree(C.root, td, { collapsed: C.collapsed, expanded: C.expanded, showEmpty: (C.showEmpty || C.edit) && td === 'out', caller, chain, hit: td === 'dial' && ['internal', 'incall'].includes(match?.result?.kind) ? { ...match.result, number: match.number } : null });
   C.tree = build();
   applyTime(C.tree, timeW());
   // Appel suivi : une branche repliée sur le chemin est dépliée, puis l'arbre refait.
@@ -117,7 +122,7 @@ function draw(keepView = false) {
   $('cf-title').textContent = `${t.label || ''} ${info.title}`;
   const nCards = `${C.tree.nodes.size} carte${C.tree.nodes.size > 1 ? 's' : ''}`;
   $('cf-sub').textContent = td === 'dial'
-    ? `Appel ${C.sim.mode === 'int' ? 'interne' : 'sortant'} passé depuis ici · ${nCards}`
+    ? `Appel sortant depuis ici (numéro interne ou extérieur) · ${nCards}`
     : C.dir === 'out' ? `Où vont les appels · ${nCards}${info.sub ? ` · ${info.sub}` : ''}`
       : `Qui envoie des appels ici · ${C.tree.nodes.size - 1} origine${C.tree.nodes.size > 2 ? 's' : ''}`;
   // Aide : recalculée quand le mode change.
@@ -127,7 +132,7 @@ function draw(keepView = false) {
   if (!$('cf-hb')) $('cf-help-box').innerHTML = helpBox('cf-hb', td === 'dial'
     ? 'Appel passé depuis la carte choisie à gauche (un utilisateur ; pour un groupe, un de ses membres ; ou un contexte), dans l\'ordre de recherche d\'Asterisk : numéros internes et règles sortantes du contexte de la ligne, puis contextes inclus (vérifié dans le code d\'Asterisk : numéro exact avant motif, motif le plus précis, contexte avant ses inclus). Interne : sans les règles sortantes. Sortant : chaque règle montre ce qui peut bloquer (autorisations d\'appels de l\'utilisateur, de ses groupes, de la règle ; horaire ; règle désactivée), ses motifs, le numéro envoyé et ses trunks jusqu\'à l\'opérateur. Tapez un numéro : le chemin pris s\'allume, avec le verdict des autorisations (vérifié dans wazo-agid).'
     : C.dir === 'out'
-      ? 'Chaque carte est un objet Wazo ; ses sorties (à droite) sont les cas où l\'appel la quitte : débordements, touches de SVI, horaire fermé… Un lien en pointillé rejoint une carte déjà affichée ailleurs (boucle ou objet partagé). Un lien gris clair est une simple association (messagerie de l\'utilisateur), pas un routage. Les durées affichées sont celles de Wazo (sonnerie, délai du groupe ou de la file). « Suivre un appel » (bandeau du dessus) simule un appel entrant, interne ou sortant à partir de la carte choisie à gauche.'
+      ? 'Chaque carte est un objet Wazo ; ses sorties (à droite) sont les cas où l\'appel la quitte : débordements, touches de SVI, horaire fermé… Un lien en pointillé rejoint une carte déjà affichée ailleurs (boucle ou objet partagé). Un lien gris clair est une simple association (messagerie de l\'utilisateur), pas un routage. Les durées affichées sont celles de Wazo (sonnerie, délai du groupe ou de la file). « Simulation d\'appel » (bandeau du dessus) simule un appel entrant, interne ou sortant à partir de la carte choisie à gauche.'
       : 'Les cartes de gauche envoient des appels vers la carte choisie ; la sortie concernée est indiquée sur chacune. Seuls les routages lus dans confd sont trouvés (renvois vers un numéro interne compris).');
   C.treeId = (C.treeId || 0) + 1; // bandeau à recalculer
   C.canvas.render(C.tree, td, `${C.scope}|${C.root}|${td}${td === 'dial' ? C.sim.mode : ''}`, { keepView, edit: C.edit && td === 'out', changed: new Set(C.draft.keys()), sim: C.simR });
@@ -170,22 +175,26 @@ function setDir(d) {
   $('cf-help-box').innerHTML = '';
   draw();
 }
-// Appel passé (interne / sortant) : depuis un utilisateur, un groupe (un de ses membres) ou un contexte non entrant.
-const dialOk = () => { const { type, obj } = entity(C.root || ''); return type === 'user' || type === 'group' || (type === 'context' && obj?.type !== 'incall'); };
-// Sens de l'arbre affiché : la vue normale (lecture du dialplan) ; en simulation
-// Interne / Sortant (demande de Brice, 16/10/2026 : seulement quand « Suivre
-// un appel » est coché), arbre des appels passés ('dial').
-// Type d'appel effectif : le choix est gardé d'une carte à l'autre ; une carte qui
-// ne compose pas (trunk, SDA, règle…) est vue en Entrant.
-const simMode = () => (dialOk() ? C.sim.mode : 'in');
-const TD = () => (C.dir === 'out' && C.sim.on && simMode() !== 'in' ? 'dial' : C.dir);
+// Sens de la simulation (décision de Brice, 16/10/2026) : Entrant ou Sortant,
+// choisis dans des menus déroulants avec la carte de départ. « Interne » n'existe
+// plus : un appel qui part d'un utilisateur est un appel sortant, il va là où le
+// numéro composé mène (poste interne ou extérieur). Départ en sortant :
+// utilisateur seulement (un groupe ne compose pas).
+const dialOk = () => entity(C.root || '').type === 'user';
+const simMode = () => C.sim.mode;
+// Sortant demandé mais carte de départ qui ne compose pas : rien à simuler tant qu'un utilisateur n'est pas choisi.
+const needUser = () => C.sim.on && C.sim.mode === 'out' && !dialOk();
+// Arbre affiché : vue normale (lecture du dialplan) ; en simulation sortante, arbre des appels passés ('dial').
+const TD = () => (C.dir === 'out' && C.sim.on && simMode() === 'out' && dialOk() ? 'dial' : C.dir);
+// Cartes de départ possibles selon le sens.
+const START_TYPES = { in: [['trunk', 'Trunks'], ['incall', 'SDA'], ['user', 'Utilisateurs'], ['group', 'Groupes'], ['queue', 'Files d\'attente'], ['ivr', 'SVI'], ['switchboard', 'Standards'], ['conference', 'Conférences']], out: [['user', 'Utilisateurs']] };
 function syncDir() {
   for (const b of document.querySelectorAll('[data-dir]')) b.classList.toggle('active', b.dataset.dir === C.dir);
   $('cf-empty').disabled = TD() !== 'out';
 }
 
 // ---------------------------------------------------------------------------
-// Suivre un appel (demande de Brice, 16/10/2026 : dans le graphe, sans
+// Simulation d'appel (demande de Brice, 16/10/2026 : dans le graphe, sans
 // fenêtre, en partant de l'objet choisi à gauche). Le chemin d'un appel si
 // personne ne décroche s'allume, avec l'instant de chaque étape ; le reste est
 // atténué. Numéro demandé pour un trunk ou un contexte entrant (numéro reçu)
@@ -195,12 +204,19 @@ function syncDir() {
 function numKind() {
   if (TD() === 'dial') return 'dial';
   const { type, obj } = entity(C.root || '');
-  return C.dir === 'out' && (type === 'trunk' || (type === 'context' && obj?.type === 'incall')) ? 'in' : '';
+  if (C.dir === 'out' && (type === 'trunk' || (type === 'context' && obj?.type === 'incall'))) return 'in';
+  // Appel entrant vers un objet atteint par plusieurs SDA : choix de la SDA ('via').
+  return needChain() && (C.chains?.length || 0) > 1 ? 'via' : '';
 }
-const simActive = () => C.sim.on && C.dir !== 'in';
+const simActive = () => C.sim.on && C.dir !== 'in' && !needUser();
+// Appel entrant vers un objet qui n'est ni un trunk, ni une SDA, ni un contexte
+// (retour de Brice, 16/10/2026 : « je teste un appel entrant depuis la carte Bart,
+// on ne voit pas le cheminement jusqu'à lui ») : chaîne SDA → … → objet (entryChains).
+const NO_CHAIN = new Set(['trunk', 'incall', 'context', 'outcall']);
+const needChain = () => C.sim.on && C.sim.mode === 'in' && TD() === 'out' && C.root && !NO_CHAIN.has(entity(C.root).type);
 // Appelant extérieur (retour de Brice, 16/10/2026 : « un client d'une banque » qui
-// appelle) : départ trunk, contexte entrant ou SDA.
-const callerOk = () => { const { type, obj } = entity(C.root || ''); return TD() === 'out' && (type === 'trunk' || type === 'incall' || (type === 'context' && obj?.type === 'incall')); };
+// appelle) : départ trunk, contexte entrant, SDA, ou objet atteint par une SDA.
+const callerOk = () => { const { type, obj } = entity(C.root || ''); return C.sim.mode === 'in' && TD() === 'out' && (type === 'trunk' || type === 'incall' || (type === 'context' && obj?.type === 'incall') || needChain()); };
 // SDA joignables depuis la carte de départ (trunk ou contexte entrant) : [{exten, ctx}].
 function rootIncalls() {
   const { type, obj } = entity(C.root || '');
@@ -230,7 +246,7 @@ const cardTitle = (n) => { const lbl = TYPES[n.info?.type]?.label || ''; const t
 const simW = () => whenOf(C.time.date, C.time.min);
 function simMatch() {
   const num = C.sim.num.trim(); const k = numKind();
-  if (!C.sim.on || !num || !k) return null;
+  if (!C.sim.on || !num || !k || k === 'via') return null;
   const { type, obj } = entity(C.root);
   if (k === 'in') return simulate(num, type === 'trunk' ? obj.context : obj.name);
   // Appel passé : par l'utilisateur, ou par un membre du groupe (autorisations du groupe comprises).
@@ -259,17 +275,25 @@ const fmtS = (s) => (s >= 60 ? `${Math.floor(s / 60)} min${s % 60 ? ` ${s % 60} 
 function renderFollow() {
   const k = numKind(), act = simActive();
   $('s-on').checked = C.sim.on; $('s-on').disabled = C.dir === 'in';
-  // Type d'appel simulé : Entrant toujours ; Interne / Sortant depuis un utilisateur, un groupe ou un contexte.
-  $('s-mode').hidden = !C.sim.on || C.dir !== 'out';
-  for (const b of $('s-mode').querySelectorAll('[data-sm]')) { b.classList.toggle('active', b.dataset.sm === simMode()); b.disabled = b.dataset.sm !== 'in' && !dialOk(); }
+  // Sens et carte de départ (menus déroulants ; le départ suit la colonne de gauche).
+  const showSel = C.sim.on && C.dir === 'out';
+  $('s-dir-l').hidden = !showSel; $('s-from-l').hidden = !showSel;
+  $('s-dir').value = C.sim.mode;
+  const fromKey = `${C.sim.mode}|${C.scope}|${C.root}|${M.lists.user?.length}`;
+  if (showSel && C.fromKey !== fromKey) {
+    C.fromKey = fromKey;
+    const inList = START_TYPES[C.sim.mode].some(([t]) => t === entity(C.root || '').type);
+    $('s-from').innerHTML = `${inList ? '' : `<option value="" selected>${C.sim.mode === 'out' ? '— choisir un utilisateur —' : '— choisir une carte —'}</option>`}${START_TYPES[C.sim.mode].map(([t, l]) => { const xs = listOf(t); return xs.length ? `<optgroup label="${esc(l)}">${xs.map((x) => `<option value="${esc(x.key)}"${x.key === C.root ? ' selected' : ''}>${esc(x.title)}${x.sub && t !== 'user' ? ` · ${esc(x.sub)}` : ''}</option>`).join('')}</optgroup>` : ''; }).join('')}`;
+  }
   // Libellés visibles devant les champs (retour de Brice : le texte indicatif disparaît à la saisie).
   $('s-num-l').hidden = !C.sim.on || !k;
-  $('s-num-t').textContent = k === 'in' ? 'Appelé (SDA)' : 'Composé';
+  $('s-num-t').textContent = k === 'in' ? 'Appelé (SDA)' : k === 'via' ? 'Par la SDA' : 'Composé';
   $('s-num-l').title = k === 'in' ? 'Numéro que compose l\'appelant (une SDA du trunk). Vide : toutes les SDA sont des routes possibles.' : 'Numéro composé par l\'utilisateur ou depuis le contexte choisi.';
-  $('s-num').placeholder = k === 'in' ? 'vide : toutes les SDA' : 'ex. 0805293535';
+  $('s-num').placeholder = k === 'in' ? 'vide : toutes les SDA' : k === 'via' ? 'vide : la plus directe' : 'ex. 0805293535';
   if ($('s-num').value !== C.sim.num) $('s-num').value = C.sim.num;
   $('s-caller-l').hidden = !C.sim.on || !callerOk();
   if ($('s-caller').value !== C.sim.caller) $('s-caller').value = C.sim.caller;
+  if (needUser()) { $('s-trame').hidden = false; $('s-trame').innerHTML = '<span class="cf-ln">Trame</span><div class="cf-trs"><span class="cf-tr-end">Sortant : un appel sortant part d\'un utilisateur ; choisissez-le dans « Départ » (ou dans la colonne de gauche).</span></div>'; return; }
   const R = act ? C.simR : null;
   $('s-trame').hidden = !R;
   if (!R) return;
@@ -284,8 +308,13 @@ function renderFollow() {
   const chips = R.steps.map((s) => { const n = C.tree.nodes.get(s.key); const ty = n?.info?.type; const lbl = TYPES[ty]?.label || ''; const ti = String(n?.info?.title || ''); return `<button type="button" class="cf-tr t-${esc(ty || '')}" data-key="${esc(s.key)}" title="${esc(s.what)}"><b>${fmtS(s.t)}</b> ${ty === 'dial' ? esc(s.what) : esc(ti.toLowerCase().startsWith(lbl.toLowerCase()) ? ti : `${lbl} ${ti}`.trim())}${s.dur ? ` <span class="muted">${Number.isFinite(s.dur) ? fmtS(s.dur) : 'sans fin'}</span>` : ''}</button>`; });
   // Départ utilisateur ou contexte, sens « où vont les appels » : c'est un appel REÇU ; le rappeler.
   const { type: rt, obj: ro } = entity(C.root || '');
-  const hint = TD() === 'out' && dialOk() && (rt === 'user' || rt === 'group' || ro?.type !== 'incall') ? '<button type="button" class="cf-tr-end cf-link" data-godial>appel reçu ; pour un appel passé depuis ici : Sortant</button>' : '';
-  $('s-trame').innerHTML = `<span class="cf-ln">Trame</span><div class="cf-trs">${chips.join('<span class="cf-tr-arr">→</span>')}${R.end ? `<span class="cf-tr-end">${esc(R.end)}</span>` : ''}${blk}${hint}</div>`;
+  const hint = TD() === 'out' && dialOk() ? '<button type="button" class="cf-tr-end cf-link" data-godial>appel entrant vers cet utilisateur ; pour un appel qu\'il passe : sens Sortant</button>' : '';
+  // Arrivée vers l'objet choisi : autres SDA possibles (clic = suivre par celle-là), ou aucune.
+  const others = (C.chains || []).filter((c) => c !== C.chain);
+  const via = !C.chains ? '' : !C.chains.length
+    ? `<span class="cf-tr-warn" role="alert"><strong>Aucune route entrante</strong> : aucune SDA ne mène à ${esc(nodeInfo(C.root).title)}, un appel venant de l'extérieur ne peut pas l'atteindre. Vérifiez le routage (seul un appel interne l'atteint).</span>`
+    : others.length ? `<span class="cf-tr-end">aussi par :</span>${others.map((c) => `<button type="button" class="cf-tr t-incall" data-num="${esc(c.exten)}" title="Suivre l'appel arrivant par cette SDA">SDA ${esc(c.exten)}</button>`).join('')}` : '';
+  $('s-trame').innerHTML = `<span class="cf-ln">Trame</span><div class="cf-trs">${chips.join('<span class="cf-tr-arr">→</span>')}${R.end ? `<span class="cf-tr-end">${esc(R.end)}</span>` : ''}${blk}${via}${C.chains ? '' : hint}</div>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -316,8 +345,8 @@ function renderLanes() {
   const scheds = C.dir !== 'in' ? schedulesIn(C.tree) : [];
   if (!scheds.length) { $('t-lanes').innerHTML = ''; C.landing = null; return; }
   // Trunk ou contexte entrant : le résultat dépend du numéro reçu, donc seulement avec un appel suivi.
-  const viaSim = simActive() && C.simR && !(numKind() && !simMatch());
-  C.landing = viaSim ? simLanding(d) : numKind() ? null : landingSegments(C.tree, d);
+  const viaSim = simActive() && C.simR && !(['in', 'dial'].includes(numKind()) && !simMatch());
+  C.landing = viaSim ? simLanding(d) : ['in', 'dial'].includes(numKind()) ? null : landingSegments(C.tree, d);
   const rows = C.landing ? [`<div class="cf-lane cf-result"><span class="cf-ln" title="Où arrive l'appel à chaque moment de la journée, une fois tous les horaires du parcours franchis">Résultat</span><div class="cf-lb">${C.landing.map((b) => seg(b, `r t-${b.type}`, b.title, b.title)).join('')}<b class="cf-cursor"></b></div></div>`] : [];
   for (const s of scheds) {
     rows.push(`<div class="cf-lane"><span class="cf-ln" title="${esc(s.name || '')}">${esc(s.name || `Horaire #${s.id}`)}</span><div class="cf-lb">${dayBands(s, d).map((b) => seg(b, `b-${b.k}`, b.label, b.k === 'exc' ? b.label.replace('Fermeture exceptionnelle', 'Ferm. exc.') : '')).join('')}<b class="cf-cursor"></b></div></div>`);
@@ -333,7 +362,7 @@ function renderTime() {
   renderLanes();
   for (const c of $('t-lanes').querySelectorAll('.cf-cursor')) c.style.left = `${((C.time.min + 0.5) / 1440) * 100}%`;
   if (C.dir === 'in') { $('t-state').textContent = 'Simulation : sens « où vont les appels » ou « numéros composés »'; return; }
-  if (!C.landing) { $('t-state').textContent = numKind() && !simMatch() ? (C.simR?.routes ? `Suivre un appel : ${C.simR.routes.length} route(s) possible(s), tapez ou choisissez le numéro appelé pour la trame` : 'Suivre un appel : tapez le numéro pour voir où il arrive') : schedulesIn(C.tree).length ? '' : 'Aucun horaire sur ce parcours'; return; }
+  if (!C.landing) { $('t-state').textContent = numKind() && !simMatch() ? (C.simR?.routes ? `Simulation d'appel : ${C.simR.routes.length} route(s) possible(s), tapez ou choisissez le numéro appelé pour la trame` : 'Simulation d\'appel : tapez le numéro pour voir où il arrive') : schedulesIn(C.tree).length ? '' : 'Aucun horaire sur ce parcours'; return; }
   const now = C.landing.find((b) => C.time.min >= b.start && C.time.min < b.end);
   $('t-state').textContent = now ? `Arrive sur : ${now.title}` : '';
 }
@@ -823,13 +852,14 @@ $('t-prev').onclick = () => shiftDay(-1);
 $('t-next').onclick = () => shiftDay(1);
 $('t-now').onclick = () => { setNow(); updateTime(); };
 $('t-on').onchange = () => { C.time.on = $('t-on').checked; updateTime(); };
-// Suivre un appel : case, numéro (recalcul à la frappe), clic sur une étape de la trame → la carte.
+// Simulation d'appel : case, numéro (recalcul à la frappe), clic sur une étape de la trame → la carte.
 $('s-on').onchange = () => { C.sim.on = $('s-on').checked; draw(true); if (C.sim.on && numKind()) $('s-num').focus(); };
 $('s-num').oninput = () => { C.sim.num = $('s-num').value; draw(true); };
 $('s-caller').oninput = () => { C.sim.caller = $('s-caller').value; draw(true); };
 // Type d'appel : l'arbre change (vue normale ↔ appels passés).
-const setSimMode = (m) => { C.sim.mode = m; C.collapsed.clear(); C.expanded.clear(); draw(); };
-$('s-mode').onclick = (e) => { const b = e.target.closest('[data-sm]'); if (b && !b.disabled) setSimMode(b.dataset.sm); };
+const setSimMode = (m) => { if (m !== C.sim.mode) C.sim.num = ''; C.sim.mode = m; C.collapsed.clear(); C.expanded.clear(); draw(); };
+$('s-dir').onchange = () => setSimMode($('s-dir').value);
+$('s-from').onchange = () => { if ($('s-from').value) setRoot($('s-from').value); };
 $('s-trame').onclick = (e) => { if (e.target.closest('[data-godial]')) { setSimMode('out'); return; } const u = e.target.closest('[data-num]'); if (u) { C.sim.num = u.dataset.num; draw(true); return; } const b = e.target.closest('[data-key]'); if (!b) return; const n = C.tree?.nodes.get(b.dataset.key); if (n) { C.canvas.select(n.key, false); C.canvas.focus(n.key); showDetail(n); } };
 $('t-help').innerHTML = helpButton('t-hb', 'Simulation de la date et de l\'heure');
 $('t-help-box').innerHTML = helpBox('t-hb', 'Choisissez un jour et une heure : les branches qui ne s\'appliquent pas à ce moment sont atténuées (ouvert → sorties normales de la SDA, de l\'utilisateur, du groupe… ; fermé → destination de fermeture ; fermeture exceptionnelle → sa destination, prioritaire). Règles lues dans le code de Wazo : fermetures exceptionnelles d\'abord, puis plages d\'ouverture, sinon fermé ; bornes horaires incluses à la minute (une plage 09:00–12:30 couvre 12:30). L\'heure est celle du site (fuseau de l\'horaire). Le bandeau montre la journée choisie : la ligne « Résultat » indique où arrive l\'appel une fois tous les horaires franchis (couleur de la carte d\'arrivée), puis une ligne par horaire du parcours (vert ouvert, gris fermé, rouge fermeture exceptionnelle). Survolez une tranche pour ses heures exactes.');
