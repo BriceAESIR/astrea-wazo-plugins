@@ -12,7 +12,7 @@
 //    « prefix » est lu mais pas appliqué.
 // Supposé : effet exact des autorisations d'appels et d'un horaire sur une
 // règle sortante (affichés à titre indicatif).
-import { M, scheduleState, whenOf, entity } from './model.js?v=0.39.1';
+import { M, scheduleState, whenOf, entity } from './model.js?v=0.39.2';
 
 // Motif → liste d'éléments { set: chaînes de caractères, size } | { dot } | { bang } ; null si numéro exact.
 export function parsePattern(p) {
@@ -100,6 +100,68 @@ export function dialedNumber(number, dp) {
   return n;
 }
 
+// ---------------------------------------------------------------------------
+// Autorisations d'appels (demande de Brice, 16/10/2026 : « ce qu'il peut
+// bloquer »). Vérifié dans wazo-agid (modules/user_set_call_rights.py,
+// call_rights.py, master) :
+//  - motif d'une autorisation : « _ » retiré, X → [0-9], Z → [1-9], N → [2-9],
+//    « . » → .+, « ! » → .*, + et * littéraux, le reste en expression
+//    régulière (ex. [1-5]) ; doit couvrir tout le numéro ;
+//  - on ne garde que les autorisations dont un motif correspond au numéro
+//    composé ; aucune → appel autorisé ;
+//  - puis, dans l'ordre : celles de l'utilisateur, celles des groupes dont il
+//    est membre, celles de la règle sortante. Au premier niveau qui en a
+//    (activées) : une seule « autoriser » suffit ; sinon refus, avec le code de
+//    la dernière lue (le code personnel de l'utilisateur remplace celui de ses
+//    autorisations). Aucun niveau concerné → autorisé.
+// Supposé : refus avec code = Asterisk demande le code puis laisse passer.
+// ---------------------------------------------------------------------------
+export function rightMatches(number, pattern) {
+  let re = String(pattern || '');
+  for (const [k, v] of [['_', ''], ['*', '\\*'], ['+', '\\+'], ['X', '[0-9]'], ['Z', '[1-9]'], ['N', '[2-9]'], ['.', '.+'], ['!', '.*']]) re = re.split(k).join(v);
+  try { return new RegExp(`^${re}$`).test(String(number)); } catch { return false; }
+}
+// Autorisations d'un objet : champ call_permissions de l'objet, ou listes users / groups / outcalls de l'autorisation.
+function rightsOf(kind, o) {
+  if (!o) return [];
+  const ids = new Set((o.call_permissions || []).map((p) => String(p.id)));
+  const back = { user: (p) => (p.users || []).some((u) => u.uuid === o.uuid || u.id === o.id), group: (p) => (p.groups || []).some((g) => g.uuid === o.uuid || g.id === o.id), outcall: (p) => (p.outcalls || []).some((x) => x.id === o.id) }[kind];
+  return (M.lists.callpermission || []).filter((p) => ids.has(String(p.id)) || back?.(p));
+}
+// Groupes dont l'utilisateur est membre (membre fixe).
+export const groupsOfUser = (u) => (u ? (M.lists.group || []).filter((g) => (g.members?.users || []).some((m) => m.uuid === u.uuid)) : []);
+// Autorisations qui s'appliquent à un appel passé par user via outcall, dans
+// l'ordre d'évaluation : [{ level, p, via? }] (via = nom du groupe).
+export function rightsList(user, outcall) {
+  const out = []; const seen = new Set();
+  const add = (level, list, via) => { for (const p of list) { const k = `${level}|${p.id}`; if (!seen.has(k)) { seen.add(k); out.push({ level, p, via }); } } };
+  if (user) { add('user', rightsOf('user', user)); for (const g of groupsOfUser(user)) add('group', rightsOf('group', g), g.label || g.name); }
+  if (outcall) add('outcall', rightsOf('outcall', outcall));
+  return out;
+}
+// → { verdict: 'allow' | 'deny', level: 'user' | 'group' | 'outcall' | null, by: autorisation, code: bool, matched: [autorisations] }
+export function callRights(number, user, outcall) {
+  const n = String(number || '');
+  const matched = (M.lists.callpermission || []).filter((p) => (p.extensions || []).some((x) => rightMatches(n, x)));
+  if (!matched.length) return { verdict: 'allow', level: null, matched };
+  const ids = new Set(matched.map((p) => String(p.id)));
+  const on = (list) => list.filter((p) => ids.has(String(p.id)) && p.enabled !== false);
+  const levels = [];
+  if (user) {
+    levels.push(['user', on(rightsOf('user', user))]);
+    levels.push(['group', on(groupsOfUser(user).flatMap((g) => rightsOf('group', g)))]);
+  }
+  if (outcall) levels.push(['outcall', on(rightsOf('outcall', outcall))]);
+  for (const [level, rows] of levels) {
+    if (!rows.length) continue;
+    const ok = rows.find((p) => p.mode === 'allow');
+    if (ok) return { verdict: 'allow', level, by: ok, matched };
+    const last = rows[rows.length - 1];
+    return { verdict: 'deny', level, by: last, code: !!(last.password || (level === 'user' && user?.call_permission_password)), matched };
+  }
+  return { verdict: 'allow', level: null, matched };
+}
+
 // Où va un numéro composé depuis un contexte.
 export function simulate(number, fromCtx, user = null, when = null) {
   const n = String(number || '').replace(/[\s.()-]/g, '');
@@ -129,9 +191,7 @@ export function simulate(number, fromCtx, user = null, when = null) {
       const best = cand[0]; const o = best.outcall;
       const sched = (o.schedules || [])[0] && M.by.schedule?.get(String(o.schedules[0].id));
       const st = sched && when ? scheduleState(sched, when) : null;
-      const permIds = new Set([...(o.call_permissions || []), ...((user?.call_permissions) || [])].map((p) => p.id));
-      const perms = [...permIds].map((id) => M.by.callpermission?.get(String(id))).filter((p) => p && p.enabled !== false && (p.extensions || []).some((x) => matches(x, n)));
-      return { kind: 'outcall', ctx, outcall: o, dp: best.dp, others: cand.slice(1), sent: dialedNumber(n, best.dp), trunks: (o.trunks || []).map((t) => M.by.trunk?.get(String(t.id)) || t), sched, schedState: st, perms };
+      return { kind: 'outcall', ctx, outcall: o, dp: best.dp, others: cand.slice(1), sent: dialedNumber(n, best.dp), trunks: (o.trunks || []).map((t) => M.by.trunk?.get(String(t.id)) || t), sched, schedState: st, rights: callRights(n, user, o) };
     }
     for (const inc of c?.contexts || []) { const r = search(inc.name || (M.lists.context || []).find((x) => x.id === inc.id)?.name, depth + 1); if (r) return r; }
     return null;
@@ -180,7 +240,11 @@ export function simPath(tree, w, match, { blocked = null } = {}) {
     const type = n.info?.type; const { obj: o, owner } = n.leaf ? {} : entity(n.key);
     const st = { key: n.key, t, dur: 0, what: '' };
     let p = null, end = false;
-    if (n.leaf) {
+    // Départ « numéro composé » (utilisateur, membre d'un groupe) : vers le contexte de recherche.
+    if (tree.root === n && P((x) => x.slot === 'dial_from')) {
+      p = P((x) => x.slot === 'dial_from' && x.to); st.what = match?.number ? `compose ${match.number}` : 'compose un numéro';
+      if (!r) { end = true; R.end = 'tapez le numéro composé'; }
+    } else if (n.leaf) {
       if (type === 'caller') { p = ports[0]; st.what = 'appelle'; }
       else if (type === 'dial') { p = P((x) => x.slot === 'trunk'); st.what = r?.sent ? `envoie ${r.sent}` : 'numéro envoyé'; }
       else { st.what = n.info.title; end = true; }
@@ -206,11 +270,6 @@ export function simPath(tree, w, match, { blocked = null } = {}) {
         }
         end = true; st.what = 'contexte'; break;
       case 'user':
-        if (tree.root === n && n.ports?.some((x) => x.slot === 'dial_from')) {
-          p = P((x) => x.slot === 'dial_from' && x.to); st.what = match?.number ? `compose ${match.number}` : 'compose un numéro';
-          if (!r) { end = true; R.end = 'tapez le numéro composé'; }
-          break;
-        }
         {
           // Liste de blocage (vérifié : elle existe dans confd ; supposé : appel rejeté, sans sonnerie ni débordement).
           if (blocked?.has(o.uuid)) { st.what = `bloque cet appelant${blocked.get(o.uuid) ? ` (« ${blocked.get(o.uuid)} »)` : ''}`; end = true; R.end = 'numéro dans la liste de blocage de l\'utilisateur : l\'appel est rejeté (supposé)'; break; }
@@ -250,7 +309,21 @@ export function simPath(tree, w, match, { blocked = null } = {}) {
         break;
       }
       case 'ivr': { const tries = o.max_tries || 1; st.dur = (o.timeout || 0) * tries; st.what = `menu, attend une touche${o.timeout ? ` ${o.timeout} s × ${tries} (supposé)` : ''}`; p = P((x) => x.slot === 'ivr_timeout'); break; }
-      case 'outcall': p = P((x) => x.slot === 'pattern' && x.label === r?.dp?.exten); st.what = r?.dp ? `motif ${r.dp.exten}` : 'règle sortante'; break;
+      case 'outcall': {
+        p = P((x) => x.slot === 'pattern' && x.label === r?.dp?.exten);
+        st.what = r?.dp ? `motif ${r.dp.exten}` : 'règle sortante';
+        if (o?.enabled === false) { st.what += ' · règle désactivée'; st.block = true; end = true; R.end = 'règle sortante désactivée : l\'appel échoue (supposé)'; break; }
+        // Horaire de la règle (supposé : fermé → destination de fermeture de l'horaire, l'appel ne sort pas).
+        if (r?.schedState && !r.schedState.open) { st.what += ` · horaire ${r.sched.name} : ${r.schedState.label}`; st.block = true; end = true; R.end = `horaire « ${r.sched.name} » ${r.schedState.label.toLowerCase()} : l'appel ne sort pas (supposé)`; break; }
+        const cr = r?.rights;
+        if (cr?.by) {
+          const lvl = { user: 'de l\'utilisateur', group: 'd\'un groupe dont il est membre', outcall: 'de la règle' }[cr.level];
+          if (cr.verdict === 'allow') st.what += ` · autorisé par « ${cr.by.name} » (${lvl})`;
+          else if (cr.code) st.what += ` · code demandé : « ${cr.by.name} » (${lvl})`;
+          else { st.what += ` · refusé par « ${cr.by.name} » (${lvl})`; st.block = true; end = true; R.end = `bloqué par l'autorisation d'appel « ${cr.by.name} » (${lvl})`; }
+        }
+        break;
+      }
       case 'voicemail': st.what = 'l\'appelant laisse un message'; end = true; break;
       case 'conference': st.what = 'entre dans la conférence'; end = true; break;
       default: st.what = n.info?.title || ''; end = true;

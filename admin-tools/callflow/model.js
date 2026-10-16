@@ -21,8 +21,8 @@
 // Supposé, à vérifier en réel : les listes (GET /groups, /queues,
 // /switchboards, /schedules) contiennent déjà fallbacks, membres et
 // destinations ; sinon on lit le détail de chaque objet (ensureDetails).
-import { S, api, listAll, fullName } from '../common/core.js?v=0.39.1';
-import { comparePatterns, describePattern, userContext } from './dialsim.js?v=0.39.1';
+import { S, api, listAll, fullName } from '../common/core.js?v=0.39.2';
+import { comparePatterns, describePattern, userContext, rightsList } from './dialsim.js?v=0.39.2';
 
 export const M = { lists: {}, by: {}, ext: new Map(), extAny: new Map(), rev: null, warns: [] };
 
@@ -487,19 +487,30 @@ export function edgesOf(k) {
 // numéro composé peut passer : numéros internes et règles sortantes du
 // contexte, puis contextes inclus, dans l'ordre de recherche d'Asterisk.
 // hit = résultat de simulate() : son numéro interne trouvé devient une sortie.
-function dialEdgesOf(k, hit) {
+// Qui compose, pour une carte de départ : l'utilisateur lui-même ; pour un
+// groupe, son premier membre utilisateur qui a une ligne (les autorisations du
+// groupe valent pour ses membres : vérifié, wazo-agid user_set_call_rights).
+export function dialUser(k) {
+  const { type, obj } = entity(k || '');
+  if (type === 'user') return obj;
+  if (type === 'group') return groupMemberList(obj).filter((m) => m.kind === 'user').map((m) => M.userByUuid.get(m.uuid)).find((u) => u && userContext(u)) || null;
+  return null;
+}
+// scope : 'int' (interne : sans les règles sortantes) | 'out' (sortant : sans le décompte des numéros internes) | '' (tout).
+function dialEdgesOf(k, hit, scope = '') {
   const { type, obj: o } = entity(k);
   if (!o) return [];
-  if (type === 'user') {
-    const c = userContext(o);
-    return c && M.by.context?.has(c) ? [{ ...link('dial_from', `context:${c}`), note: ctxLabel(c) }] : [{ slot: 'dial_from', label: 'Compose depuis', note: 'aucune ligne : ne peut pas appeler', info: true, to: null }];
+  if (type === 'user' || type === 'group') {
+    const u = dialUser(k); const c = userContext(u);
+    const label = type === 'group' ? `Un membre compose${u ? ` (ex. ${fullName(u)})` : ''}` : 'Compose depuis';
+    return c && M.by.context?.has(c) ? [{ ...link('dial_from', `context:${c}`), label, note: ctxLabel(c) }] : [{ slot: 'dial_from', label, note: type === 'group' ? 'aucun membre avec une ligne' : 'aucune ligne : ne peut pas appeler', info: true, to: null }];
   }
   if (type !== 'context') return edgesOf(k);
   const e = [];
   if (hit?.ctx === o.name && hit.key) e.push({ ...link('internal', hit.key.startsWith('incall:') ? hit.key : gated(hit.key)), label: `${hit.number} : numéro interne`, note: 'l\'appel reste dans Wazo' });
   const n = [...M.ext.keys()].filter((x) => x.endsWith(`@${o.name}`) && !M.ext.get(x).startsWith('incall:')).length;
-  if (n) e.push({ ...link('internals', ''), to: null, info: true, note: `${n} dans ce contexte` });
-  for (const oc of M.lists.outcall || []) {
+  if (n && scope !== 'out') e.push({ ...link('internals', ''), to: null, info: true, note: `${n} dans ce contexte` });
+  if (scope !== 'int') for (const oc of M.lists.outcall || []) {
     const pats = (oc.extensions || []).filter((x) => x.context === o.name).map((x) => x.exten);
     if (pats.length) e.push({ ...link('outcall', key('outcall', oc)), label: `Règle ${oc.name || oc.label || oc.id}`, note: pats.join(', ') });
   }
@@ -797,7 +808,7 @@ export function reverseIndex() {
 // dir 'out' : où vont les appels ; 'in' : qui arrive ici.
 // ---------------------------------------------------------------------------
 const MAX_NODES = 400; // garde-fou : au-delà, les répétitions deviennent des liens
-export function buildTree(rootKey, dir, { maxDepth = 8, collapsed = new Set(), expanded = new Set(), showEmpty = false, hit = null, caller = '' } = {}) {
+export function buildTree(rootKey, dir, { maxDepth = 8, collapsed = new Set(), expanded = new Set(), showEmpty = false, hit = null, caller = '', dialScope = '' } = {}) {
   // Objet gardé par un horaire : en sens « où vont les appels », le parcours
   // commence par la carte horaire (une SDA garde sa carte, l'horaire suit).
   if (dir === 'out' && !rootKey.startsWith('incall:')) rootKey = gated(rootKey);
@@ -838,7 +849,18 @@ export function buildTree(rootKey, dir, { maxDepth = 8, collapsed = new Set(), e
     // Sens « Numéros composés » : l'utilisateur de départ et les contextes de la chaîne de recherche ;
     // au-delà (règle sortante, objet interne trouvé), les sorties habituelles.
     const dialNode = dir === 'dial' && (n.depth === 0 || n.viaDial);
-    let edges = n.leaf ? (n.leaf.edges || []) : dialNode ? dialEdgesOf(n.key, hit) : edgesOf(n.key);
+    let edges = n.leaf ? (n.leaf.edges || []) : dialNode ? dialEdgesOf(n.key, hit, dialScope) : edgesOf(n.key);
+    // Règle sortante en appel passé : ce qui peut bloquer, sur la carte (autorisations
+    // de l'appelant, de ses groupes, de la règle ; horaire ; règle désactivée).
+    if (dir === 'dial' && !n.leaf && baseKey(n.key).startsWith('outcall:')) {
+      const oc = entity(n.key).obj; const u = dialUser(rootKey);
+      const LV = { user: 'utilisateur', group: 'groupe', outcall: 'règle' };
+      const blocks = rightsList(u, oc).map(({ level, p, via }) => ({ slot: 'right', label: `Autorisation « ${p.name} »`, note: [p.mode === 'allow' ? 'autorise' : 'refuse', (p.extensions || []).join(', '), p.password ? 'code' : '', `${LV[level]}${via ? ` ${via}` : ''}`, p.enabled === false ? 'désactivée' : ''].filter(Boolean).join(' · '), help: 'Autorisation d\'appel qui s\'applique à ce chemin (vérifié, wazo-agid : utilisateur, puis ses groupes, puis la règle ; au premier niveau concerné, une « autorise » suffit, sinon refus).', to: null, info: true, npd: p.mode !== 'allow' }));
+      const sc = (oc?.schedules || [])[0] && M.by.schedule?.get(String(oc.schedules[0].id));
+      if (sc) blocks.push({ slot: 'right', label: `Horaire « ${sc.name} »`, note: 'fermé : l\'appel ne sort pas (supposé)', help: 'Horaire associé à la règle sortante.', to: null, info: true });
+      if (oc?.enabled === false) blocks.push({ slot: 'right', label: 'Règle désactivée', note: 'aucun appel ne sort par elle', to: null, info: true, npd: true });
+      edges = [...blocks, ...edges];
+    }
     // Trunk atteint par une règle sortante : l'appel sort vers l'opérateur, fin
     // du parcours dans Wazo. Sans ça, le graphe enchaînait sur le contexte
     // entrant du trunk (mêmes trunks dans les deux sens) : boucle juste pour

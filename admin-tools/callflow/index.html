@@ -7,8 +7,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Mulish:wght@300..800&display=swap">
-<link rel="stylesheet" href="../common/style.css?v=0.39.1">
-<link rel="stylesheet" href="./callflow.css?v=0.39.1">
+<link rel="stylesheet" href="../common/style.css?v=0.39.2">
+<link rel="stylesheet" href="./callflow.css?v=0.39.2">
 <script>if (window.parent !== window) document.documentElement.classList.add('framed');</script>
 </head>
 <body>
@@ -50,9 +50,7 @@
         <div class="cf-tools">
           <div class="cf-seg" role="group" aria-label="Sens">
             <button data-dir="out" class="active" title="Où vont les appels qui arrivent sur l'objet choisi">Où vont les appels</button>
-            <button data-dir="in" title="Quels objets envoient des appels vers l'objet choisi">Qui arrive ici</button>
-            <button data-dir="dial" title="Utilisateur ou contexte : par où passe un numéro qu'il compose (numéros internes, règles sortantes, motifs, trunks, opérateur)">Numéros composés</button>
-          </div>
+            <button data-dir="in" title="Quels objets envoient des appels vers l'objet choisi">Qui arrive ici</button>          </div>
           <label class="inline small" title="Afficher aussi les sorties non réglées (débordements vides…)"><input type="checkbox" id="cf-empty"> Sorties vides</label>
           <button id="cf-out" class="icon zoom" title="Zoom arrière">−</button>
           <button id="cf-in" class="icon zoom" title="Zoom avant">+</button>
@@ -76,8 +74,13 @@
           <!-- Suivre un appel dans le graphe (demande de Brice 16/10/2026, sans fenêtre) -->
           <div class="cf-follow">
             <label class="inline small" title="Allume dans le graphe le chemin d'un appel si personne ne décroche, avec l'instant de chaque étape (à la date et l'heure choisies) ; le reste est atténué"><input type="checkbox" id="s-on"> Suivre un appel</label>
-            <input type="search" id="s-caller" inputmode="tel" autocomplete="off" placeholder="Appelant (ex. 0612345678)" title="Numéro de la personne qui appelle : carte en tête du graphe, et contrôle des listes de blocage des utilisateurs" hidden>
-            <input type="search" id="s-num" inputmode="tel" autocomplete="off" hidden>
+            <div class="cf-seg cf-smode" id="s-mode" role="group" aria-label="Type d'appel" hidden>
+              <button type="button" data-sm="in" title="Appel reçu par la carte choisie à gauche (depuis un trunk : numéro appelé, appelant)">Entrant</button>
+              <button type="button" data-sm="int" title="Appel passé vers un numéro interne depuis la carte choisie (utilisateur, groupe : un de ses membres, contexte)">Interne</button>
+              <button type="button" data-sm="out" title="Appel passé vers l'extérieur depuis la carte choisie : contexte, règle sortante, ce qui peut bloquer, motif, trunk, opérateur">Sortant</button>
+            </div>
+            <label class="cf-sf small" id="s-caller-l" title="Numéro de la personne qui appelle : carte en tête du graphe, et contrôle des listes de blocage des utilisateurs" hidden><span>Appelant</span><input type="search" id="s-caller" inputmode="tel" autocomplete="off" placeholder="ex. 0612345678"></label>
+            <label class="cf-sf small" id="s-num-l" hidden><span id="s-num-t">Appelé</span><input type="search" id="s-num" inputmode="tel" autocomplete="off"></label>
           </div>
           <span class="spacer"></span>
           <button id="t-now" title="Revenir à la date et l'heure actuelles">Maintenant</button>
@@ -120,6 +123,6 @@
     <div class="btnrow right"><button id="modal-cancel">Annuler</button><button id="modal-ok" class="primary">Confirmer</button></div></div></div>
   <div id="toast" class="toast" hidden></div>
 </div>
-<script type="module" src="./app.js?v=0.39.1"></script>
+<script type="module" src="./app.js?v=0.39.2"></script>
 </body>
 </html>
