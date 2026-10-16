@@ -21,7 +21,7 @@
 // Supposé, à vérifier en réel : les listes (GET /groups, /queues,
 // /switchboards, /schedules) contiennent déjà fallbacks, membres et
 // destinations ; sinon on lit le détail de chaque objet (ensureDetails).
-import { S, api, listAll, fullName } from '../common/core.js?v=0.37.0';
+import { S, api, listAll, fullName } from '../common/core.js?v=0.37.1';
 
 export const M = { lists: {}, by: {}, ext: new Map(), extAny: new Map(), rev: null, warns: [] };
 
@@ -43,12 +43,12 @@ export const TYPES = {
   outcall: { label: 'Sortant', badge: 'OUT', help: 'Règle d\'appel sortant : le numéro part vers l\'extérieur par les trunks, dans l\'ordre (le suivant si le premier échoue).' },
   application: { label: 'Application', badge: 'APP', help: 'Application Wazo (Stasis) : l\'appel est remis à une application externe.' },
   member: { label: 'Membre', badge: 'M', help: 'Membre du groupe. En NPD, il ne sonne pas et l\'appel n\'est pas renvoyé (vérifié dans le code de Wazo). Les renvois d\'appel, renvois par défaut et le filtrage de l\'utilisateur ne s\'appliquent pas quand il est appelé par un groupe (déduit du dialplan, non testé). Un membre « numéro » qui pointe vers un utilisateur passe en revanche par le traitement normal de l\'utilisateur.' },
-  members: { label: 'Membres', badge: '👥', help: 'Membres qui sonnent : membres fixes (réglés dans Wazo) et, pour un groupe, utilisateurs inscrits par la touche « bascule groupe » (*50) — ceux-là ne sont connus que d\'Asterisk, lus si le serveur l\'autorise. Ce sont les postes des membres qui sonnent : leurs propres renvois par défaut ne s\'appliquent pas (supposé).' },
-  hangup: { label: 'Raccrocher', badge: '✕', help: 'Fin de l\'appel, avec la tonalité choisie : normal, occupé ou encombré.' },
-  sound: { label: 'Fichier son', badge: '♪', help: 'Joue un fichier son (sons du tenant ou sons système), puis raccroche (sauf « ne pas décrocher » : le son est joué en pré-décroché).' },
+  members: { label: 'Membres', badge: 'MBR', help: 'Membres qui sonnent : membres fixes (réglés dans Wazo) et, pour un groupe, utilisateurs inscrits par la touche « bascule groupe » (*50) — ceux-là ne sont connus que d\'Asterisk, lus si le serveur l\'autorise. Ce sont les postes des membres qui sonnent : leurs propres renvois par défaut ne s\'appliquent pas (supposé).' },
+  hangup: { label: 'Raccrocher', badge: 'FIN', help: 'Fin de l\'appel, avec la tonalité choisie : normal, occupé ou encombré.' },
+  sound: { label: 'Fichier son', badge: 'SON', help: 'Joue un fichier son (sons du tenant ou sons système), puis raccroche (sauf « ne pas décrocher » : le son est joué en pré-décroché).' },
   custom: { label: 'Commande', badge: '{ }', help: 'Commande Asterisk personnalisée (application du dialplan).' },
   extension: { label: 'Numéro', badge: '#', help: 'Numéro composé dans un contexte. Résolu vers l\'objet correspondant quand il est connu ; sinon affiché tel quel.' },
-  external: { label: 'Numéro externe', badge: '☎', help: 'Numéro hors de Wazo (renvoi vers un mobile, un autre site…). Le renvoi sort par les règles d\'appel sortant de l\'utilisateur.' },
+  external: { label: 'Numéro externe', badge: 'EXT', help: 'Numéro hors de Wazo (renvoi vers un mobile, un autre site…). Le renvoi sort par les règles d\'appel sortant de l\'utilisateur.' },
   app_sub: { label: 'Service', badge: 'SRV', help: 'Service Wazo : annuaire, DISA, rappel DISA, fax vers e-mail, consultation de messagerie.' },
   missing: { label: 'Cible introuvable', badge: '!', help: 'La destination pointe vers un objet introuvable (supprimé, autre tenant, ou droit de lecture manquant).' },
   more: { label: 'Suite', badge: '…', help: 'Branche non dépliée (profondeur maximale). Cliquez pour la déplier.' },
@@ -203,7 +203,7 @@ export function describe(type, o) {
   switch (type) {
     case 'incall': return { title: firstExten(o) || `SDA #${o.id}`, sub: [o.description, ctxLabel(o.extensions?.[0]?.context)].filter(Boolean).join(' · ') };
     case 'user': return { title: fullName(o) || `#${o.id}`, sub: [userExten(o), o.ring_seconds != null ? `sonne ${o.ring_seconds} s` : '', o.services?.dnd?.enabled ? 'ne pas déranger' : ''].filter(Boolean).join(' · ') };
-    case 'group': return { title: o.label || o.name, sub: [o.enabled === false ? '⚠ désactivé : l\'appel échoue' : '', firstExten(o), STRATEGY[o.ring_strategy] || o.ring_strategy, o.timeout ? `${o.timeout} s` : 'sans limite'].filter(Boolean).join(' · ') };
+    case 'group': return { title: o.label || o.name, sub: [o.enabled === false ? 'désactivé : l\'appel échoue' : '', firstExten(o), STRATEGY[o.ring_strategy] || o.ring_strategy, o.timeout ? `${o.timeout} s` : 'sans limite'].filter(Boolean).join(' · ') };
     case 'queue': return { title: o.label || o.name, sub: [firstExten(o), o.timeout ? `délai ${o.timeout} s` : ''].filter(Boolean).join(' · ') };
     case 'ivr': return { title: o.name, sub: [o.description, `${(o.choices || []).length} choix`].filter(Boolean).join(' · ') };
     case 'schedule': return { title: o.name || `Horaire #${o.id}`, sub: [o.enabled === false ? 'désactivé' : '', o.timezone].filter(Boolean).join(' · ') };
@@ -388,7 +388,6 @@ const ORDER = { random: 'un à la fois, au hasard', least_recent: 'un à la fois
 // user_timeout puis la pause retry_delay (dialplan group-linear). Au-delà, le
 // premier membre resonne. NPD exclus du calcul par l'appelant s'il le souhaite.
 export const linearRound = (n, ut, rd) => (n > 0 ? n * ((ut ?? 15) + (rd ?? 0)) : 0);
-const PICTO = { random: '🎲', least_recent: '⏳', fewest_calls: '📉', memorized_round_robin: '🔁', weight_random: '⚖' };
 const STRAT_HELP_SHORT = {
   random: 'Asterisk choisit un membre au hasard, le fait sonner, puis un autre s\'il ne répond pas.',
   least_recent: 'Asterisk fait sonner d\'abord le membre qui a raccroché depuis le plus longtemps.',
@@ -403,7 +402,7 @@ function groupFlow(o) {
   const list = groupMemberList(o);
   const ut = o.user_timeout, rd = o.retry_delay;
   const gk = `group:${o.id}`;
-  const badge = (m) => [m.kind === 'live' ? 'inscrit par touche' : '', m.kind === 'ext' ? 'numéro' : '', m.dnd ? 'NPD : ne sonne pas' : '', m.unknown ? '⚠ utilisateur inconnu' : '', m.exten && m.kind === 'user' ? m.exten : ''].filter(Boolean).join(' · ');
+  const badge = (m) => [m.kind === 'live' ? 'inscrit par touche' : '', m.kind === 'ext' ? 'numéro' : '', m.dnd ? 'NPD : ne sonne pas' : '', m.unknown ? 'utilisateur inconnu' : '', m.exten && m.kind === 'user' ? m.exten : ''].filter(Boolean).join(' · ');
   const card = (m, extra = {}) => leaf('member', m.name.replace(/^Numéro /, ''), badge(m), { dnd: m.dnd, live: m.kind === 'live', group: gk, member: m, ...extra });
   if (!list.length) return hub;
   if (o.ring_strategy === 'linear') {
@@ -440,7 +439,7 @@ function groupFlow(o) {
     // bloc qui contient les membres, sans mini-cartes (demande de Brice).
     const how = ORDER[o.ring_strategy] || o.ring_strategy;
     hub.leaf.edges = [
-      { slot: 'pick', label: `${PICTO[o.ring_strategy] || '•'} ${how[0].toUpperCase()}${how.slice(1)}`, note: `${ut ?? '?'} s chacun, puis un autre${rd ? ` · pause ${rd} s entre deux tours` : ''}`, help: STRAT_HELP_SHORT[o.ring_strategy] || '', to: null, info: true },
+      { slot: 'pick', label: `${how[0].toUpperCase()}${how.slice(1)}`, note: `${ut ?? '?'} s chacun, puis un autre${rd ? ` · pause ${rd} s entre deux tours` : ''}`, help: STRAT_HELP_SHORT[o.ring_strategy] || '', to: null, info: true },
       ...list.map((m) => ({ slot: 'member', label: m.name, note: badge(m) || (m.kind === 'user' ? 'membre' : ''), help: m.dnd ? 'En NPD : ce membre ne sonne pas, l\'appel n\'est pas renvoyé.' : `Membre du groupe (${how}).`, to: null, info: true, npd: m.dnd })),
     ];
     hub.leaf.how = how;
@@ -458,7 +457,6 @@ export const QSTRAT = {
   ringall: 'Tous en même temps', linear: 'Un par un, dans l\'ordre', rrordered: 'Tour de rôle, dans l\'ordre', rrmemory: 'Tour de rôle mémorisé',
   leastrecent: 'Le moins récemment appelé', fewestcalls: 'Le moins d\'appels pris', random: 'Aléatoire', wrandom: 'Aléatoire pondéré (pénalités)',
 };
-const QPICTO = { ringall: '🔔', linear: '➜', rrordered: '🔁', rrmemory: '🔁', leastrecent: '⏳', fewestcalls: '📉', random: '🎲', wrandom: '⚖' };
 export const qopt = (o, k) => (o?.options || []).find(([x]) => x === k)?.[1] ?? null;
 function queueFlow(o) {
   const hub = membersLeaf('queue', o);
@@ -470,7 +468,7 @@ function queueFlow(o) {
     ...agents.map((a) => ({ slot: 'member', label: [fullName(a), a.number ? `agent ${a.number}` : ''].filter(Boolean).join(' · ') || `agent #${a.id}`, note: `pénalité ${a.penalty ?? 0}`, help: 'Agent membre de la file : il ne reçoit les appels que s\'il est connecté (logué).', to: null, info: true })),
     ...users.map((m) => { const u = M.userByUuid.get(m.uuid); const dnd = !!u?.services?.dnd?.enabled; return { slot: 'member', label: fullName(m) || fullName(u) || m.uuid, note: dnd ? 'NPD : en pause' : 'utilisateur', help: dnd ? 'En NPD : wazo-calld met ce membre en pause dans la file.' : 'Utilisateur membre direct de la file.', to: null, info: true, npd: dnd }; }),
   ];
-  hub.leaf.edges = [{ slot: 'pick', label: `${QPICTO[strat] || '•'} ${QSTRAT[strat] || strat}`, note: `${ut} s par agent${rd ? `, pause ${rd} s` : ''}${o.timeout ? ` · ${o.timeout} s au total` : ' · sans limite'}`, help: 'Règle de distribution de la file (option Asterisk strategy) ; sonnerie par agent = option timeout ; pause = option retry.', to: null, info: true }, ...rows];
+  hub.leaf.edges = [{ slot: 'pick', label: QSTRAT[strat] || strat, note: `${ut} s par agent${rd ? `, pause ${rd} s` : ''}${o.timeout ? ` · ${o.timeout} s au total` : ' · sans limite'}`, help: 'Règle de distribution de la file (option Asterisk strategy) ; sonnerie par agent = option timeout ; pause = option retry.', to: null, info: true }, ...rows];
   hub.leaf.how = QSTRAT[strat] || strat;
   hub.leaf.sub = [hub.leaf.how, hub.leaf.sub].filter(Boolean).join(' — ');
   return hub;
@@ -489,7 +487,7 @@ function membersLeaf(type, o) {
   const sub = [few(fixed)];
   const ghosts = dyn.filter((x) => x.unknown);
   if (dyn.length > ghosts.length) sub.push(`inscrits : ${few(dyn.filter((x) => !x.unknown).map((x) => x.name))}`);
-  if (ghosts.length) sub.push(`⚠ ${plural(ghosts.length, 'inscrit')} inconnu${ghosts.length > 1 ? 's' : ''} (utilisateur supprimé ?)`);
+  if (ghosts.length) sub.push(`Attention : ${plural(ghosts.length, 'inscrit')} inconnu${ghosts.length > 1 ? 's' : ''} (utilisateur supprimé ?)`);
   // Inscrits non lisibles (amid refusé) : on montre les membres possibles
   // (touche de bascule), sans savoir s'ils sont inscrits en ce moment.
   if (!live && keys?.length) sub.push(`bascule : ${few([...new Set(keys.map((k) => k.name))])} (inscrits ou non)`);
@@ -857,7 +855,7 @@ export function facts(k, leafInfo) {
     const dyn = (leafInfo.live || []).filter((x) => x.dynamic);
     const ghosts = dyn.filter((x) => x.unknown);
     return [['Membres fixes', leafInfo.names.join(', ') || 'aucun', 'Membres réglés dans Wazo (confd). Ils sonnent toujours.'],
-      ...(ghosts.length ? [['⚠ Inscrits inconnus', ghosts.map((x) => `${x.uuid} — pour le retirer (CLI Asterisk) : queue remove member ${x.itf} from ${x.queue}`).join(' ; '),
+      ...(ghosts.length ? [['Inscrits inconnus', ghosts.map((x) => `${x.uuid} — pour le retirer (CLI Asterisk) : queue remove member ${x.itf} from ${x.queue}`).join(' ; '),
         'Inscription par touche dont l\'utilisateur n\'existe pas dans ce tenant : utilisateur supprimé alors qu\'il était inscrit (Asterisk garde l\'inscription, persistentmembers = yes), ou utilisateur d\'un autre tenant. Le groupe continue d\'appeler ce canal. Supposé : la commande queue remove member retire aussi l\'inscription persistante.']] : []),
       [g ? 'Inscrits en ce moment' : 'Connectés en ce moment', leafInfo.live ? (dyn.filter((x) => !x.unknown).map((x) => `${x.name}${x.state ? ` (${x.state})` : ''}`).join(', ') || 'aucun') : `non lisible : ${M.liveState || 'non lu'}`,
         g ? 'Utilisateurs inscrits par la touche « bascule groupe » (*50, *51, *52). Wazo ne les enregistre pas dans sa configuration : seul Asterisk les connaît (lecture par l\'API amid).' : 'Agents connectés à la file, lus dans Asterisk (API amid).'],

@@ -3,15 +3,15 @@
 // déposer (lot 2a, brouillon puis aperçu, sauvegarde, écriture).
 // Cadrage : astrea-wazo-dev/docs/CALLFLOW-MANAGER.md.
 // Modèle (sources confd vérifiées) : model.js ; canevas : canvas.js ; écriture : write.js.
-import { S, $, esc, fullName, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.37.0';
-import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, scanGroupKeys, buildTree, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel, periodText, STRATEGY, QSTRAT, baseKey } from './model.js?v=0.37.0';
-import { createCanvas } from './canvas.js?v=0.37.0';
-import { getDest, setDest, sameValue, prepare, execute } from './write.js?v=0.37.0';
-import { openScheduleEditor } from './sched-editor.js?v=0.37.0';
-import { openGroupEditor, groupCfgDiff } from './group-editor.js?v=0.37.0';
-import { openQueueEditor, queueCfgDiff, agentName } from './queue-editor.js?v=0.37.0';
-import { openIvrEditor, ivrCfgDiff } from './ivr-editor.js?v=0.37.0';
-import { openDestEditor, ENTITY_DEST } from './dest-editor.js?v=0.37.0';
+import { S, $, esc, fullName, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.37.1';
+import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, scanGroupKeys, buildTree, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel, periodText, STRATEGY, QSTRAT, baseKey } from './model.js?v=0.37.1';
+import { createCanvas } from './canvas.js?v=0.37.1';
+import { getDest, setDest, sameValue, prepare, execute } from './write.js?v=0.37.1';
+import { openScheduleEditor } from './sched-editor.js?v=0.37.1';
+import { openGroupEditor, groupCfgDiff } from './group-editor.js?v=0.37.1';
+import { openQueueEditor, queueCfgDiff, agentName } from './queue-editor.js?v=0.37.1';
+import { openIvrEditor, ivrCfgDiff } from './ivr-editor.js?v=0.37.1';
+import { openDestEditor, ENTITY_DEST } from './dest-editor.js?v=0.37.1';
 
 const TESTED_STACK = ['26.07'];
 const NAV = [

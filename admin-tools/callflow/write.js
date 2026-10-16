@@ -11,11 +11,11 @@
 //  - SVI : choices envoyé en entier (supposé : la liste est remplacée).
 // Toujours : relire juste avant d'écrire, ne rien écrire si c'est identique,
 // une seule écriture par objet.
-import { api } from '../common/core.js?v=0.37.0';
-import { M } from './model.js?v=0.37.0';
-import { groupCfgOf, applyGroupCfg, GROUP_FIELDS } from './group-editor.js?v=0.37.0';
-import { queueCfgOf, applyQueueCfg, QUEUE_FIELDS, optionsList } from './queue-editor.js?v=0.37.0';
-import { ivrCfgOf, applyIvrCfg, IVR_FIELDS } from './ivr-editor.js?v=0.37.0';
+import { api } from '../common/core.js?v=0.37.1';
+import { M } from './model.js?v=0.37.1';
+import { groupCfgOf, applyGroupCfg, GROUP_FIELDS } from './group-editor.js?v=0.37.1';
+import { queueCfgOf, applyQueueCfg, QUEUE_FIELDS, optionsList } from './queue-editor.js?v=0.37.1';
+import { ivrCfgOf, applyIvrCfg, IVR_FIELDS } from './ivr-editor.js?v=0.37.1';
 
 // Champs d'entrée de chaque type de destination (le reste est en lecture seule).
 const DEST_KEYS = {

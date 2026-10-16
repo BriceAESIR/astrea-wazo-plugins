@@ -18,10 +18,10 @@
 //    présent sort sans notifier Asterisk : pour changer priorité ou pénalité,
 //    write.js retire puis rajoute le membre ;
 //  - une seule extension, contexte internal, dans les queue_ranges.
-import { $, esc, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.37.0';
-import { M, listOf, QSTRAT } from './model.js?v=0.37.0';
-import { pickerHtml, bindPicker, readPicker, fillSoundSelect } from './sched-editor.js?v=0.37.0';
-import { sec, field, setSums, openSec } from './ed-ui.js?v=0.37.0';
+import { $, esc, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.37.1';
+import { M, listOf, QSTRAT } from './model.js?v=0.37.1';
+import { pickerHtml, bindPicker, readPicker, fillSoundSelect } from './sched-editor.js?v=0.37.1';
+import { sec, field, setSums, openSec } from './ed-ui.js?v=0.37.1';
 
 const QSTRAT_HELP = {
   ringall: 'Tous les agents disponibles sonnent ensemble ; le premier qui décroche prend l\'appel.',
@@ -141,7 +141,7 @@ export function openQueueEditor(q, onSave) {
       <div class="cf-ge-l cf-ge-gap">Utilisateurs</div>
       <ul class="cf-ge-list" id="qe-users">${userRows()}</ul>
       <div class="cf-ge-row"><select id="qe-uadd">${addU()}</select><button data-add="u">Ajouter</button></div>
-      ${live.length ? `<p class="small muted">Connectés en ce moment (agents logués, lus dans Asterisk) : ${esc(live.map((x) => x.name).join(', '))}</p>` : ''}`, { open: true, help: 'Agents : membres de la file par leur fiche agent (pénalité : les plus basses d\'abord). Utilisateurs : membres directs. Chaque ajout, retrait ou changement est une écriture séparée ; pour changer l\'ordre ou la pénalité d\'un membre existant, l\'appli le retire puis le rajoute (confd ne notifie pas Asterisk sinon, vérifié).' })}
+      ${live.length ? `<p class="small muted">Connectés en ce moment (agents logués, lus dans Asterisk) : ${esc(live.map((x) => x.name).join(', '))}</p>` : ''}`, { open: true, help: 'Agent : sonne seulement quand il est connecté à la file (*31 ou application), peut se mettre en pause, a une pénalité (les plus basses sont appelées d\'abord) et des statistiques. Pour un centre d\'appels. Utilisateur : ses postes sonnent toujours, sans connexion ni pénalité ; en NPD, il est mis en pause. Pour faire simplement sonner des postes. Chaque ajout, retrait ou changement est une écriture séparée ; pour changer l\'ordre ou la pénalité d\'un membre existant, l\'appli le retire puis le rajoute (confd ne notifie pas Asterisk sinon, vérifié).' })}
     ${sec('fb', 'Débordements', `
       <div class="cf-ge-f"><span class="cf-ge-l">Si personne ne répond (durée totale)</span>${pickerHtml('qe-noans', fb.noanswer_destination)}</div>
       <div class="cf-ge-f"><span class="cf-ge-l">Si la file est pleine (occupé)</span>${pickerHtml('qe-busy', fb.busy_destination)}</div>
