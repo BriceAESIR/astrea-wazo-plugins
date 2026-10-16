@@ -5,8 +5,8 @@
 // positions manuelles mémorisées donnaient des dispositions bizarres quand le
 // graphe changeait) : une carte déplacée à la main garde sa place seulement
 // tant que la vue montre les mêmes cartes. Plus rien n'est gardé dans le navigateur.
-import { esc } from '../common/core.js?v=0.40.2';
-import { TYPES } from './model.js?v=0.40.2';
+import { esc } from '../common/core.js?v=0.40.3';
+import { TYPES } from './model.js?v=0.40.3';
 
 const W = 236, GAP_X = 104, GAP_Y = 18;
 try { localStorage.removeItem('astrea-callflow-pos-v1'); } catch { /* ancien stockage des positions */ }
@@ -115,7 +115,8 @@ export function createCanvas(viewport, { onSelect, onOpen, onFold, onClear, onUn
     if (V.dir !== 'in') for (const n of V.tree.nodes.values()) if (n.flowTo) line(portPoint(n.key, n.ports?.find((p) => p.info)?.id || null), inPoint(n.flowTo), `cf-edge flow${n.dim || V.tree.nodes.get(n.flowTo)?.dim ? ' inactive' : ''}`);
     for (const c of V.tree.cross) {
       if (V.dir === 'in') line(portPoint(c.to, c.port), inPoint(c.from), 'cf-edge cross');
-      else line(portPoint(c.from, c.port), inPoint(c.to), `cf-edge cross${c.edge?.assoc ? ' assoc' : ''}${guard(c.from, c.port)}${off(c.from, c.port) ? ' inactive' : ''}`);
+      // Sortie qui converge (motifs d'une règle vers son trunk) : lien plein, comme un lien normal.
+      else line(portPoint(c.from, c.port), inPoint(c.to), `cf-edge${c.merge ? '' : ' cross'}${c.edge?.assoc ? ' assoc' : ''}${guard(c.from, c.port)}${off(c.from, c.port) ? ' inactive' : ''}`);
     }
     g.innerHTML = out.join('');
   }

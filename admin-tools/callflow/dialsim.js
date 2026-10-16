@@ -12,7 +12,7 @@
 //    « prefix » est lu mais pas appliqué.
 // Supposé : effet exact des autorisations d'appels et d'un horaire sur une
 // règle sortante (affichés à titre indicatif).
-import { M, scheduleState, whenOf, entity, groupMemberList } from './model.js?v=0.40.2';
+import { M, scheduleState, whenOf, entity, groupMemberList } from './model.js?v=0.40.3';
 
 // Motif → liste d'éléments { set: chaînes de caractères, size } | { dot } | { bang } ; null si numéro exact.
 export function parsePattern(p) {
@@ -348,7 +348,8 @@ export function simPath(tree, w, match, { blocked = null } = {}) {
       case 'ivr': { const tries = o.max_tries || 1; st.dur = (o.timeout || 0) * tries; st.what = `menu, attend une touche${o.timeout ? ` ${o.timeout} s × ${tries} (supposé)` : ''}`; p = P((x) => x.slot === 'ivr_timeout'); break; }
       case 'outcall': {
         p = P((x) => x.slot === 'pattern' && (x.pats ? x.pats.includes(r?.dp?.exten) : x.label === r?.dp?.exten));
-        st.what = r?.dp ? `motif ${r.dp.exten}` : 'règle sortante';
+        // Numéro envoyé sur l'étape de la règle (la carte « Envoi » n'existe plus).
+        st.what = r?.dp ? `motif ${r.dp.exten}${r.sent ? ` · envoie ${r.sent}` : ''}` : 'règle sortante';
         if (o?.enabled === false) { st.what += ' · règle désactivée'; st.block = true; end = true; R.end = 'règle sortante désactivée : l\'appel échoue (supposé)'; break; }
         // Horaire de la règle : carte horaire placée devant elle (suivie comme les autres horaires).
         const cr = r?.rights;

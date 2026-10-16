@@ -21,8 +21,8 @@
 // Supposé, à vérifier en réel : les listes (GET /groups, /queues,
 // /switchboards, /schedules) contiennent déjà fallbacks, membres et
 // destinations ; sinon on lit le détail de chaque objet (ensureDetails).
-import { S, api, listAll, fullName } from '../common/core.js?v=0.40.2';
-import { comparePatterns, describePattern, userContext, rightsList, simulate, famLabel } from './dialsim.js?v=0.40.2';
+import { S, api, listAll, fullName } from '../common/core.js?v=0.40.3';
+import { comparePatterns, describePattern, userContext, rightsList, simulate, famLabel } from './dialsim.js?v=0.40.3';
 
 export const M = { lists: {}, by: {}, ext: new Map(), extAny: new Map(), rev: null, warns: [] };
 
@@ -497,10 +497,11 @@ export function edgesOf(k) {
       // Motifs regroupés par transformation (retour de Brice, 16/10/2026 : une
       // sortie par motif devenait illisible) : une sortie par combinaison
       // chiffres retirés / préfixe ajouté / numéro présenté, qui liste ses
-      // familles et ses motifs, vers une seule carte « Envoi » (numéro envoyé :
-      // strip_digits, external_prefix, vérifié dans wazo-agid) puis les trunks
-      // dans l'ordre (le suivant si le premier échoue). L'ordre d'essai entre
-      // motifs reste celui d'Asterisk (le plus précis d'abord).
+      // familles, ses motifs et sa transformation (numéro envoyé : strip_digits,
+      // external_prefix, vérifié dans wazo-agid). Plus de carte « Envoi » (retour
+      // de Brice : elle répétait la sortie) : toutes les sorties convergent vers
+      // UNE carte du 1er trunk (merge), qui porte « si échec » vers le suivant.
+      // L'ordre d'essai entre motifs reste celui d'Asterisk (le plus précis d'abord).
       const trunks = (o.trunks || []).filter((t) => M.by.trunk?.has(String(t.id)));
       const pats = [...(o.extensions || [])].sort((a, b) => comparePatterns(a.exten, b.exten));
       const groups = new Map();
@@ -511,12 +512,10 @@ export function edgesOf(k) {
       }
       return [...groups.values()].map(({ dp, list }) => {
         const tr = [dp.strip_digits ? `retire ${dp.strip_digits} chiffre${dp.strip_digits > 1 ? 's' : ''}` : '', dp.external_prefix ? `ajoute ${dp.external_prefix} devant` : ''].filter(Boolean).join(', ');
-        const send = leaf('dial', tr ? `Numéro ${tr}` : 'Numéro envoyé tel quel', [dp.caller_id ? `présenté : ${dp.caller_id}` : '', `${trunks.length} trunk${trunks.length > 1 ? 's' : ''}`].filter(Boolean).join(' · '), {
-          edges: trunks.map((t, i) => ({ ...link('trunk', `trunk:${t.id}`), label: i ? `${i + 1}. si échec : trunk` : '1. Trunk', note: '' })),
-        });
         const fams = [...new Set(list.map(famLabel))];
         const shown = list.length > 6 ? `${list.slice(0, 6).join(', ')} +${list.length - 6}` : list.join(', ');
-        return { slot: 'pattern', pats: list, label: `${fams.join(', ')}`.replace(/^./, (c) => c.toUpperCase()), note: `${shown}${tr ? ` · ${tr}` : ' · tel quel'}`, help: `Motifs qui partent avec la même transformation : ${list.join(', ')}. Règles d'Asterisk : _ = motif, X = 0-9, Z = 1-9, N = 2-9, [1-5] = un chiffre parmi, « . » = un ou plusieurs caractères ; le plus précis est essayé d'abord.`, to: send };
+        const to = trunks.length ? { key: `trunk:${trunks[0].id}` } : null;
+        return { slot: 'pattern', pats: list, merge: true, outTrunks: trunks.slice(1).map((t) => t.id), label: `${fams.join(', ')}`.replace(/^./, (c) => c.toUpperCase()), note: [shown, tr || 'tel quel', dp.caller_id ? `présenté ${dp.caller_id}` : '', trunks.length ? '' : 'aucun trunk : ne sort pas'].filter(Boolean).join(' · '), help: `Motifs qui partent avec la même transformation : ${list.join(', ')}. Règles d'Asterisk : _ = motif, X = 0-9, Z = 1-9, N = 2-9, [1-5] = un chiffre parmi, « . » = un ou plusieurs caractères ; le plus précis est essayé d'abord.`, to, info: !to };
       });
     }
     default: return [];
@@ -977,9 +976,12 @@ export function buildTree(rootKey, dir, { maxDepth = 8, collapsed = new Set(), e
     // entrant du trunk (mêmes trunks dans les deux sens) : boucle juste pour
     // Asterisk, déroutante à lire (retour de Brice, 16/10/2026). Trunk choisi
     // comme point de départ : ses appels entrants restent affichés.
-    if (!n.leaf && baseKey(n.key).startsWith('trunk:') && n.parent && (baseKey(n.parent).startsWith('outcall:') || nodes.get(n.parent)?.leaf?.type === 'dial')) {
+    if (!n.leaf && baseKey(n.key).startsWith('trunk:') && n.parent && (n.edge?.merge || n.edge?.outTrunk || baseKey(n.parent).startsWith('outcall:') || nodes.get(n.parent)?.leaf?.type === 'dial')) {
       const op = entity(n.key).obj?.operator;
       edges = [{ slot: 'pstn', label: op ? `Vers l'opérateur ${op.name}` : 'Vers l\'opérateur (réseau public)', note: 'appel sortant : fin du parcours dans Wazo', op: op?.name || null, help: 'L\'appel quitte Wazo par ce trunk. Ses appels entrants (contexte, SDA) se voient en partant du trunk lui-même.', to: null, info: true }];
+      // Trunks suivants de la règle : utilisés si celui-ci échoue (ordre de la règle).
+      const rest = n.edge?.outTrunks || [];
+      if (rest.length) edges.push({ ...link('trunk', `trunk:${rest[0]}`), label: 'Si échec : trunk suivant', note: '', outTrunk: true, outTrunks: rest.slice(1), help: 'La règle sortante essaie ses trunks dans l\'ordre : celui-ci est utilisé si le précédent échoue.' });
     }
     n.ports = edges.filter((e) => e.to || showEmpty || e.info).map((e, i) => ({ ...e, id: `${e.slot}#${i}` }));
     edges = n.ports;
@@ -995,6 +997,9 @@ export function buildTree(rootKey, dir, { maxDepth = 8, collapsed = new Set(), e
       // répétée (demande de Brice : chaque fin possible visible, quitte à se
       // répéter). Au-delà de MAX_NODES cartes, lien en pointillé.
       let key = k;
+      // Sorties qui convergent (motifs d'une règle → son trunk) : la 2e sortie et les
+      // suivantes rejoignent la carte créée par la 1re (lien plein, pas de carte répétée).
+      if (e.merge && n.mergeTo?.[k]) { cross.push({ from: n.key, port: e.id, to: n.mergeTo[k], edge: e, merge: true }); continue; }
       if (nodes.has(k)) {
         // Cartes d'arrivée (appelant, trunk, chaîne vers la carte choisie) : pas des boucles (ex. renvoi qui ressort par le trunk d'arrivée).
         let a = n; while (a && (a.entry || baseKey(a.key) !== k)) a = a.parent ? nodes.get(a.parent) : null;
@@ -1007,6 +1012,7 @@ export function buildTree(rootKey, dir, { maxDepth = 8, collapsed = new Set(), e
       nodes.set(key, child);
       n.kids.push(child);
       queue.push(child);
+      if (e.merge) (n.mergeTo ||= {})[k] = key;
     }
   }
   // (0.36.1) Plus de liens « membres → pas de réponse » : la durée du groupe
