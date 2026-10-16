@@ -12,7 +12,7 @@
 //    « prefix » est lu mais pas appliqué.
 // Supposé : effet exact des autorisations d'appels et d'un horaire sur une
 // règle sortante (affichés à titre indicatif).
-import { M, scheduleState, whenOf, entity, groupMemberList } from './model.js?v=0.40.3';
+import { M, scheduleState, whenOf, entity, groupMemberList } from './model.js?v=0.40.4';
 
 // Motif → liste d'éléments { set: chaînes de caractères, size } | { dot } | { bang } ; null si numéro exact.
 export function parsePattern(p) {
@@ -130,6 +130,8 @@ export function dialedNumber(number, dp) {
 // ---------------------------------------------------------------------------
 export function rightMatches(number, pattern) {
   let re = String(pattern || '');
+  // Motif saisi par un admin de tenant : seulement les caractères d'un motif (audit, risque de regex piège).
+  if (!/^[0-9XZN.!_+*#\[\]-]{1,80}$/.test(re)) return false;
   for (const [k, v] of [['_', ''], ['*', '\\*'], ['+', '\\+'], ['X', '[0-9]'], ['Z', '[1-9]'], ['N', '[2-9]'], ['.', '.+'], ['!', '.*']]) re = re.split(k).join(v);
   try { return new RegExp(`^${re}$`).test(String(number)); } catch { return false; }
 }

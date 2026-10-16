@@ -3,22 +3,22 @@
 // déposer (lot 2a, brouillon puis aperçu, sauvegarde, écriture).
 // Cadrage : astrea-wazo-dev/docs/CALLFLOW-MANAGER.md.
 // Modèle (sources confd vérifiées) : model.js ; canevas : canvas.js ; écriture : write.js.
-import { S, $, esc, fullName, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.40.3';
-import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, loadTrunkOperators, scanGroupKeys, buildTree, landingAt, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel, periodText, STRATEGY, QSTRAT, baseKey, gateOf, loadBlocklist, blockedBy, dialUser, entryChains, isGlob, numMatch, showNum } from './model.js?v=0.40.3';
-import { createCanvas } from './canvas.js?v=0.40.3';
-import { getDest, setDest, sameValue, prepare, execute } from './write.js?v=0.40.3';
-import { openScheduleEditor } from './sched-editor.js?v=0.40.3';
-import { openGroupEditor, groupCfgDiff } from './group-editor.js?v=0.40.3';
-import { openQueueEditor, queueCfgDiff, agentName } from './queue-editor.js?v=0.40.3';
-import { openIvrEditor, ivrCfgDiff } from './ivr-editor.js?v=0.40.3';
-import { openSbEditor, sbCfgDiff } from './sb-editor.js?v=0.40.3';
-import { redact } from './ed-ui.js?v=0.40.3';
-import { openRestore } from './restore.js?v=0.40.3';
-import { openIncallEditor, incallCfgDiff, openUserEditor, userCfgDiff, openVmEditor, vmCfgDiff, openConfEditor, confCfgDiff, openSchedGenEditor, schedCfgDiff } from './obj-editors.js?v=0.40.3';
-import { openDestEditor, ENTITY_DEST } from './dest-editor.js?v=0.40.3';
-import { openOutcallEditor, outcallCfgDiff } from './outcall-editor.js?v=0.40.3';
-import { openCreate, openCreateIncall, CREATABLE } from './create.js?v=0.40.3';
-import { simulate, userContext, simPath } from './dialsim.js?v=0.40.3';
+import { S, $, esc, fullName, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.40.4';
+import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, loadTrunkOperators, scanGroupKeys, buildTree, landingAt, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel, periodText, STRATEGY, QSTRAT, baseKey, gateOf, loadBlocklist, blockedBy, dialUser, entryChains, isGlob, numMatch, showNum } from './model.js?v=0.40.4';
+import { createCanvas } from './canvas.js?v=0.40.4';
+import { getDest, setDest, sameValue, prepare, execute } from './write.js?v=0.40.4';
+import { openScheduleEditor } from './sched-editor.js?v=0.40.4';
+import { openGroupEditor, groupCfgDiff } from './group-editor.js?v=0.40.4';
+import { openQueueEditor, queueCfgDiff, agentName } from './queue-editor.js?v=0.40.4';
+import { openIvrEditor, ivrCfgDiff } from './ivr-editor.js?v=0.40.4';
+import { openSbEditor, sbCfgDiff } from './sb-editor.js?v=0.40.4';
+import { redact } from './ed-ui.js?v=0.40.4';
+import { openRestore } from './restore.js?v=0.40.4';
+import { openIncallEditor, incallCfgDiff, openUserEditor, userCfgDiff, openVmEditor, vmCfgDiff, openConfEditor, confCfgDiff, openSchedGenEditor, schedCfgDiff } from './obj-editors.js?v=0.40.4';
+import { openDestEditor, ENTITY_DEST } from './dest-editor.js?v=0.40.4';
+import { openOutcallEditor, outcallCfgDiff } from './outcall-editor.js?v=0.40.4';
+import { openCreate, openCreateIncall, CREATABLE, LABEL } from './create.js?v=0.40.4';
+import { simulate, userContext, simPath } from './dialsim.js?v=0.40.4';
 
 const TESTED_STACK = ['26.07'];
 const NAV = [
@@ -37,15 +37,23 @@ async function boot() {
   $('conn').textContent = 'Chargement…';
   document.body.classList.remove('idle');
   const scope = `${S.base}|${S.tenant}`;
-  if (C.scope !== scope) { C.root = null; C.sel = null; C.collapsed.clear(); C.expanded.clear(); }
+  // Changement de tenant (audit du 16/10/2026) : tout ce qui vise l'ancien tenant est
+  // abandonné — carte de départ, simulation (trunk, numéros), brouillon (signalé).
+  if (C.scope !== scope) {
+    if (C.scope && C.draft.size) toast(`Changement de tenant : ${C.draft.size} modification${C.draft.size > 1 ? 's' : ''} du brouillon abandonnée${C.draft.size > 1 ? 's' : ''} (rien n'a été écrit).`, 8000);
+    C.root = null; C.sel = null; C.collapsed.clear(); C.expanded.clear(); C.chains = null;
+    C.sim.num = ''; C.sim.caller = ''; C.sim.trunk = '';
+  }
   C.draft.clear(); renderDraft(); // les objets sont relus : le brouillon ne vaut plus
   C.scope = scope;
   try {
     await reload();
+    // Tenant changé pendant le chargement : un autre boot() s'en charge.
+    if (`${S.base}|${S.tenant}` !== scope) return;
     loaded();
     $('conn').textContent = `${new URL(S.base).host}`;
     draw();
-  } catch (e) { loadFailed(e); }
+  } catch (e) { if (e.stale || `${S.base}|${S.tenant}` !== scope) return; loadFailed(e); }
 }
 async function reload() {
   await loadAll();
@@ -84,8 +92,11 @@ function renderList() {
   const q = $('q').value.trim().toLowerCase();
   // Recherche aussi sur le numéro saisi (33…) et le format national sans espaces.
   const items = listOf(C.type).filter((x) => !q || `${x.title} ${String(x.title).replace(/\s/g, '')} ${x.raw || ''} ${x.sub}`.toLowerCase().includes(q.replace(/\s/g, '')) || `${x.title} ${x.sub}`.toLowerCase().includes(q));
-  // Créer une SDA (liste des SDA, écriture permise).
-  $('list-actions').hidden = C.type !== 'incall' || !!S.readonly;
+  // Créer un objet du type affiché (demande de Brice, 16/10/2026 : comme les SDA, pour tous sauf les utilisateurs).
+  const canNew = C.type === 'incall' || CREATABLE.has(C.type);
+  $('list-actions').hidden = !canNew || !!S.readonly;
+  if (canNew) $('cf-new-incall').textContent = C.type === 'incall' ? 'Créer une SDA…' : `Créer ${LABEL[C.type]}…`;
+  if (canNew) $('cf-new-incall').title = C.type === 'incall' ? 'Créer une SDA à partir des plages déclarées dans un contexte entrant (numéros pas encore utilisés)' : `Créer ${LABEL[C.type]} tout de suite dans Wazo, puis ouvrir ses réglages complets (mode édition)`;
   $('count').textContent = `${items.length} élément${items.length > 1 ? 's' : ''}`;
   $('list').innerHTML = items.map((x) => `<li data-key="${esc(x.key)}" class="${x.key === C.root ? 'sel' : ''}"><div><div>${esc(x.title)}</div>${x.sub ? `<div class="sub">${esc(x.sub)}</div>` : ''}</div></li>`).join('') || '<li class="muted">Aucun élément</li>';
 }
@@ -888,7 +899,17 @@ function newIncall(ctxPref = '') {
     if (p) openDest({ nodeKey: n2.key, portId: p.id });
   }, reloadKeepDraft, ctx, showNum);
 }
-$('cf-new-incall').onclick = () => newIncall();$('cf-edit').onclick = () => setEdit(!C.edit);
+// Autre type : création, puis carte de départ, mode édition et réglages complets ouverts.
+function newObject(type) {
+  if (!canWrite()) return;
+  openCreate(type, (id) => {
+    const key = `${type}:${id}`; setRoot(key);
+    if (!C.edit) setEdit(true);
+    const n = C.tree?.nodes.get(C.tree.root.key); const cfg = n && cfgOfNode(n);
+    if (cfg) openCfg(cfg);
+  }, reloadKeepDraft, true);
+}
+$('cf-new-incall').onclick = () => (C.type === 'incall' ? newIncall() : newObject(C.type));$('cf-edit').onclick = () => setEdit(!C.edit);
 $('cf-draft-cancel').onclick = () => confirmModal(`<h3>Annuler le brouillon ?</h3><p>Les ${C.draft.size} modification${C.draft.size > 1 ? 's' : ''} non écrite${C.draft.size > 1 ? 's' : ''} sont abandonnée${C.draft.size > 1 ? 's' : ''}.</p>`, () => cancelDraft(), 'Annuler le brouillon');
 $('cf-draft-apply').onclick = applyDraft;
 // Restaurer : seulement brouillon vide (sinon la relecture effacerait le brouillon).

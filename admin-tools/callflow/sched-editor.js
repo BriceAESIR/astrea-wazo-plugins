@@ -21,8 +21,8 @@
 //    modifiable (15/10/2026) ;
 //  - fermeture liée à un jour de semaine ou valable tous les mois : conservée
 //    telle quelle et listée (supprimable).
-import { $, esc, confirmModal, helpButton, helpBox } from '../common/core.js?v=0.40.3';
-import { M, listOf, destLabel, loadSounds, soundName } from './model.js?v=0.40.3';
+import { $, esc, confirmModal, helpButton, helpBox } from '../common/core.js?v=0.40.4';
+import { M, listOf, destLabel, loadSounds, soundName } from './model.js?v=0.40.4';
 
 const SLOT = 15, N = 96;
 const DAYS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
@@ -37,7 +37,7 @@ const hm = (s) => { const [h, m] = String(s || '').split(':').map(Number); retur
 const partial = (a, full) => Array.isArray(a) && a.length > 0 && a.length < full;
 const sameD = (a, b) => JSON.stringify(a || null) === JSON.stringify(b || null);
 // « 1-5, 7 » ↔ [1,2,3,4,5,7] ; null si la saisie est invalide.
-const toList = (s) => { const out = []; for (const part of String(s || '').split(',').map((x) => x.trim()).filter(Boolean)) { const m = part.match(/^(\d+)\s*-\s*(\d+)$/); if (m) { for (let i = +m[1]; i <= +m[2]; i++) out.push(i); } else if (/^\d+$/.test(part)) out.push(+part); else return null; } return [...new Set(out)].sort((a, b) => a - b); };
+const toList = (s) => { const out = []; for (const part of String(s || '').split(',').map((x) => x.trim()).filter(Boolean)) { const m = part.match(/^(\d+)\s*-\s*(\d+)$/); if (m) { if (+m[1] > 31 || +m[2] > 31) return null; for (let i = +m[1]; i <= +m[2]; i++) out.push(i); } /* bornes 1-31 avant la boucle (audit : « 1-999999999 » figeait l'onglet) */ else if (/^\d+$/.test(part)) out.push(+part); else return null; } return [...new Set(out)].sort((a, b) => a - b); };
 const fromList = (a) => { const v = [...(a || [])].sort((x, y) => x - y); const out = []; for (let i = 0; i < v.length; i++) { let j = i; while (j + 1 < v.length && v[j + 1] === v[j] + 1) j++; out.push(j > i ? `${v[i]}-${v[j]}` : `${v[i]}`); i = j; } return out.join(', '); };
 
 // ---------------------------------------------------------------------------

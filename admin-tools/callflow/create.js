@@ -14,13 +14,14 @@
 //  - horaire : closed_destination obligatoire ; listes de jours / mois non vides.
 // Extension : POST /extensions {exten, context} puis PUT /<objet>/{id}/extensions/{ext}
 // (une seule par objet, contexte internal).
-import { $, esc, api, toast, confirmModal } from '../common/core.js?v=0.40.3';
-import { M } from './model.js?v=0.40.3';
-import { pickerHtml, bindPicker, readPicker, fillSoundSelect } from './sched-editor.js?v=0.40.3';
-import { field, secretField, bindSecrets } from './ed-ui.js?v=0.40.3';
+import { $, esc, toast, confirmModal } from '../common/core.js?v=0.40.4';
+// Créations liées au tenant des données chargées (tapi, model.js).
+import { M, tapi as api } from './model.js?v=0.40.4';
+import { pickerHtml, bindPicker, readPicker, fillSoundSelect } from './sched-editor.js?v=0.40.4';
+import { field, secretField, bindSecrets } from './ed-ui.js?v=0.40.4';
 
-export const CREATABLE = new Set(['group', 'queue', 'ivr', 'switchboard', 'voicemail', 'conference', 'schedule']);
-const LABEL = { group: 'un groupe d\'appel', queue: 'une file d\'attente', ivr: 'un SVI', switchboard: 'un standard', voicemail: 'une messagerie', conference: 'une conférence', schedule: 'un horaire' };
+export const CREATABLE = new Set(['group', 'queue', 'ivr', 'switchboard', 'voicemail', 'conference', 'schedule', 'outcall']);
+export const LABEL = { group: 'un groupe d\'appel', queue: 'une file d\'attente', ivr: 'un SVI', switchboard: 'un standard', voicemail: 'une messagerie', conference: 'une conférence', schedule: 'un horaire', outcall: 'une règle sortante' };
 const RANGE = { group: 'group_ranges', queue: 'queue_ranges', conference: 'conference_room_ranges' };
 const internal = () => (M.lists.context || []).filter((c) => c.type === 'internal');
 const ctxSel = (attr) => `<select ${attr}>${internal().map((c) => `<option value="${esc(c.name)}">${esc(c.label || c.name)}</option>`).join('')}</select>`;
@@ -109,7 +110,8 @@ export function openCreateIncall(onCreated, reload, ctxName = '', showNum = (x) 
 }
 
 // onCreated(id) : id de l'objet créé (uuid pour un standard).
-export function openCreate(type, onCreated, reload) {
+// fromList : création depuis la colonne de gauche (pas depuis une sortie du graphe).
+export function openCreate(type, onCreated, reload, fromList = false) {
   if (!CREATABLE.has(type)) return;
   const num = RANGE[type] ? `<div class="cf-ge-2">${field('Numéro interne (facultatif)', '<input data-c="exten" placeholder="aucun" inputmode="numeric">', 'Pour l\'appeler directement.')}${field('Contexte du numéro', ctxSel('data-c="ctx"'))}</div>` : '';
   const forms = {
@@ -119,10 +121,12 @@ export function openCreate(type, onCreated, reload) {
     switchboard: () => field('Nom *', '<input data-c="name" maxlength="128" placeholder="ex. Standard">', 'Opérateurs, délai et débordement : « Régler le standard… » ensuite.'),
     voicemail: () => `${field('Nom *', '<input data-c="name" maxlength="80" placeholder="ex. Messagerie accueil">')}<div class="cf-ge-2">${field('Numéro *', '<input data-c="number" inputmode="numeric" placeholder="ex. 8000">', 'Pour consulter la boîte.')}${field('Contexte *', ctxSel('data-c="ctx"'))}</div>${field('E-mail (facultatif)', '<input type="email" data-c="email" placeholder="aucun">')}${secretField('data-c="password"', 'Code (facultatif)', '', 'Chiffres. Masqué partout, jamais dans une sauvegarde.')}`,
     conference: () => `${field('Nom', '<input data-c="name" maxlength="128" placeholder="ex. Réunion">')}${num}`,
+    // Règle sortante (vérifié, confd outcall/schema.py : seul name est obligatoire) ; motifs et trunks ensuite (« Régler la règle sortante… », assistant France).
+    outcall: () => field('Nom *', '<input data-c="name" maxlength="128" placeholder="ex. Sortie Unyc">', 'Motifs (assistant France), trunks, horaire et autorisations : dans le réglage complet, ouvert juste après.'),
     schedule: () => `${field('Nom *', '<input data-c="name" maxlength="128" placeholder="ex. Horaires bureau">')}${field('Heures d\'ouverture', `<select data-c="preset">${Object.entries(PRESETS).map(([k, [l]]) => `<option value="${k}">${esc(l)}</option>`).join('')}</select>`, 'Point de départ : à affiner ensuite (« Modifier les heures… »).')}<div class="cf-ge-f"><span class="cf-ge-l">Si fermé *</span>${pickerHtml('cr-closed', { type: 'hangup', cause: 'normal' })}</div>`,
   };
   confirmModal(`<div class="cf-ed">
-    <div class="cf-ge-head"><div><h3>Créer ${esc(LABEL[type])}</h3><div class="small muted">Création immédiate dans Wazo, puis branchement sur la sortie (brouillon)</div></div></div>
+    <div class="cf-ge-head"><div><h3>Créer ${esc(LABEL[type])}</h3><div class="small muted">${fromList ? 'Création immédiate dans Wazo ; ses réglages complets s\'ouvrent ensuite (brouillon)' : 'Création immédiate dans Wazo, puis branchement sur la sortie (brouillon)'}</div></div></div>
     <div class="cf-ge-body cf-cr-body">${forms[type]()}</div>
     <div class="warn"><span>« Créer » enregistre l'objet tout de suite dans Wazo. Annuler ensuite le brouillon ne le supprime pas.</span></div>
     <p id="cr-err" class="error small"></p></div>`, async () => {
@@ -148,6 +152,7 @@ export function openCreate(type, onCreated, reload) {
       body = { name: v('name'), number: v('number'), context: ctx, ...(v('email') ? { email: v('email') } : {}), ...(v('password') ? { password: v('password') } : {}) }; path = '/voicemails';
     }
     if (type === 'conference') { body = { name: v('name') || null }; path = '/conferences'; }
+    if (type === 'outcall') { if (!v('name')) return err('Nom obligatoire.'); body = { name: v('name') }; path = '/outcalls'; }
     if (type === 'schedule') {
       if (!v('name')) return err('Nom obligatoire.');
       let closed; try { closed = readPicker('cr-closed'); } catch (e) { return err(e.message); }
@@ -163,7 +168,7 @@ export function openCreate(type, onCreated, reload) {
       try { const e = await api('POST', '/extensions', { exten: ex, context: ctx }); try { await api('PUT', `${base}/extensions/${e.id}`); } catch (e2) { try { await api('DELETE', `/extensions/${e.id}`); } catch { /* */ } throw e2; } } catch (e) { toast(`Objet créé, mais numéro ${ex} refusé : ${e.message}`, 9000); }
     }
     console.info('[astrea] Call Flow : création', path, id);
-    toast(`${LABEL[type][0].toUpperCase()}${LABEL[type].slice(1)} : ${['queue', 'voicemail', 'conference'].includes(type) ? 'créée' : 'créé'} dans Wazo.`, 5000);
+    toast(`${LABEL[type][0].toUpperCase()}${LABEL[type].slice(1)} : ${['queue', 'voicemail', 'conference', 'outcall'].includes(type) ? 'créée' : 'créé'} dans Wazo.`, 5000);
     await reload?.();
     setTimeout(() => onCreated?.(id), 0);
     return true;

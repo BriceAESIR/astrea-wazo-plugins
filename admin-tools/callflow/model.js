@@ -21,8 +21,8 @@
 // Supposé, à vérifier en réel : les listes (GET /groups, /queues,
 // /switchboards, /schedules) contiennent déjà fallbacks, membres et
 // destinations ; sinon on lit le détail de chaque objet (ensureDetails).
-import { S, api, listAll, fullName } from '../common/core.js?v=0.40.3';
-import { comparePatterns, describePattern, userContext, rightsList, simulate, famLabel } from './dialsim.js?v=0.40.3';
+import { S, api, listAll, fullName } from '../common/core.js?v=0.40.4';
+import { comparePatterns, describePattern, userContext, rightsList, simulate, famLabel } from './dialsim.js?v=0.40.4';
 
 export const M = { lists: {}, by: {}, ext: new Map(), extAny: new Map(), rev: null, warns: [] };
 
@@ -125,18 +125,40 @@ const SOURCES = [
   // Pour le réglage des files (16/10/2026) : agents (noms, ajout de membres).
   ['agent', '/agents', 'Agents', 'id'],
 ];
+// ---------------------------------------------------------------------------
+// Tenant (audit du 16/10/2026). Le portail change de tenant tout de suite
+// (S.tenant, en-tête Wazo-Tenant) : un appel encore en cours partirait vers le
+// nouveau tenant avec les identifiants de l'ancien.
+//  - M.tenant = tenant des données chargées ; tapi() refuse tout appel du module
+//    (lectures de préparation comprises) si le portail a changé de tenant :
+//    l'écriture s'arrête au lieu de viser le nouveau tenant.
+//  - un chargement terminé après un changement de tenant est abandonné (stale).
+//  - les listes ne gardent que les objets du tenant (listAll lit en recurse=true :
+//    un tenant parent verrait sinon les objets de ses sous-tenants).
+// ---------------------------------------------------------------------------
+export const sameTenant = (t) => S.tenant === t;
+export async function tapi(method, path, body) {
+  if (M.tenant !== undefined && !sameTenant(M.tenant)) throw Object.assign(new Error('Le tenant a changé dans le portail : opération arrêtée (rien n\'est envoyé vers le nouveau tenant). Rechargez puis recommencez.'), { stale: true });
+  return api(method, path, body);
+}
+const stale = () => Object.assign(new Error('tenant changé pendant le chargement'), { stale: true });
+const ownTenant = (t, l) => (l || []).filter((o) => !t || !o?.tenant_uuid || o.tenant_uuid === t);
 export async function loadAll() {
+  const tenant = S.tenant;
   M.warns = [];
   const [users, ...rest] = await Promise.all([loadUsers(), ...SOURCES.map(([, p, w]) => lookup(p, w))]);
-  M.lists = { user: users };
-  SOURCES.forEach(([t], i) => (M.lists[t] = rest[i]));
+  if (!sameTenant(tenant)) throw stale();
+  M.tenant = tenant;
+  M.lists = { user: ownTenant(tenant, users) };
+  SOURCES.forEach(([t], i) => (M.lists[t] = ownTenant(tenant, rest[i])));
   M.by = {};
   for (const [t, , , k] of [['user', 0, 0, 'id'], ...SOURCES]) M.by[t] = new Map((M.lists[t] || []).map((o) => [String(o[k]), o]));
   // Les groupes sont aussi cherchés par uuid (membres, liens).
   M.groupByUuid = new Map((M.lists.group || []).map((g) => [g.uuid, g]));
-  M.userByUuid = new Map(users.map((u) => [u.uuid, u]));
+  M.userByUuid = new Map(M.lists.user.map((u) => [u.uuid, u]));
   indexExtensions();
-  M.rev = null; M.keys = null; M.live = null; M.liveState = ''; M.sounds = null;
+  // Caches liés au tenant : remis à zéro (la liste de blocage restait celle du tenant précédent).
+  M.rev = null; M.keys = null; M.live = null; M.liveState = ''; M.sounds = null; M.blocklist = undefined;
   return M;
 }
 // ---------------------------------------------------------------------------
@@ -193,7 +215,7 @@ function providerByHost(host) {
   for (const [k, p] of M.providerHosts) if (k.split('.').slice(-2).join('.') === dom) return p;
   return null;
 }
-const provOp = (p) => ({ name: p.name, known: true, logo: /^https:\/\/raw\.githubusercontent\.com\//.test(p.logo || '') ? p.logo : null, color: p.mainColor || null });
+const provOp = (p) => ({ name: p.name, known: true, logo: /^https:\/\/raw\.githubusercontent\.com\/wazo-communication\/portal-plugins\/[A-Za-z0-9_/.-]+\.(png|svg|jpg|jpeg|webp)$/.test(p.logo || '') ? p.logo : null, color: p.mainColor || null });
 // Recherche, dans l'ordre : modèles hérités, serveur déclaré par un modèle du
 // portail, nom du trunk (trunk créé avec des modèles génériques, retour de
 // Brice 16/10/2026), puis nom contenu dans l'hôte.
@@ -240,7 +262,10 @@ export async function loadTrunkOperators() {
 // null = illisible (droit refusé ou stack plus ancienne).
 export async function loadBlocklist() {
   if (M.blocklist !== undefined) return M.blocklist;
-  try { M.blocklist = await listAll('/users/blocklist/numbers'); } catch (e) { M.blocklist = null; console.warn('[astrea] listes de blocage illisibles', e); }
+  const tenant = M.tenant;
+  let l; try { l = await listAll('/users/blocklist/numbers'); } catch (e) { l = null; console.warn('[astrea] listes de blocage illisibles', e); }
+  if (!sameTenant(tenant)) return M.blocklist; // tenant changé pendant la lecture : ignorée
+  M.blocklist = l ? ownTenant(tenant, l) : null;
   return M.blocklist;
 }
 // Numéro français (demande de Brice, 16/10/2026) : les SDA sont souvent saisies en
@@ -266,7 +291,9 @@ export function numMatch(pattern, number) {
   if (!p) return false;
   const forms = [n, numKey(n)];
   if (!isGlob(p)) return forms.includes(p) || forms.includes(numKey(p));
-  const re = new RegExp(`^${p.replace(/\+/g, '\\+').replace(/\*/g, '.*').replace(/\?/g, '.')}$`);
+  // Saisie libre : métacaractères échappés, jokers limités (audit : *[ ou *{ faisaient planter le graphe).
+  if ((p.match(/\*/g) || []).length > 6) return false;
+  let re; try { re = new RegExp(`^${p.replace(/[.^$|()[\]{}\\+]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.')}$`); } catch { return false; }
   return forms.some((x) => re.test(x));
 }
 // Utilisateurs (uuid) qui bloquent cet appelant (jokers acceptés).
@@ -727,6 +754,7 @@ async function queueStatus(name) {
   return r.json();
 }
 export async function loadLiveMembers() {
+  const tenant = M.tenant; // résultat ignoré si le tenant change pendant la lecture
   M.live = null; M.liveState = '';
   const names = [...(M.lists.group || []), ...(M.lists.queue || [])].map((x) => x.name).filter(Boolean);
   if (!names.length) return;
@@ -760,6 +788,7 @@ export async function loadLiveMembers() {
       try { const usr = await api('GET', `/users/${x.uuid}`); if (usr) { x.name = fullName(usr); x.unknown = false; } } catch { /* introuvable */ }
       if (x.unknown) x.name = `inscrit inconnu (${x.uuid.slice(0, 8)}…)`;
     }
+    if (!sameTenant(tenant)) return;
     M.live = live; M.liveState = 'ok';
     console.info('[astrea] Call Flow : membres en direct (amid QueueStatus)', M.live);
   } catch (e) { M.liveState = e.status ? e.message : `indisponible (${e.message})`; console.info('[astrea] amid QueueStatus :', M.liveState, e); }
@@ -797,6 +826,7 @@ export const soundName = (filename) => String(filename || '').split('/').pop();
 // groupmember, group_id entier, action join|leave|toggle ; vérifié dans
 // wazo-confd func_key/schema.py). Une lecture par utilisateur : à la demande.
 export async function scanGroupKeys(onProgress) {
+  const tenant = M.tenant;
   const users = M.lists.user || [];
   const keys = new Map();
   let i = 0, done = 0;
@@ -815,7 +845,7 @@ export async function scanGroupKeys(onProgress) {
       onProgress?.(++done, users.length);
     }
   }));
-  M.keys = keys;
+  if (sameTenant(tenant)) M.keys = keys;
 }
 
 // ---------------------------------------------------------------------------

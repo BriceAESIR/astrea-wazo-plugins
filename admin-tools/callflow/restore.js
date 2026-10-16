@@ -7,12 +7,33 @@
 // montrés une seule fois (jamais enregistrés dans un fichier).
 // Non restauré automatiquement : un numéro interne changé (risque de collision
 // si le numéro a été réattribué) — signalé.
-import { S, $, esc, api, toast, confirmModal, downloadJson, fullName } from '../common/core.js?v=0.40.3';
-import { M } from './model.js?v=0.40.3';
-import { cleanDest } from './write.js?v=0.40.3';
-import { redact } from './ed-ui.js?v=0.40.3';
+import { S, $, esc, toast, confirmModal, downloadJson, fullName } from '../common/core.js?v=0.40.4';
+// Restauration liée au tenant des données chargées (tapi, model.js).
+import { M, tapi as api } from './model.js?v=0.40.4';
+import { cleanDest } from './write.js?v=0.40.4';
+import { redact, SECRET_KEYS } from './ed-ui.js?v=0.40.4';
+import { GROUP_FIELDS } from './group-editor.js?v=0.40.4';
+import { QUEUE_FIELDS } from './queue-editor.js?v=0.40.4';
+import { IVR_FIELDS } from './ivr-editor.js?v=0.40.4';
+import { SB_FIELDS } from './sb-editor.js?v=0.40.4';
+import { INCALL_FIELDS, USER_FIELDS, VM_FIELDS, CONF_FIELDS, SCHED_FIELDS } from './obj-editors.js?v=0.40.4';
+import { OUTCALL_FIELDS } from './outcall-editor.js?v=0.40.4';
 
 const HIDDEN = '***';
+// Audit du 16/10/2026 : la sauvegarde est un fichier que l'on peut modifier ; on ne
+// lui fait pas confiance. Chemins : caractères sûrs seulement (pas de ?, #, %, \,
+// ni ..), identifiants numériques ou uuid, motifs ancrés. Champs : seulement ceux
+// que le module écrit lui-même (listes *_FIELDS des éditeurs, destinations).
+const ID = '[0-9]+|[0-9a-fA-F-]{36}';
+const safePath = (p) => typeof p === 'string' && p.startsWith('/') && p.length < 200 && /^[/A-Za-z0-9_-]+$/.test(p) && !p.includes('..');
+const ALLOW = {
+  groups: GROUP_FIELDS, queues: [...QUEUE_FIELDS, 'options'], ivr: [...IVR_FIELDS, 'choices'], switchboards: SB_FIELDS, incalls: INCALL_FIELDS, users: USER_FIELDS,
+  voicemails: VM_FIELDS, conferences: CONF_FIELDS, schedules: [...SCHED_FIELDS, 'open_periods', 'exceptional_periods'], outcalls: OUTCALL_FIELDS,
+};
+const allowed = (res, k) => k === 'destination' || k.endsWith('_destination') || (ALLOW[res] || []).includes(k);
+// Une valeur masquée (« *** ») cachée dans une destination (code DISA…) : ne pas la réécrire.
+const hasHidden = (v) => (v === HIDDEN) || (v && typeof v === 'object' && Object.values(v).some(hasHidden));
+const R = (re) => new RegExp(re.replace(/ID/g, `(?:${ID})`));
 const newCode = (n = 4) => { const a = new Uint32Array(n); crypto.getRandomValues(a); return [...a].map((x) => x % 10).join(''); };
 const all = (a, n) => (Array.isArray(a) && a.length ? [...a].sort((x, y) => x - y) : Array.from({ length: n }, (_, i) => i + 1));
 const period = (p, dest) => { const x = { hours_start: p.hours_start, hours_end: p.hours_end, week_days: all(p.week_days, 7), month_days: all(p.month_days, 31), months: all(p.months, 12) }; if (dest) x.destination = cleanDest(p.destination) || { type: 'none' }; return x; };
@@ -53,31 +74,38 @@ const sub = (path) => {
 // secrets : objets dont un code envoyé est masqué dans la sauvegarde.
 function undo(e, secrets) {
   const m = e.method || 'PUT', p = e.path, b = e.before;
+  if (!safePath(p) || !['PUT', 'POST', 'DELETE'].includes(m)) return { skip: 'chemin ou méthode refusé (sauvegarde modifiée ?)' };
   if (e.numero) return { skip: /^\/outcalls\//.test(p) || /^\/extensions\//.test(p) ? 'motif de règle sortante ajouté, retiré ou renommé : à remettre à la main' : 'numéro interne changé : à remettre à la main (l\'ancien numéro a pu être réattribué)' };
-  if (/^\/(incalls|users|groups|queues|outcalls)\/[^/]+\/schedules\/\d+$/.test(p) || /\/callpermissions\/\d+$/.test(p)) return [{ method: m === 'DELETE' ? 'PUT' : 'DELETE', path: p }];
+  if (R('^/(incalls|users|groups|queues|outcalls)/ID/schedules/[0-9]+$').test(p) || R('^/(users|groups|outcalls)/ID/callpermissions/[0-9]+$').test(p)) return [{ method: m === 'DELETE' ? 'PUT' : 'DELETE', path: p }];
   let x;
-  if ((x = p.match(/^\/queues\/\d+\/members\/(agents|users)\/([^/]+)$/))) {
+  if ((x = p.match(R('^/queues/[0-9]+/members/(agents|users)/(ID)$')))) {
     // Retirer, puis remettre tel qu'avant s'il était membre (un PUT seul ne notifie pas Asterisk).
     const list = b?.[x[1]] || [];
     const old = x[1] === 'agents' ? list.find((a) => String(a.id) === x[2]) : list.find((u) => u.uuid === x[2]);
     return [{ method: 'DELETE', path: p }, ...(old ? [{ method: 'PUT', path: p, body: x[1] === 'agents' ? { penalty: old.penalty ?? 0, priority: old.priority ?? 0 } : { priority: old.priority ?? 0 } }] : [])];
   }
-  if (/^\/groups\/[^/]+\/members\/users$/.test(p)) return [{ method: 'PUT', path: p, body: { users: (b?.users || []).map((u) => ({ uuid: u.uuid, priority: u.priority ?? 0 })) } }];
-  if (/^\/groups\/[^/]+\/members\/extensions$/.test(p)) return [{ method: 'PUT', path: p, body: { extensions: (b?.extensions || []).map((u) => ({ exten: u.exten, context: u.context, priority: u.priority ?? 0 })) } }];
-  if (/^\/switchboards\/[^/]+\/members\/users$/.test(p)) return [{ method: 'PUT', path: p, body: { users: (b?.users || []).map((u) => ({ uuid: u.uuid })) } }];
+  if (R('^/groups/ID/members/users$').test(p)) return [{ method: 'PUT', path: p, body: { users: (b?.users || []).map((u) => ({ uuid: u.uuid, priority: u.priority ?? 0 })) } }];
+  if (R('^/groups/ID/members/extensions$').test(p)) return [{ method: 'PUT', path: p, body: { extensions: (b?.extensions || []).map((u) => ({ exten: u.exten, context: u.context, priority: u.priority ?? 0 })) } }];
+  if (R('^/switchboards/ID/members/users$').test(p)) return [{ method: 'PUT', path: p, body: { users: (b?.users || []).map((u) => ({ uuid: u.uuid })) } }];
   if (/^\/outcalls\/\d+\/trunks$/.test(p)) return [{ method: 'PUT', path: p, body: { trunks: (b?.trunks || []).map((t) => ({ id: t.id })) } }];
   if ((x = p.match(/^\/outcalls\/\d+\/extensions\/(\d+)$/)) && m === 'PUT') {
     const old = (b?.extensions || []).find((d) => String(d.id) === x[1]);
     return old ? [{ method: 'PUT', path: p, body: { strip_digits: old.strip_digits ?? 0, external_prefix: old.external_prefix || null, prefix: old.prefix || null, caller_id: old.caller_id || null } }] : { skip: 'motif introuvable dans la sauvegarde' };
   }
-  if (/\/fallbacks$/.test(p)) { const body = {}; for (const k of Object.keys(e.body || {})) body[k] = cleanDest(b?.[k]); return [{ method: 'PUT', path: p, body }]; }
-  if ((x = p.match(/\/services\/(dnd|incallfilter)$/))) return [{ method: 'PUT', path: p, body: { enabled: !!b?.[x[1]]?.enabled } }];
-  if ((x = p.match(/\/forwards\/(\w+)$/))) return [{ method: 'PUT', path: p, body: { enabled: !!b?.[x[1]]?.enabled, destination: b?.[x[1]]?.destination ?? null } }];
-  if (/^\/(incalls|groups|queues|ivr|schedules|switchboards|voicemails|conferences|users|outcalls)\/[^/]+$/.test(p) && m === 'PUT') {
-    const body = {};
+  if (R('^/(users|groups|queues|switchboards)/ID/fallbacks$').test(p)) {
+    const body = {}; for (const k of Object.keys(e.body || {})) { if (!/^[a-z_]+_destination$/.test(k)) continue; const d = cleanDest(b?.[k]); if (hasHidden(d)) return { skip: 'destination avec un code masqué (DISA) : à remettre à la main' }; body[k] = d; }
+    return [{ method: 'PUT', path: p, body }];
+  }
+  if ((x = p.match(R('^/users/ID/services/(dnd|incallfilter)$')))) return [{ method: 'PUT', path: p, body: { enabled: !!b?.[x[1]]?.enabled } }];
+  if ((x = p.match(R('^/users/ID/forwards/(busy|noanswer|unconditional)$')))) return [{ method: 'PUT', path: p, body: { enabled: !!b?.[x[1]]?.enabled, destination: b?.[x[1]]?.destination ?? null } }];
+  if ((x = p.match(R('^/(incalls|groups|queues|ivr|schedules|switchboards|voicemails|conferences|users|outcalls)/ID$'))) && m === 'PUT') {
+    const res = x[1]; const body = {};
     for (const k of Object.keys(e.body || {})) {
+      if (!allowed(res, k)) continue; // champ que le module n'écrit pas : ignoré
       const v = b?.[k];
-      if (v === HIDDEN) { secrets.push({ path: p, key: k }); continue; }
+      // Code masqué : réinitialisable seulement pour les codes connus (messagerie, conférence).
+      if (v === HIDDEN) { if (SECRET_KEYS.has(k) && (res === 'voicemails' || res === 'conferences')) secrets.push({ path: p, key: k }); continue; }
+      if (hasHidden(v)) return { skip: 'valeur masquée dans un réglage (code) : à remettre à la main' };
       if (k === 'destination') body[k] = cleanDest(v) || { type: 'none' };
       else if (k.endsWith('_destination')) body[k] = k === 'closed_destination' ? cleanDest(v) || { type: 'none' } : cleanDest(v);
       else if (k === 'choices') body[k] = (v || []).map((c) => ({ exten: c.exten, destination: cleanDest(c.destination) }));
@@ -138,14 +166,15 @@ export function openRestore(onDone) {
     let j; try { j = JSON.parse(await file.text()); } catch { $('rs-err').textContent = 'Fichier illisible (JSON attendu).'; return; }
     if (j.outil !== 'Call Flow Manager') { $('rs-err').textContent = 'Ce fichier ne vient pas de Call Flow Manager.'; return; }
     if (j.format !== 2 || !Array.isArray(j.ecritures)) { $('rs-err').textContent = 'Sauvegarde d\'une version antérieure (sans le détail des écritures) : restauration automatique impossible. Elle reste lisible pour une remise à la main.'; return; }
-    if (j.serveur !== S.base || (j.tenant && S.tenant && j.tenant !== S.tenant)) { $('rs-err').textContent = `Cette sauvegarde vient d'un autre serveur ou tenant (${j.serveur || '?'}) : restauration refusée.`; return; }
+    // Tenant exigé et identique (audit : un fichier sans tenant passait le contrôle).
+    if (j.serveur !== S.base || ((j.tenant || S.tenant) && j.tenant !== S.tenant)) { $('rs-err').textContent = `Cette sauvegarde vient d'un autre serveur ou tenant (${j.serveur || '?'}) : restauration refusée.`; return; }
     const secrets = [];
     const steps = [...j.ecritures].reverse().map((e) => { const r = undo(e, secrets); return Array.isArray(r) ? { e, ops: r } : { e, skip: r.skip }; });
     const uniq = [...new Map(secrets.map((x) => [`${x.path}|${x.key}`, x])).values()];
     out._state = { steps, secrets: uniq };
     const KEY = { password: 'code de messagerie', pin: 'code participant', admin_pin: 'code animateur' };
     out.innerHTML = `<p class="small">Sauvegarde du ${esc(new Date(j.date).toLocaleString('fr'))} : ${j.ecritures.length} écriture(s).</p>
-      <div class="cf-diffwrap"><table class="diff"><thead><tr><th></th><th>Objet</th><th>Partie</th><th>Action</th></tr></thead><tbody>${steps.map((s, i) => `<tr class="${s.skip ? 'muted' : ''}"><td>${s.skip ? '' : `<input type="checkbox" id="rs-c${i}" checked>`}</td><td>${esc(objLabel(s.e.path))}</td><td>${esc(sub(s.e.path))}</td><td class="small">${s.skip ? esc(`Non restauré : ${s.skip}`) : esc(s.ops.map((o) => `${o.method === 'DELETE' ? 'retirer' : 'remettre'}`).join(' puis '))}</td></tr>`).join('')}</tbody></table></div>
+      <div class="cf-diffwrap"><table class="diff"><thead><tr><th></th><th>Objet</th><th>Partie</th><th>Action</th><th>Requête</th></tr></thead><tbody>${steps.map((s, i) => `<tr class="${s.skip ? 'muted' : ''}"><td>${s.skip ? '' : `<input type="checkbox" id="rs-c${i}" checked>`}</td><td>${esc(objLabel(s.e.path))}</td><td>${esc(sub(s.e.path))}</td><td class="small">${s.skip ? esc(`Non restauré : ${s.skip}`) : esc(s.ops.map((o) => `${o.method === 'DELETE' ? 'retirer' : 'remettre'}`).join(' puis '))}</td><td class="small"><code>${esc(s.skip ? `${s.e.method || 'PUT'} ${s.e.path}` : s.ops.map((o) => `${o.method} ${o.path}`).join(' ; '))}</code></td></tr>`).join('')}</tbody></table></div>
       ${uniq.length ? `<div class="warn"><span><strong>Attention : les codes ne sont pas dans la sauvegarde.</strong> ${uniq.length} code(s) (${esc([...new Set(uniq.map((x) => objLabel(x.path)))].join(', '))}) resteront inchangés dans Wazo : la restauration ne remet pas l'ancien code.</span></div>
         <label class="cf-ge-b"><input type="checkbox" id="rs-reset"><span><strong>Réinitialiser ces codes</strong><span class="small muted">Un nouveau code de 4 chiffres par code concerné (${esc(uniq.map((x) => KEY[x.key] || x.key).join(', '))}), affiché une seule fois à la fin.</span></span></label>` : ''}`;
   };

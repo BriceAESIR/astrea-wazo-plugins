@@ -3,7 +3,7 @@
 // résumé dans le titre, une colonne aérée, aide sous les champs, options rares
 // derrière une case à cocher. Styles : classes cf-ge-* de callflow.css, dans un
 // conteneur .cf-ed (largeur du dialogue).
-import { esc, helpButton, helpBox } from '../common/core.js?v=0.40.3';
+import { esc, helpButton, helpBox } from '../common/core.js?v=0.40.4';
 
 // Section dépliable : le résumé (data-sum) est rempli par l'éditeur (recap).
 export const sec = (id, title, body, { open = false, help = '' } = {}) => `<details class="cf-ge-sec" data-sec="${id}"${open ? ' open' : ''}>
@@ -24,7 +24,8 @@ export const openSec = (box, id) => { const d = box.querySelector(`[data-sec="${
 // « Afficher » révèle la valeur actuelle (lisible dans confd), « Générer » propose
 // un code de chiffres. Dans le brouillon, l'aperçu et la sauvegarde JSON, la
 // valeur est remplacée par « *** » (SECRET_KEYS, voir redact).
-export const SECRET_KEYS = new Set(['password', 'pin', 'admin_pin']);
+// call_permission_password : code personnel d'autorisations d'appels d'un utilisateur (renvoyé par GET /users, audit du 16/10/2026).
+export const SECRET_KEYS = new Set(['password', 'pin', 'admin_pin', 'call_permission_password']);
 export const secretField = (attr, label, cur, help, len = 4) => field(label, `<span class="cf-ge-row cf-secret"><input type="password" ${attr} value="${esc(cur ?? '')}" inputmode="numeric" autocomplete="new-password" spellcheck="false" placeholder="aucun"><button type="button" data-reveal title="Afficher ou masquer le code">Afficher</button><button type="button" data-gen="${len}" title="Proposer un code de ${len} chiffres">Générer</button></span>`, help);
 // À appeler une fois sur le corps du dialogue.
 export function bindSecrets(box) {

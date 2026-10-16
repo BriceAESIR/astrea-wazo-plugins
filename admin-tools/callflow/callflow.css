@@ -463,3 +463,8 @@ button.cf-tr-end { border: 0; background: none; padding: 0; text-transform: none
 .cf-oe-new #oe-ng-exten { width: 14em; font-family: ui-monospace, Consolas, monospace; }
 .cf-oe-new input[type="number"] { width: 4em; }
 .cf-oe-new #oe-ng-prefix { width: 6em; }
+/* En-tête des cartes : les pastilles (Ouvert, Horaire …, répété) passent à la ligne et
+   se tronquent au lieu de déborder sur le bouton de repli (retour de Brice, 16/10/2026). */
+.cf-type { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; min-width: 0; }
+.cf-type .cf-state, .cf-type .cf-rep, .cf-type .cf-gpill { margin-left: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cf-head > .cf-oplogo, .cf-head > .cf-fold { flex: none; }
