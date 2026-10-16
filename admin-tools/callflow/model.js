@@ -21,7 +21,7 @@
 // Supposé, à vérifier en réel : les listes (GET /groups, /queues,
 // /switchboards, /schedules) contiennent déjà fallbacks, membres et
 // destinations ; sinon on lit le détail de chaque objet (ensureDetails).
-import { S, api, listAll, fullName } from '../common/core.js?v=0.36.4';
+import { S, api, listAll, fullName } from '../common/core.js?v=0.37.0';
 
 export const M = { lists: {}, by: {}, ext: new Map(), extAny: new Map(), rev: null, warns: [] };
 
@@ -90,7 +90,7 @@ const APP_SUB = { callback_disa: 'Rappel DISA', disa: 'DISA', directory: 'Annuai
 // Chargement
 // ---------------------------------------------------------------------------
 // Listes qui ne servent qu'aux formulaires de réglage : pas d'avertissement en tête (console seulement).
-const QUIET = new Set(['/moh', '/callpermissions']);
+const QUIET = new Set(['/moh', '/callpermissions', '/agents']);
 async function lookup(path, what) {
   try { return await listAll(path); } catch (e) { if (!QUIET.has(path)) M.warns.push(`${what} indisponibles (${e.status || ''} ${path}) : non affichés.`); console.warn('[astrea]', path, e); return []; }
 }
@@ -115,6 +115,8 @@ const SOURCES = [
   // Pour le réglage des groupes (lot 2c) : musiques d'attente (clé = name, valeur
   // attendue par confd) et autorisations d'appels.
   ['moh', '/moh', 'Musiques d\'attente', 'name'], ['callpermission', '/callpermissions', 'Autorisations d\'appels', 'id'],
+  // Pour le réglage des files (16/10/2026) : agents (noms, ajout de membres).
+  ['agent', '/agents', 'Agents', 'id'],
 ];
 export async function loadAll() {
   M.warns = [];
@@ -310,12 +312,12 @@ export function edgesOf(k) {
       // stratégie) ou chaîne « un par un ». Durée totale vide ou 0 = le groupe
       // sonne indéfiniment (vérifié : Queue() sans timeout, api.yml confd).
       return [
-        { slot: 'members', label: SLOTS.members.label, help: SLOTS.members.help, note: [STRATEGY[o.ring_strategy] || o.ring_strategy, o.user_timeout ? `${o.user_timeout} s chacun` : ''].filter(Boolean).join(' · '), to: groupFlow(o), cfg: o.uuid },
+        { slot: 'members', label: SLOTS.members.label, help: SLOTS.members.help, note: [STRATEGY[o.ring_strategy] || o.ring_strategy, o.user_timeout ? `${o.user_timeout} s chacun` : ''].filter(Boolean).join(' · '), to: groupFlow(o), cfg: { k: 'group', id: o.uuid } },
         fbOut('group_fb', o.uuid, o, 'noanswer', o.timeout ? after(o.timeout) : 'jamais : sonne indéfiniment (durée totale vide)'),
         fbOut('group_fb', o.uuid, o, 'congestion', o.max_calls ? `plus de ${o.max_calls} appel${o.max_calls > 1 ? 's' : ''} en cours` : '')];
     case 'queue': {
       return [
-        { slot: 'members', label: SLOTS.members.label, help: SLOTS.members.help, note: '', to: membersLeaf('queue', o) },
+        { slot: 'members', label: SLOTS.members.label, help: SLOTS.members.help, note: [QSTRAT[qopt(o, 'strategy') || 'ringall'], `${qopt(o, 'timeout') || 15} s par agent`].join(' · '), to: queueFlow(o), cfg: { k: 'queue', id: o.id } },
         W(out('wait_time', o.wait_time_destination, o.wait_time_threshold != null ? `> ${o.wait_time_threshold} s` : ''), 'queue', o.id, 'wait_time_destination'),
         W(out('wait_ratio', o.wait_ratio_destination, o.wait_ratio_threshold != null ? `> ${o.wait_ratio_threshold}` : ''), 'queue', o.id, 'wait_ratio_destination'),
         fbOut('queue_fb', o.id, o, 'noanswer', after(o.timeout)), fbOut('queue_fb', o.id, o, 'busy'), fbOut('queue_fb', o.id, o, 'congestion'), fbOut('queue_fb', o.id, o, 'fail')];
@@ -444,6 +446,33 @@ function groupFlow(o) {
     hub.leaf.how = how;
   }
   hub.leaf.sub = [o.ring_strategy === 'linear' ? 'un par un' : hub.leaf.how, hub.leaf.sub].filter(Boolean).join(' — ');
+  return hub;
+}
+// ---------------------------------------------------------------------------
+// Files d'attente (16/10/2026). Stratégie et durées = options Asterisk de la
+// file (`options`, paires [clé, valeur] ; vérifié dans xivo-dao : défauts
+// strategy ringall, timeout 15, retry 5). Affichage : un bloc qui liste les
+// membres (agents avec leur pénalité, puis utilisateurs), avec la règle en tête.
+// ---------------------------------------------------------------------------
+export const QSTRAT = {
+  ringall: 'Tous en même temps', linear: 'Un par un, dans l\'ordre', rrordered: 'Tour de rôle, dans l\'ordre', rrmemory: 'Tour de rôle mémorisé',
+  leastrecent: 'Le moins récemment appelé', fewestcalls: 'Le moins d\'appels pris', random: 'Aléatoire', wrandom: 'Aléatoire pondéré (pénalités)',
+};
+const QPICTO = { ringall: '🔔', linear: '➜', rrordered: '🔁', rrmemory: '🔁', leastrecent: '⏳', fewestcalls: '📉', random: '🎲', wrandom: '⚖' };
+export const qopt = (o, k) => (o?.options || []).find(([x]) => x === k)?.[1] ?? null;
+function queueFlow(o) {
+  const hub = membersLeaf('queue', o);
+  const strat = qopt(o, 'strategy') || 'ringall';
+  const ut = Number(qopt(o, 'timeout') ?? 15), rd = Number(qopt(o, 'retry') ?? 5);
+  const agents = [...(o.members?.agents || [])].sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0));
+  const users = [...(o.members?.users || [])].sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0));
+  const rows = [
+    ...agents.map((a) => ({ slot: 'member', label: [fullName(a), a.number ? `agent ${a.number}` : ''].filter(Boolean).join(' · ') || `agent #${a.id}`, note: `pénalité ${a.penalty ?? 0}`, help: 'Agent membre de la file : il ne reçoit les appels que s\'il est connecté (logué).', to: null, info: true })),
+    ...users.map((m) => { const u = M.userByUuid.get(m.uuid); const dnd = !!u?.services?.dnd?.enabled; return { slot: 'member', label: fullName(m) || fullName(u) || m.uuid, note: dnd ? 'NPD : en pause' : 'utilisateur', help: dnd ? 'En NPD : wazo-calld met ce membre en pause dans la file.' : 'Utilisateur membre direct de la file.', to: null, info: true, npd: dnd }; }),
+  ];
+  hub.leaf.edges = [{ slot: 'pick', label: `${QPICTO[strat] || '•'} ${QSTRAT[strat] || strat}`, note: `${ut} s par agent${rd ? `, pause ${rd} s` : ''}${o.timeout ? ` · ${o.timeout} s au total` : ' · sans limite'}`, help: 'Règle de distribution de la file (option Asterisk strategy) ; sonnerie par agent = option timeout ; pause = option retry.', to: null, info: true }, ...rows];
+  hub.leaf.how = QSTRAT[strat] || strat;
+  hub.leaf.sub = [hub.leaf.how, hub.leaf.sub].filter(Boolean).join(' — ');
   return hub;
 }
 // Carte « membres » : fixes (confd), inscrits en ce moment (Asterisk, si

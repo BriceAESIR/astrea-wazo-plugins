@@ -76,8 +76,14 @@ courant. Cadrage, sources et décisions : `docs/CALLFLOW-MANAGER.md` (dépôt de
   sonnerie en cours, ignorer la redirection, répondu ailleurs, enregistrement),
   durées, membres (utilisateurs et numéros, dans l'ordre), débordements,
   appels maximum, horaire, autorisations d'appels.
-- Pas encore modifiables : renvois d'appel de l'utilisateur, membres des files
-  d'attente, ajout d'une nouvelle touche de SVI.
+- **Files d'attente** : « Régler la file d'attente… » (fiche) ou un clic sur
+  « Sonne les membres » ouvre toutes les options de la file, y compris les
+  options Asterisk (stratégie, sonnerie par agent, pause, repos après appel,
+  annonces…) : membres (agents avec pénalité, utilisateurs), débordements et
+  seuils d'attente, horaire, touches pendant l'appel, options avancées.
+- **SVI** : « Régler le SVI… » ouvre ses messages, ses touches (ajout, retrait,
+  destination de chacune) et les cas sans saisie, invalide, trop d'essais.
+- Pas encore modifiables : renvois d'appel de l'utilisateur.
 - Tout passe par un **brouillon** : un point orange marque chaque sortie
   modifiée, et rien n'est écrit tant qu'on n'a pas cliqué « Appliquer… ».
 - **Appliquer…** se déroule ainsi :
@@ -111,7 +117,10 @@ Pour les membres d'un groupe inscrits par la touche « bascule groupe », qui ne
   `confd.groups.{uuid}.members.extensions.update`, `confd.extensions.create`,
   `confd.groups.{uuid}.extensions.{id}.update|delete`,
   `confd.groups.{uuid}.callpermissions.{id}.update|delete` ; listes
-  `confd.moh.read` et `confd.callpermissions.read` (sans elles, menus vides).
+  `confd.moh.read` et `confd.callpermissions.read` (sans elles, menus vides) ;
+- files : `confd.queues.{id}.update`, `confd.queues.{id}.members.users.{uuid}.update|delete`,
+  `confd.queues.{id}.members.agents.{id}.update|delete`, `confd.extensions.create`,
+  `confd.queues.{id}.extensions.{id}.update|delete` ; liste `confd.agents.read`.
 
 Ces droits ne sont pas encore vérifiés en réel pour le token du portail. Sans
 l'un d'eux, le graphe s'affiche quand même, sans ce type d'objet, avec un

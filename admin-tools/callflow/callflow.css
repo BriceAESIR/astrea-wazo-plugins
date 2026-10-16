@@ -301,6 +301,18 @@ body.in-portal.ready #workbench { height: 100vh; }
 .cf-ge-gap { margin-top: 8px; }
 .cf-ge-note { margin: -8px 0 0; }
 .cf-ge-sub { display: grid; gap: 12px; margin: -4px 0 0 26px; padding-left: 12px; border-left: 2px solid var(--line); }
+/* Files d'attente : pénalité des agents, options Asterisk brutes */
+.cf-ge-pen { display: inline-flex; align-items: center; gap: 4px; margin: 0; font-size: .75rem; color: var(--muted); }
+.cf-ge-pen input { width: 56px !important; height: 26px; font-size: .8125rem; }
+.cf-qe-raw li { gap: 8px; }
+.cf-qe-raw code { min-width: 160px; font-size: .75rem; }
+.cf-qe-raw input { flex: 1; min-width: 0; height: 28px; font-size: .8125rem; }
+/* SVI : une ligne par touche */
+.cf-ie-list li.cf-ie-ch { flex-wrap: wrap; padding: 6px 8px; }
+.cf-ie-ch .cf-dp { flex: 1; min-width: 0; flex-wrap: nowrap; }
+.cf-ie-ch .cf-dp select[data-do] { flex: 1; min-width: 0 !important; max-width: 100%; }
+.cf-ie-key { display: inline-flex; align-items: center; gap: 6px; margin: 0; font-size: .8125rem; font-weight: 600; }
+.cf-ie-key input { width: 56px !important; height: 28px; text-align: center; font-weight: 600; }
 /* « Un par un » : durée d'un tour complet proposée */
 .cf-ge-tour { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: var(--radius); background: color-mix(in srgb, var(--accent) 7%, var(--panel)); border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--panel)); font-size: .875rem; }
 .cf-ge-tour > div { flex: 1; display: grid; gap: 2px; }

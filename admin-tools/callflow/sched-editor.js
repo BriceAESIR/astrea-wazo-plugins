@@ -21,8 +21,8 @@
 //    modifiable (15/10/2026) ;
 //  - fermeture liée à un jour de semaine ou valable tous les mois : conservée
 //    telle quelle et listée (supprimable).
-import { $, esc, confirmModal, helpButton, helpBox } from '../common/core.js?v=0.36.4';
-import { M, listOf, destLabel, loadSounds, soundName } from './model.js?v=0.36.4';
+import { $, esc, confirmModal, helpButton, helpBox } from '../common/core.js?v=0.37.0';
+import { M, listOf, destLabel, loadSounds, soundName } from './model.js?v=0.37.0';
 
 const SLOT = 15, N = 96;
 const DAYS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
@@ -124,9 +124,14 @@ function excFromRows(rows, hol) {
 // ---------------------------------------------------------------------------
 const DTYPES = [['voicemail', 'Messagerie'], ['sound', 'Fichier son'], ['hangup', 'Raccrocher'], ['user', 'Utilisateur'], ['group', 'Groupe'], ['queue', 'File d\'attente'], ['ivr', 'SVI'], ['switchboard', 'Standard'], ['conference', 'Conférence'], ['extension', 'Numéro'], ['none', 'Aucune']];
 const IDF = { user: 'user_id', group: 'group_id', queue: 'queue_id', ivr: 'ivr_id', voicemail: 'voicemail_id', conference: 'conference_id', switchboard: 'switchboard_uuid' };
+// La destination d'origine est gardée (data-orig) : un type que ce menu ne
+// propose pas (application, commande, règle sortante…) reste « inchangé », et
+// les réglages qu'il ne montre pas (durée de sonnerie, accueil de messagerie,
+// options d'un son) sont conservés si l'objet visé ne change pas.
 export function pickerHtml(id, cur) {
-  const t = cur?.type || 'none';
-  return `<span class="cf-dp" id="${id}"><select data-dt>${DTYPES.map(([k, l]) => `<option value="${k}"${k === t ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select><span data-dx>${pickerExtra(t, cur)}</span></span>`;
+  const known = !cur?.type || DTYPES.some(([k]) => k === cur.type);
+  const t = known ? cur?.type || 'none' : 'keep';
+  return `<span class="cf-dp" id="${id}" data-orig="${esc(cur ? JSON.stringify(cur) : '')}"><select data-dt>${known ? '' : `<option value="keep" selected>Inchangée : ${esc(destLabel(cur))}</option>`}${DTYPES.map(([k, l]) => `<option value="${k}"${k === t ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select><span data-dx>${pickerExtra(t, cur)}</span></span>`;
 }
 function pickerExtra(t, cur) {
   if (IDF[t]) {
@@ -155,12 +160,17 @@ export function bindPicker(id) {
 }
 export function readPicker(id) {
   const el = $(id); const t = el.querySelector('[data-dt]').value;
+  let orig = null; try { orig = el.dataset.orig ? JSON.parse(el.dataset.orig) : null; } catch { /* */ }
+  if (t === 'keep') return orig;
   if (t === 'none') return null;
-  if (IDF[t]) { const v = el.querySelector('[data-do]')?.value; if (!v) throw new Error('Choisissez un objet pour la destination.'); return { type: t, [IDF[t]]: t === 'switchboard' ? v : Number(v) }; }
-  if (t === 'hangup') return { type: t, cause: el.querySelector('[data-dc]').value };
-  if (t === 'sound') { const f = el.querySelector('[data-df]').value; if (!f) throw new Error('Choisissez un fichier son.'); return { type: t, filename: f }; }
-  if (t === 'extension') { const x = el.querySelector('[data-de]').value.trim(); if (!/^[0-9*#]+$/.test(x)) throw new Error('Numéro : chiffres, * et #.'); return { type: t, exten: x, context: el.querySelector('[data-dctx]').value }; }
-  return null;
+  let d = null;
+  if (IDF[t]) { const v = el.querySelector('[data-do]')?.value; if (!v) throw new Error('Choisissez un objet pour la destination.'); d = { type: t, [IDF[t]]: t === 'switchboard' ? v : Number(v) }; }
+  if (t === 'hangup') d = { type: t, cause: el.querySelector('[data-dc]').value };
+  if (t === 'sound') { const f = el.querySelector('[data-df]').value; if (!f) throw new Error('Choisissez un fichier son.'); d = { type: t, filename: f }; }
+  if (t === 'extension') { const x = el.querySelector('[data-de]').value.trim(); if (!/^[0-9*#]+$/.test(x)) throw new Error('Numéro : chiffres, * et #.'); d = { type: t, exten: x, context: el.querySelector('[data-dctx]').value }; }
+  // Même type et même objet : on garde les réglages d'origine non affichés.
+  if (d && orig?.type === t && (!IDF[t] || String(orig[IDF[t]]) === String(d[IDF[t]]))) return { ...orig, ...d };
+  return d;
 }
 
 // ---------------------------------------------------------------------------

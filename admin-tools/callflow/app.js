@@ -3,13 +3,15 @@
 // déposer (lot 2a, brouillon puis aperçu, sauvegarde, écriture).
 // Cadrage : astrea-wazo-dev/docs/CALLFLOW-MANAGER.md.
 // Modèle (sources confd vérifiées) : model.js ; canevas : canvas.js ; écriture : write.js.
-import { S, $, esc, fullName, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.36.4';
-import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, scanGroupKeys, buildTree, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel, periodText, STRATEGY, baseKey } from './model.js?v=0.36.4';
-import { createCanvas } from './canvas.js?v=0.36.4';
-import { getDest, setDest, sameValue, prepare, execute } from './write.js?v=0.36.4';
-import { openScheduleEditor } from './sched-editor.js?v=0.36.4';
-import { openGroupEditor, groupCfgDiff } from './group-editor.js?v=0.36.4';
-import { openDestEditor, ENTITY_DEST } from './dest-editor.js?v=0.36.4';
+import { S, $, esc, fullName, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.37.0';
+import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, scanGroupKeys, buildTree, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel, periodText, STRATEGY, QSTRAT, baseKey } from './model.js?v=0.37.0';
+import { createCanvas } from './canvas.js?v=0.37.0';
+import { getDest, setDest, sameValue, prepare, execute } from './write.js?v=0.37.0';
+import { openScheduleEditor } from './sched-editor.js?v=0.37.0';
+import { openGroupEditor, groupCfgDiff } from './group-editor.js?v=0.37.0';
+import { openQueueEditor, queueCfgDiff, agentName } from './queue-editor.js?v=0.37.0';
+import { openIvrEditor, ivrCfgDiff } from './ivr-editor.js?v=0.37.0';
+import { openDestEditor, ENTITY_DEST } from './dest-editor.js?v=0.37.0';
 
 const TESTED_STACK = ['26.07'];
 const NAV = [
@@ -216,7 +218,7 @@ function showDetail(n) {
       const own = schedOwner(n.key), ot = ownerTitle({ key: own }), has = (entity(own).obj.schedules || []).length;
       return `<div class="dsec"><h4>Horaire de ${esc(ot)}</h4><div class="btnrow"><button id="d-sched" title="Choisir quel horaire est vérifié avant ${esc(ot)} (ne change pas les heures de l'horaire ; brouillon)">${has ? 'Remplacer par un autre horaire…' : 'Associer un horaire…'}</button>${entity(n.key).owner ? `<button id="d-unsched" class="danger" title="${esc(ot)} n'aura plus d'horaire : ses appels passent toujours (brouillon ; touche Suppr)">Retirer l'horaire de ${esc(ot)}</button>` : ''}</div></div>`;
     })() : ''}
-    ${C.edit && C.dir === 'out' && groupOfNode(n) ? '<div class="btnrow"><button id="d-group" class="primary" title="Toutes les options du groupe : stratégie, durées, membres, numéro, musique, débordements, horaire, autorisations (brouillon)">Régler le groupe…</button></div>' : ''}
+    ${C.edit && C.dir === 'out' && cfgOfNode(n) ? `<div class="btnrow"><button id="d-group" class="primary" title="Toutes les options de l'objet, en sections dépliables (brouillon)">${CFG_LABEL[cfgOfNode(n).k]}</button></div>` : ''}
     ${C.edit && n.key.startsWith('schedule:') ? (() => { const sc = entity(n.key).obj; const u = schedUsage(sc); return `<div class="btnrow"><button id="d-periods" class="primary" title="Change les heures d'ouverture, la destination si fermé et les fermetures exceptionnelles de l'horaire « ${esc(sc.name)} ». ${u > 1 ? `Il est utilisé par ${u} objets : tous sont concernés.` : 'Le changement vaut pour tout objet qui utilise cet horaire.'} (brouillon)">Modifier les heures de « ${esc(sc.name)} »…</button></div>${u > 1 ? `<p class="small muted">Horaire partagé par ${u} objets : modifier ses heures les concerne tous.</p>` : ''}`; })() : ''}
     ${C.edit && C.dir === 'out' && !entity(n.key).owner && incomingPort(n) ? `<div class="btnrow"><button id="d-remove" class="danger" title="Vide la sortie « ${esc(incomingPort(n).p.label)} » de ${esc(ownerTitle(incomingPort(n).n))} (brouillon ; touche Suppr)">Retirer de cette sortie</button></div>` : ''}
     ${n.leaf ? '' : `<div class="dsec"><h4>Arrive depuis</h4>${refs}</div>`}
@@ -228,7 +230,7 @@ function showDetail(n) {
   const ds = $('d-sched'); if (ds) ds.onclick = () => openSchedule(schedOwner(n.key));
   const du = $('d-unsched'); if (du) du.onclick = removeSelected;
   const dp = $('d-periods'); if (dp) dp.onclick = () => openPeriods(entity(n.key).id);
-  const dg = $('d-group'); if (dg) dg.onclick = () => openGroupFor(groupOfNode(n));
+  const dg = $('d-group'); if (dg) dg.onclick = () => openCfg(cfgOfNode(n));
   const i = $('d-in'); if (i) i.onclick = () => { if (baseKey(n.key) !== C.root) setRoot(n.key); setDir(C.dir === 'in' && baseKey(n.key) === C.root ? 'out' : 'in'); };
   for (const li of $('d-body').querySelectorAll('.cf-refs li')) li.onclick = () => setRoot(li.dataset.key);
   const k = $('d-keys');
@@ -375,6 +377,7 @@ function cardDrop(cardKey, t) {
 function openDest(t, preset = {}) {
   const r = portOf(t); if (!r) return;
   const { n, p } = r;
+  if ((p.w.k === 'ivr' || p.w.k === 'ivr_choice') && C.draft.has(`ivr_cfg:${p.w.id}:cfg`)) { toast('Ce SVI a un réglage complet dans le brouillon : modifiez-le par « Régler le SVI… », ou appliquez d\'abord.', 7000); return; }
   const sched = p.periods ? M.by.schedule?.get(String(p.periods)) : null;
   openDestEditor({ title: p.label, owner: whereOf(n, p), cur: getDest(p.w), type: preset.type, id: preset.id, help: p.help,
     periods: sched ? { name: sched.name, shared: schedUsage(sched), open: () => openPeriods(sched.id) } : null },
@@ -389,6 +392,18 @@ function valLabel(w, v) {
       `${(v?.users || []).length + (v?.exts || []).length} membre(s) : ${[...(v?.users || []).map((m) => fullName(M.userByUuid.get(m.uuid)) || m.uuid), ...(v?.exts || []).map((m) => m.exten)].join(', ') || 'aucun'}`,
       v?.extension ? `n° ${v.extension.exten}` : 'sans numéro', f.max_calls ? `max ${f.max_calls} appels` : '', f.music_on_hold ? `musique ${f.music_on_hold}` : 'sonnerie',
       (v?.perms || []).length ? `${v.perms.length} autorisation(s)` : ''].filter(Boolean).join(' · ');
+  }
+  if (w.k === 'queue_cfg') {
+    const f = v?.fields || {}, o = v?.opts || {};
+    return [f.label ? `« ${f.label} »` : '', f.enabled === false ? 'DÉSACTIVÉE' : '', QSTRAT[o.strategy || 'ringall'] || o.strategy, f.timeout ? `${f.timeout} s au total` : 'sans limite', `${o.timeout || 15} s / agent`, `pause ${o.retry || 5} s`,
+      `${(v?.agents || []).length} agent(s)${(v?.agents || []).length ? ` : ${(v.agents).map((a) => agentName(M.by.agent?.get(String(a.id))) || `#${a.id}`).join(', ')}` : ''}`,
+      `${(v?.users || []).length} utilisateur(s)${(v?.users || []).length ? ` : ${v.users.map((m) => fullName(M.userByUuid.get(m.uuid)) || m.uuid).join(', ')}` : ''}`,
+      v?.extension ? `n° ${v.extension.exten}` : 'sans numéro', `${Object.keys(o).length} option(s) Asterisk`].filter(Boolean).join(' · ');
+  }
+  if (w.k === 'ivr_cfg') {
+    const f = v?.fields || {};
+    return [`« ${f.name || '?'} »`, `${f.timeout ?? '?'} s`, `${f.max_tries ?? '?'} essais`, `touches : ${(v?.choices || []).map((c) => `${c.exten} → ${destLabel(c.destination)}`).join(' ; ') || 'aucune'}`,
+      `sans saisie : ${destLabel(v?.timeout_destination)}`, `invalide : ${destLabel(v?.invalid_destination)}`, `trop d'essais : ${destLabel(v?.abort_destination)}`].join(' · ');
   }
   if (w.k !== 'sched_periods') return destLabel(v);
   const o = (v?.open_periods || []).map(periodText).join(' ; ') || 'aucune plage (toujours fermé)';
@@ -410,11 +425,47 @@ function openGroupFor(uuid) {
     addDraft(assocW(`group:${g.id}`), r.schedule ? { type: 'schedule', schedule_id: r.schedule } : null, { where, slot: 'Horaire' });
   });
 }
-// Groupe concerné par une carte (le groupe, sa carte « membres » ou une mini-carte membre).
-const groupOfNode = (n) => { if (!n) return null; if (n.key.startsWith('group:')) return entity(n.key).obj?.uuid; const lf = n.leaf; if (lf?.type === 'member') return entity(lf.group).obj?.uuid; if (lf?.ownerType === 'group' && n.parent?.startsWith('group:')) return entity(n.parent).obj?.uuid; return null; };
+// Réglage complet d'une file (queue-editor.js) : réglages + options Asterisk +
+// membres + numéro dans « queue_cfg » ; débordements (queue_fb), seuils
+// d'attente (queue) et horaire (sched_assoc) dans leurs entrées habituelles.
+function openQueueFor(id) {
+  const q = M.by.queue?.get(String(id)); if (!q) return;
+  openQueueEditor(q, (r) => {
+    const where = `File d'attente ${q.label || q.name}`;
+    addDraft({ k: 'queue_cfg', id: q.id, f: 'cfg', key: `queue_cfg:${q.id}:cfg` }, r.cfg, { where, slot: 'Réglages de la file' });
+    for (const f of ['noanswer', 'busy', 'congestion', 'fail']) addDraft({ k: 'queue_fb', id: q.id, f, key: `queue_fb:${q.id}:${f}` }, r.fb[f], { where, slot: { noanswer: 'Pas de réponse', busy: 'Occupé', congestion: 'Encombré', fail: 'Échec' }[f] });
+    addDraft({ k: 'queue', id: q.id, f: 'wait_time_destination', key: `queue:${q.id}:wait_time_destination` }, r.wait.time, { where, slot: 'Attente trop longue' });
+    addDraft({ k: 'queue', id: q.id, f: 'wait_ratio_destination', key: `queue:${q.id}:wait_ratio_destination` }, r.wait.ratio, { where, slot: 'Trop d\'appelants' });
+    addDraft(assocW(`queue:${q.id}`), r.schedule ? { type: 'schedule', schedule_id: r.schedule } : null, { where, slot: 'Horaire' });
+  });
+}
+// Réglage complet d'un SVI (ivr-editor.js) : une entrée « ivr_cfg » (un PUT).
+// Pas de mélange avec les sorties du même SVI modifiées une à une dans le brouillon.
+function openIvrFor(id) {
+  const o = M.by.ivr?.get(String(id)); if (!o) return;
+  if ([...C.draft.keys()].some((k) => k.startsWith(`ivr:${id}:`) || k.startsWith(`ivr_choice:${id}:`))) { toast('Appliquez ou annulez d\'abord les sorties de ce SVI modifiées dans le brouillon, puis rouvrez son réglage.', 7000); return; }
+  openIvrEditor(o, (cfg) => addDraft({ k: 'ivr_cfg', id: o.id, f: 'cfg', key: `ivr_cfg:${o.id}:cfg` }, cfg, { where: `SVI ${o.name}`, slot: 'Réglages du SVI' }));
+}
+const CFG_LABEL = { group: 'Régler le groupe…', queue: 'Régler la file d\'attente…', ivr: 'Régler le SVI…' };
+const CFG_DIFF = { group_cfg: groupCfgDiff, queue_cfg: queueCfgDiff, ivr_cfg: ivrCfgDiff };
+const openCfg = (c) => { if (!c) return; if (c.k === 'group') openGroupFor(c.id); else if (c.k === 'queue') openQueueFor(c.id); else if (c.k === 'ivr') openIvrFor(c.id); };
+// Objet réglable concerné par une carte : le groupe / la file / le SVI, leur
+// carte « membres » ou une mini-carte membre.
+const cfgOfNode = (n) => {
+  if (!n) return null;
+  const k = n.leaf ? null : baseKey(n.key);
+  if (k?.startsWith('group:')) return { k: 'group', id: entity(k).obj?.uuid };
+  if (k?.startsWith('queue:')) return { k: 'queue', id: entity(k).obj?.id };
+  if (k?.startsWith('ivr:')) return { k: 'ivr', id: entity(k).obj?.id };
+  const lf = n.leaf;
+  if (lf?.type === 'member') return { k: 'group', id: entity(lf.group).obj?.uuid };
+  if (lf?.ownerType === 'group' && n.parent?.startsWith('group:')) return { k: 'group', id: entity(n.parent).obj?.uuid };
+  if (lf?.ownerType === 'queue' && n.parent?.startsWith('queue:')) return { k: 'queue', id: entity(n.parent).obj?.id };
+  return null;
+};
 function portClick(nodeKey, portId) {
   const n = C.tree?.nodes.get(nodeKey); const p = n?.ports?.find((x) => x.id === portId); if (!p) return;
-  if (p.cfg) { openGroupFor(p.cfg); return; }
+  if (p.cfg) { openCfg(p.cfg); return; }
   if (p.w) { openDest({ nodeKey, portId }); return; }
   // Sortie d'horaire sans destination modifiable (« Ouvert ») : seulement les heures.
   const sched = p.periods ? M.by.schedule?.get(String(p.periods)) : null;
@@ -457,7 +508,7 @@ async function applyDraft() {
   let ops;
   try { ops = await prepare(entries.map((e) => ({ w: e.w, after: e.after }))); } catch (e) { toast(`Lecture avant écriture impossible : ${e.message}`, 8000); return; }
   const writes = ops.filter((o) => o.changed);
-  const rows = entries.map((e) => `<tr><td>${esc(e.where)}</td><td>${esc(e.slot)}${e.w.k === 'group_cfg' ? `<br><span class="small muted">Modifié : ${esc(groupCfgDiff(e.before, e.after) || '—')}</span>` : ''}</td><td>${esc(valLabel(e.w, e.before))}</td><td><strong>${esc(valLabel(e.w, e.after))}</strong></td></tr>`).join('');
+  const rows = entries.map((e) => `<tr><td>${esc(e.where)}</td><td>${esc(e.slot)}${CFG_DIFF[e.w.k] ? `<br><span class="small muted">Modifié : ${esc(CFG_DIFF[e.w.k](e.before, e.after) || '—')}</span>` : ''}</td><td>${esc(valLabel(e.w, e.before))}</td><td><strong>${esc(valLabel(e.w, e.after))}</strong></td></tr>`).join('');
   confirmModal(`<h3>Appliquer le brouillon</h3>
     <p class="small muted">${writes.length} écriture${writes.length > 1 ? 's' : ''} (une requête par partie modifiée)${ops.length > writes.length ? `, ${ops.length - writes.length} objet${ops.length - writes.length > 1 ? 's' : ''} déjà à jour sur le serveur` : ''}. Une sauvegarde JSON de l'état actuel est téléchargée avant d'écrire.</p>
     <div class="cf-diffwrap"><table class="diff"><thead><tr><th>Objet</th><th>Sortie</th><th>Avant</th><th>Après</th></tr></thead><tbody>${rows}</tbody></table></div>`, async () => {

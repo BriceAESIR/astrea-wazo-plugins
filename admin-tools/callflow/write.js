@@ -11,9 +11,11 @@
 //  - SVI : choices envoyé en entier (supposé : la liste est remplacée).
 // Toujours : relire juste avant d'écrire, ne rien écrire si c'est identique,
 // une seule écriture par objet.
-import { api } from '../common/core.js?v=0.36.4';
-import { M } from './model.js?v=0.36.4';
-import { groupCfgOf, applyGroupCfg, GROUP_FIELDS } from './group-editor.js?v=0.36.4';
+import { api } from '../common/core.js?v=0.37.0';
+import { M } from './model.js?v=0.37.0';
+import { groupCfgOf, applyGroupCfg, GROUP_FIELDS } from './group-editor.js?v=0.37.0';
+import { queueCfgOf, applyQueueCfg, QUEUE_FIELDS, optionsList } from './queue-editor.js?v=0.37.0';
+import { ivrCfgOf, applyIvrCfg, IVR_FIELDS } from './ivr-editor.js?v=0.37.0';
 
 // Champs d'entrée de chaque type de destination (le reste est en lecture seule).
 const DEST_KEYS = {
@@ -70,10 +72,15 @@ function holder(w) {
 // Éditeur d'horaire : plages + destination « si fermé » ensemble.
 const periodsOf = (s) => JSON.parse(JSON.stringify({ open_periods: s?.open_periods || [], exceptional_periods: s?.exceptional_periods || [], closed_destination: s?.closed_destination || null }));
 // Égalité d'une valeur du brouillon (destination, horaire associé ou plages).
-export const sameValue = (w, a, b) => (w.k === 'sched_periods' || w.k === 'group_cfg' ? JSON.stringify(a) === JSON.stringify(b) : sameDest(a, b));
+const CFG_KINDS = new Set(['sched_periods', 'group_cfg', 'queue_cfg', 'ivr_cfg']);
+// SVI : destinations nettoyées (comparaison et écriture sur les seuls champs d'entrée).
+const normIvr = (v) => v && { ...v, timeout_destination: cleanDest(v.timeout_destination), invalid_destination: cleanDest(v.invalid_destination), abort_destination: cleanDest(v.abort_destination), choices: (v.choices || []).map((c) => ({ exten: String(c.exten), destination: cleanDest(c.destination) })) };
+export const sameValue = (w, a, b) => (w.k === 'ivr_cfg' ? JSON.stringify(normIvr(a)) === JSON.stringify(normIvr(b)) : CFG_KINDS.has(w.k) ? JSON.stringify(a) === JSON.stringify(b) : sameDest(a, b));
 export function getDest(w) {
   // group_cfg (lot 2c) : réglage complet d'un groupe (voir group-editor.js).
   if (w.k === 'group_cfg') return JSON.parse(JSON.stringify(groupCfgOf(M.groupByUuid?.get(w.id) || {})));
+  if (w.k === 'queue_cfg') return JSON.parse(JSON.stringify(queueCfgOf(M.by.queue?.get(String(w.id)) || {})));
+  if (w.k === 'ivr_cfg') return normIvr(JSON.parse(JSON.stringify(ivrCfgOf(M.by.ivr?.get(String(w.id)) || {}))));
   if (w.k === 'sched_periods') return periodsOf(M.by.schedule?.get(String(w.id)));
   if (w.k === 'ivr_choice') return (M.by.ivr?.get(String(w.id))?.choices || []).find((c) => c.exten === w.f)?.destination || null;
   if (w.k === 'sched_assoc') { const s = ownerOf(w.id).o?.schedules?.[0]; return s ? { type: 'schedule', schedule_id: s.id } : null; }
@@ -81,6 +88,8 @@ export function getDest(w) {
 }
 export function setDest(w, d) {
   if (w.k === 'group_cfg') { const g = M.groupByUuid?.get(w.id); if (g && d) applyGroupCfg(g, JSON.parse(JSON.stringify(d))); return; }
+  if (w.k === 'queue_cfg') { const q = M.by.queue?.get(String(w.id)); if (q && d) applyQueueCfg(q, JSON.parse(JSON.stringify(d))); return; }
+  if (w.k === 'ivr_cfg') { const o = M.by.ivr?.get(String(w.id)); if (o && d) applyIvrCfg(o, JSON.parse(JSON.stringify(d))); return; }
   if (w.k === 'sched_periods') {
     const s = M.by.schedule?.get(String(w.id)); if (!s || !d) return;
     const v = periodsOf(d); s.open_periods = v.open_periods; s.exceptional_periods = v.exceptional_periods; s.closed_destination = v.closed_destination;
@@ -111,7 +120,7 @@ function opsOf(entries) {
   const by = new Map();
   for (const e of entries) {
     // Champs d'une file et débordements d'une file : deux routes différentes.
-    const k = e.w.k === 'ivr_choice' ? 'ivr' : e.w.k === 'sched_exc' || e.w.k === 'sched_periods' ? 'sched' : e.w.k;
+    const k = e.w.k === 'ivr_choice' || e.w.k === 'ivr_cfg' ? 'ivr' : e.w.k === 'sched_exc' || e.w.k === 'sched_periods' ? 'sched' : e.w.k;
     const res = `${k}:${e.w.id}`;
     if (!by.has(res)) by.set(res, { k, id: e.w.id, entries: [] });
     by.get(res).entries.push(e);
@@ -145,9 +154,17 @@ export async function prepare(entries) {
       const path = `/ivr/${op.id}`;
       const before = await api('GET', path);
       const body = {};
-      let choices = (before?.choices || []).map((c) => ({ exten: c.exten, destination: cleanDest(c.destination) }));
+      let choices = (before?.choices || []).map((c) => ({ exten: String(c.exten), destination: cleanDest(c.destination) }));
       let touched = false;
       for (const e of op.entries) {
+        if (e.w.k === 'ivr_cfg') {
+          // Réglage complet (ivr-editor.js) : champs modifiés + destinations + touches en entier.
+          const a = normIvr(e.after);
+          for (const k of IVR_FIELDS) if (JSON.stringify(before?.[k] ?? null) !== JSON.stringify(a.fields[k] ?? null)) body[k] = a.fields[k];
+          for (const k of ['timeout_destination', 'invalid_destination', 'abort_destination']) body[k] = a[k];
+          choices = a.choices.map((c) => ({ ...c })); touched = true;
+          continue;
+        }
         if (e.w.k === 'ivr_choice') {
           touched = true;
           const i = choices.findIndex((c) => c.exten === e.w.f);
@@ -157,8 +174,8 @@ export async function prepare(entries) {
       }
       if (touched) { choices = choices.sort((a, b) => String(a.exten).localeCompare(String(b.exten), 'fr', { numeric: true })); body.choices = choices; }
       const changed = Object.keys(body).some((f) => f === 'choices'
-        ? JSON.stringify(body.choices) !== JSON.stringify((before?.choices || []).map((c) => ({ exten: c.exten, destination: cleanDest(c.destination) })).sort((a, b) => String(a.exten).localeCompare(String(b.exten), 'fr', { numeric: true })))
-        : !sameDest(before?.[f], body[f]));
+        ? JSON.stringify(body.choices) !== JSON.stringify((before?.choices || []).map((c) => ({ exten: String(c.exten), destination: cleanDest(c.destination) })).sort((a, b) => String(a.exten).localeCompare(String(b.exten), 'fr', { numeric: true })))
+        : f.endsWith('_destination') ? !sameDest(before?.[f], body[f]) : JSON.stringify(before?.[f] ?? null) !== JSON.stringify(body[f] ?? null));
       out.push({ path, before, body, changed });
     } else if (op.k === 'sched') {
       // Horaire : PUT partiel, mais périodes envoyées en entier (pas d'id de
@@ -221,6 +238,51 @@ export async function prepare(entries) {
       }
       for (const id of a.perms.filter((x) => !b.perms.includes(x))) mine.push({ method: 'PUT', path: `${base}/callpermissions/${id}`, before: { call_permissions: before?.call_permissions }, changed: true });
       for (const id of b.perms.filter((x) => !a.perms.includes(x))) mine.push({ method: 'DELETE', path: `${base}/callpermissions/${id}`, before: { call_permissions: before?.call_permissions }, changed: true });
+      out.push(...(mine.length ? mine : [{ path: base, before, changed: false }]));
+    } else if (op.k === 'queue_cfg') {
+      // Réglage complet d'une file (queue-editor.js) : relire, puis une écriture par partie modifiée.
+      const base = `/queues/${op.id}`;
+      const before = await api('GET', base);
+      const b = queueCfgOf(before || {}), a = op.entries[op.entries.length - 1].after;
+      const nn = (x) => (x === undefined ? null : x);
+      const mine = [];
+      const body = {};
+      for (const k of QUEUE_FIELDS) if (JSON.stringify(nn(b.fields[k])) !== JSON.stringify(nn(a.fields[k]))) body[k] = a.fields[k];
+      // options : confd remplace TOUTE la liste (vérifié, xivo-dao) → liste complète.
+      const ol = (o) => JSON.stringify(optionsList(o).sort((x, y) => x[0].localeCompare(y[0])));
+      if (ol(b.opts) !== ol(a.opts)) body.options = optionsList(a.opts);
+      if (Object.keys(body).length) mine.push({ path: base, before, body, changed: true });
+      // Membres un par un. Membre déjà présent dont l'ordre ou la pénalité change :
+      // retiré puis rajouté (un PUT seul ne notifie pas Asterisk, vérifié).
+      const memberOps = (kind, bl, al, idOf, bodyOf) => {
+        const bi = new Map(bl.map((m, i) => [String(idOf(m)), { m, i }]));
+        const ai = new Map(al.map((m, i) => [String(idOf(m)), { m, i }]));
+        for (const [id] of bi) if (!ai.has(id)) mine.push({ method: 'DELETE', path: `${base}/members/${kind}/${id}`, before: before?.members, changed: true });
+        for (const [id, { m, i }] of ai) {
+          const old = bi.get(id);
+          const same = old && JSON.stringify(bodyOf(old.m, old.i)) === JSON.stringify(bodyOf(m, i));
+          if (same) continue;
+          if (old) mine.push({ method: 'DELETE', path: `${base}/members/${kind}/${id}`, before: before?.members, changed: true });
+          mine.push({ path: `${base}/members/${kind}/${id}`, before: before?.members, body: bodyOf(m, i), changed: true });
+        }
+      };
+      memberOps('agents', b.agents, a.agents, (m) => m.id, (m, i) => ({ penalty: m.penalty ?? 0, priority: i }));
+      memberOps('users', b.users, a.users, (m) => m.uuid, (m, i) => ({ priority: i }));
+      if (JSON.stringify(b.extension) !== JSON.stringify(a.extension)) {
+        const old = before?.extensions?.[0];
+        mine.push({ path: `${base}/extensions`, before: { extensions: before?.extensions }, body: { extension: a.extension }, changed: true,
+          // Une seule extension par file (vérifié, queue_extension/validator.py) : comme pour un groupe.
+          run: async () => {
+            const created = a.extension ? await api('POST', '/extensions', { exten: a.extension.exten, context: a.extension.context }) : null;
+            if (old) await api('DELETE', `${base}/extensions/${old.id}`);
+            if (!created) return;
+            try { await api('PUT', `${base}/extensions/${created.id}`); } catch (e) {
+              if (old) { try { await api('PUT', `${base}/extensions/${old.id}`); } catch { /* */ } }
+              try { await api('DELETE', `/extensions/${created.id}`); } catch { /* */ }
+              throw e;
+            }
+          } });
+      }
       out.push(...(mine.length ? mine : [{ path: base, before, changed: false }]));
     } else if (op.k === 'sched_assoc') {
       // Association : relire l'objet, retirer l'ancien horaire, associer le nouveau.
