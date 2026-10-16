@@ -7,13 +7,13 @@
 // {enabled, destination (texte ≤ 128)} ; services PUT /users/{uuid}/services/
 // {dnd|incallfilter} {enabled} ; messagerie : delete_messages exige email et
 // attach_audio dans le même envoi (validates_schema).
-// Volontairement absents : mots de passe et codes PIN (messagerie, conférence,
-// utilisateur) — ils finiraient en clair dans le brouillon et la sauvegarde
-// JSON. À changer dans le portail Wazo.
-import { $, esc, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.38.0';
-import { M } from './model.js?v=0.38.0';
-import { fillSoundSelect } from './sched-editor.js?v=0.38.0';
-import { sec, field, check, setSums, openSec } from './ed-ui.js?v=0.38.0';
+// Codes (messagerie, conférence) : champ masqué avec « Afficher » / « Générer » ;
+// jamais en clair dans le brouillon, l'aperçu ni la sauvegarde JSON (redact).
+// Le mot de passe de connexion d'un utilisateur reste dans User Manager.
+import { $, esc, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.39.0';
+import { M } from './model.js?v=0.39.0';
+import { fillSoundSelect } from './sched-editor.js?v=0.39.0';
+import { sec, field, check, setSums, openSec, secretField, bindSecrets } from './ed-ui.js?v=0.39.0';
 
 const pickFields = (o, keys) => { const f = {}; for (const k of keys) f[k] = o?.[k] ?? null; return f; };
 const diffKeys = (a, b, keys, L) => keys.filter((k) => JSON.stringify(a?.fields?.[k] ?? null) !== JSON.stringify(b?.fields?.[k] ?? null)).map((k) => L[k] || k);
@@ -134,7 +134,7 @@ export function userCfgDiff(a, b) {
 // ---------------------------------------------------------------------------
 // Messagerie (le code d'accès n'est pas modifiable ici)
 // ---------------------------------------------------------------------------
-export const VM_FIELDS = ['name', 'number', 'context', 'email', 'language', 'timezone', 'pager', 'max_messages', 'attach_audio', 'delete_messages', 'ask_password', 'enabled'];
+export const VM_FIELDS = ['name', 'number', 'context', 'email', 'language', 'timezone', 'pager', 'max_messages', 'attach_audio', 'delete_messages', 'ask_password', 'enabled', 'password'];
 export const vmCfgOf = (o) => ({ fields: pickFields(o, VM_FIELDS) });
 export const applyVmCfg = (o, v) => Object.assign(o, v.fields);
 const LANGS = [['fr_FR', 'Français (France)'], ['fr_CA', 'Français (Canada)'], ['en_US', 'Anglais (États-Unis)'], ['en_GB', 'Anglais (Royaume-Uni)'], ['de_DE', 'Allemand'], ['es_ES', 'Espagnol'], ['it_IT', 'Italien'], ['nl_NL', 'Néerlandais']];
@@ -144,7 +144,7 @@ export function openVmEditor(o, onSave) {
   const users = (o.users || []).map((u) => fullName(u)).filter(Boolean);
   const b = (k, l, h) => check(`vme-${k}`, l, h, !!f[k], `data-b="${k}"`);
   confirmModal(`<div class="cf-ed">
-    ${head('vme-hb', `Messagerie « ${o.name} »`, users.length ? `Utilisée par ${users.join(', ')}` : (o.accesstype === 'global' ? 'Messagerie partagée' : ''), 'Options de l\'API Wazo pour une boîte vocale. Le code d\'accès se change dans le portail Wazo (il apparaîtrait en clair dans le brouillon et la sauvegarde).')}
+    ${head('vme-hb', `Messagerie « ${o.name} »`, users.length ? `Utilisée par ${users.join(', ')}` : (o.accesstype === 'global' ? 'Messagerie partagée' : ''), 'Options de l\'API Wazo pour une boîte vocale. Le code est masqué dans le brouillon, l\'aperçu et la sauvegarde JSON.')}
     ${sec('gen', 'Général', `
       ${field('Nom *', `<input data-f="name" value="${esc(f.name || '')}" maxlength="80">`)}
       <div class="cf-ge-2">
@@ -163,6 +163,7 @@ export function openVmEditor(o, onSave) {
         ${field('Fuseau horaire', tzSelect('data-f="timezone"', f.timezone), 'Pour l\'heure annoncée des messages.')}
       </div>
       ${field('Nombre maximum de messages', `<input type="number" min="0" step="1" data-f="max_messages" value="${esc(f.max_messages ?? '')}" placeholder="défaut du serveur">`)}
+      ${secretField('data-f="password"', 'Code de la messagerie', f.password, 'Chiffres seulement. Vide : pas de code.')}
       ${b('ask_password', 'Demander le code à la consultation', 'Décoché : accès direct depuis le poste du titulaire.')}`)}
     <p id="vme-err" class="error small"></p></div>`, () => {
     const box = $('modal-body');
@@ -176,6 +177,7 @@ export function openVmEditor(o, onSave) {
     nf.language = box.querySelector('[data-f="language"]').value || null;
     nf.timezone = box.querySelector('[data-f="timezone"]').value || null;
     const mm = intOrNull(val(box, '[data-f="max_messages"]'), 0); if (mm === undefined) return err('Nombre de messages : entier positif.', 'opt'); nf.max_messages = mm;
+    nf.password = val(box, '[data-f="password"]') || null; if (nf.password && !/^[0-9]{1,80}$/.test(nf.password)) return err('Code de la messagerie : chiffres seulement.', 'opt');
     // Case non lue (valeur absente) et laissée décochée : rien n'est écrit.
     for (const el of box.querySelectorAll('[data-b]')) nf[el.dataset.b] = f[el.dataset.b] == null && !el.checked ? f[el.dataset.b] : el.checked;
     if (nf.delete_messages && (!nf.email || !nf.attach_audio)) return err('« Supprimer après l\'envoi » exige un e-mail et la pièce jointe audio.', 'mail');
@@ -188,23 +190,24 @@ export function openVmEditor(o, onSave) {
     mail: [val(box, '[data-f="email"]') || 'pas d\'e-mail', box.querySelector('[data-b="attach_audio"]').checked ? 'avec audio' : ''],
     opt: [box.querySelector('[data-f="language"]').selectedOptions[0]?.text, val(box, '[data-f="max_messages"]') ? `${val(box, '[data-f="max_messages"]')} messages max.` : ''],
   });
+  bindSecrets(box);
   box.addEventListener('input', () => { $('vme-err').textContent = ''; recap(); });
   box.addEventListener('change', recap);
   recap();
 }
-export const vmCfgDiff = (a, b) => diffKeys(a, b, VM_FIELDS, { name: 'nom', number: 'numéro', context: 'contexte', email: 'e-mail', language: 'langue', timezone: 'fuseau', pager: 'pager', max_messages: 'messages max.', attach_audio: 'pièce jointe', delete_messages: 'suppression après envoi', ask_password: 'demande du code', enabled: 'activée' }).join(', ');
+export const vmCfgDiff = (a, b) => diffKeys(a, b, VM_FIELDS, { name: 'nom', number: 'numéro', context: 'contexte', email: 'e-mail', language: 'langue', timezone: 'fuseau', pager: 'pager', max_messages: 'messages max.', attach_audio: 'pièce jointe', delete_messages: 'suppression après envoi', ask_password: 'demande du code', enabled: 'activée', password: 'code' }).join(', ');
 
 // ---------------------------------------------------------------------------
-// Conférence (codes d'accès non modifiables ici)
+// Conférence
 // ---------------------------------------------------------------------------
-export const CONF_FIELDS = ['name', 'max_users', 'record', 'quiet_join_leave', 'announce_join_leave', 'announce_user_count', 'announce_only_user', 'music_on_hold', 'preprocess_subroutine'];
+export const CONF_FIELDS = ['name', 'max_users', 'record', 'quiet_join_leave', 'announce_join_leave', 'announce_user_count', 'announce_only_user', 'music_on_hold', 'preprocess_subroutine', 'pin', 'admin_pin'];
 export const confCfgOf = (o) => ({ fields: pickFields(o, CONF_FIELDS) });
 export const applyConfCfg = (o, v) => Object.assign(o, v.fields);
 export function openConfEditor(o, onSave) {
   const f = confCfgOf(o).fields;
   const b = (k, l, h) => check(`cfe-${k}`, l, h, !!f[k], `data-b="${k}"`);
   confirmModal(`<div class="cf-ed">
-    ${head('cfe-hb', `Conférence « ${o.name || o.id} »`, [o.extensions?.[0]?.exten, o.pin ? 'code d\'accès défini' : 'sans code d\'accès'].filter(Boolean).join(' · '), 'Options de l\'API Wazo pour une salle de conférence. Les codes d\'accès (participant, animateur) se changent dans le portail Wazo.')}
+    ${head('cfe-hb', `Conférence « ${o.name || o.id} »`, [o.extensions?.[0]?.exten, o.pin ? 'code d\'accès défini' : 'sans code d\'accès'].filter(Boolean).join(' · '), 'Options de l\'API Wazo pour une salle de conférence. Les codes sont masqués dans le brouillon, l\'aperçu et la sauvegarde JSON.')}
     ${sec('gen', 'Général', `
       ${field('Nom', `<input data-f="name" value="${esc(f.name || '')}" maxlength="128">`)}
       ${field('Participants maximum', `<input type="number" min="0" step="1" data-f="max_users" value="${esc(f.max_users ?? '')}">`, '0 = illimité.')}
@@ -214,6 +217,7 @@ export function openConfEditor(o, onSave) {
       ${b('announce_user_count', 'Annoncer le nombre de participants', '')}
       ${b('announce_only_user', 'Annoncer « vous êtes seul »', '')}
       ${field('Musique d\'attente', `<select data-f="music_on_hold">${mohOpts(f.music_on_hold, 'Aucune')}</select>`, 'Pour le premier participant, en attendant les autres.')}`, { open: true })}
+    ${sec('codes', 'Codes d\'accès', `<div class="cf-ge-2">${secretField('data-f="pin"', 'Code participant', f.pin, 'Vide : entrée libre.')}${secretField('data-f="admin_pin"', 'Code animateur', f.admin_pin, 'Vide : pas d\'animateur.')}</div>`)}
     ${sec('adv', 'Avancé', field('Sous-routine', `<input data-f="preprocess_subroutine" value="${esc(f.preprocess_subroutine || '')}" maxlength="79" placeholder="aucune">`))}
     <p id="cfe-err" class="error small"></p></div>`, () => {
     const box = $('modal-body');
@@ -224,11 +228,14 @@ export function openConfEditor(o, onSave) {
     for (const el of box.querySelectorAll('[data-b]')) nf[el.dataset.b] = f[el.dataset.b] == null && !el.checked ? f[el.dataset.b] : el.checked;
     nf.music_on_hold = box.querySelector('[data-f="music_on_hold"]').value || null;
     nf.preprocess_subroutine = val(box, '[data-f="preprocess_subroutine"]') || null;
+    for (const k of ['pin', 'admin_pin']) { nf[k] = val(box, `[data-f="${k}"]`) || null; if (nf[k] && !/^[0-9]{1,80}$/.test(nf[k])) { openSec(box, 'codes'); $('cfe-err').textContent = 'Codes : chiffres seulement.'; return false; } }
     onSave({ fields: nf });
     return true;
   }, 'Ajouter au brouillon');
   const box = $('modal-body');
+  bindSecrets(box);
   const recap = () => setSums(box, {
+    codes: [val(box, '[data-f="pin"]') ? 'code participant' : 'entrée libre', val(box, '[data-f="admin_pin"]') ? 'code animateur' : ''],
     gen: [Number(val(box, '[data-f="max_users"]')) ? `${val(box, '[data-f="max_users"]')} participants max.` : 'illimité', box.querySelector('[data-b="record"]').checked ? 'enregistrée' : ''],
     ann: [`${box.querySelectorAll('[data-sec="ann"] [data-b]:checked').length} annonce(s)`],
     adv: [val(box, '[data-f="preprocess_subroutine"]')],
@@ -236,7 +243,7 @@ export function openConfEditor(o, onSave) {
   box.addEventListener('input', recap); box.addEventListener('change', recap);
   recap();
 }
-export const confCfgDiff = (a, b) => diffKeys(a, b, CONF_FIELDS, { name: 'nom', max_users: 'participants max.', record: 'enregistrement', quiet_join_leave: 'arrivées silencieuses', announce_join_leave: 'annonce des arrivées', announce_user_count: 'nombre de participants', announce_only_user: '« vous êtes seul »', music_on_hold: 'musique', preprocess_subroutine: 'sous-routine' }).join(', ');
+export const confCfgDiff = (a, b) => diffKeys(a, b, CONF_FIELDS, { name: 'nom', max_users: 'participants max.', record: 'enregistrement', quiet_join_leave: 'arrivées silencieuses', announce_join_leave: 'annonce des arrivées', announce_user_count: 'nombre de participants', announce_only_user: '« vous êtes seul »', music_on_hold: 'musique', preprocess_subroutine: 'sous-routine', pin: 'code participant', admin_pin: 'code animateur' }).join(', ');
 
 // ---------------------------------------------------------------------------
 // Horaire : nom, fuseau, activé (les heures : éditeur d'horaire)

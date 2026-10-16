@@ -21,7 +21,8 @@
 // Supposé, à vérifier en réel : les listes (GET /groups, /queues,
 // /switchboards, /schedules) contiennent déjà fallbacks, membres et
 // destinations ; sinon on lit le détail de chaque objet (ensureDetails).
-import { S, api, listAll, fullName } from '../common/core.js?v=0.38.0';
+import { S, api, listAll, fullName } from '../common/core.js?v=0.39.0';
+import { comparePatterns, describePattern } from './dialsim.js?v=0.39.0';
 
 export const M = { lists: {}, by: {}, ext: new Map(), extAny: new Map(), rev: null, warns: [] };
 
@@ -42,6 +43,7 @@ export const TYPES = {
   switchboard: { label: 'Standard (POPC)', badge: 'POPC', help: 'Standard : l\'appel attend d\'être pris par un standardiste ; sans réponse dans le délai, il part vers le débordement « pas de réponse ».' },
   outcall: { label: 'Sortant', badge: 'OUT', help: 'Règle d\'appel sortant : le numéro part vers l\'extérieur par les trunks, dans l\'ordre (le suivant si le premier échoue).' },
   application: { label: 'Application', badge: 'APP', help: 'Application Wazo (Stasis) : l\'appel est remis à une application externe.' },
+  dial: { label: 'Envoi', badge: 'ENV', help: 'Ce qui part vers l\'opérateur pour ce motif : le numéro après transformation (chiffres retirés, préfixe ajouté ; vérifié dans wazo-agid), le numéro présenté, puis les trunks dans l\'ordre (le suivant si le premier échoue).' },
   member: { label: 'Membre', badge: 'M', help: 'Membre du groupe. En NPD, il ne sonne pas et l\'appel n\'est pas renvoyé (vérifié dans le code de Wazo). Les renvois d\'appel, renvois par défaut et le filtrage de l\'utilisateur ne s\'appliquent pas quand il est appelé par un groupe (déduit du dialplan, non testé). Un membre « numéro » qui pointe vers un utilisateur passe en revanche par le traitement normal de l\'utilisateur.' },
   members: { label: 'Membres', badge: 'MBR', help: 'Membres qui sonnent : membres fixes (réglés dans Wazo) et, pour un groupe, utilisateurs inscrits par la touche « bascule groupe » (*50) — ceux-là ne sont connus que d\'Asterisk, lus si le serveur l\'autorise. Ce sont les postes des membres qui sonnent : leurs propres renvois par défaut ne s\'appliquent pas (supposé).' },
   hangup: { label: 'Raccrocher', badge: 'FIN', help: 'Fin de l\'appel, avec la tonalité choisie : normal, occupé ou encombré.' },
@@ -132,6 +134,57 @@ export async function loadAll() {
   M.rev = null; M.keys = null; M.live = null; M.liveState = ''; M.sounds = null;
   return M;
 }
+// ---------------------------------------------------------------------------
+// Opérateur d'un trunk (demande de Brice, 16/10/2026 : « regarde le champ
+// template »). Vérifié dans wazo-confd (endpoint_sip/schema.py) : GET
+// /endpoints/sip/{uuid} donne `templates` [{uuid, label}] (modèles hérités, ceux
+// que pose l'assistant d'interconnexion du portail, supposé) et
+// `aor_section_options` (contact sip:hôte). La fiche contient aussi les
+// identifiants SIP : seuls les libellés de modèles et l'hôte sont gardés.
+// ---------------------------------------------------------------------------
+const OPERATORS = [
+  ['Phenix Partner', ['phenix']], ['Rubix Telecom', ['rubix']], ['Sewan', ['sewan']], ['SFR Business', ['sfr']], ['SignalWire', ['signalwire']],
+  ['Telecom Object', ['telecomobject', 'telecom-object']], ['Telnyx', ['telnyx']], ['Twilio', ['twilio']], ['Unyc', ['unyc']], ['Voice Me Up', ['voicemeup']],
+  ['VoIP.ms', ['voipms', 'voip.ms']], ['Waycom', ['waycom']], ['OVHcloud', ['ovh']], ['Keyyo', ['keyyo']], ['Orange', ['orange']], ['Bouygues Telecom', ['bouygues']],
+  ['Alphalink', ['alphalink']], ['Axialys', ['axialys']], ['Colt', ['colt']], ['Ipline', ['ipline']], ['Kiwi', ['kiwi']],
+];
+const GENERIC_TPL = /^(global|default|trunk|webrtc|registration|wazo|template)/i;
+const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9.-]/g, '');
+// Modèles d'opérateurs du portail Wazo (indication de Brice, 16/10/2026) :
+// dépôt public wazo-communication/portal-plugins, plugins/sip/list.json
+// ({ items: [{ name, slug, logo, mainColor… }] }) — la même liste et les mêmes
+// logos que la page « Interconnexions › Créer ». Lue une fois ; sans réseau,
+// repli sur la liste OPERATORS (sans logo).
+const PROVIDERS_URL = 'https://raw.githubusercontent.com/wazo-communication/portal-plugins/master/plugins/sip/list.json';
+export async function loadProviders() {
+  if (M.providers) return M.providers;
+  try { const r = await fetch(PROVIDERS_URL); M.providers = r.ok ? ((await r.json())?.items || []) : []; } catch (e) { M.providers = []; console.warn('[astrea] modèles d\'opérateurs illisibles', e); }
+  return M.providers;
+}
+export function trunkOperator(tplLabels, host) {
+  // Liste du portail d'abord : nom ou slug (sans « v1 ») dans un modèle hérité ou dans l'hôte.
+  for (const p of M.providers || []) {
+    const keys = [norm(p.name), norm(String(p.slug || '').replace(/v\d+$/, ''))].filter((k) => k.length >= 3);
+    if (keys.some((k) => tplLabels.some((l) => norm(l).includes(k)) || norm(host).includes(k))) return { name: p.name, known: true, logo: /^https:\/\/raw\.githubusercontent\.com\//.test(p.logo || '') ? p.logo : null, color: p.mainColor || null };
+  }
+  for (const [name, keys] of OPERATORS) if (keys.some((k) => tplLabels.some((l) => norm(l).includes(k)) || norm(host).includes(k))) return { name, known: true };
+  const other = tplLabels.find((l) => l && !GENERIC_TPL.test(l));
+  return other ? { name: other, known: false } : host ? { name: host, known: false } : null;
+}
+export async function loadTrunkOperators() {
+  if (!(M.lists.trunk || []).length) return;
+  await loadProviders();
+  await Promise.all((M.lists.trunk || []).map(async (t) => {
+    const uuid = t.endpoint_sip?.uuid; if (!uuid || t.operator !== undefined) return;
+    try {
+      const ep = await api('GET', `/endpoints/sip/${uuid}`);
+      const tpl = (ep?.templates || []).map((x) => x.label).filter(Boolean);
+      const contact = (ep?.aor_section_options || []).find(([k]) => k === 'contact')?.[1] || '';
+      const host = (contact.match(/^sips?:(?:[^@]*@)?([^:;>]+)/) || [])[1] || '';
+      t.operator = trunkOperator(tpl, host); t.sipTemplates = tpl; t.sipHost = host;
+    } catch (e) { t.operator = null; console.warn('[astrea] trunk', t.id, e); }
+  }));
+}
 // Détails absents des listes (supposé) : relus un par un, une seule fois.
 const DETAIL = { group: ['fallbacks', (g) => `/groups/${g.uuid}`], queue: ['fallbacks', (q) => `/queues/${q.id}`], switchboard: ['fallbacks', (s) => `/switchboards/${s.uuid}/fallbacks`, true], schedule: ['closed_destination', (s) => `/schedules/${s.id}`], ivr: ['choices', (i) => `/ivr/${i.id}`] };
 export async function ensureDetail(type, obj) {
@@ -211,7 +264,7 @@ export function describe(type, o) {
     case 'conference': return { title: o.name || `#${o.id}`, sub: firstExten(o) };
     case 'switchboard': return { title: o.name, sub: firstExten(o) };
     case 'context': return { title: o.label || o.name, sub: o.type };
-    case 'trunk': { const ep = o.endpoint_sip || o.endpoint_iax || o.endpoint_custom || {}; return { title: ep.label || ep.name || ep.interface || `Trunk #${o.id}`, sub: ctxLabel(o.context) }; }
+    case 'trunk': { const ep = o.endpoint_sip || o.endpoint_iax || o.endpoint_custom || {}; return { title: ep.label || ep.name || ep.interface || `Trunk #${o.id}`, sub: [o.operator ? `opérateur ${o.operator.name}` : '', ctxLabel(o.context)].filter(Boolean).join(' · ') }; }
     case 'outcall': return { title: o.name || o.label || `#${o.id}`, sub: (o.extensions || []).map((e) => e.exten).slice(0, 3).join(', ') };
     case 'application': return { title: o.name || o.uuid, sub: '' };
     default: return { title: String(o.name || o.id || ''), sub: '' };
@@ -346,7 +399,20 @@ export function edgesOf(k) {
       for (const c of o.contexts || []) { const cc = (M.lists.context || []).find((y) => y.id === c.id || y.name === c.name); if (cc) e.push(link('include', key('context', cc))); }
       return e;
     }
-    case 'outcall': return (o.trunks || []).map((t, i) => ({ ...link('trunk', `trunk:${t.id}`), label: `Trunk ${i + 1}` })).filter((x) => M.by.trunk?.has(x.to.key.slice(6)));
+    case 'outcall': {
+      // Une sortie par motif (vérifié : extensions = dialpatterns), vers une carte
+      // « Envoi » : numéro envoyé (strip_digits, external_prefix ; vérifié dans
+      // wazo-agid) puis trunks dans l'ordre (le suivant si le premier échoue).
+      const trunks = (o.trunks || []).filter((t) => M.by.trunk?.has(String(t.id)));
+      const pats = [...(o.extensions || [])].sort((a, b) => comparePatterns(a.exten, b.exten));
+      return pats.map((dp) => {
+        const tr = [dp.strip_digits ? `retire ${dp.strip_digits} chiffre${dp.strip_digits > 1 ? 's' : ''}` : '', dp.external_prefix ? `ajoute ${dp.external_prefix} devant` : ''].filter(Boolean).join(', ');
+        const send = leaf('dial', tr ? `Numéro ${tr}` : 'Numéro envoyé tel quel', [dp.caller_id ? `présenté : ${dp.caller_id}` : '', `${trunks.length} trunk${trunks.length > 1 ? 's' : ''}`].filter(Boolean).join(' · '), {
+          edges: trunks.map((t, i) => ({ ...link('trunk', `trunk:${t.id}`), label: i ? `${i + 1}. si échec : trunk` : '1. Trunk', note: '' })),
+        });
+        return { slot: 'pattern', label: dp.exten, note: describePattern(dp.exten), help: 'Motif de numéros composés qui partent par cette règle (règles d\'Asterisk : _ = motif, X = 0-9, Z = 1-9, N = 2-9, [1-5] = un chiffre parmi, « . » = un ou plusieurs caractères).', to: send };
+      });
+    }
     default: return [];
   }
 }
@@ -669,6 +735,15 @@ export function buildTree(rootKey, dir, { maxDepth = 8, collapsed = new Set(), e
     }
     // Une feuille peut porter ses propres sorties (membres d'un groupe).
     let edges = n.leaf ? (n.leaf.edges || []) : edgesOf(n.key);
+    // Trunk atteint par une règle sortante : l'appel sort vers l'opérateur, fin
+    // du parcours dans Wazo. Sans ça, le graphe enchaînait sur le contexte
+    // entrant du trunk (mêmes trunks dans les deux sens) : boucle juste pour
+    // Asterisk, déroutante à lire (retour de Brice, 16/10/2026). Trunk choisi
+    // comme point de départ : ses appels entrants restent affichés.
+    if (!n.leaf && baseKey(n.key).startsWith('trunk:') && n.parent && (baseKey(n.parent).startsWith('outcall:') || nodes.get(n.parent)?.leaf?.type === 'dial')) {
+      const op = entity(n.key).obj?.operator;
+      edges = [{ slot: 'pstn', label: op ? `Vers l'opérateur ${op.name}` : 'Vers l\'opérateur (réseau public)', note: 'appel sortant : fin du parcours dans Wazo', op: op?.name || null, help: 'L\'appel quitte Wazo par ce trunk. Ses appels entrants (contexte, SDA) se voient en partant du trunk lui-même.', to: null, info: true }];
+    }
     n.ports = edges.filter((e) => e.to || showEmpty || e.info).map((e, i) => ({ ...e, id: `${e.slot}#${i}` }));
     edges = n.ports;
     if (stop) { n.folded = edges.some((e) => e.to); continue; }
@@ -910,7 +985,7 @@ export function facts(k, leafInfo) {
     case 'conference': f.push(['Numéro', exts], ['Participants max', o.max_users || '—'], ['Code PIN', o.pin ? 'oui' : 'non']); break;
     case 'switchboard': f.push(['Numéro', exts], ['Délai', sec(o.timeout)]); break;
     case 'context': f.push(['Nom technique', o.name], ['Type', o.type], ['SDA (plages)', (o.incall_ranges || []).map((r) => `${r.start}–${r.end}`).join(', ')], ['Utilisateurs (plages)', (o.user_ranges || []).map((r) => `${r.start}–${r.end}`).join(', ')], ['Inclut', (o.contexts || []).map((c) => c.label || c.name).join(', ')]); break;
-    case 'trunk': { const ep = o.endpoint_sip ? 'SIP' : o.endpoint_iax ? 'IAX' : o.endpoint_custom ? 'personnalisé' : '—'; f.push(['Type', ep], ['Contexte', ctxLabel(o.context)], ['Format du numéro présenté', o.outgoing_caller_id_format], ['Règles sortantes', (o.outcalls || []).map((x) => x.name).join(', ')]); break; }
+    case 'trunk': { const ep = o.endpoint_sip ? 'SIP' : o.endpoint_iax ? 'IAX' : o.endpoint_custom ? 'personnalisé' : '—'; f.push(['Type', ep], ['Opérateur', o.operator ? `${o.operator.name}${o.operator.known ? '' : ' (déduit du modèle ou de l\'hôte)'}` : o.operator === null ? 'non reconnu' : 'non lu', 'Lu sur la fiche SIP du trunk : modèles hérités (posés par l\'assistant d\'interconnexion du portail) puis hôte de l\'opérateur.'], ['Modèles SIP', (o.sipTemplates || []).join(', ') || '—'], ['Hôte', o.sipHost || '—'], ['Contexte', ctxLabel(o.context)], ['Format du numéro présenté', o.outgoing_caller_id_format], ['Règles sortantes', (o.outcalls || []).map((x) => x.name).join(', ')]); break; }
     case 'outcall': f.push(['Motifs', (o.extensions || []).map((e) => `${e.exten}${e.strip_digits ? ` (−${e.strip_digits})` : ''}${e.prefix ? ` (+${e.prefix})` : ''}`).join(', ')], ['Nom appelant interne', o.internal_caller_id ? 'oui' : 'non'], ['Sonnerie', sec(o.ring_time)], ['Actif', o.enabled === false ? 'non' : 'oui']); break;
     default: break;
   }

@@ -56,6 +56,8 @@ body.in-portal.ready #workbench { height: 100vh; }
 .cf-links #cf-arrow-g path { fill: var(--cf-menu); }
 .cf-edge.guard.inactive { stroke: var(--cf-edge); stroke-width: 2; }
 .cf-guard { margin: 0 8px 6px 10px; padding: 3px 8px; border-radius: var(--radius); background: color-mix(in srgb, var(--cf-menu) 10%, var(--panel)); color: color-mix(in srgb, var(--cf-menu) 75%, var(--ink)); font-size: .6875rem; line-height: 1.35; }
+/* Logo de l'opérateur (modèles d'interconnexion du portail Wazo) : fond clair, lisible en thème sombre */
+.cf-oplogo { flex: none; width: 56px; height: 28px; object-fit: contain; padding: 2px 4px; border-radius: 4px; background: #fff; border: 1px solid var(--line); align-self: center; }
 .cf-rep { margin-left: 6px; padding: 0 6px; border-radius: 9px; font-size: .625rem; letter-spacing: .02em; text-transform: none; border: 1px dashed var(--line); color: var(--muted); white-space: nowrap; }
 .cf-gpill { margin-left: 6px; padding: 0 6px; border-radius: 9px; font-size: .625rem; letter-spacing: .02em; text-transform: none; background: color-mix(in srgb, var(--cf-menu) 14%, var(--panel)); color: color-mix(in srgb, var(--cf-menu) 80%, var(--ink)); white-space: nowrap; }
 .cf-node.dropcard { outline: 2px dashed var(--cf-menu); outline-offset: 3px; }
@@ -313,6 +315,19 @@ body.in-portal.ready #workbench { height: 100vh; }
 .cf-ie-ch .cf-dp select[data-do] { flex: 1; min-width: 0 !important; max-width: 100%; }
 .cf-ie-key { display: inline-flex; align-items: center; gap: 6px; margin: 0; font-size: .8125rem; font-weight: 600; }
 .cf-ie-key input { width: 56px !important; height: 28px; text-align: center; font-weight: 600; }
+/* Palette : carte grisée (aucun objet de ce type ; la poser propose de le créer) */
+.cf-chip.empty { opacity: .5; border-style: dashed; }
+.cf-chip.empty:hover { opacity: .8; }
+.cf-cr-body { padding: 0; margin-bottom: 12px; }
+/* Règle sortante : un bloc par motif */
+.cf-oe-list li.cf-oe-pat { display: grid; gap: 8px; padding: 10px 12px; }
+.cf-oe-pat [data-p="exten"] { font-family: ui-monospace, Consolas, monospace; max-width: 200px; flex: none !important; }
+.cf-oe-desc { flex: 1; }
+/* Simulateur de numéro */
+.cf-sim-res { display: grid; gap: 10px; margin-top: 8px; }
+.cf-sim-step { display: grid; grid-template-columns: 150px 1fr; gap: 8px; font-size: .875rem; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+.cf-sim-step code { font-size: .8125rem; }
+@media (max-width: 700px) { .cf-sim-step { grid-template-columns: 1fr; } }
 /* « Un par un » : durée d'un tour complet proposée */
 .cf-ge-tour { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: var(--radius); background: color-mix(in srgb, var(--accent) 7%, var(--panel)); border: 1px solid color-mix(in srgb, var(--accent) 25%, var(--panel)); font-size: .875rem; }
 .cf-ge-tour > div { flex: 1; display: grid; gap: 2px; }

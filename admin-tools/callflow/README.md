@@ -87,10 +87,15 @@ courant. Cadrage, sources et décisions : `docs/CALLFLOW-MANAGER.md` (dépôt de
   opérateurs, son délai, ses musiques d'attente et son débordement.
 - **SDA, utilisateurs, messageries, conférences, horaires** : un bouton
   « Régler … » dans la fiche ouvre leurs options (pour un utilisateur : sonnerie,
-  appels simultanés, NPD, filtrage, renvois). Codes et mots de passe : portail Wazo.
+  appels simultanés, NPD, filtrage, renvois). Codes de messagerie et de
+  conférence : masqués, « Afficher » / « Générer » ; jamais en clair dans le brouillon,
+  l'aperçu ni la sauvegarde JSON (« *** »).
 - Toute carte reliée par une sortie modifiable : « Remplacer… » choisit une autre
   destination pour cette sortie.
-- En lecture seule : trunks, contextes, règles sortantes.
+- **Règles sortantes** : une sortie par motif (fixe, mobile, 08, international…), numéro envoyé, trunks dans l'ordre ; « Régler la règle sortante… » (motifs, transformations, trunks, horaire, autorisations).
+- **Simuler un numéro…** (barre d'outils) : où part un numéro composé depuis un utilisateur ou un contexte (poste interne, ou règle, motif, numéro envoyé, trunks).
+- **Cartes grisées** dans la palette : aucun objet de ce type ; les poser ouvre un panneau de création (création immédiate dans Wazo). « Créer un nouveau… » aussi dans le dialogue de destination.
+- En lecture seule : trunks, contextes.
 - Tout passe par un **brouillon** : un point orange marque chaque sortie
   modifiée, et rien n'est écrit tant qu'on n'a pas cliqué « Appliquer… ».
 - **Appliquer…** se déroule ainsi :
@@ -99,6 +104,12 @@ courant. Cadrage, sources et décisions : `docs/CALLFLOW-MANAGER.md` (dépôt de
   3. elle télécharge une sauvegarde JSON (état lu et contenu envoyé) ;
   4. elle écrit une seule fois par objet, et seulement ce qui change ;
   5. elle relit le graphe.
+
+  **Restaurer…** (barre d'édition, brouillon vide) défait les écritures d'une
+  sauvegarde téléchargée : aperçu ligne par ligne, cases à cocher. Les codes ne
+  sont pas dans la sauvegarde : un encart le signale et propose de les
+  réinitialiser (nouveaux codes affichés une seule fois). Un numéro interne
+  changé n'est pas remis automatiquement.
 
   Les renvois par défaut sont toujours renvoyés en entier (confd les remplace
   tous à chaque écriture).
@@ -128,6 +139,7 @@ Pour les membres d'un groupe inscrits par la touche « bascule groupe », qui ne
 - files : `confd.queues.{id}.update`, `confd.queues.{id}.members.users.{uuid}.update|delete`,
   `confd.queues.{id}.members.agents.{id}.update|delete`, `confd.extensions.create`,
   `confd.queues.{id}.extensions.{id}.update|delete` ; liste `confd.agents.read` ;
+- opérateur des trunks (lecture) : `confd.endpoints.sip.{uuid}.read` (seuls les modèles et l'hôte sont gardés) ;
 - standards : `confd.switchboards.{uuid}.update`, `confd.switchboards.{uuid}.members.users.update` ;
 - SDA `confd.incalls.{id}.update` ; utilisateurs `confd.users.{uuid}.update`,
   `confd.users.{uuid}.services.dnd.update` (même droit pour le filtrage, vérifié),

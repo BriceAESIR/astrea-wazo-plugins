@@ -3,17 +3,22 @@
 // déposer (lot 2a, brouillon puis aperçu, sauvegarde, écriture).
 // Cadrage : astrea-wazo-dev/docs/CALLFLOW-MANAGER.md.
 // Modèle (sources confd vérifiées) : model.js ; canevas : canvas.js ; écriture : write.js.
-import { S, $, esc, fullName, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.38.0';
-import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, scanGroupKeys, buildTree, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel, periodText, STRATEGY, QSTRAT, baseKey } from './model.js?v=0.38.0';
-import { createCanvas } from './canvas.js?v=0.38.0';
-import { getDest, setDest, sameValue, prepare, execute } from './write.js?v=0.38.0';
-import { openScheduleEditor } from './sched-editor.js?v=0.38.0';
-import { openGroupEditor, groupCfgDiff } from './group-editor.js?v=0.38.0';
-import { openQueueEditor, queueCfgDiff, agentName } from './queue-editor.js?v=0.38.0';
-import { openIvrEditor, ivrCfgDiff } from './ivr-editor.js?v=0.38.0';
-import { openSbEditor, sbCfgDiff } from './sb-editor.js?v=0.38.0';
-import { openIncallEditor, incallCfgDiff, openUserEditor, userCfgDiff, openVmEditor, vmCfgDiff, openConfEditor, confCfgDiff, openSchedGenEditor, schedCfgDiff } from './obj-editors.js?v=0.38.0';
-import { openDestEditor, ENTITY_DEST } from './dest-editor.js?v=0.38.0';
+import { S, $, esc, fullName, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.39.0';
+import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, loadTrunkOperators, scanGroupKeys, buildTree, landingAt, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel, periodText, STRATEGY, QSTRAT, baseKey } from './model.js?v=0.39.0';
+import { createCanvas } from './canvas.js?v=0.39.0';
+import { getDest, setDest, sameValue, prepare, execute } from './write.js?v=0.39.0';
+import { openScheduleEditor } from './sched-editor.js?v=0.39.0';
+import { openGroupEditor, groupCfgDiff } from './group-editor.js?v=0.39.0';
+import { openQueueEditor, queueCfgDiff, agentName } from './queue-editor.js?v=0.39.0';
+import { openIvrEditor, ivrCfgDiff } from './ivr-editor.js?v=0.39.0';
+import { openSbEditor, sbCfgDiff } from './sb-editor.js?v=0.39.0';
+import { redact } from './ed-ui.js?v=0.39.0';
+import { openRestore } from './restore.js?v=0.39.0';
+import { openIncallEditor, incallCfgDiff, openUserEditor, userCfgDiff, openVmEditor, vmCfgDiff, openConfEditor, confCfgDiff, openSchedGenEditor, schedCfgDiff } from './obj-editors.js?v=0.39.0';
+import { openDestEditor, ENTITY_DEST } from './dest-editor.js?v=0.39.0';
+import { openOutcallEditor, outcallCfgDiff } from './outcall-editor.js?v=0.39.0';
+import { openCreate, CREATABLE } from './create.js?v=0.39.0';
+import { simulate, userContext, nowWhen, describePattern } from './dialsim.js?v=0.39.0';
 
 const TESTED_STACK = ['26.07'];
 const NAV = [
@@ -41,7 +46,7 @@ async function boot() {
 }
 async function reload() {
   await loadAll();
-  await Promise.all([ensureAllDetails(), loadLiveMembers()]);
+  await Promise.all([ensureAllDetails(), loadLiveMembers(), loadTrunkOperators()]);
   selfCheck();
   $('lookwarn').innerHTML = M.warns.map((w) => `<div class="warn">${esc(w)}</div>`).join('');
   if (C.root && !nodeExists(C.root)) C.root = null;
@@ -263,10 +268,16 @@ const PAL_HELP = {
   hangup: 'Termine l\'appel avec la tonalité choisie.',
   schedule: 'À déposer sur une CARTE (SDA, utilisateur, groupe, file d\'attente), pas sur une sortie : associe un horaire à cet objet. Un seul horaire par objet.',
 };
+// Carte grisée : aucun objet de ce type dans le tenant (la poser propose de le créer).
+const paletteEmpty = (t) => (ENTITY_DEST[t] || t === 'schedule') && !listOf(t).length;
 function renderPalette() {
-  $('cf-palette').innerHTML = PALETTE.map(([t, l]) => `<div class="cf-chip t-${t}" data-pal="${t}" title="${esc(PAL_HELP[t] || TYPES[t]?.help || '')}"><span class="cf-badge">${esc(TYPES[t]?.badge || '?')}</span>${esc(l)}</div>`).join('');
+  $('cf-palette').innerHTML = PALETTE.map(([t, l]) => {
+    const empty = paletteEmpty(t);
+    const tip = empty ? (CREATABLE.has(t) ? `Aucun objet de ce type : posez la carte pour en créer un. ${PAL_HELP[t] || TYPES[t]?.help || ''}` : 'Aucun utilisateur : créez-le d\'abord dans User Manager ou le portail.') : PAL_HELP[t] || TYPES[t]?.help || '';
+    return `<div class="cf-chip t-${t}${empty ? ' empty' : ''}" data-pal="${t}" title="${esc(tip)}"><span class="cf-badge">${esc(TYPES[t]?.badge || '?')}</span>${esc(l)}</div>`;
+  }).join('');
   $('pal-help').innerHTML = helpButton('pal-hb', 'Comment modifier');
-  $('pal-help-box').innerHTML = helpBox('pal-hb', 'Glissez une carte de la palette, ou une carte déjà présente dans le graphe, sur une sortie (Pas de réponse, Touche 1, Destination…) : un dialogue demande l\'objet visé et ses options, puis la modification part dans le brouillon (point orange). × sur une sortie la vide ; ↶ annule une modification (retour à la valeur d\'origine) ; la liste du brouillon (clic sur le compteur) permet aussi d\'annuler ligne par ligne ; une carte sélectionnée se retire de sa sortie par « Retirer de cette sortie » ou la touche Suppr. Rien n\'est écrit avant « Appliquer… », qui montre l\'avant / après, télécharge une sauvegarde JSON, relit chaque objet sur le serveur et n\'écrit que ce qui change, une fois par objet. Horaires : leurs sorties Fermé et Fermetures exceptionnelles se modifient comme les autres ; la carte « Horaire » de la palette se dépose sur une carte (SDA, utilisateur, groupe, file d\'attente) pour lui associer un horaire ; sur une carte horaire sélectionnée, « Retirer l\'horaire » ou Suppr le retire de son objet. Pas encore modifiables : renvois d\'appel de l\'utilisateur, membres.');
+  $('pal-help-box').innerHTML = helpBox('pal-hb', 'Glissez une carte de la palette, ou une carte déjà présente dans le graphe, sur une sortie (Pas de réponse, Touche 1, Destination…) : un dialogue demande l\'objet visé et ses options, puis la modification part dans le brouillon (point orange). × sur une sortie la vide ; ↶ annule une modification (retour à la valeur d\'origine) ; la liste du brouillon (clic sur le compteur) permet aussi d\'annuler ligne par ligne ; une carte sélectionnée se retire de sa sortie par « Retirer de cette sortie » ou la touche Suppr. Rien n\'est écrit avant « Appliquer… », qui montre l\'avant / après, télécharge une sauvegarde JSON, relit chaque objet sur le serveur et n\'écrit que ce qui change, une fois par objet. Horaires : leurs sorties Fermé et Fermetures exceptionnelles se modifient comme les autres ; la carte « Horaire » de la palette se dépose sur une carte (SDA, utilisateur, groupe, file d\'attente) pour lui associer un horaire ; sur une carte horaire sélectionnée, « Retirer l\'horaire » ou Suppr le retire de son objet. Carte grisée : aucun objet de ce type ; la poser ouvre un panneau de création (l\'objet est créé tout de suite dans Wazo, puis branché par le brouillon). Toute carte sélectionnée a un bouton « Régler … » pour toutes ses options.');
 }
 function setEdit(on) {
   if (!on && C.draft.size) {
@@ -382,7 +393,7 @@ function openDest(t, preset = {}) {
   const { n, p } = r;
   if ((p.w.k === 'ivr' || p.w.k === 'ivr_choice') && C.draft.has(`ivr_cfg:${p.w.id}:cfg`)) { toast('Ce SVI a un réglage complet dans le brouillon : modifiez-le par « Régler le SVI… », ou appliquez d\'abord.', 7000); return; }
   const sched = p.periods ? M.by.schedule?.get(String(p.periods)) : null;
-  openDestEditor({ title: p.label, owner: whereOf(n, p), cur: getDest(p.w), type: preset.type, id: preset.id, help: p.help,
+  openDestEditor({ title: p.label, owner: whereOf(n, p), cur: getDest(p.w), type: preset.type, id: preset.id, help: p.help, creatable: CREATABLE, onCreate: (type) => createFor(type, t),
     periods: sched ? { name: sched.name, shared: schedUsage(sched), open: () => openPeriods(sched.id) } : null },
   (d) => addDraft(p.w, d, { where: whereOf(n, p), slot: p.label }));
 }
@@ -403,6 +414,12 @@ function valLabel(w, v) {
       `${(v?.users || []).length} utilisateur(s)${(v?.users || []).length ? ` : ${v.users.map((m) => fullName(M.userByUuid.get(m.uuid)) || m.uuid).join(', ')}` : ''}`,
       v?.extension ? `n° ${v.extension.exten}` : 'sans numéro', `${Object.keys(o).length} option(s) Asterisk`].filter(Boolean).join(' · ');
   }
+  if (w.k === 'outcall_cfg') {
+    const f = v?.fields || {};
+    const tr = (p) => [p.strip_digits ? `retire ${p.strip_digits}` : '', p.external_prefix ? `ajoute ${p.external_prefix}` : ''].filter(Boolean).join(', ');
+    return [`« ${f.name || '?'} »`, f.enabled === false ? 'DÉSACTIVÉE' : '', `motifs : ${(v?.patterns || []).map((p) => `${p.exten}${tr(p) ? ` (${tr(p)})` : ''}`).join(', ') || 'aucun'}`,
+      `trunks : ${(v?.trunks || []).map((id) => nodeInfo(`trunk:${id}`).title).join(' puis ') || 'aucun'}`].filter(Boolean).join(' · ');
+  }
   if (w.k === 'sb_cfg') {
     const f = v?.fields || {};
     return [`« ${f.name || '?'} »`, f.timeout ? `${f.timeout} s avant débordement` : 'sans limite', `${(v?.users || []).length} opérateur(s)${(v?.users || []).length ? ` : ${v.users.map((m) => fullName(M.userByUuid.get(m.uuid)) || m.uuid).join(', ')}` : ''}`,
@@ -419,7 +436,13 @@ function valLabel(w, v) {
     return [`sonne ${v?.fields?.ring_seconds ?? '?'} s`, `${v?.fields?.simultaneous_calls ?? '?'} appel(s) simultané(s)`, v?.dnd ? 'NPD' : '', v?.incallfilter ? 'filtrage' : '', ...fw].filter(Boolean).join(' · ');
   }
   // Réglages simples (obj-editors.js) : liste des champs renseignés.
-  if (/^(incall|vm|conf|schedgen)_cfg$/.test(w.k)) return Object.entries(v?.fields || {}).filter(([, x]) => x !== null && x !== '' && x !== false).map(([k, x]) => (x === true ? k : `${k} ${x}`)).join(' · ') || '—';
+  // Codes jamais affichés (SECRET_KEYS) : « *** ».
+  if (/^(incall|vm|conf|schedgen)_cfg$/.test(w.k)) {
+    const FL = { name: 'nom', number: 'n°', context: 'contexte', email: 'e-mail', description: 'description', timezone: 'fuseau', enabled: 'activé', password: 'code', pin: 'code participant', admin_pin: 'code animateur',
+      language: 'langue', max_messages: 'messages max.', attach_audio: 'pièce jointe', delete_messages: 'suppression après envoi', ask_password: 'demande du code', pager: 'pager', max_users: 'participants max.', record: 'enregistrée',
+      music_on_hold: 'musique', preprocess_subroutine: 'sous-routine', caller_id_mode: 'nom affiché', caller_id_name: 'texte', greeting_sound: 'accueil', quiet_join_leave: 'arrivées silencieuses', announce_join_leave: 'annonce des arrivées', announce_user_count: 'nombre annoncé', announce_only_user: '« vous êtes seul »' };
+    return Object.entries(redact(v?.fields || {})).filter(([, x]) => x !== null && x !== '' && x !== false).map(([k, x]) => (x === true ? FL[k] || k : `${FL[k] || k} ${x}`)).join(' · ') || '—';
+  }
   if (w.k !== 'sched_periods') return destLabel(v);
   const o = (v?.open_periods || []).map(periodText).join(' ; ') || 'aucune plage (toujours fermé)';
   // Jours de fermeture exceptionnelle (une période par mois : on compte les jours).
@@ -480,16 +503,25 @@ function openSimpleFor(k, id) {
   if (k === 'conference') openConfEditor(o, add('conf_cfg', 'Réglages de la conférence'));
   if (k === 'schedule') openSchedGenEditor(o, schedUsage(o), add('schedgen_cfg', 'Nom, fuseau, activation'), () => openPeriods(o.id));
 }
+// Règle sortante (outcall-editor.js) : « outcall_cfg » + horaire (sched_assoc).
+function openOutcallFor(id) {
+  const o = M.by.outcall?.get(String(id)); if (!o) return;
+  openOutcallEditor(o, (r) => {
+    const where = `Règle sortante ${o.name}`;
+    addDraft({ k: 'outcall_cfg', id: o.id, f: 'cfg', key: `outcall_cfg:${o.id}:cfg` }, r.cfg, { where, slot: 'Réglages, motifs, trunks' });
+    addDraft(assocW(`outcall:${o.id}`), r.schedule ? { type: 'schedule', schedule_id: r.schedule } : null, { where, slot: 'Horaire' });
+  });
+}
 function openUserFor(uuid) {
   const u = M.userByUuid?.get(uuid); if (!u) return;
   openUserEditor(u, (v) => addDraft({ k: 'user_cfg', id: uuid, f: 'cfg', key: `user_cfg:${uuid}:cfg` }, v, { where: `Utilisateur ${fullName(u)}`, slot: 'Sonnerie, services, renvois' }));
 }
-const CFG_LABEL = { group: 'Régler le groupe…', queue: 'Régler la file d\'attente…', ivr: 'Régler le SVI…', switchboard: 'Régler le standard…', incall: 'Régler la SDA…', user: 'Régler l\'utilisateur…', voicemail: 'Régler la messagerie…', conference: 'Régler la conférence…', schedule: 'Régler l\'horaire…' };
-const CFG_DIFF = { group_cfg: groupCfgDiff, queue_cfg: queueCfgDiff, ivr_cfg: ivrCfgDiff, sb_cfg: sbCfgDiff, incall_cfg: incallCfgDiff, user_cfg: userCfgDiff, vm_cfg: vmCfgDiff, conf_cfg: confCfgDiff, schedgen_cfg: schedCfgDiff };
+const CFG_LABEL = { group: 'Régler le groupe…', queue: 'Régler la file d\'attente…', ivr: 'Régler le SVI…', switchboard: 'Régler le standard…', incall: 'Régler la SDA…', user: 'Régler l\'utilisateur…', voicemail: 'Régler la messagerie…', conference: 'Régler la conférence…', schedule: 'Régler l\'horaire…', outcall: 'Régler la règle sortante…' };
+const CFG_DIFF = { group_cfg: groupCfgDiff, queue_cfg: queueCfgDiff, ivr_cfg: ivrCfgDiff, sb_cfg: sbCfgDiff, incall_cfg: incallCfgDiff, user_cfg: userCfgDiff, vm_cfg: vmCfgDiff, conf_cfg: confCfgDiff, schedgen_cfg: schedCfgDiff, outcall_cfg: outcallCfgDiff };
 const openCfg = (c) => {
   if (!c) return;
   if (c.k === 'group') openGroupFor(c.id); else if (c.k === 'queue') openQueueFor(c.id); else if (c.k === 'ivr') openIvrFor(c.id); else if (c.k === 'switchboard') openSbFor(c.id);
-  else if (c.k === 'user') openUserFor(c.id); else openSimpleFor(c.k, c.id);
+  else if (c.k === 'user') openUserFor(c.id); else if (c.k === 'outcall') openOutcallFor(c.id); else openSimpleFor(c.k, c.id);
 };
 // Objet réglable concerné par une carte : le groupe / la file / le SVI, leur
 // carte « membres » ou une mini-carte membre.
@@ -501,6 +533,7 @@ const cfgOfNode = (n) => {
   if (k?.startsWith('ivr:')) return { k: 'ivr', id: entity(k).obj?.id };
   if (k?.startsWith('switchboard:')) return { k: 'switchboard', id: entity(k).obj?.uuid };
   if (k?.startsWith('user:')) return { k: 'user', id: entity(k).obj?.uuid };
+  if (k?.startsWith('outcall:')) return { k: 'outcall', id: entity(k).id };
   for (const t of ['incall', 'voicemail', 'conference', 'schedule']) if (k?.startsWith(`${t}:`) && entity(k).obj) return { k: t, id: entity(k).id };
   const lf = n.leaf;
   if (lf?.type === 'member') return { k: 'group', id: entity(lf.group).obj?.uuid };
@@ -534,18 +567,32 @@ $('cf-palette').addEventListener('pointerdown', (e) => {
     window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up);
     ghost.remove();
     // Horaire : se dépose sur une CARTE (SDA, utilisateur, groupe, file), pas sur une sortie.
-    if (chip.dataset.pal === 'schedule') {
+    const type = chip.dataset.pal, empty = paletteEmpty(type);
+    if (type === 'schedule') {
       const k = C.canvas?.cardAt(ev.clientX, ev.clientY); C.canvas?.hover(null);
       const owner = k && schedOwner(k);
-      if (owner) openSchedule(owner); else toast('Lâchez l\'horaire sur une carte SDA, utilisateur, groupe ou file d\'attente.');
+      if (!owner) { toast('Lâchez l\'horaire sur une carte SDA, utilisateur, groupe ou file d\'attente.'); return; }
+      // Aucun horaire : création, puis association (brouillon).
+      if (empty) openCreate('schedule', (id) => addDraft(assocW(owner), { type: 'schedule', schedule_id: Number(id) }, { where: ownerTitle({ key: owner }), slot: 'Horaire' }), reloadKeepDraft);
+      else openSchedule(owner);
       return;
     }
     const t = C.canvas?.portAt(ev.clientX, ev.clientY); C.canvas?.hover(null);
-    if (t) openDest(t, { type: chip.dataset.pal }); else toast('Lâchez la carte sur une sortie modifiable (ligne d\'une carte du graphe).');
+    if (!t) { toast('Lâchez la carte sur une sortie modifiable (ligne d\'une carte du graphe).'); return; }
+    if (empty && !CREATABLE.has(type)) { toast('Aucun utilisateur : créez-le d\'abord dans User Manager ou le portail.', 6000); return; }
+    if (empty) createFor(type, t); else openDest(t, { type });
   };
   move(e);
   window.addEventListener('pointermove', move); window.addEventListener('pointerup', up);
 });
+// Création (create.js) : relecture du serveur sans perdre le brouillon (ses
+// valeurs sont réappliquées à la copie fraîche), puis branchement sur la sortie.
+async function reloadKeepDraft() {
+  try { await reload(); } catch (e) { loadFailed(e); return; }
+  for (const e of C.draft.values()) setDest(e.w, e.after);
+  M.rev = null; draw(true); if (C.edit) renderPalette();
+}
+function createFor(type, t) { openCreate(type, (id) => openDest(t, { type, id: String(id) }), reloadKeepDraft); }
 // Appliquer : aperçu (relu sur le serveur), sauvegarde JSON, écriture, relecture.
 async function applyDraft() {
   if (!C.draft.size || !canWrite()) return;
@@ -558,7 +605,10 @@ async function applyDraft() {
     <p class="small muted">${writes.length} écriture${writes.length > 1 ? 's' : ''} (une requête par partie modifiée)${ops.length > writes.length ? `, ${ops.length - writes.length} objet${ops.length - writes.length > 1 ? 's' : ''} déjà à jour sur le serveur` : ''}. Une sauvegarde JSON de l'état actuel est téléchargée avant d'écrire.</p>
     <div class="cf-diffwrap"><table class="diff"><thead><tr><th>Objet</th><th>Sortie</th><th>Avant</th><th>Après</th></tr></thead><tbody>${rows}</tbody></table></div>`, async () => {
     downloadJson(`astrea-callflow-sauvegarde-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.json`,
-      { outil: 'Call Flow Manager', serveur: S.base, tenant: S.tenant, date: new Date().toISOString(), avant: ops.map((o) => ({ path: o.path, before: o.before })), envoye: writes.map((o) => ({ path: o.path, body: o.body })) });
+      // Format 2 (16/10/2026) : une ligne par écriture, avec méthode, état d'avant et
+      // contenu envoyé — ce qu'il faut à « Restaurer… » (restore.js) pour la défaire.
+      { outil: 'Call Flow Manager', format: 2, serveur: S.base, tenant: S.tenant, date: new Date().toISOString(), codes: 'masqués (***) : non restaurables depuis ce fichier',
+        ecritures: redact(writes.map((o) => ({ method: o.method || 'PUT', path: o.path, before: o.before ?? null, body: o.body ?? null, ...(o.run ? { numero: true } : {}) }))) });
     const res = await execute(ops);
     const bad = res.filter((x) => !x.ok);
     console.info('[astrea] Call Flow : écriture', res);
@@ -579,6 +629,64 @@ async function applyDraft() {
 $('cf-edit').onclick = () => setEdit(!C.edit);
 $('cf-draft-cancel').onclick = () => confirmModal(`<h3>Annuler le brouillon ?</h3><p>Les ${C.draft.size} modification${C.draft.size > 1 ? 's' : ''} non écrite${C.draft.size > 1 ? 's' : ''} sont abandonnée${C.draft.size > 1 ? 's' : ''}.</p>`, () => cancelDraft(), 'Annuler le brouillon');
 $('cf-draft-apply').onclick = applyDraft;
+// Simuler un numéro (dialsim.js) : où part un numéro composé depuis un
+// utilisateur ou un contexte. Lecture seule, rien n'est écrit.
+function openDialSim() {
+  const users = [...(M.lists.user || [])].filter((u) => userContext(u)).sort((a, b) => fullName(a).localeCompare(fullName(b), 'fr'));
+  const ctxs = (M.lists.context || []).filter((c) => c.type === 'internal');
+  const from = `<optgroup label="Utilisateurs">${users.map((u) => `<option value="u:${esc(u.uuid)}">${esc(fullName(u))} (${esc(userContext(u))})</option>`).join('')}</optgroup><optgroup label="Contextes internes">${ctxs.map((c) => `<option value="c:${esc(c.name)}">${esc(c.label || c.name)}</option>`).join('')}</optgroup><optgroup label="Appel entrant, par un trunk">${(M.lists.trunk || []).filter((t) => t.context).map((t) => `<option value="c:${esc(t.context)}">${esc(nodeInfo(`trunk:${t.id}`).title)} → ${esc(M.by.context?.get(t.context)?.label || t.context)}</option>`).join('')}</optgroup>`;
+  confirmModal(`<div class="cf-ed cf-sim-ed">
+    <div class="cf-ge-head"><div><h3>Simuler un numéro</h3><div class="small muted">Où part un numéro composé : poste interne ou appel sortant (motif, numéro envoyé, trunks)</div></div>${helpButton('ds-hb', 'Aide')}</div>${helpBox('ds-hb', 'Règles vérifiées : Asterisk cherche d\'abord dans le contexte de l\'appelant, puis dans les contextes inclus, dans l\'ordre ; un numéro exact passe avant les motifs, et entre motifs le plus précis gagne (code d\'Asterisk, pbx.c). Numéro envoyé = numéro composé, moins les chiffres retirés, préfixe ajouté devant (wazo-agid). À titre indicatif (supposé) : effet des autorisations d\'appels et de l\'horaire de la règle. Les codes de service (*…) ne sont pas simulés.')}
+    <div class="cf-ge-2">
+      <label class="cf-ge-f"><span class="cf-ge-l">Numéro composé</span><input id="ds-num" inputmode="tel" placeholder="ex. 0805293535" autocomplete="off"></label>
+      <label class="cf-ge-f"><span class="cf-ge-l">Depuis</span><select id="ds-from">${from}</select></label>
+    </div>
+    <div id="ds-res" class="cf-sim-res"></div></div>`, () => true, 'Fermer');
+  const run = () => {
+    const num = $('ds-num').value.trim(); const fv = $('ds-from').value;
+    const user = fv.startsWith('u:') ? M.userByUuid.get(fv.slice(2)) : null;
+    const ctx = user ? userContext(user) : fv.slice(2);
+    if (!num) { $('ds-res').innerHTML = ''; return; }
+    const { steps, result: r, number } = simulate(num, ctx, user, nowWhen());
+    const chain = steps.map((s) => `${esc(s.label)}${s.type ? ` <span class="small muted">(${esc(s.type)})</span>` : ''}`).join(' → ');
+    let html = `<div class="cf-sim-step"><span class="cf-ge-l">Contextes parcourus</span><div>${chain || '—'}</div></div>`;
+    if (r.kind === 'feature') html += `<div class="warn"><span>${esc(r.note)}</span></div>`;
+    else if (r.kind === 'none') html += steps[0]?.type === 'incall'
+      ? `<div class="warn"><span><strong>Aucune SDA</strong> ${esc(number)} dans le contexte entrant ${esc(steps[0].label)} : l'appel est rejeté (numéro non attribué).</span></div>`
+      : `<div class="warn"><span><strong>Aucune correspondance</strong> : ni poste interne, ni motif de règle sortante pour ${esc(number)} depuis ce contexte. L'appel échoue (numéro inconnu).</span></div>`;
+    else if (r.kind === 'incall') {
+      // Appel entrant : SDA trouvée, puis parcours jusqu'à la destination à l'heure actuelle (horaires compris).
+      const sda = nodeInfo(r.key); const tree = buildTree(r.key, 'out', {}); const land = landingAt(tree, nowWhen());
+      const li = land.key ? nodeInfo(land.key) : null;
+      html += `<div class="cf-sim-step"><span class="cf-ge-l">SDA</span><div><strong>${esc(sda.title)}</strong>${sda.sub ? ` <span class="small muted">${esc(sda.sub)}</span>` : ''}${r.viaDid ? `<div class="small muted">reconnue comme ${esc(r.viaDid)} (forme nationale ou derniers chiffres selon la longueur de SDA du contexte ; supposé)</div>` : ''}</div></div>
+        <div class="cf-sim-step"><span class="cf-ge-l">Arrive maintenant sur</span><div>${li ? `<strong>${esc(TYPES[li.type]?.label || li.type)} ${esc(li.title)}</strong>` : `<span class="cf-ge-dnd">${esc(land.why || 'aucune destination')}</span>`}<div class="small muted">après les horaires du parcours, à l'heure actuelle ; la simulation date / heure du graphe permet d'essayer d'autres moments</div></div></div>
+        <div class="btnrow"><button type="button" data-go="${esc(r.key)}" class="primary">Voir dans le graphe</button></div>`;
+    }
+    else if (r.kind === 'internal') { const i = nodeInfo(r.key); html += `<div class="cf-sim-step"><span class="cf-ge-l">Appel interne</span><div><strong>${esc(TYPES[i.type]?.label || i.type)} ${esc(i.title)}</strong> <span class="small muted">numéro ${esc(number)} dans ${esc(r.ctx)}</span></div></div><div class="btnrow"><button type="button" data-go="${esc(r.key)}" class="primary">Voir dans le graphe</button></div>`; }
+    else {
+      const o = r.outcall, dp = r.dp;
+      html += `<div class="cf-sim-step"><span class="cf-ge-l">Règle sortante</span><div><strong>${esc(o.name)}</strong>${o.enabled === false ? ' <span class="cf-ge-dnd">DÉSACTIVÉE</span>' : ''}</div></div>
+        <div class="cf-sim-step"><span class="cf-ge-l">Motif retenu</span><div><code>${esc(dp.exten)}</code> <span class="small muted">${esc(describePattern(dp.exten))}</span>${r.others.length ? `<div class="small muted">Correspondent aussi, moins précis : ${r.others.map((x) => `<code>${esc(x.dp.exten)}</code> (${esc(x.outcall.name)})`).join(', ')}</div>` : ''}</div></div>
+        <div class="cf-sim-step"><span class="cf-ge-l">Numéro envoyé</span><div><strong>${esc(r.sent)}</strong>${r.sent !== number ? ` <span class="small muted">(${dp.strip_digits ? `${dp.strip_digits} chiffre(s) retiré(s)` : ''}${dp.strip_digits && dp.external_prefix ? ', ' : ''}${dp.external_prefix ? `${esc(dp.external_prefix)} ajouté devant` : ''})</span>` : ''}</div></div>
+        <div class="cf-sim-step"><span class="cf-ge-l">Numéro présenté</span><div>${o.internal_caller_id ? 'numéro interne de l\'appelant' : dp.caller_id ? esc(dp.caller_id) : 'numéro sortant de l\'appelant (ou celui par défaut)'}</div></div>
+        <div class="cf-sim-step"><span class="cf-ge-l">Trunks</span><div>${r.trunks.length ? r.trunks.map((t, i) => `${i + 1}. ${esc(nodeInfo(`trunk:${t.id}`).title)}${i ? ' <span class="small muted">si le précédent échoue</span>' : ''}`).join('<br>') : '<span class="cf-ge-dnd">aucun trunk : l\'appel ne peut pas sortir</span>'}<div class="small muted">puis vers l'opérateur (réseau public)</div></div></div>
+        ${r.sched ? `<div class="cf-sim-step"><span class="cf-ge-l">Horaire (maintenant)</span><div>${esc(r.sched.name)} : <strong>${esc(r.schedState?.label || '?')}</strong>${r.schedState && !r.schedState.open ? ` <span class="small muted">→ ${esc(destLabel(r.schedState.exc >= 0 ? r.sched.exceptional_periods?.[r.schedState.exc]?.destination : r.sched.closed_destination))} (supposé)</span>` : ''}</div></div>` : ''}
+        ${r.perms.length ? `<div class="warn"><span>Autorisations d'appels concernées (effet supposé) : ${r.perms.map((p) => `${esc(p.name)} (${p.mode === 'deny' ? 'refus' : 'autorisation'}${p.password ? ', code demandé' : ''})`).join(', ')}</span></div>` : ''}
+        <div class="btnrow"><button type="button" data-go="outcall:${o.id}" class="primary">Voir la règle dans le graphe</button></div>`;
+    }
+    $('ds-res').innerHTML = html;
+  };
+  $('ds-num').oninput = run; $('ds-from').onchange = run;
+  $('ds-res').onclick = (e) => { const g = e.target.closest('[data-go]'); if (!g) return; $('modal').hidden = true; setRoot(g.dataset.go); };
+  $('ds-num').focus();
+}
+$('cf-dialsim').onclick = openDialSim;
+// Restaurer : seulement brouillon vide (sinon la relecture effacerait le brouillon).
+$('cf-restore').onclick = () => {
+  if (!canWrite()) return;
+  if (C.draft.size) { toast('Appliquez ou annulez d\'abord le brouillon, puis restaurez.', 6000); return; }
+  openRestore(async () => { try { await reload(); } catch (e) { loadFailed(e); } draw(true); });
+};
 $('cf-draft-n').onclick = showDraftList;
 // Suppr / Retour arrière sur une carte sélectionnée (mode Modifier, hors champ de saisie).
 document.addEventListener('keydown', (e) => {

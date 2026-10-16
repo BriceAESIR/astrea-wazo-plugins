@@ -5,10 +5,10 @@
 // renvoie la destination au brouillon (onSave). Champs vérifiés dans le schéma
 // des destinations de wazo-confd (ring_time, greeting, skip_instructions,
 // filename, skip, no_answer, cause, exten + context).
-import { $, esc, confirmModal, helpButton, helpBox } from '../common/core.js?v=0.38.0';
-import { TYPES, M, listOf, destLabel } from './model.js?v=0.38.0';
-import { fillSoundSelect } from './sched-editor.js?v=0.38.0';
-import { sec, field, check, setSums, openSec } from './ed-ui.js?v=0.38.0';
+import { $, esc, confirmModal, helpButton, helpBox } from '../common/core.js?v=0.39.0';
+import { TYPES, M, listOf, destLabel } from './model.js?v=0.39.0';
+import { fillSoundSelect } from './sched-editor.js?v=0.39.0';
+import { sec, field, check, setSums, openSec } from './ed-ui.js?v=0.39.0';
 
 export const DEST_TYPES = [
   ['user', 'Utilisateur'], ['group', 'Groupe'], ['queue', 'File d\'attente'], ['ivr', 'SVI'], ['voicemail', 'Messagerie'],
@@ -48,7 +48,8 @@ export function openDestEditor(o, onSave) {
       const sel = String(o.type === type && o.id != null ? o.id : s ? s[ENTITY_DEST[type]] : '');
       const items = listOf(type);
       return `${field('Rechercher', '<input id="dd-q" placeholder="Nom, numéro…" autocomplete="off">')}
-        <select id="dd-obj" size="8" class="cf-dd-list">${items.map((x) => { const id = x.key.slice(x.key.indexOf(':') + 1); return `<option value="${esc(id)}"${id === sel ? ' selected' : ''}>${esc(x.title)}${x.sub ? ` — ${esc(x.sub)}` : ''}</option>`; }).join('') || '<option value="" disabled>Aucun objet de ce type</option>'}</select>`;
+        <select id="dd-obj" size="8" class="cf-dd-list">${items.map((x) => { const id = x.key.slice(x.key.indexOf(':') + 1); return `<option value="${esc(id)}"${id === sel ? ' selected' : ''}>${esc(x.title)}${x.sub ? ` — ${esc(x.sub)}` : ''}</option>`; }).join('') || '<option value="" disabled>Aucun objet de ce type</option>'}</select>
+        ${o.onCreate && o.creatable?.has(type) ? `<div class="btnrow"><button type="button" data-create="${type}" title="Crée l'objet tout de suite dans Wazo, puis le choisit pour cette sortie">Créer un nouveau…</button></div>` : ''}`;
     }
     if (type === 'extension') {
       const ctx = (M.lists.context || []).filter((c) => c.type !== 'incall');
@@ -150,6 +151,7 @@ export function openDestEditor(o, onSave) {
       bind(); return;
     }
     if (e.target.closest('#de-periods')) P?.open();
+    const cr = e.target.closest('[data-create]'); if (cr) o.onCreate(cr.dataset.create);
   });
   if (canDest) bind();
   recap();
