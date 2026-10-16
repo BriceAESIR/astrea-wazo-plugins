@@ -43,6 +43,17 @@ body.in-portal.ready #workbench { height: 100vh; }
   background-color: color-mix(in srgb, var(--ink) 2%, var(--panel));
   background-image: radial-gradient(circle, var(--line) 1px, transparent 1.2px); background-size: 20px 20px;
 }
+/* Mode édition (demande de Brice, 16/10/2026) : bandeau d'état, cadre de la zone de
+   travail et fond du graphe, aux couleurs d'accent de la charte (variables seulement). */
+.cf-editbanner { display: flex; align-items: center; gap: 8px 12px; flex-wrap: wrap; margin: -16px -24px 12px; padding: 8px 24px; background: var(--accent); color: var(--accent-ink); }
+.cf-editbanner[hidden] { display: none; }
+.cf-eb-t { font-weight: 600; }
+.cf-eb-s { font-size: .8125rem; opacity: .85; }
+.cf-eb-n { font-size: .8125rem; padding: 2px 10px; border-radius: var(--radius); background: color-mix(in srgb, var(--accent-ink) 18%, transparent); }
+.cf-editbanner button { color: var(--accent-ink); border-color: color-mix(in srgb, var(--accent-ink) 55%, transparent); background: transparent; }
+.cf-editbanner button:hover { background: color-mix(in srgb, var(--accent-ink) 14%, transparent); }
+#workbench.cf-editing { box-shadow: inset 0 0 0 2px var(--accent); }
+#workbench.cf-editing .cf-view { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); background-color: color-mix(in srgb, var(--accent) 5%, var(--panel)); }
 .cf-view:focus-visible { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent); }
 .cf-view.panning { cursor: grabbing; }
 .cf-view.empty::after { content: "Choisissez un objet dans la colonne de gauche."; position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); }
@@ -177,6 +188,11 @@ body.in-portal.ready #workbench { height: 100vh; }
 .cf-time.off .cf-lanes, .cf-time.off .cf-slider, .cf-time.off .cf-date, .cf-time.off .cf-clock strong { opacity: .45; }
 @media (max-width: 800px) { .cf-lane { grid-template-columns: 90px minmax(0, 1fr); } }
 #t-help-box .helpbox { margin: 0 0 8px; }
+/* Simulation d'appel : bloc sous la vue chronologique, avec sa propre aide */
+.cf-sim { padding: 6px 0 8px; border-top: 1px solid var(--line); }
+.cf-sim-top { display: flex; align-items: center; gap: 8px 12px; flex-wrap: wrap; }
+#s-help-box .helpbox { margin: 6px 0 2px; white-space: pre-line; }
+.cf-sim .cf-trame { margin-top: 6px; }
 #pal-help-box .helpbox { margin: 8px 0 0; }
 
 /* Mode Modifier : palette, brouillon, sorties modifiables */
@@ -410,3 +426,12 @@ button.cf-tr-end { border: 0; background: none; padding: 0; text-transform: none
   #workbench, body.in-portal.ready #workbench { height: auto; padding: 16px; }
   .cf-view { height: 70vh; flex: none; }
 }
+/* Temps écoulé de l'appel simulé : barre proportionnelle aux durées */
+.cf-elapsed { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 8px; align-items: start; margin-top: 6px; }
+.cf-elapsed .cf-ln { padding-top: 3px; color: var(--ink); font-weight: 600; }
+.cf-eb { display: flex; height: 22px; border-radius: 6px; overflow: hidden; border: 1px solid var(--line); background: var(--panel); }
+.cf-eb i { display: flex; align-items: center; min-width: 4px; background: color-mix(in srgb, var(--c, var(--muted)) 28%, var(--panel)); border-right: 2px solid var(--panel); font-style: normal; font-size: .6875rem; overflow: hidden; cursor: pointer; }
+.cf-eb i span { padding: 0 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--ink); }
+.cf-eb i.inf { background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--c, var(--muted)) 28%, var(--panel)) 0 6px, var(--panel) 6px 12px); }
+.cf-eb-scale { display: flex; justify-content: space-between; margin-top: 2px; }
+@media (max-width: 800px) { .cf-elapsed { grid-template-columns: 1fr; } }

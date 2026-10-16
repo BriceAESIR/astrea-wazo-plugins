@@ -12,7 +12,7 @@
 //    « prefix » est lu mais pas appliqué.
 // Supposé : effet exact des autorisations d'appels et d'un horaire sur une
 // règle sortante (affichés à titre indicatif).
-import { M, scheduleState, whenOf, entity } from './model.js?v=0.39.6';
+import { M, scheduleState, whenOf, entity } from './model.js?v=0.39.7';
 
 // Motif → liste d'éléments { set: chaînes de caractères, size } | { dot } | { bang } ; null si numéro exact.
 export function parsePattern(p) {
@@ -316,9 +316,9 @@ export function simPath(tree, w, match, { blocked = null } = {}) {
             const ut = o.user_timeout ?? 15, rd = o.retry_delay ?? 0, lim = tmax || chain.length * (ut + rd);
             for (let j = 0, s = 0; s < lim && j < 60; j++, s += ut + rd) {
               const c = chain[j % chain.length]; const prev = R.ring.get(c.key);
-              R.ring.set(c.key, `${prev ? `${prev}, ` : ''}${t + s}→${t + Math.min(s + ut, lim)} s`);
+              R.ring.set(c.key, `${prev ? `${prev}, ` : ''}${t + s} → ${t + Math.min(s + ut, lim)} s`);
             }
-          } else for (const c of chain) R.ring.set(c.key, tmax ? `${t}→${t + tmax} s` : `dès ${t} s`);
+          } else for (const c of chain) R.ring.set(c.key, tmax ? `${t} → ${t + tmax} s` : `dès ${t} s`);
         }
         if (tmax) p = P((x) => x.slot === 'noanswer'); else { end = true; R.end = 'sonne sans fin (durée totale vide) jusqu\'à ce que l\'appelant raccroche'; }
         break;

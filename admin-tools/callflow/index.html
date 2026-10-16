@@ -7,8 +7,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Mulish:wght@300..800&display=swap">
-<link rel="stylesheet" href="../common/style.css?v=0.39.6">
-<link rel="stylesheet" href="./callflow.css?v=0.39.6">
+<link rel="stylesheet" href="../common/style.css?v=0.39.7">
+<link rel="stylesheet" href="./callflow.css?v=0.39.7">
 <script>if (window.parent !== window) document.documentElement.classList.add('framed');</script>
 </head>
 <body>
@@ -40,6 +40,14 @@
     </aside>
 
     <section id="workbench">
+      <!-- Mode édition : bandeau d'état (demande de Brice 16/10/2026, couleurs de la charte) -->
+      <div id="cf-edit-banner" class="cf-editbanner" role="status" hidden>
+        <span class="cf-eb-t">Mode édition</span>
+        <span class="cf-eb-s">les modifications vont dans le brouillon ; rien n'est écrit dans Wazo avant « Appliquer… »</span>
+        <span class="spacer"></span>
+        <span id="cf-edit-count" class="cf-eb-n">Aucune modification</span>
+        <button id="cf-edit-quit" type="button" title="Quitter le mode édition (le brouillon non appliqué est abandonné, avec confirmation)">Quitter</button>
+      </div>
       <div id="compat" class="compat" role="alert" hidden></div>
       <div id="lookwarn"></div>
       <div class="cf-toolbar">
@@ -61,7 +69,7 @@
         </div>
       </div>
       <div id="cf-help-box"></div>
-      <!-- Simulation date / heure (en haut, demande de Brice 14/10/2026) -->
+      <!-- Vue chronologique : date / heure, plages horaires (en haut, demande de Brice 14/10/2026) -->
       <div id="cf-time" class="cf-time">
         <div class="cf-time-top">
           <label class="inline small" title="Vue chronologique : affiche les plages horaires du parcours (bandes sous la date) et atténue les branches qui ne s'appliquent pas à la date et l'heure choisies (ouvert, fermé, fermetures exceptionnelles). Rien n'est enregistré."><input type="checkbox" id="t-on" checked> Afficher la vue chronologique</label>
@@ -71,20 +79,12 @@
             <button id="t-next" class="icon" title="Jour suivant">›</button>
           </div>
           <div class="cf-clock"><strong id="t-label">--:--</strong><span id="t-state" class="muted small"></span></div>
-          <!-- Simulation d'appel dans le graphe (demande de Brice 16/10/2026, sans fenêtre) -->
-          <div class="cf-follow">
-            <label class="inline small" title="Allume dans le graphe le chemin d'un appel si personne ne décroche, avec l'instant de chaque étape (à la date et l'heure choisies) ; le reste est atténué"><input type="checkbox" id="s-on"> Simulation d'appel</label>
-            <label class="cf-sf small" id="s-dir-l" title="Entrant : un appel venant de l'extérieur, jusqu'à la carte de départ et au-delà. Sortant : un utilisateur compose un numéro (poste interne ou extérieur)." hidden><span>Sens</span><select id="s-dir"><option value="in">Entrant</option><option value="out">Sortant</option></select></label>
-            <label class="cf-sf small" id="s-from-l" title="Carte de départ de la simulation (la même que dans la colonne de gauche)" hidden><span>Départ</span><select id="s-from"></select></label>
-            <label class="cf-sf small" id="s-caller-l" title="Numéro de la personne qui appelle : carte en tête du graphe, et contrôle des listes de blocage des utilisateurs" hidden><span>Appelant</span><input type="search" id="s-caller" inputmode="tel" autocomplete="off" placeholder="ex. 0612345678"></label>
-            <label class="cf-sf small" id="s-num-l" hidden><span id="s-num-t">Appelé</span><input type="search" id="s-num" inputmode="tel" autocomplete="off"></label>
-          </div>
           <span class="spacer"></span>
           <button id="t-now" title="Revenir à la date et l'heure actuelles">Maintenant</button>
           <span id="t-help"></span>
         </div>
+        <div id="t-help-box"></div>
         <!-- Une ligne « Résultat » (où arrive l'appel) puis une ligne par horaire du parcours ; le curseur est en dessous, aligné. -->
-        <div id="s-trame" class="cf-trame" hidden></div>
         <div id="t-lanes" class="cf-lanes" aria-hidden="true"></div>
         <div class="cf-lane cf-slider">
           <span class="cf-ln"></span>
@@ -92,7 +92,24 @@
         </div>
         <div class="cf-lane"><span class="cf-ln"></span><div class="cf-ticks" aria-hidden="true"><span>0 h</span><span>3 h</span><span>6 h</span><span>9 h</span><span>12 h</span><span>15 h</span><span>18 h</span><span>21 h</span><span>24 h</span></div></div>
       </div>
-      <div id="t-help-box"></div>
+      <!-- Simulation d'appel, sous la vue chronologique (demande de Brice 16/10/2026 : deux blocs superposés, chacun son aide) -->
+      <div id="cf-sim" class="cf-sim">
+        <div class="cf-sim-top">
+          <div class="cf-follow">
+            <label class="inline small" title="Allume dans le graphe le chemin d'un appel si personne ne décroche, avec l'instant de chaque étape (à la date et l'heure choisies) ; le reste est atténué"><input type="checkbox" id="s-on"> Simulation d'appel</label>
+            <label class="cf-sf small" id="s-dir-l" title="Entrant : un appel venant de l'extérieur, qui arrive toujours par un trunk. Sortant : un utilisateur compose un numéro (poste interne ou extérieur)." hidden><span>Sens</span><select id="s-dir"><option value="in">Entrant</option><option value="out">Sortant</option></select></label>
+            <label class="cf-sf small" id="s-from-l" hidden><span id="s-from-t">Trunk</span><select id="s-from"></select></label>
+            <label class="cf-sf small" id="s-caller-l" title="Numéro de la personne qui appelle : carte en tête du graphe, et contrôle des listes de blocage des utilisateurs" hidden><span>Appelant</span><input type="search" id="s-caller" inputmode="tel" autocomplete="off" placeholder="ex. 0612345678 ou *5678"></label>
+            <label class="cf-sf small" id="s-num-l" hidden><span id="s-num-t">Appelé</span><input type="search" id="s-num" inputmode="tel" autocomplete="off" list="s-num-list"></label>
+            <datalist id="s-num-list"></datalist>
+          </div>
+          <span class="spacer"></span>
+          <span id="s-help"></span>
+        </div>
+        <div id="s-help-box"></div>
+        <div id="s-trame" class="cf-trame" hidden></div>
+        <div id="s-elapsed" class="cf-elapsed" hidden></div>
+      </div>
       <div id="cf-view" class="cf-view" tabindex="0" aria-label="Graphe du parcours des appels"></div>
       <!-- Mode Modifier (en bas) : palette de cartes à glisser sur une sortie (ou un horaire sur une carte), et brouillon -->
       <div id="cf-edit-bar" class="cf-editbar" hidden>
@@ -120,6 +137,6 @@
     <div class="btnrow right"><button id="modal-cancel">Annuler</button><button id="modal-ok" class="primary">Confirmer</button></div></div></div>
   <div id="toast" class="toast" hidden></div>
 </div>
-<script type="module" src="./app.js?v=0.39.6"></script>
+<script type="module" src="./app.js?v=0.39.7"></script>
 </body>
 </html>

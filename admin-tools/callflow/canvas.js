@@ -5,8 +5,8 @@
 // positions manuelles mémorisées donnaient des dispositions bizarres quand le
 // graphe changeait) : une carte déplacée à la main garde sa place seulement
 // tant que la vue montre les mêmes cartes. Plus rien n'est gardé dans le navigateur.
-import { esc } from '../common/core.js?v=0.39.6';
-import { TYPES } from './model.js?v=0.39.6';
+import { esc } from '../common/core.js?v=0.39.7';
+import { TYPES } from './model.js?v=0.39.7';
 
 const W = 236, GAP_X = 104, GAP_Y = 18;
 try { localStorage.removeItem('astrea-callflow-pos-v1'); } catch { /* ancien stockage des positions */ }
@@ -131,7 +131,11 @@ export function createCanvas(viewport, { onSelect, onOpen, onFold, onClear, onUn
       e.classList.toggle('onpath', !!on); e.classList.toggle('ringing', ring != null);
       const b = e.querySelector('.cf-simt');
       if (b) {
-        const txt = on ? [`à ${fmt(on.t)}`, on.what, on.dur ? (Number.isFinite(on.dur) ? fmt(on.dur) : 'sans fin') : ''].filter(Boolean).join(' · ') : ring || '';
+        // Temps cumulé seulement sur les cartes qui durent (choix de Brice, 16/10/2026) :
+        // « sonne 30 s · 0 → 30 s » ; rien sur les étapes instantanées. Le déroulé complet
+        // est sur la ligne « Temps écoulé » du bloc simulation.
+        const when = !on || !on.dur ? '' : Number.isFinite(on.dur) ? `${fmt(on.t)} → ${fmt(on.t + on.dur)}` : `dès ${fmt(on.t)}, sans fin`;
+        const txt = on ? [on.what, when].filter(Boolean).join(' · ') : ring || '';
         b.textContent = txt; b.hidden = !txt;
       }
       for (const li of e.querySelectorAll('li[data-port]')) li.classList.toggle('taken', !!S?.ports.has(`${n.key}|${li.dataset.port}`));

@@ -21,8 +21,8 @@
 // Supposé, à vérifier en réel : les listes (GET /groups, /queues,
 // /switchboards, /schedules) contiennent déjà fallbacks, membres et
 // destinations ; sinon on lit le détail de chaque objet (ensureDetails).
-import { S, api, listAll, fullName } from '../common/core.js?v=0.39.6';
-import { comparePatterns, describePattern, userContext, rightsList } from './dialsim.js?v=0.39.6';
+import { S, api, listAll, fullName } from '../common/core.js?v=0.39.7';
+import { comparePatterns, describePattern, userContext, rightsList } from './dialsim.js?v=0.39.7';
 
 export const M = { lists: {}, by: {}, ext: new Map(), extAny: new Map(), rev: null, warns: [] };
 
@@ -245,10 +245,23 @@ export async function loadBlocklist() {
 }
 // Forme comparable d'un numéro : chiffres, +33 / 0033 → 0 (France ; supposé pour les autres pays).
 export const numKey = (n) => String(n || '').replace(/[^\d+]/g, '').replace(/^(\+|00)33/, '0').replace(/^\+/, '00');
-// Utilisateurs (uuid) qui bloquent cet appelant.
+// Jokers dans les champs Appelant / Appelé (demande de Brice, 16/10/2026 : « *7652
+// plus pratique que de retrouver la SDA exacte ») : * = n'importe quelle suite,
+// ? = un caractère ; comparé au numéro tel quel et à sa forme nationale (+33 / 0033 → 0).
+// Pas pour le numéro composé en sortant : là, * est un vrai code de service Wazo.
+export const isGlob = (s) => /[*?]/.test(String(s || ''));
+export function numMatch(pattern, number) {
+  const p = String(pattern || '').replace(/[\s.()-]/g, ''); const n = String(number || '');
+  if (!p) return false;
+  const forms = [n, numKey(n)];
+  if (!isGlob(p)) return forms.includes(p) || forms.includes(numKey(p));
+  const re = new RegExp(`^${p.replace(/\+/g, '\\+').replace(/\*/g, '.*').replace(/\?/g, '.')}$`);
+  return forms.some((x) => re.test(x));
+}
+// Utilisateurs (uuid) qui bloquent cet appelant (jokers acceptés).
 export function blockedBy(caller) {
-  const k = numKey(caller); if (!k || !M.blocklist) return new Map();
-  return new Map(M.blocklist.filter((b) => numKey(b.number) === k).map((b) => [b.user_uuid, b.label || '']));
+  if (!String(caller || '').trim() || !M.blocklist) return new Map();
+  return new Map(M.blocklist.filter((b) => numMatch(caller, b.number)).map((b) => [b.user_uuid, b.label || '']));
 }
 
 // Détails absents des listes (supposé) : relus un par un, une seule fois.
@@ -846,7 +859,7 @@ export function entryChains(target) {
 }
 
 const MAX_NODES = 400; // garde-fou : au-delà, les répétitions deviennent des liens
-export function buildTree(rootKey, dir, { maxDepth = 8, collapsed = new Set(), expanded = new Set(), showEmpty = false, hit = null, caller = '', dialScope = '', chain = null } = {}) {
+export function buildTree(rootKey, dir, { maxDepth = 8, collapsed = new Set(), expanded = new Set(), showEmpty = false, hit = null, caller = '', dialScope = '', chain = null, trunkPref = '', viaTrunk = false } = {}) {
   // Objet gardé par un horaire : en sens « où vont les appels », le parcours
   // commence par la carte horaire (une SDA garde sa carte, l'horaire suit).
   if (dir === 'out' && !rootKey.startsWith('incall:')) rootKey = gated(rootKey);
@@ -859,13 +872,15 @@ export function buildTree(rootKey, dir, { maxDepth = 8, collapsed = new Set(), e
   //  Appelant (si saisi) → Trunk (contexte de la SDA) → SDA → [chain : cartes
   //  entre la SDA et l'objet, voir entryChains] → objet.
   // chain = { sda, steps: [{ key, edge }] } (départ autre qu'un trunk ou une SDA).
-  if (dir === 'out' && (caller || chain)) {
+  // viaTrunk : simulation entrante depuis une SDA, le trunk s'affiche même sans appelant.
+  if (dir === 'out' && (caller || chain || viaTrunk)) {
     const seq = [];
     const sda = rootKey.startsWith('incall:') ? rootKey : chain?.sda || null;
     if (sda) {
-      // Trunk dont le contexte est celui de la SDA ; plusieurs : le premier, les autres cités.
+      // Trunk dont le contexte est celui de la SDA : celui choisi dans la simulation (trunkPref), sinon le premier ; les autres cités.
       const ctxs = (entity(sda).obj?.extensions || []).map((x) => x.context);
-      const trs = (M.lists.trunk || []).filter((t) => ctxs.includes(t.context));
+      const all = (M.lists.trunk || []).filter((t) => ctxs.includes(t.context));
+      const trs = [...all.filter((t) => `trunk:${t.id}` === trunkPref), ...all.filter((t) => `trunk:${t.id}` !== trunkPref)];
       if (trs.length) seq.push({ key: `trunk:${trs[0].id}`, port: { slot: 'via', label: 'Contexte entrant → SDA', note: [ctxLabel(trs[0].context), trs.length > 1 ? `ou par ${trs.slice(1).map((t) => nodeInfo(`trunk:${t.id}`).title).join(', ')}` : ''].filter(Boolean).join(' · '), help: 'Le numéro appelé est cherché parmi les SDA du contexte entrant du trunk.' } });
     }
     for (const s of chain?.steps || []) seq.push({ key: s.key, pass: true, port: { ...s.edge } });
