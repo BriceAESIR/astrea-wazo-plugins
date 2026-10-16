@@ -10,10 +10,10 @@
 //  - trunks : PUT /outcalls/{id}/trunks {trunks:[{id}]}, ordre = priorité.
 // wazo-agid (outgoingfeatures.py) : seuls strip_digits et external_prefix
 // changent le numéro envoyé ; « prefix » est lu mais pas appliqué.
-import { $, esc, confirmModal, helpButton, helpBox, api, canWrite } from '../common/core.js?v=0.40.1';
-import { M, listOf, nodeInfo } from './model.js?v=0.40.1';
-import { sec, field, check, setSums, openSec } from './ed-ui.js?v=0.40.1';
-import { describePattern, comparePatterns, dialedNumber, matches } from './dialsim.js?v=0.40.1';
+import { $, esc, confirmModal, helpButton, helpBox, api, canWrite } from '../common/core.js?v=0.40.2';
+import { M, listOf, nodeInfo } from './model.js?v=0.40.2';
+import { sec, field, check, setSums, openSec } from './ed-ui.js?v=0.40.2';
+import { describePattern, comparePatterns, dialedNumber, matches, famLabel } from './dialsim.js?v=0.40.2';
 
 export const OUTCALL_FIELDS = ['name', 'description', 'enabled', 'ring_time', 'internal_caller_id', 'preprocess_subroutine'];
 const DP = ['exten', 'strip_digits', 'external_prefix', 'prefix', 'caller_id'];
@@ -71,22 +71,32 @@ export function openOutcallEditor(o, onSave) {
   let trunks = [...v.trunks];
   const outCtx = rows[0]?.context || (M.lists.context || []).find((c) => c.type === 'outcall')?.name || '';
   const sched = (o.schedules || [])[0]?.id;
-  // Une ligne compacte par motif (retour de Brice, 16/10/2026 : liste pénible à
-  // faire défiler). Ordre affiché = ordre d'essai d'Asterisk (le plus précis
-  // d'abord, vérifié dans pbx.c) : il ne se règle pas, Wazo ne stocke aucun ordre
-  // pour les motifs ; il est recalculé quand un motif change.
-  const rowHtml = (r, i) => `<li class="cf-oe-pat" data-row="${r.rid}">
-    <span class="cf-ge-n" title="Essayé en ${i + 1}${i ? 'e' : 'er'} par Asterisk">${i + 1}</span>
-    <input data-p="exten" value="${esc(r.exten)}" placeholder="_0XXXXXXXXX" spellcheck="false" aria-label="Motif">
-    <input type="number" min="0" step="1" data-p="strip_digits" value="${esc(r.strip_digits)}" aria-label="Chiffres retirés en tête" title="Chiffres retirés en tête">
-    <input data-p="external_prefix" value="${esc(r.external_prefix)}" placeholder="rien" aria-label="Ajouté devant" title="Ajouté devant, avant l'envoi au trunk">
-    <input data-p="caller_id" value="${esc(r.caller_id)}" placeholder="de l'appelant" aria-label="Numéro présenté" title="Numéro présenté">
-    <button type="button" class="icon" data-delrow="${r.rid}" title="Retirer ce motif">×</button>
-    <div class="small muted cf-oe-info"><span data-desc="${r.rid}">${esc(describePattern(r.exten))}</span> · <span data-ex="${r.rid}"></span></div></li>`;
+  // Motifs regroupés par transformation (retour de Brice, 16/10/2026 : « ça n'a
+  // pas changé l'assistant ») : un bloc par combinaison chiffres retirés /
+  // préfixe ajouté / numéro présenté, réglages communs au bloc, motifs en
+  // pastilles. Le n° sur chaque pastille = ordre d'essai d'Asterisk (le plus
+  // précis d'abord, vérifié dans pbx.c) : il ne se règle pas, Wazo ne stocke
+  // aucun ordre ; recalculé à chaque modification. L'état est tenu dans rows.
+  const tkey = (r) => `${Number(r.strip_digits || 0)}|${r.external_prefix || ''}|${r.caller_id || ''}`;
   const sortRows = () => rows.sort((a, b) => comparePatterns(a.exten, b.exten));
-  // Valeurs saisies → rows (avant de redessiner la liste).
-  const readRows = () => { for (const r of rows) { const li = $('modal-body').querySelector(`[data-row="${r.rid}"]`); if (!li) continue; for (const k of ['exten', 'strip_digits', 'external_prefix', 'caller_id']) r[k] = li.querySelector(`[data-p="${k}"]`).value.trim(); } };
-  const listHtml = () => { sortRows(); return rows.map(rowHtml).join('') || '<li class="muted">Aucun motif : aucun numéro ne part par cette règle</li>'; };
+  const groupsOf = () => { sortRows(); const g = new Map(); rows.forEach((r, i) => { r.rank = i + 1; const k = tkey(r); if (!g.has(k)) g.set(k, []); g.get(k).push(r); }); return [...g.values()]; };
+  const famsOf = (rs) => [...new Set(rs.map((r) => famLabel(r.exten)))].join(', ').replace(/^./, (c) => c.toUpperCase());
+  const example = (p) => String(p || '').replace(/^_/, '').replace(/\[([^\]]*)\]/g, (m, x) => x[0]).replace(/[XxZzNn]/g, (c) => ({ x: '1', z: '1', n: '2' }[c.toLowerCase()])).replace(/[.!]/g, '123');
+  const groupHtml = (rs, gi) => {
+    const r0 = rs[0]; const ex = example(r0.exten);
+    return `<li class="cf-oe-grp" data-g="${gi}" data-rids="${rs.map((r) => r.rid).join(',')}">
+      <div class="cf-oe-grp-h"><strong>${esc(famsOf(rs))}</strong><span class="small muted">${rs.length} motif${rs.length > 1 ? 's' : ''}</span><span class="spacer"></span><button type="button" class="icon" data-gdel="${gi}" title="Retirer ce groupe et tous ses motifs">×</button></div>
+      <div class="cf-oe-grp-f">
+        <label>Retirer <input type="number" min="0" step="1" data-gf="strip_digits" value="${esc(r0.strip_digits ?? 0)}" title="Chiffres retirés en tête"> chiffre(s)</label>
+        <label>Ajouter devant <input data-gf="external_prefix" value="${esc(r0.external_prefix || '')}" placeholder="rien" title="Ajouté devant, avant l'envoi au trunk"></label>
+        <label>Présenté <input data-gf="caller_id" value="${esc(r0.caller_id || '')}" placeholder="de l'appelant" title="Numéro présenté"></label>
+      </div>
+      <div class="cf-oe-chips">${rs.map((r) => `<span class="cf-oe-chip" data-row="${r.rid}" title="${esc(describePattern(r.exten))} · essayé en n° ${r.rank} par Asterisk"><small>${r.rank}</small><code>${esc(r.exten)}</code><button type="button" data-delrow="${r.rid}" aria-label="Retirer ${esc(r.exten)}">×</button></span>`).join('')}<input class="cf-oe-add" data-gadd="${gi}" placeholder="+ motif" spellcheck="false" title="Ajouter un motif à ce groupe (Entrée)"></div>
+      <div class="small muted">${ex ? `ex. ${esc(ex)} → envoyé ${esc(dialedNumber(ex, { strip_digits: Number(r0.strip_digits || 0), external_prefix: r0.external_prefix }))}${r0.caller_id ? `, présenté ${esc(r0.caller_id)}` : ''}` : ''}</div></li>`;
+  };
+  const readRows = () => {}; // état déjà dans rows (mis à jour à la saisie)
+  const listHtml = () => groupsOf().map(groupHtml).join('') || '<li class="muted">Aucun motif : aucun numéro ne part par cette règle</li>';
+  const PAT_RE = /^_?[0-9*#+XZNxzn.!\[\]-]+$/;
   const trunkRows = () => trunks.map((id, i) => `<li><span class="cf-ge-n">${i + 1}</span><span>${esc(trunkName(id))}</span><span class="small muted">${i ? 'si le précédent échoue' : 'en premier'}</span><span class="spacer"></span><button class="icon" data-tup="${i}"${i ? '' : ' disabled'}>↑</button><button class="icon" data-tdown="${i}"${i < trunks.length - 1 ? '' : ' disabled'}>↓</button><button class="icon" data-tdel="${i}" title="Retirer ce trunk">×</button></li>`).join('') || '<li class="muted">Aucun trunk : les appels ne peuvent pas sortir</li>';
   const addT = () => `<option value="">Choisir un trunk à ajouter…</option>${(M.lists.trunk || []).filter((t) => !trunks.includes(t.id)).map((t) => `<option value="${t.id}">${esc(trunkName(t.id))}</option>`).join('')}`;
 
@@ -98,11 +108,11 @@ export function openOutcallEditor(o, onSave) {
       ${field('Durée de sonnerie (s)', `<input type="number" min="0" step="1" data-f="ring_time" value="${esc(f.ring_time ?? '')}" placeholder="défaut">`, 'Avant d\'abandonner l\'appel sortant.')}
       ${check('oe-en', 'Règle activée', '', f.enabled !== false)}
       ${check('oe-int', 'Présenter le numéro interne', 'Le correspondant voit le numéro interne de l\'appelant au lieu de son numéro public (rarement utile vers l\'extérieur).', !!f.internal_caller_id)}`, { open: true })}
-    ${sec('pat', 'Motifs de numéros', `<div class="cf-oe-head small muted"><span>Ordre</span><span>Motif</span><span>Retirer</span><span>Ajouter devant</span><span>Présenté</span><span></span></div>
-      <ul class="cf-ge-list cf-oe-list" id="oe-rows">${listHtml()}</ul>
+    ${sec('pat', 'Motifs de numéros', `<ul class="cf-oe-grps" id="oe-rows">${listHtml()}</ul>
       <div id="oe-wiz" class="cf-oe-wiz" hidden></div>
-      <div class="cf-ge-row"><button type="button" data-addrow>Ajouter un motif</button><button type="button" data-wizard title="Ajouter d'un coup les motifs courants pour un trunk français">Assistant France…</button><span class="spacer"></span><input id="oe-test" inputmode="tel" placeholder="Tester un numéro" autocomplete="off" title="Quel motif de cette règle prend ce numéro"></div>
-      <div id="oe-test-r" class="small"></div>`, { open: true, help: 'Règles d\'Asterisk : « _ » en tête = motif ; X = un chiffre 0-9, Z = 1-9, N = 2-9, [1-5] = un chiffre parmi, « . » = un ou plusieurs caractères. Ex. _0[1-5]XXXXXXXX = fixe, _0[67]XXXXXXXX = mobile, _00. = international, _X. = tout le reste. Ordre : quand plusieurs motifs correspondent, Asterisk prend le plus précis, position par position (chiffre fixe, puis [ensemble] le plus petit, N, Z, X, puis « . ») ; vérifié dans son code. Cet ordre ne se règle pas (Wazo ne stocke aucune priorité pour les motifs) : la colonne « Ordre » le montre, recalculée à chaque modification. Pour changer la priorité, rendez un motif plus ou moins précis. Le numéro envoyé = numéro composé, moins les chiffres retirés, avec le préfixe ajouté devant (vérifié dans wazo-agid).' })}
+      <div class="cf-oe-new small"><span class="cf-ge-l">Nouveau groupe</span><input id="oe-ng-exten" placeholder="motif, ex. _0[67]XXXXXXXX" spellcheck="false"><label>retirer <input type="number" min="0" step="1" id="oe-ng-strip" value="0"></label><label>ajouter <input id="oe-ng-prefix" placeholder="rien"></label><button type="button" data-ngadd>Ajouter</button></div>
+      <div class="cf-ge-row"><button type="button" data-wizard title="Ajouter d'un coup les motifs courants pour un trunk français">Assistant France…</button><span class="spacer"></span><input id="oe-test" inputmode="tel" placeholder="Tester un numéro" autocomplete="off" title="Quel motif de cette règle prend ce numéro"></div>
+      <div id="oe-test-r" class="small"></div>`, { open: true, help: 'Règles d\'Asterisk : « _ » en tête = motif ; X = un chiffre 0-9, Z = 1-9, N = 2-9, [1-5] = un chiffre parmi, « . » = un ou plusieurs caractères. Ex. _0[1-5]XXXXXXXX = fixe, _0[67]XXXXXXXX = mobile, _00. = international, _X. = tout le reste. Ordre : quand plusieurs motifs correspondent, Asterisk prend le plus précis, position par position (chiffre fixe, puis [ensemble] le plus petit, N, Z, X, puis « . ») ; vérifié dans son code. Cet ordre ne se règle pas (Wazo ne stocke aucune priorité pour les motifs) : le n° de chaque pastille le montre, recalculé à chaque modification. Les motifs sont regroupés par transformation (chiffres retirés, préfixe, numéro présenté) : modifier un réglage de groupe vaut pour tous ses motifs. Pour changer la priorité, rendez un motif plus ou moins précis. Le numéro envoyé = numéro composé, moins les chiffres retirés, avec le préfixe ajouté devant (vérifié dans wazo-agid).' })}
     ${sec('trk', 'Trunks', `<ul class="cf-ge-list" id="oe-trunks">${trunkRows()}</ul>
       <div class="cf-ge-row"><select id="oe-tadd">${addT()}</select><button data-tadd>Ajouter</button></div>`, { open: true, help: 'L\'appel part par le premier trunk ; s\'il échoue, par le suivant.' })}
     ${sec('sch', 'Horaire', field('Horaire de la règle', `<select id="oe-sched"><option value="">Aucun : toujours ouverte</option>${listOf('schedule').map((x) => `<option value="${esc(x.key.slice(9))}"${String(sched) === x.key.slice(9) ? ' selected' : ''}>${esc(x.title)}</option>`).join('')}</select>`))}
@@ -119,14 +129,13 @@ export function openOutcallEditor(o, onSave) {
     nf.preprocess_subroutine = box.querySelector('[data-f="preprocess_subroutine"]').value.trim() || null;
     const patterns = []; const seen = new Set();
     for (const r of rows) {
-      const li = box.querySelector(`[data-row="${r.rid}"]`); const g = (k) => li.querySelector(`[data-p="${k}"]`).value.trim();
-      const exten = g('exten');
-      if (!/^_?[0-9*#+XZNxzn.!\[\]-]+$/.test(exten)) return err(`Motif « ${exten} » : chiffres, X Z N, [..], « . », « ! », avec « _ » en tête pour un motif.`, 'pat');
+      const exten = String(r.exten || '').trim();
+      if (!PAT_RE.test(exten)) return err(`Motif « ${exten} » : chiffres, X Z N, [..], « . », « ! », avec « _ » en tête pour un motif.`, 'pat');
       if (seen.has(exten)) return err(`Le motif ${exten} apparaît deux fois.`, 'pat'); seen.add(exten);
-      const sd = g('strip_digits'); if (sd !== '' && !/^\d+$/.test(sd)) return err('Chiffres retirés : entier positif.', 'pat');
+      const sd = String(r.strip_digits ?? '').trim(); if (sd !== '' && !/^\d+$/.test(sd)) return err('Chiffres retirés : entier positif.', 'pat');
       // Vérifié (outcall_extension/resource.py) : chiffres, * et #, « + » possible en tête ; 64 caractères max.
-      const xp = g('external_prefix'); if (xp && (!/^\+?[0-9#*]*$/.test(xp) || xp.length > 64)) return err(`Préfixe ajouté « ${xp} » : chiffres, * et #, avec « + » possible en tête.`, 'pat');
-      patterns.push({ id: r.id, exten, context: r.context || outCtx, strip_digits: Number(sd || 0), external_prefix: g('external_prefix'), prefix: r.prefix || '', caller_id: g('caller_id') });
+      const xp = String(r.external_prefix || '').trim(); if (xp && (!/^\+?[0-9#*]*$/.test(xp) || xp.length > 64)) return err(`Préfixe ajouté « ${xp} » : chiffres, * et #, avec « + » possible en tête.`, 'pat');
+      patterns.push({ id: r.id, exten, context: r.context || outCtx, strip_digits: Number(sd || 0), external_prefix: xp, prefix: r.prefix || '', caller_id: String(r.caller_id || '').trim() });
     }
     if (patterns.some((p) => !p.context)) return err('Aucun contexte « sortant » trouvé pour un nouveau motif.', 'pat');
     const perms = [...box.querySelectorAll('[data-perm]:checked')].map((c) => Number(c.dataset.perm)).sort((a, b) => a - b);
@@ -136,19 +145,10 @@ export function openOutcallEditor(o, onSave) {
   }, 'Ajouter au brouillon');
 
   const box = $('modal-body');
-  // Exemple de transformation sous chaque motif.
-  const example = (p) => { const t = p.replace(/^_/, '').replace(/\[([^\]]*)\]/g, (m, x) => x[0]).replace(/[XxZzNn]/g, (c) => ({ x: '1', z: '1', n: '2' }[c.toLowerCase()])).replace(/[.!]/g, '123'); return t; };
   const recap = () => {
-    for (const r of rows) {
-      const li = box.querySelector(`[data-row="${r.rid}"]`); if (!li) continue;
-      const g = (k) => li.querySelector(`[data-p="${k}"]`).value.trim();
-      const ex = example(g('exten'));
-      box.querySelector(`[data-desc="${r.rid}"]`).textContent = describePattern(g('exten'));
-      box.querySelector(`[data-ex="${r.rid}"]`).textContent = ex ? `ex. ${ex} → envoyé ${dialedNumber(ex, { strip_digits: Number(g('strip_digits') || 0), external_prefix: g('external_prefix') })}${g('caller_id') ? `, présenté ${g('caller_id')}` : ''}` : '';
-    }
     setSums(box, {
       gen: [box.querySelector('[data-f="name"]').value.trim(), $('oe-en').checked ? '' : 'DÉSACTIVÉE'],
-      pat: [`${rows.length} motif${rows.length > 1 ? 's' : ''}`],
+      pat: [`${rows.length} motif${rows.length > 1 ? 's' : ''}`, `${new Set(rows.map(tkey)).size} groupe${new Set(rows.map(tkey)).size > 1 ? 's' : ''}`],
       trk: [trunks.length ? trunks.map(trunkName).join(' puis ') : 'aucun trunk'],
       sch: [$('oe-sched').value ? $('oe-sched').selectedOptions[0].text : 'aucun'],
       perm: [`${box.querySelectorAll('[data-perm]:checked').length || 'aucune'}`],
@@ -157,19 +157,42 @@ export function openOutcallEditor(o, onSave) {
   };
   const redrawT = () => { $('oe-trunks').innerHTML = trunkRows(); $('oe-tadd').innerHTML = addT(); recap(); };
   // Liste redessinée dans l'ordre d'Asterisk (après saisie d'un motif, ajout, retrait).
-  const redrawRows = (focusRid) => { readRows(); $('oe-rows').innerHTML = listHtml(); recap(); testNum(); if (focusRid) box.querySelector(`[data-row="${focusRid}"] [data-p="exten"]`)?.select(); };
+  const redrawRows = (focusGroupOf) => {
+    $('oe-rows').innerHTML = listHtml(); recap(); testNum();
+    if (focusGroupOf) box.querySelector(`[data-row="${focusGroupOf}"]`)?.closest('.cf-oe-grp')?.querySelector('.cf-oe-add')?.focus();
+  };
   // Tester un numéro : motif retenu parmi ceux de la règle (règles d'Asterisk), numéro envoyé.
   const testNum = () => {
     const n = $('oe-test').value.replace(/[\s.()-]/g, ''); const out = $('oe-test-r');
-    for (const li of box.querySelectorAll('.cf-oe-pat')) li.classList.remove('hit');
+    for (const el of box.querySelectorAll('.cf-oe-chip.hit')) el.classList.remove('hit');
     if (!n) { out.textContent = ''; return; }
-    readRows(); const i = [...rows].sort((a, b) => comparePatterns(a.exten, b.exten)).findIndex((r) => matches(r.exten, n));
+    sortRows(); const i = rows.findIndex((r) => matches(r.exten, n));
     if (i < 0) { out.innerHTML = `<span class="cf-ge-dnd">Aucun motif de cette règle ne prend ${esc(n)}</span>`; return; }
-    const r = rows[i]; box.querySelector(`[data-row="${r.rid}"]`)?.classList.add('hit');
+    const r = rows[i]; box.querySelector(`.cf-oe-chip[data-row="${r.rid}"]`)?.classList.add('hit');
     out.textContent = `${n} → motif n° ${i + 1} ${r.exten} → envoyé ${dialedNumber(n, { strip_digits: Number(r.strip_digits || 0), external_prefix: r.external_prefix })} (dans cette règle ; une autre règle ou un numéro interne du contexte peut passer avant)`;
   };
-  box.addEventListener('input', (e) => { $('oe-err').textContent = ''; recap(); if (e.target.id === 'oe-test' || e.target.dataset.p) testNum(); });
-  box.addEventListener('change', (e) => { if (e.target.dataset.p === 'exten') redrawRows(); else recap(); });
+  // Réglage d'un groupe : appliqué à tous ses motifs ; redessin à la fin de la saisie (des groupes peuvent fusionner).
+  const groupRows = (el) => { const ids = (el.closest('.cf-oe-grp')?.dataset.rids || '').split(','); return rows.filter((r) => ids.includes(r.rid)); };
+  // Ajout d'un motif : contrôlé (forme, doublon) avant d'entrer dans rows.
+  const addPattern = (exten, t) => {
+    exten = String(exten || '').trim(); const msg = $('oe-test-r');
+    if (!exten) return false;
+    if (!PAT_RE.test(exten)) { msg.innerHTML = `<span class="cf-ge-dnd">Motif « ${esc(exten)} » : chiffres, X Z N, [..], « . », « ! », avec « _ » en tête pour un motif.</span>`; return false; }
+    if (rows.some((r) => r.exten === exten)) { msg.innerHTML = `<span class="cf-ge-dnd">Le motif ${esc(exten)} est déjà dans la règle.</span>`; return false; }
+    const r = { id: null, rid: `p${seq++}`, exten, context: outCtx, prefix: '', caller_id: '', strip_digits: 0, external_prefix: '', ...t };
+    rows.push(r); redrawRows(r.rid); return true;
+  };
+  box.addEventListener('input', (e) => {
+    $('oe-err').textContent = '';
+    const k = e.target.dataset.gf; if (k) for (const r of groupRows(e.target)) r[k] = e.target.value.trim();
+    recap(); if (e.target.id === 'oe-test' || k) testNum();
+  });
+  box.addEventListener('change', (e) => { if (e.target.dataset.gf) redrawRows(); else recap(); });
+  box.addEventListener('keydown', (e) => {
+    const a = e.target.closest?.('[data-gadd]'); if (!a || e.key !== 'Enter') return;
+    e.preventDefault(); const g = groupRows(a)[0];
+    if (addPattern(a.value, g ? { strip_digits: g.strip_digits, external_prefix: g.external_prefix, caller_id: g.caller_id } : {})) a.value = '';
+  });
   // --- Assistant France -----------------------------------------------------
   const permBox = () => box.querySelector('.cf-ge-perms');
   const find118 = () => (M.lists.callpermission || []).find((p) => p.mode === 'deny' && (p.extensions || []).includes(BLOCK_118));
@@ -222,8 +245,14 @@ export function openOutcallEditor(o, onSave) {
     if (e.target.closest('[data-wizard]')) { const w = $('oe-wiz'); w.hidden = !w.hidden; if (!w.hidden) w.innerHTML = wizHtml(); return; }
     if (e.target.closest('[data-wclose]')) { $('oe-wiz').hidden = true; return; }
     if (e.target.closest('[data-wapply]')) { wizApply(); return; }
-    if (e.target.closest('[data-addrow]')) { readRows(); const r = { id: null, rid: `p${seq++}`, exten: '_X.', context: outCtx, strip_digits: 0, external_prefix: '', prefix: '', caller_id: '' }; rows.push(r); redrawRows(r.rid); return; }
-    const d = e.target.closest('[data-delrow]'); if (d) { readRows(); rows = rows.filter((r) => r.rid !== d.dataset.delrow); redrawRows(); return; }
+    // Nouveau groupe : un motif avec sa transformation (rejoint un groupe existant si la transformation est la même).
+    if (e.target.closest('[data-ngadd]')) {
+      const sd = $('oe-ng-strip').value.trim(); if (sd !== '' && !/^\d+$/.test(sd)) { $('oe-test-r').innerHTML = '<span class="cf-ge-dnd">Chiffres retirés : entier positif.</span>'; return; }
+      if (addPattern($('oe-ng-exten').value, { strip_digits: Number(sd || 0), external_prefix: $('oe-ng-prefix').value.trim() })) { $('oe-ng-exten').value = ''; $('oe-ng-prefix').value = ''; $('oe-ng-strip').value = '0'; }
+      return;
+    }
+    const gd = e.target.closest('[data-gdel]'); if (gd) { const ids = new Set(groupRows(gd).map((r) => r.rid)); rows = rows.filter((r) => !ids.has(r.rid)); redrawRows(); return; }
+    const d = e.target.closest('[data-delrow]'); if (d) { rows = rows.filter((r) => r.rid !== d.dataset.delrow); redrawRows(); return; }
     const t = e.target.closest('[data-tup],[data-tdown],[data-tdel],[data-tadd]'); if (!t) return;
     if (t.dataset.tadd != null) { const id = Number($('oe-tadd').value); if (id) trunks.push(id); }
     const i = Number(t.dataset.tup ?? t.dataset.tdown ?? t.dataset.tdel);

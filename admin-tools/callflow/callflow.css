@@ -443,3 +443,23 @@ button.cf-tr-end { border: 0; background: none; padding: 0; text-transform: none
 .cf-list-actions { padding: 6px 0; }
 .cf-list-actions[hidden] { display: none; }
 .cf-list-actions button { width: 100%; }
+/* Règle sortante : motifs regroupés par transformation */
+.cf-oe-grps { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.cf-oe-grp { border: 1px solid var(--line); border-radius: var(--radius); padding: 8px 12px; display: grid; gap: 6px; background: var(--panel); }
+.cf-oe-grp-h { display: flex; align-items: baseline; gap: 8px; }
+.cf-oe-grp-f { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: .8125rem; color: var(--muted); }
+.cf-oe-grp-f label { display: inline-flex; align-items: center; gap: 6px; }
+.cf-oe-grp-f input { width: 7em; padding: 3px 6px; }
+.cf-oe-grp-f input[type="number"] { width: 4em; }
+.cf-oe-chips { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.cf-oe-chip { display: inline-flex; align-items: center; gap: 4px; padding: 1px 2px 1px 6px; border-radius: 12px; border: 1px solid var(--line); background: color-mix(in srgb, var(--ink) 4%, var(--panel)); font-size: .8125rem; }
+.cf-oe-chip small { color: var(--muted); font-variant-numeric: tabular-nums; }
+.cf-oe-chip code { font-size: .8125rem; }
+.cf-oe-chip button { border: 0; background: none; padding: 0 4px; min-height: 0; line-height: 1; cursor: pointer; color: var(--muted); }
+.cf-oe-chip.hit { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, var(--panel)); }
+.cf-oe-add { width: 9em; padding: 2px 6px; font-family: ui-monospace, Consolas, monospace; font-size: .8125rem; }
+.cf-oe-new { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 8px 0 4px; }
+.cf-oe-new input { padding: 3px 6px; }
+.cf-oe-new #oe-ng-exten { width: 14em; font-family: ui-monospace, Consolas, monospace; }
+.cf-oe-new input[type="number"] { width: 4em; }
+.cf-oe-new #oe-ng-prefix { width: 6em; }

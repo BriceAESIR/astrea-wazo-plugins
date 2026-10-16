@@ -3,22 +3,22 @@
 // déposer (lot 2a, brouillon puis aperçu, sauvegarde, écriture).
 // Cadrage : astrea-wazo-dev/docs/CALLFLOW-MANAGER.md.
 // Modèle (sources confd vérifiées) : model.js ; canevas : canvas.js ; écriture : write.js.
-import { S, $, esc, fullName, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.40.1';
-import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, loadTrunkOperators, scanGroupKeys, buildTree, landingAt, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel, periodText, STRATEGY, QSTRAT, baseKey, gateOf, loadBlocklist, blockedBy, dialUser, entryChains, isGlob, numMatch, showNum } from './model.js?v=0.40.1';
-import { createCanvas } from './canvas.js?v=0.40.1';
-import { getDest, setDest, sameValue, prepare, execute } from './write.js?v=0.40.1';
-import { openScheduleEditor } from './sched-editor.js?v=0.40.1';
-import { openGroupEditor, groupCfgDiff } from './group-editor.js?v=0.40.1';
-import { openQueueEditor, queueCfgDiff, agentName } from './queue-editor.js?v=0.40.1';
-import { openIvrEditor, ivrCfgDiff } from './ivr-editor.js?v=0.40.1';
-import { openSbEditor, sbCfgDiff } from './sb-editor.js?v=0.40.1';
-import { redact } from './ed-ui.js?v=0.40.1';
-import { openRestore } from './restore.js?v=0.40.1';
-import { openIncallEditor, incallCfgDiff, openUserEditor, userCfgDiff, openVmEditor, vmCfgDiff, openConfEditor, confCfgDiff, openSchedGenEditor, schedCfgDiff } from './obj-editors.js?v=0.40.1';
-import { openDestEditor, ENTITY_DEST } from './dest-editor.js?v=0.40.1';
-import { openOutcallEditor, outcallCfgDiff } from './outcall-editor.js?v=0.40.1';
-import { openCreate, openCreateIncall, CREATABLE } from './create.js?v=0.40.1';
-import { simulate, userContext, simPath } from './dialsim.js?v=0.40.1';
+import { S, $, esc, fullName, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.40.2';
+import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, loadTrunkOperators, scanGroupKeys, buildTree, landingAt, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel, periodText, STRATEGY, QSTRAT, baseKey, gateOf, loadBlocklist, blockedBy, dialUser, entryChains, isGlob, numMatch, showNum } from './model.js?v=0.40.2';
+import { createCanvas } from './canvas.js?v=0.40.2';
+import { getDest, setDest, sameValue, prepare, execute } from './write.js?v=0.40.2';
+import { openScheduleEditor } from './sched-editor.js?v=0.40.2';
+import { openGroupEditor, groupCfgDiff } from './group-editor.js?v=0.40.2';
+import { openQueueEditor, queueCfgDiff, agentName } from './queue-editor.js?v=0.40.2';
+import { openIvrEditor, ivrCfgDiff } from './ivr-editor.js?v=0.40.2';
+import { openSbEditor, sbCfgDiff } from './sb-editor.js?v=0.40.2';
+import { redact } from './ed-ui.js?v=0.40.2';
+import { openRestore } from './restore.js?v=0.40.2';
+import { openIncallEditor, incallCfgDiff, openUserEditor, userCfgDiff, openVmEditor, vmCfgDiff, openConfEditor, confCfgDiff, openSchedGenEditor, schedCfgDiff } from './obj-editors.js?v=0.40.2';
+import { openDestEditor, ENTITY_DEST } from './dest-editor.js?v=0.40.2';
+import { openOutcallEditor, outcallCfgDiff } from './outcall-editor.js?v=0.40.2';
+import { openCreate, openCreateIncall, CREATABLE } from './create.js?v=0.40.2';
+import { simulate, userContext, simPath } from './dialsim.js?v=0.40.2';
 
 const TESTED_STACK = ['26.07'];
 const NAV = [
