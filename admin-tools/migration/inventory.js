@@ -11,7 +11,7 @@
 //  - touches de fonction : GET /users/{uuid}/funckeys (une requête par utilisateur).
 // Supposé : les listes /groups, /queues, /switchboards contiennent membres et
 // débordements (forme lue par Call Flow Manager, vérifiée en réel sur les groupes).
-import { S, api, listAll } from '../common/core.js?v=0.40.9';
+import { S, api, listAll } from '../common/core.js?v=0.40.10';
 
 export const I = { tenant: undefined, lists: {}, by: {}, funckeys: {}, warns: [], loadedAt: null };
 

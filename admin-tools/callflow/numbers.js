@@ -8,8 +8,8 @@
 // Même champ partout (création et éditeurs complets) : liste des numéros
 // libres, plages du contexte choisi et premier numéro libre, mis à jour au
 // changement de contexte.
-import { esc } from '../common/core.js?v=0.40.9';
-import { M, showNum } from './model.js?v=0.40.9';
+import { esc } from '../common/core.js?v=0.40.10';
+import { M, showNum } from './model.js?v=0.40.10';
 
 export const RANGE_KEY = { group: 'group_ranges', queue: 'queue_ranges', conference: 'conference_room_ranges' };
 const RANGE_NAME = { group: 'groupes', queue: 'files d\'attente', conference: 'conférences' };
@@ -107,7 +107,7 @@ export function incallNumberHtml({ exten = '', pattern = false, field }) {
   return `<div class="cf-ge-f"><span class="cf-ge-l">Format du numéro *</span><span class="cf-ge-row">
       <label class="inline"><input type="radio" name="inc-fmt" value="num"${pattern ? '' : ' checked'}> Numéro</label>
       <label class="inline"><input type="radio" name="inc-fmt" value="pat"${pattern ? ' checked' : ''}> Motif (dial pattern)</label></span></div>
-    <span id="inc-num"${pattern ? ' hidden' : ''}><span class="cf-ge-2">${field('Numéro *', `<input data-inc="num" value="${pattern ? '' : esc(exten)}" inputmode="numeric" list="inc-num-l" autocomplete="off" placeholder="tel que reçu de l'opérateur, ex. 33978247652"><datalist id="inc-num-l"></datalist>`, '')}${field('Numéros libres du contexte', '<select id="inc-free"></select>', 'Numéros des plages SDA sans SDA : le choisir remplit le champ.')}</span></span>
+    <span id="inc-num"${pattern ? ' hidden' : ''}><span class="cf-ge-2">${field('Numéro *', `<input data-inc="num" value="${pattern ? '' : esc(exten)}" inputmode="numeric" list="inc-num-l" autocomplete="off" placeholder="tel que reçu de l'opérateur, ex. 33978247652"><datalist id="inc-num-l"></datalist>`, '')}<span id="inc-free-f">${field('Numéros libres du contexte', '<select id="inc-free"></select>', 'Numéros déclarés dans le contexte qui n\'ont pas encore de SDA : le choisir remplit le champ.')}</span></span></span>
     <span id="inc-pat"${pattern ? '' : ' hidden'}>${field('Motif *', `<input data-inc="pat" value="${pattern ? esc(exten) : ''}" placeholder="ex. _3397824765X">`, 'Plusieurs numéros vers la même destination : « _ » puis X (0-9), Z (1-9), N (2-9), [1-5], « . » (un ou plusieurs chiffres). Pas de contrôle de plage pour un motif (vérifié dans confd).')}</span>
     <p class="small muted cf-nf-hint" id="inc-h"></p>`;
 }
@@ -116,19 +116,27 @@ export const readIncallNumber = (box) => {
   const v = (box.querySelector(`[data-inc="${pat ? 'pat' : 'num'}"]`)?.value || '').trim();
   return pat ? v : v.replace(/[\s.-]/g, '');
 };
-// own : numéro actuel (compté libre). getCtx : contexte courant (création : liste déroulante).
+// own : numéro actuel de la SDA (pas compté libre : retour de Brice, 19/10/2026). getCtx : contexte courant (création : liste déroulante).
 export function bindIncallNumber(box, ctxOrFn, own = '') {
   const ctxOf = typeof ctxOrFn === 'function' ? ctxOrFn : () => ctxOrFn;
   const upd = () => {
     const ctx = ctxOf(); const pat = box.querySelector('input[name="inc-fmt"]:checked')?.value === 'pat';
     box.querySelector('#inc-num').hidden = pat; box.querySelector('#inc-pat').hidden = !pat;
     const l = incallRanges(ctx); const free = [];
-    for (const r of l) { const len = String(r.start).length; for (let n = BigInt(r.start), e = BigInt(r.end || r.start); n <= e && free.length < MAX_FREE; n += 1n) { const x = n.toString().padStart(len, '0'); if (x === own || !M.ext.has(`${x}@${ctx}`)) free.push(x); } }
+    for (const r of l) { const len = String(r.start).length; for (let n = BigInt(r.start), e = BigInt(r.end || r.start); n <= e && free.length < MAX_FREE; n += 1n) { const x = n.toString().padStart(len, '0'); if (x !== own && !M.ext.has(`${x}@${ctx}`)) free.push(x); } }
     box.querySelector('#inc-num-l').innerHTML = free.map((x) => `<option value="${esc(x)}">`).join('');
     const fs = box.querySelector('#inc-free');
-    if (fs) fs.innerHTML = `<option value="">${free.length ? 'Choisir un numéro libre…' : 'aucun numéro libre'}</option>${free.map((x) => `<option value="${esc(x)}">${esc(showNum(x))}${showNum(x).replace(/\s/g, '') !== x ? ` · ${esc(x)}` : ''}${x === own ? ' (actuel)' : ''}</option>`).join('')}`;
+    if (fs) fs.innerHTML = `<option value="">Choisir un numéro libre…</option>${free.map((x) => `<option value="${esc(x)}">${esc(showNum(x))}${showNum(x).replace(/\s/g, '') !== x ? ` · ${esc(x)}` : ''}</option>`).join('')}`;
+    const ff = box.querySelector('#inc-free-f'); if (ff) ff.hidden = !free.length;
     const c = M.by.context?.get(ctx);
-    box.querySelector('#inc-h').textContent = pat ? 'Motif : pas de plage à respecter.' : !c ? '' : l.length ? `Plages SDA de ${c.label || ctx} : ${l.map(rangeTxt).join(', ')}. ${free.length ? `${free.length >= MAX_FREE ? `${MAX_FREE} et plus` : free.length} sans SDA, premier : ${free[0]}.` : 'Tous les numéros ont déjà une SDA.'}` : `Aucune plage SDA dans ${c.label || ctx} : seul un motif est possible. Déclarez une plage dans le portail (Contextes).`;
+    // Plages au format national (un numéro seul ou « de … à … »), 6 au plus puis « + N ».
+    const nat = (r) => (r.end && String(r.end) !== String(r.start) ? `${showNum(String(r.start))} à ${showNum(String(r.end))}` : showNum(String(r.start)));
+    const rl = l.slice(0, 6).map(nat).join(', ') + (l.length > 6 ? ` (+ ${l.length - 6})` : '');
+    const nf = free.length >= MAX_FREE ? `${MAX_FREE} numéros et plus` : `${free.length} numéro${free.length > 1 ? 's' : ''}`;
+    box.querySelector('#inc-h').textContent = pat ? 'Motif : pas de plage à respecter.' : !c ? ''
+      : !l.length ? `Aucun numéro SDA déclaré dans le contexte ${c.label || ctx} : seul un motif est possible. Déclarez les numéros dans le portail (Contextes, plages SDA).`
+      : free.length ? `Numéros déclarés dans le contexte ${c.label || ctx} : ${rl}. ${nf} sans SDA, dans la liste ci-dessus.`
+      : `Numéros déclarés dans le contexte ${c.label || ctx} : ${rl}. Tous ont déjà une SDA${own ? ' (dont celle-ci)' : ''} : pour un autre numéro, déclarez-le d'abord dans le portail (Contextes, plages SDA).`;
   };
   box.addEventListener('change', (e) => {
     if (e.target.id === 'inc-free' && e.target.value) { const i = box.querySelector('[data-inc="num"]'); i.value = e.target.value; i.dispatchEvent(new Event('input', { bubbles: true })); e.target.value = ''; return; }

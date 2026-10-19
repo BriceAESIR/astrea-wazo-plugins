@@ -2,11 +2,12 @@
 // vérification du paramétrage et export JSON. Lecture seule.
 // Cadrage : astrea-wazo-dev/docs/MIGRATION-ASSISTANT.md.
 // Inventaire : inventory.js ; contrôles : checks.js ; export : export.js.
-import { S, $, esc, toast, connect, showCompat, setReadonly, loaded, loadFailed, stackVersion, helpButton, helpBox, confirmModal, downloadJson } from '../common/core.js?v=0.40.9';
-import { I, SOURCES, CATEGORIES, loadInventory, ctxLabel } from './inventory.js?v=0.40.9';
-import { runChecks, SEV } from './checks.js?v=0.40.9';
-import { buildExport, exportFileName } from './export.js?v=0.40.9';
-import { initMultisite, renderMultisite, loadJournalFile } from './multisite-ui.js?v=0.40.9';
+import { S, $, esc, toast, connect, showCompat, setReadonly, loaded, loadFailed, stackVersion, helpButton, helpBox, confirmModal, downloadJson } from '../common/core.js?v=0.40.10';
+import { I, SOURCES, CATEGORIES, loadInventory, ctxLabel } from './inventory.js?v=0.40.10';
+import { runChecks, SEV } from './checks.js?v=0.40.10';
+import { buildExport, exportFileName } from './export.js?v=0.40.10';
+import { initMultisite, renderMultisite, loadJournalFile } from './multisite-ui.js?v=0.40.10';
+import { initThreecx, renderThreecx } from './threecx-ui.js?v=0.40.10';
 
 const TESTED_STACK = ['26.07'];
 const VIEW_KEY = 'astrea-migration-view-v1';
@@ -66,6 +67,7 @@ function renderAll() {
   renderChecks();
   renderExport();
   renderMultisite().catch((e) => console.error('[astrea] multisite', e));
+  renderThreecx();
   renderNavCounts();
   showView(A.view);
   const d = I.loadedAt;
@@ -75,7 +77,7 @@ function renderAll() {
 // ---------------------------------------------------------------------------
 // Navigation
 // ---------------------------------------------------------------------------
-const VIEWS = ['overview', 'checks', 'export', 'multisite'];
+const VIEWS = ['overview', 'checks', 'export', 'multisite', 'threecx'];
 function showView(v) {
   if (!VIEWS.includes(v)) v = 'overview';
   A.view = v;
@@ -84,6 +86,7 @@ function showView(v) {
   for (const x of VIEWS) $(`v-${x}`).hidden = x !== v;
 }
 initMultisite({ reload: () => boot() });
+initThreecx();
 $('ms-jfile').onchange = (e) => { const f = e.target.files?.[0]; if (f) loadJournalFile(f); e.target.value = ''; };
 $('nav').addEventListener('click', (e) => { const b = e.target.closest('button[data-view]'); if (b) showView(b.dataset.view); });
 $('reload').onclick = () => boot();

@@ -85,6 +85,33 @@ input.short { width: 110px !important; }
 .filebtn span { display: inline-flex; align-items: center; padding: 5px 15px; border-radius: var(--radius); border: 1px solid color-mix(in srgb, var(--accent) 50%, transparent); color: var(--accent); font-weight: 500; font-size: .8125rem; line-height: 1.75; letter-spacing: .02857em; text-transform: uppercase; }
 .filebtn:hover span { background: color-mix(in srgb, var(--accent) 6%, transparent); }
 
+/* Import 3CX : fiche de reprise */
+.x3-head { display: flex; flex-direction: column; gap: 4px; }
+.x3-sec { margin: 0 0 24px; max-width: 1180px; }
+.x3-sec .titlerow { margin-bottom: 6px; }
+.x3-sec h3 { margin: 0; }
+.x3-table { max-height: none; overflow: auto; border: 1px solid var(--line); border-radius: var(--radius); }
+.x3-table table { width: 100%; margin: 0; font-size: .8125rem; }
+.x3-table td { vertical-align: top; }
+.x3-table td:first-child { white-space: nowrap; }
+.x3-table tr.x3-error td:first-child { color: var(--danger); font-weight: 600; }
+.x3-table tr.x3-warn td:first-child { color: var(--warn); font-weight: 600; }
+.x3-table tr.x3-info td:first-child { color: var(--muted); }
+.x3-dids { max-width: 260px; white-space: normal; line-height: 1.4; }
+.x3-cols { columns: 3 220px; }
+#x3 code { font-size: .75rem; }
+
+@media print {
+  .topbar, #sidebar, .noprint, .helpbtn, .compat, #lookwarn { display: none !important; }
+  #main, #main.no-detail { display: block !important; }
+  .view:not(#v-threecx) { display: none !important; }
+  #v-threecx { display: block !important; }
+  .x3-sec { break-inside: auto; }
+  .x3-table { border: 0; }
+  .x3-table tr { break-inside: avoid; }
+  body { background: #fff; }
+}
+
 @media (max-width: 800px) {
   #main.no-detail { grid-template-columns: 1fr; }
   .ms-site { grid-template-columns: 1fr 1fr; }
