@@ -281,7 +281,9 @@ async function api(method, path, body) {
   const txt = await r.text();
   return txt ? JSON.parse(txt) : null;
 }
-const listAll = async (path) => (await api('GET', `${path}?recurse=true&limit=10000`))?.items || [];
+// Même règle que common/core.js : seulement le tenant courant (S.tenant) ; le
+// filtre par tenant de l'utilisateur édité (inTenant) s'ajoute par-dessus.
+const listAll = async (path) => ((await api('GET', `${path}?recurse=true&limit=10000`))?.items || []).filter((o) => !S.tenant || !o?.tenant_uuid || o.tenant_uuid === S.tenant);
 
 // ---------------------------------------------------------------------------
 // provd : touches ligne par poste (option astrea_linekeys)
@@ -2134,7 +2136,7 @@ async function applyDeploy() {
 // Format : { app, version, created, base, tenant, reason, entries: [{ uuid,
 // name, userfield, keys }] } — keys = touches propres (hors héritées).
 const BK_STORE = 'astrea-blf-last-backup';
-const APP_VERSION = '0.40.16';
+const APP_VERSION = '0.40.17';
 function makeBackup(reason, entries) {
   const bk = { app: 'astrea-blf', version: APP_VERSION, created: new Date().toISOString(), base: S.base, tenant: S.tenant, reason, entries };
   const json = JSON.stringify(bk, null, 1);

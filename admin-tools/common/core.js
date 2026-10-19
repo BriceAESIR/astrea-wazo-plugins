@@ -93,7 +93,17 @@ export function downloadJson(name, data) {
     setTimeout(() => URL.revokeObjectURL(a.href), 10000);
   } catch (e) { console.warn('téléchargement', e); }
 }
-export const listAll = async (path) => (await api('GET', `${path}${path.includes('?') ? '&' : '?'}recurse=true&limit=10000`))?.items || [];
+// RÈGLE DE BASE (skill wazo-plugins) : seulement le tenant courant. recurse=true
+// ramène aussi les sous-tenants ; confd accepte ensuite une référence vers un
+// autre tenant, mais la stack la refuse à l'usage (« Ce numéro de poste n'est
+// pas valide », touches Agent / Membre d'un groupe, 19/10/2026). Objet sans
+// tenant_uuid (sons…) : gardé. Tenant inconnu (S.tenant vide) : pas de filtre.
+// Lecture de tous les tenants : listAll(path, { allTenants: true }), à justifier.
+export const tenantOnly = (items, t = S.tenant) => (items || []).filter((o) => !t || !o?.tenant_uuid || o.tenant_uuid === t);
+export const listAll = async (path, { allTenants = false } = {}) => {
+  const items = (await api('GET', `${path}${path.includes('?') ? '&' : '?'}recurse=true&limit=10000`))?.items || [];
+  return allTenants ? items : tenantOnly(items);
+};
 
 // ---------------------------------------------------------------------------
 // Lecture seule / bandeau de compatibilité (élément #compat)

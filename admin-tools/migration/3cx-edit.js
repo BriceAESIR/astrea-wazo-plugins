@@ -2,12 +2,12 @@
 // Modèle et règles : 3cx-draft.js. Chaque modification est enregistrée dans le
 // navigateur (brouillon par fichier et date de sauvegarde) ; rien n'est écrit
 // dans Wazo depuis ces tableaux.
-import { $, esc, toast, helpButton, helpBox, confirmModal, downloadJson } from '../common/core.js?v=0.40.16';
-import { I } from './inventory.js?v=0.40.16';
+import { $, esc, toast, helpButton, helpBox, confirmModal, downloadJson } from '../common/core.js?v=0.40.17';
+import { I } from './inventory.js?v=0.40.17';
 import {
   GROUP_STRATEGIES, MODES, HUNT_TARGETS, saveDraft, clearDraft, buildDraft, acceptDraft, userBy, userName, imported,
   destLabel, destProblem, draftIssues, usersCsv, blfRows, devicesCsv, deviceDesc, macWazo, macValid,
-} from './3cx-draft.js?v=0.40.16';
+} from './3cx-draft.js?v=0.40.17';
 
 const E = { d: null, m: null, file: '', tab: 'users', sel: { users: new Set(), dids: new Set() }, q: '', onReset: null };
 export const TABS = [
