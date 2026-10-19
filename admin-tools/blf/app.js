@@ -137,7 +137,7 @@ const KEY_TYPES = {
     "Appelle la file d'attente (son numéro). Pas de supervision : numérotation rapide (vérifié). Pour se connecter à une file en tant qu'agent, utiliser le type « Agent »." },
   agent: { supDef: true, label: 'Agent', short: 'Agent', sup: true, noTpl: true,
     fields: [{ p: 'agent_id', list: 'agent', label: 'Agent' }, { p: 'action', label: 'Action', opts: [['toggle', 'Bascule (alterne)'], ['login', 'Connexion'], ['logout', 'Déconnexion']] }], help:
-    "Connecte ou déconnecte l'agent choisi depuis ce poste (bascule = alterne). Refusé par Wazo dans les modèles de touches partagés (vérifié) : seulement sur les touches d'un utilisateur. Voyant allumé quand l'agent est connecté : supposé, à tester." },
+    "Connecte ou déconnecte l'agent choisi sur le poste qui appuie (bascule = alterne). En pratique : l'agent de l'utilisateur, proposé en premier. Vérifié (dialplan, wazo-agid) : la touche ne fonctionne que sur les postes de l'utilisateur à qui elle appartient (sinon l'appel est coupé sans message) ; « Ce numéro de poste n'est pas valide » = agent introuvable, ou poste déjà occupé par un autre agent (un seul agent connecté à la fois par poste : déconnecter d'abord). Mot de passe d'agent éventuel demandé à la connexion. Refusé par Wazo dans les modèles de touches partagés. Voyant allumé quand l'agent est connecté : supposé, à tester." },
   conference: { label: 'Conférence', short: 'Conférence', sup: true,
     fields: [{ p: 'conference_id', list: 'conference', label: 'Conférence' }], help:
     "Rejoint la salle de conférence. Avec la supervision, le voyant indiquerait que la salle est occupée (supposé, à tester)." },
@@ -193,7 +193,50 @@ function fixedMemberHits(uuid, keys) {
   }
   return hits;
 }
+// Agent associé à un utilisateur (confd : user.agent = { id, number }, vérifié
+// dans le schéma). La liste /users ne le contient peut-être pas : fiche relue
+// une fois. null = pas d'agent ; undefined = pas encore lu.
+async function loadUserAgent(u) {
+  if (!u || u.agentLoaded) return;
+  if (!('agent' in u)) {
+    try { const full = await api('GET', `/users/${u.uuid}`); u.agent = full?.agent || null; } catch (e) { console.warn('[astrea] agent de', u.uuid, e.message); u.agent = null; }
+  }
+  u.agentLoaded = true;
+}
+const userAgentId = (u) => (u?.agentLoaded ? u.agent?.id ?? null : undefined);
+// Touches Agent qui ne visent pas l'agent de l'utilisateur : [{ p, id }].
+function foreignAgentHits(u, keys) {
+  const mine = userAgentId(u);
+  if (mine === undefined) return undefined;
+  return Object.entries(keys).filter(([, k]) => k?.destination.type === 'agent' && k.destination.agent_id !== mine).map(([p, k]) => ({ p: Number(p), id: k.destination.agent_id }));
+}
+const agentNum = (id) => (S.named.agent || []).find((a) => a.id === id)?.number || `#${id}`;
 const groupName = (id) => { const g = (S.named.group || []).find((x) => x.id === id); return g ? LISTS.group.name(g) : `#${id}`; };
+// Les listes sont lues avec recurse=true (sous-tenants compris). Une touche
+// doit viser un objet du tenant de son utilisateur : wazo-agid cherche groupe /
+// agent dans ce tenant et répond « Ce numéro de poste n'est pas valide » sinon
+// (vu en réel le 19/10/2026 ; confd accepte pourtant l'enregistrement).
+const curTenant = () => (S.cur?.tpl ? S.tenant : S.cur?.user?.tenant_uuid || S.tenant) || null;
+const inTenant = (x, t = curTenant()) => !t || !x?.tenant_uuid || x.tenant_uuid === t;
+const tenantItems = (l) => (S.named[l] || []).filter((x) => inTenant(x));
+// Touches qui visent un objet d'un autre tenant : [{ p, what }].
+function otherTenantHits(keys, t = curTenant()) {
+  const out = [];
+  for (const [p, k] of Object.entries(keys)) {
+    const d = k?.destination;
+    if (d?.type === 'user') {
+      const u = S.byId.get(d.user_id);
+      if (u && !inTenant(u, t)) out.push({ p: Number(p), what: `Collègue ${fullName(u)}` });
+      continue;
+    }
+    for (const f of KEY_TYPES[d?.type]?.fields || []) {
+      if (!f.list) continue;
+      const it = (S.named[f.list] || []).find((x) => x.id === d[f.p]);
+      if (it && !inTenant(it, t)) out.push({ p: Number(p), what: `${KEY_TYPES[d.type].short} ${(LISTS[f.list].name)(it)}` });
+    }
+  }
+  return out;
+}
 // Liste utilisée par un type pour un paramètre donné (ex. park_position → parking).
 const listOf = (type) => (KEY_TYPES[type]?.fields || []).filter((f) => f.list).map((f) => f.list);
 function supOf(d) {
@@ -938,13 +981,30 @@ function renderEditor() {
       else if (capD == null) warns.push(`Capacité du ${esc(devLabel(d))} inconnue : vérifiez que les touches y tiennent.`);
     }
   }
+  // Listes des destinations posées (noms lisibles, contrôle du tenant) : lues
+  // au besoin, puis nouveau rendu.
+  const keyMap = Object.fromEntries(c.slots.map((k, i) => [i + 1, k]).filter(([, k]) => k));
+  const missingTypes = [...new Set(Object.values(keyMap).map((k) => k.destination.type))].filter((t) => listOf(t).some((l) => !S.named[l]));
+  if (missingTypes.length) Promise.all(missingTypes.map(ensureNamed)).then(() => { if (S.cur === c) renderEditor(); });
+  const foreignT = otherTenantHits(keyMap);
+  if (foreignT.length) warns.push(`<span class="error">${foreignT.map((h) => `Touche ${h.p} (${esc(h.what)})`).join(', ')} : vise un objet d'un <strong>autre client (tenant)</strong>. Wazo répondra « Ce numéro de poste n'est pas valide » sur le poste. Choisissez une destination de ce client.</span>`);
   if (!isTpl) {
-    const slotMap = Object.fromEntries(c.slots.map((k, i) => [i + 1, k]).filter(([, k]) => k));
+    const slotMap = keyMap;
     const hits = fixedMemberHits(c.user.uuid, slotMap);
     if (hits === undefined) {
       const ids = Object.values(slotMap).filter((k) => k.destination.type === 'groupmember').map((k) => k.destination.group_id);
       ensureNamed('groupmember').then(() => loadGroupFixed(ids)).then(() => { if (S.cur === c) renderEditor(); });
-    } else if (hits.length) {
+    }
+    // Touches Agent : doivent viser l'agent de l'utilisateur.
+    if (Object.values(slotMap).some((k) => k.destination.type === 'agent')) {
+      const fa = foreignAgentHits(c.user, slotMap);
+      if (fa === undefined) Promise.all([ensureNamed('agent'), loadUserAgent(c.user)]).then(() => { if (S.cur === c) renderEditor(); });
+      else if (fa.length) {
+        const mine = userAgentId(c.user);
+        warns.push(`<span class="error">${fa.map((h) => `Touche ${h.p} (agent ${esc(agentNum(h.id))})`).join(', ')} : ${mine == null ? `${esc(fullName(c.user))} n'a pas d'agent dans Wazo` : `ce n'est pas l'agent de ${esc(fullName(c.user))} (agent ${esc(agentNum(mine))})`}. Sur le poste, Wazo répondra « Ce numéro de poste n'est pas valide » si un autre agent y est déjà connecté.</span>`);
+      }
+    }
+    if (hits && hits.length) {
       warns.push(`<span class="error">${hits.map((h) => `Touche ${h.p}`).join(', ')} « Membre d'un groupe » : ${esc(fullName(c.user))} est <strong>membre fixe</strong> du groupe ${hits.map((h) => `« ${esc(groupName(h.gid))} »`).filter((v, i, a) => a.indexOf(v) === i).join(', ')} dans Wazo. La touche ne pourra pas l'en faire sortir (supposé, comportement d'Asterisk : à tester). Choisir l'un ou l'autre : retirer l'utilisateur des membres du groupe pour le gérer par touche, ou supprimer la touche.</span>`);
     }
   }
@@ -1284,7 +1344,7 @@ async function loadFilterMembers() {
     const full = f.surrogates ? f : await api('GET', `/callfilters/${f.id}`);
     for (const s of full.surrogates?.users || []) {
       if (s.member_id == null) continue;
-      out.push({ id: s.member_id, name: `${full.name} · ${`${s.firstname || ''} ${s.lastname || ''}`.trim() || 'secrétaire'}` });
+      out.push({ id: s.member_id, tenant_uuid: full.tenant_uuid, name: `${full.name} · ${`${s.firstname || ''} ${s.lastname || ''}`.trim() || 'secrétaire'}` });
     }
   }
   return out;
@@ -1326,7 +1386,7 @@ function renderValueField(type, k) {
     const show = () => {
       const q = inp.value.trim().toLowerCase();
       // Jamais le propriétaire du poste : se superviser soi-même gâche une touche.
-      const list = S.users.filter((u) => u.uuid !== c.user.uuid && (!q || `${fullName(u)} ${u.username || ''} ${userExten(u)}`.toLowerCase().includes(q))).slice(0, 30);
+      const list = S.users.filter((u) => u.uuid !== c.user.uuid && inTenant(u) && (!q || `${fullName(u)} ${u.username || ''} ${userExten(u)}`.toLowerCase().includes(q))).slice(0, 30);
       sugg.innerHTML = list.map((u) => `<li data-id="${u.id}">${esc(fullName(u))} <span class="muted">${esc(userExten(u))}</span></li>`).join('') || '<li class="muted">Aucun résultat</li>';
       sugg.hidden = false;
     };
@@ -1356,12 +1416,20 @@ function renderValueField(type, k) {
     const t = KEY_TYPES[type];
     const cur = k?.destination.type === type ? k.destination : {};
     wrap.innerHTML = '<p class="muted small">Chargement…</p>';
-    ensureNamed(type).then(() => {
+    Promise.all([ensureNamed(type), type === 'agent' && !c.tpl ? loadUserAgent(c.user) : null]).then(() => {
       if (S.sel !== p) return;
       wrap.innerHTML = t.fields.map((f, i) => {
-        const v = cur[f.p];
+        let v = cur[f.p];
         if (f.list) {
-          const items = S.named[f.list] || [];
+          let items = tenantItems(f.list);
+          // Agent : celui de l'utilisateur en tête, repéré, et présélectionné
+          // sur une nouvelle touche.
+          if (f.list === 'agent' && !c.tpl) {
+            const mine = userAgentId(c.user);
+            items = [...items].sort((a, b) => (b.id === mine) - (a.id === mine));
+            if (v === undefined && mine != null) v = mine;
+            return `<label>${esc(f.label)} <select data-i="${i}"><option value="">—</option>${items.map((it) => `<option value="${it.id}" ${it.id === v ? 'selected' : ''}>${esc(LISTS.agent.name(it))}${it.id === mine ? ' (agent de cet utilisateur)' : ''}</option>`).join('')}</select></label>${mine == null ? '<p class="warn small">Cet utilisateur n\'a pas d\'agent dans Wazo : une touche Agent ne lui servira à rien (associer un agent dans sa fiche).</p>' : ''}`;
+          }
           if (!items.length) return `<p class="warn small">Aucun élément « ${esc(LISTS[f.list].what)} » sur cette stack.</p>`;
           return `<label>${esc(f.label)} <select data-i="${i}"><option value="">—</option>${items.map((it) => `<option value="${it.id}" ${it.id === v ? 'selected' : ''}>${esc((LISTS[f.list].opt || LISTS[f.list].name)(it))}</option>`).join('')}</select></label>`;
         }
@@ -2009,8 +2077,13 @@ async function previewDeploy() {
       }
       await loadGroupFixed(Object.values(keys).filter((k) => k?.destination.type === 'groupmember').map((k) => k.destination.group_id)); // touches déjà posées (mode à la suite)
       const fixed = fixedMemberHits(u.uuid, keys) || [];
+      if (Object.values(keys).some((k) => k?.destination.type === 'agent')) { await ensureNamed('agent'); await loadUserAgent(u); }
+      const foreign = foreignAgentHits(u, keys) || [];
+      const otherT = otherTenantHits(keys, u.tenant_uuid || S.tenant);
       const notes = [
         sharedNote,
+        otherT.length && `<span class="error">touche ${otherT.map((h) => h.p).join(', ')} : destination d'un autre client (tenant), refusée sur le poste</span>`,
+        foreign.length && `<span class="error">touche ${foreign.map((h) => h.p).join(', ')} : agent ${[...new Set(foreign.map((h) => esc(agentNum(h.id))))].join(', ')}, ${userAgentId(u) == null ? 'pas d\'agent pour cet utilisateur' : `pas le sien (${esc(agentNum(userAgentId(u)))})`}</span>`,
         fixed.length && `<span class="error">membre fixe de ${[...new Set(fixed.map((h) => `« ${esc(groupName(h.gid))} »`))].join(', ')} : la touche ${fixed.map((h) => h.p).join(', ')} ne pourra pas l'en faire sortir</span>`,
         linesChanged && `touches ligne ${lineKeysOf(u)} → ${lines}`,
         linesSkipped && `<span class="error">touches ligne multiples non gérées pour cette marque : ${lineKeysOf(u) + 1 === D.srcLines ? `position ${D.srcLines} laissée vide` : `positions ${lineKeysOf(u) + 1}–${D.srcLines} laissées vides`}</span>`,
@@ -2061,7 +2134,7 @@ async function applyDeploy() {
 // Format : { app, version, created, base, tenant, reason, entries: [{ uuid,
 // name, userfield, keys }] } — keys = touches propres (hors héritées).
 const BK_STORE = 'astrea-blf-last-backup';
-const APP_VERSION = '0.40.15';
+const APP_VERSION = '0.40.16';
 function makeBackup(reason, entries) {
   const bk = { app: 'astrea-blf', version: APP_VERSION, created: new Date().toISOString(), base: S.base, tenant: S.tenant, reason, entries };
   const json = JSON.stringify(bk, null, 1);

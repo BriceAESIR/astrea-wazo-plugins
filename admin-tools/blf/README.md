@@ -130,6 +130,21 @@ dans `app.js`.
   du déploiement en masse. À tester : survie des entrées par touche à un
   redémarrage d'Asterisk (`persistentmembers`), et lien avec Wazo Desktop
   (même état que la touche ?).
+- **Tenant des destinations** (0.40.16) : les listes confd sont lues avec
+  `recurse=true` (sous-tenants compris). Une touche vers un groupe ou un agent
+  d'un autre tenant est acceptée par confd, mais wazo-agid le cherche dans le
+  tenant de l'utilisateur et répond « Ce numéro de poste n'est pas valide »
+  (son `pbx-invalid` ; vu en réel le 19/10/2026 sur Membre d'un groupe et
+  Agent). Les listes (et les collègues) ne proposent plus que le tenant de
+  l'utilisateur édité ; une touche existante vers un autre tenant est signalée
+  (éditeur et déploiement en masse).
+- **Agent** (0.40.16) : l'agent de l'utilisateur (`user.agent` de confd, fiche
+  relue si la liste ne le donne pas) est proposé en tête et présélectionné ;
+  alerte si la touche vise un autre agent ou si l'utilisateur n'en a pas.
+  Vérifié dans le dialplan : `pbx-invalid` = agent introuvable ou poste déjà
+  occupé par un autre agent ; une touche programmable ne marche que sur les
+  postes de son propriétaire (wazo-agid compare l'utilisateur du code à
+  l'appelant, appel coupé sinon).
 - La case Supervision est **masquée** (« Pas de supervision pour ce type de
   touche ») quand le type n'en a pas, dès qu'il est choisi dans le menu
   (0.30.1 : avant, elle gardait l'état de l'ancien type) ; elle est cochée d'office
