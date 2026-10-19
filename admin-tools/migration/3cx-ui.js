@@ -1,10 +1,11 @@
 // Migration Assistant — vue « Import 3CX » (lot 4, première étape : analyse et
 // fiche de reprise, sans écriture dans Wazo). Lecteur : 3cx.js.
-import { $, esc, toast, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.11';
-import { I } from './inventory.js?v=0.40.11';
-import { parse3cx, issuesOf, schedulesOf, destText, periodsText, wazoUsersCsv, redacted, nameOf, STRATEGY, STRATEGY_FR, KIND_FR } from './3cx.js?v=0.40.11';
+import { $, esc, toast, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.12';
+import { I } from './inventory.js?v=0.40.12';
+import { parse3cx, issuesOf, schedulesOf, destText, periodsText, wazoUsersCsv, redacted, nameOf, blfStatus, STRATEGY, STRATEGY_FR, KIND_FR } from './3cx.js?v=0.40.12';
 
-const X = { m: null, file: '', blfOffset: 1 };
+// skipNoDevice : même réglage pour le CSV d'import et la reprise des touches.
+const X = { m: null, file: '', blfOffset: 1, skipNoDevice: true };
 const SEV_FR = { error: 'Erreur', warn: 'À vérifier', info: 'Info' };
 
 export function init3cx() {
@@ -39,7 +40,9 @@ function draw() {
   const scheds = schedulesOf(m);
   const schedName = (k) => scheds.find((s) => s.periods.map((x) => `${x.day}:${x.from}-${x.to}`).join('|') === k)?.name || 'toujours ouvert';
   const ext = m.extensions;
-  const blfOk = (e) => e.blfs.filter((b) => b.type !== 'BLF' || m.dn.has(b.target));
+  const blf = blfStatus(m, { skipNoDevice: X.skipNoDevice });
+  const blfOk = (e) => blf.get(e.number).filter((b) => b.ok);
+  const blfKo = (e) => blf.get(e.number).filter((b) => !b.ok);
   // Libellés hors du gabarit : deux accolades ouvrantes collées sont refusées par publish.ps1 (pas de .nojekyll).
   const FWD_L = { NoAnswer: 'pas de réponse', Busy: 'occupé', NotRegistered: 'non enregistré' };
   const fwdTxt = (e) => Object.entries(e.fwd).filter(([, d]) => d && typeof d === 'object').map(([k, d]) => `${FWD_L[k]} → ${D(d)}`).join('<br>') + (e.fwd.timeout ? `<div class="muted">sonnerie ${e.fwd.timeout} s</div>` : '');
@@ -71,12 +74,13 @@ function draw() {
     ]))), 'Wazo : une SDA par numéro, vers la destination « ouvert », avec l\'horaire associé (destination de fermeture = « fermé » ; fermetures exceptionnelles = jours fériés, vers la destination « férié »). Les SDA directes vers un poste peuvent aussi être créées par le CSV d\'import des utilisateurs.', m.inbound.length)}
     ${sec('sched', 'Horaires à créer', scheds.map((s) => `<p><strong>${esc(s.name)}</strong> : ${esc(s.text)} <span class="muted">(${s.users.length} SDA)</span></p>`).join('') + `<p class="small"><strong>Fermetures exceptionnelles</strong> (à ajouter à chaque horaire) : ${m.holidays.filter((h) => !h.past).map((h) => `${esc(h.name)} (${h.day}/${h.month}${h.recurrent ? ', tous les ans' : `/${h.year}`}${h.from !== '00:00' || h.to !== '23:59' ? `, ${h.from}-${h.to}` : ''})`).join(' ; ') || 'aucune'}.</p><p class="small muted">Heures de la société (groupe 3CX par défaut) : ${esc(periodsText(m.defaultGroup?.hours.periods || []))} ; pause : ${esc(periodsText(m.defaultGroup?.breakTime.periods || []))}. Les jours fériés légaux français autres que le 14 juillet ne sont pas dans la sauvegarde.</p>`, 'Horaires Wazo déduits des règles 3CX : heures de bureau moins la pause pour les règles « heures de bureau », plages propres pour les autres. Un horaire par jeu de plages distinct.', scheds.length)}
     ${sec('trunk', 'Trunk et appels sortants', table(['Trunk', 'Serveurs', 'Numéro principal', 'Numéro présenté', 'Canaux', 'Codecs', 'SDA'], m.trunks.map((t) => tr([
-      esc(t.name), `${esc(t.host)}${t.proxy ? `<br><span class="muted">proxy ${esc(t.proxy)}</span>` : ''}`, esc(t.mainNumber), esc(t.callerId), t.channels, esc(t.codecs.join(', ')), `${t.dids.length}<div class="muted small x3-dids">${esc(t.dids.join(', '))}</div>`,
-    ]))) + `<p class="small">Règles sortantes 3CX : ${m.outbound.map((o) => `${esc(o.name)} (${o.routes.map((r) => esc(r.gateway)).join(', ')}${o.prefix ? `, préfixe ${esc(o.prefix)}` : ''})`).join(' ; ') || 'aucune'}. Identifiants SIP du trunk : dans la sauvegarde (non affichés), à reprendre de l'espace opérateur de préférence.</p>`, 'Wazo : interconnexion créée depuis le portail avec le modèle de l\'opérateur (serveur eqinoxe = Unyc), puis règle sortante vers ce trunk et numéro présenté. Les SDA sont celles déclarées sur la ligne 3CX.', m.trunks.length)}
+      esc(t.name), `${esc(t.host)}${t.proxy ? `<br><span class="muted">proxy ${esc(t.proxy)}</span>` : ''}`, esc(t.mainNumber), esc(t.callerId), t.channels, esc(t.codecs.join(', ')), t.dids.length,
+    ]))) + m.trunks.map((t) => `<p class="small x3-dids"><strong>SDA ${esc(t.name)}</strong> : ${esc(t.dids.join(', '))}</p>`).join('') + `<p class="small">Règles sortantes 3CX : ${m.outbound.map((o) => `${esc(o.name)} (${o.routes.map((r) => esc(r.gateway)).join(', ')}${o.prefix ? `, préfixe ${esc(o.prefix)}` : ''})`).join(' ; ') || 'aucune'}. Identifiants SIP du trunk : dans la sauvegarde (non affichés), à reprendre de l'espace opérateur de préférence.</p>`, 'Wazo : interconnexion créée depuis le portail avec le modèle de l\'opérateur (serveur eqinoxe = Unyc), puis règle sortante vers ce trunk et numéro présenté. Les SDA sont celles déclarées sur la ligne 3CX.', m.trunks.length)}
     ${sec('sounds', 'Fichiers sons à récupérer', `<p class="small">À copier depuis le serveur 3CX (dossier <code>/var/lib/3cxpbx/Instance1/Data/Ivr/Prompts/</code>) puis à téléverser dans Wazo (Sons, ou Musiques d'attente pour ${esc(m.moh || 'la musique')}).</p><ul class="mg-list small x3-cols">${m.prompts.map((p) => `<li>${esc(p)}${p === m.moh ? ' <span class="muted">(musique d\'attente)</span>' : ''}</li>`).join('')}</ul>`, null, m.prompts.length)}
     ${sec('blf', 'Touches BLF', `<label class="inline noprint">Position Wazo = position 3CX + <input type="number" id="x3-off" min="0" max="5" value="${X.blfOffset}" class="short"> <span class="muted small">(supposé : 1, la touche 1 restant la ligne ; à vérifier sur un poste avant de déployer)</span></label>` + table(['Poste', 'Touches reprises', 'Non reprises'], ext.filter((e) => e.blfs.length).map((e) => tr([
-      name(e.number), blfOk(e).map((b) => `${b.pos + X.blfOffset}:${b.type === 'SharedParking' ? 'parking' : esc(b.target)}`).join(' '), e.blfs.filter((b) => !blfOk(e).includes(b)).map((b) => esc(b.target)).join(' ') || '—',
-    ]))), 'Touches de supervision des postes 3CX. Wazo : touches de fonction de l\'utilisateur (BLF Manager), type « supervision » vers l\'utilisateur cible ; « parking partagé » → touche parking. Le CSV donne poste, position Wazo, type et cible.')}
+      name(e.number), blfOk(e).map((b) => `${b.pos + X.blfOffset}:${b.type === 'SharedParking' ? 'parking' : esc(b.target)}`).join(' ') || '<span class="muted">aucune</span>',
+      blfKo(e).some((b) => b.status === 'non (poste non repris)') ? '<span class="muted">poste non repris</span>' : blfKo(e).map((b) => `${esc(b.target)} <span class="muted">${esc(b.status.replace(/^non \((.*)\)$/, '$1'))}</span>`).join(', ') || '—',
+    ]))), 'Touches de supervision des postes 3CX. Wazo : touches de fonction de l\'utilisateur (BLF Manager), type « supervision » vers l\'utilisateur cible ; « parking partagé » → touche parking. Non reprises : cible absente de la sauvegarde, cible ou poste non repris (mêmes règles que le CSV d\'import), doublon sur le même poste. Le CSV donne poste, position Wazo, type, cible et reprise.')}
     ${sec('other', 'Autres éléments', `<p class="small">Parkings : ${m.parks.length} emplacement(s) (${esc(m.parks.map((p) => p.number).join(', '))}) → un parking Wazo. ${m.others.map((o) => `${esc(KIND_FR[o.kind] || o.kind)} ${esc(o.number)}${o.name ? ` (${esc(o.name)})` : ''}`).join(' ; ')}. Annuaire partagé : ${m.phonebook.length} contact(s) → annuaire Wazo (à saisir).</p>`)}
     <div class="card mg-card wide noprint">
       <div class="titlerow"><h3>CSV d'import des utilisateurs Wazo</h3>${helpButton('x3h-csv', 'Aide : CSV')}</div>
@@ -85,7 +89,7 @@ function draw() {
       <label class="inline"><input type="checkbox" id="x3-dids" checked> Créer les SDA directes vers les postes</label>
       <label class="inline"><input type="checkbox" id="x3-pin"> Reprendre les codes de messagerie de 3CX</label>
       <label class="inline"><input type="checkbox" id="x3-guess" checked> Noms déduits de l'e-mail quand 3CX n'a que des initiales</label>
-      <label class="inline"><input type="checkbox" id="x3-nodev" checked> Ignorer les postes sans appareil (répondeurs, administrateur)</label>
+      <label class="inline"><input type="checkbox" id="x3-nodev" ${X.skipNoDevice ? 'checked' : ''}> Ignorer les postes sans appareil (répondeurs, administrateur) ; s'applique aussi à la reprise des touches</label>
       <div class="btnrow"><button id="x3-csv" class="primary">Télécharger le CSV</button></div>
     </div>`;
   bind();
@@ -111,17 +115,20 @@ function bind() {
   $('x3-blf').onclick = () => {
     const q = (s) => `"${String(s ?? '').replace(/"/g, '""')}"`;
     const rows = [['poste', 'nom', 'position_3cx', 'position_wazo', 'type', 'cible', 'cible_nom', 'reprise'].join(';')];
-    for (const e of m.extensions) for (const b of e.blfs) {
-      const ok = b.type !== 'BLF' || m.dn.has(b.target);
-      rows.push([e.number, [e.first, e.last].filter(Boolean).join(' '), b.pos, b.pos + X.blfOffset, b.type === 'SharedParking' ? 'parking' : 'supervision', b.target, m.dn.get(b.target)?.name || '', ok ? 'oui' : 'non (cible absente)'].map(q).join(';'));
+    const st = blfStatus(m, { skipNoDevice: X.skipNoDevice });
+    const nm = (e) => { const n = nameOf(e); return [n.first, n.last].filter(Boolean).join(' ') || (e.devices.length ? `Poste ${e.number}` : ''); };
+    for (const e of m.extensions) for (const b of st.get(e.number)) {
+      const t = m.dn.get(b.target);
+      rows.push([e.number, nm(e), b.pos, b.pos + X.blfOffset, b.type === 'SharedParking' ? 'parking' : 'supervision', b.target, t?.kind === 'Extension' ? nm(t.obj) : (t?.name || ''), b.status].map(q).join(';'));
     }
     download(`astrea-3cx-blf-${base()}.csv`, '﻿' + rows.join('\r\n'), 'text/csv;charset=utf-8');
   };
-  $('x3-off').onchange = (e) => { X.blfOffset = Math.max(0, Math.min(5, Number(e.target.value) || 0)); draw(); document.getElementById('x3-blf')?.scrollIntoView(); };
+  $('x3-nodev').onchange = (e) => { X.skipNoDevice = e.target.checked; draw(); document.getElementById('x3-nodev')?.scrollIntoView({ block: 'center' }); };
+  $('x3-off').onchange =(e) => { X.blfOffset = Math.max(0, Math.min(5, Number(e.target.value) || 0)); draw(); document.getElementById('x3-blf')?.scrollIntoView(); };
   $('x3-csv').onclick = () => {
     const ctx = $('x3-ctx').value; const incallCtx = $('x3-inctx').value;
     if (!ctx) return toast('Choisissez le contexte interne (tenant Wazo à ouvrir dans le portail).', 6000);
     if ($('x3-dids').checked && !incallCtx) return toast('Aucun contexte entrant : décochez les SDA directes, ou ouvrez le bon tenant.', 6000);
-    download(`wazo-import-utilisateurs-${base()}.csv`, wazoUsersCsv(m, { ctx, incallCtx, vmPin: $('x3-pin').checked, withDids: $('x3-dids').checked, guessNames: $('x3-guess').checked, skipNoDevice: $('x3-nodev').checked }), 'text/csv;charset=utf-8');
+    download(`wazo-import-utilisateurs-${base()}.csv`, wazoUsersCsv(m, { ctx, incallCtx, vmPin: $('x3-pin').checked, withDids: $('x3-dids').checked, guessNames: $('x3-guess').checked, skipNoDevice: X.skipNoDevice }), 'text/csv;charset=utf-8');
   };
 }

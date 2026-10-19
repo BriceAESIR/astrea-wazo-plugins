@@ -100,19 +100,31 @@ input.short { width: 110px !important; }
 .x3-table tr.x3-error td:first-child { color: var(--danger); font-weight: 600; }
 .x3-table tr.x3-warn td:first-child { color: var(--warn); font-weight: 600; }
 .x3-table tr.x3-info td:first-child { color: var(--muted); }
-.x3-dids { max-width: 260px; white-space: normal; line-height: 1.4; }
+.x3-dids { line-height: 1.5; margin: 8px 0; }
 .x3-cols { columns: 3 220px; }
 #x3 code { font-size: .75rem; }
 
+/* Impression de la fiche (retour de Brice, 19/10/2026 : en portrait, le tableau
+   des utilisateurs était coupé après « Messagerie », 3 postes par page, et les
+   SDA s'empilaient une par ligne). Paysage, tableaux à la largeur de la page,
+   coupure des mots longs (e-mails) plutôt que débordement. */
+@page { size: A4 landscape; margin: 10mm; }
 @media print {
-  .topbar, #sidebar, .noprint, .helpbtn, .compat, #lookwarn { display: none !important; }
-  #main, #main.no-detail { display: block !important; }
+  .topbar, #sidebar, .noprint, .helpbtn, .helpbox, .compat, #lookwarn, #progress, .toast { display: none !important; }
+  html, body, #app, #main, #main.no-detail, #workbench { display: block !important; width: auto !important; height: auto !important; max-width: none !important; overflow: visible !important; padding: 0 !important; margin: 0 !important; }
   .view:not(#v-3cx) { display: none !important; }
   #v-3cx { display: block !important; }
-  .x3-sec { break-inside: auto; }
-  .x3-table { border: 0; }
+  body { background: #fff; font-size: 9pt; }
+  .mg-card, .mg-card.wide, .x3-sec { max-width: none !important; box-shadow: none; }
+  .x3-sec { margin: 0 0 10px; break-inside: auto; }
+  .x3-sec h3 { font-size: 11pt; break-after: avoid; }
+  .x3-table { overflow: visible !important; border: 0; }
+  .x3-table table { width: 100% !important; font-size: 8pt; }
+  .x3-table th, .x3-table td { padding: 2px 5px !important; white-space: normal !important; overflow-wrap: anywhere; }
+  .x3-table td:first-child { white-space: nowrap !important; overflow-wrap: normal; }
+  .x3-table thead { display: table-header-group; }
   .x3-table tr { break-inside: avoid; }
-  body { background: #fff; }
+  .x3-dids { font-size: 8pt; }
 }
 
 @media (max-width: 800px) {

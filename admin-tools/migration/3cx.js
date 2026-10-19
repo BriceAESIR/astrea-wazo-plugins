@@ -271,7 +271,7 @@ export function issuesOf(m) {
   for (const v of m.ivrs.filter((x) => !x.system)) { checkDest(`SVI ${v.number}`, v.timeoutDest.to === 'EndCall' ? null : v.timeoutDest); for (const c of v.choices) checkDest(`SVI ${v.number} touche ${c.key}`, c); }
   for (const e of m.extensions) {
     const w = `Poste ${e.number}`;
-    if (!e.first && !e.last && !nameOf(e).guessed) add('warn', w, 'sans nom.');
+    if (!e.first && !e.last && !nameOf(e).guessed) add('warn', w, e.devices.length ? `sans nom : repris sous « Poste ${e.number} », à renommer.` : 'sans nom.');
     if (!e.enabled) add('info', w, 'désactivé dans 3CX : à reprendre ?');
     if (e.enabled && !e.devices.length) add('info', w, e.vm.enabled ? `sans appareil, messagerie active (« ${[e.first, e.last].filter(Boolean).join(' ')} ») : dans Wazo, une messagerie seule suffit sans doute (sans utilisateur).` : 'sans appareil : compte à reprendre (softphone, application) ou non ?');
     if (e.devices.length > 1) add('info', w, `${e.devices.length} appareils.`);
@@ -317,16 +317,45 @@ export function schedulesOf(m) {
 // séparateur virgule, booléens 1/0). `ctx` = nom technique du contexte interne,
 // `incallCtx` = contexte entrant (SDA directes), `opt.vmPin` = reprendre le code
 // de messagerie.
+// Postes repris dans Wazo (même règle pour le CSV d'import et la reprise des
+// touches) : actifs, avec un appareil ou un nom ; sans appareil exclus sur option.
+// Un poste sans nom mais avec appareil est repris sous « Poste NNN » (cas réel :
+// poste 030, un T46S qui reçoit une SDA).
+export function importedExtensions(m, { skipNoDevice = false } = {}) {
+  return m.extensions.filter((e) => e.enabled && (e.devices.length || e.first || e.last || nameOf(e).guessed) && (!skipNoDevice || e.devices.length));
+}
+// Reprise de chaque touche, alignée sur le CSV d'import : poste non repris,
+// cible absente de la sauvegarde, cible non reprise (poste exclu), doublon
+// (même cible déjà sur une touche précédente du poste). Map numéro → touches.
+export function blfStatus(m, { skipNoDevice = false } = {}) {
+  const kept = new Set(importedExtensions(m, { skipNoDevice }).map((e) => e.number));
+  const out = new Map();
+  for (const e of m.extensions) {
+    const seen = new Set();
+    out.set(e.number, e.blfs.map((b) => {
+      let status = 'oui';
+      const t = m.dn.get(b.target);
+      if (!kept.has(e.number)) status = 'non (poste non repris)';
+      else if (b.type === 'SharedParking') status = 'oui';
+      else if (!t) status = 'non (cible absente)';
+      else if (t.kind === 'Extension' && !kept.has(b.target)) status = 'non (cible non reprise)';
+      else if (seen.has(b.target)) status = 'non (doublon)';
+      if (b.type !== 'SharedParking') seen.add(b.target);
+      return { ...b, status, ok: status === 'oui' };
+    }));
+  }
+  return out;
+}
 export function wazoUsersCsv(m, { ctx, incallCtx, vmPin = false, withDids = true, guessNames = true, skipNoDevice = false } = {}) {
   const cols = ['firstname', 'lastname', 'email', 'mobile_phone_number', 'enabled', 'context', 'line_protocol', 'exten', 'voicemail_name', 'voicemail_number', 'voicemail_context', 'voicemail_password', 'voicemail_email', 'voicemail_attach_audio', 'incall_exten', 'incall_context', 'username'];
   const directDid = new Map();
   if (withDids) for (const r of m.inbound) if (r.did && r.open?.to === 'Extension' && r.open.dn && !directDid.has(r.open.dn)) directDid.set(r.open.dn, r.did);
   const q = (s) => (/[",\n]/.test(String(s ?? '')) ? `"${String(s).replace(/"/g, '""')}"` : String(s ?? ''));
-  const rows = m.extensions.filter((e) => e.enabled && (e.first || e.last || nameOf(e).guessed) && (!skipNoDevice || e.devices.length)).map((e) => {
+  const rows = importedExtensions(m, { skipNoDevice }).map((e) => {
     const vm = e.vm.enabled;
     const n = guessNames ? nameOf(e) : { first: e.first, last: e.last };
     const v = {
-      firstname: n.first || e.number, lastname: n.last, email: e.email, mobile_phone_number: e.mobile, enabled: '1', context: ctx, line_protocol: 'sip', exten: e.number,
+      firstname: n.first || (n.last ? '' : `Poste ${e.number}`), lastname: n.last, email: e.email, mobile_phone_number: e.mobile, enabled: '1', context: ctx, line_protocol: 'sip', exten: e.number,
       voicemail_name: vm ? [n.first, n.last].filter(Boolean).join(' ') : '', voicemail_number: vm ? e.number : '', voicemail_context: vm ? ctx : '',
       voicemail_password: vm && vmPin && /^\d+$/.test(e.vm.pin) ? e.vm.pin : '', voicemail_email: vm ? e.email : '', voicemail_attach_audio: vm && e.email ? '1' : '',
       incall_exten: directDid.get(e.number) || '', incall_context: directDid.has(e.number) ? incallCtx : '', username: '',
