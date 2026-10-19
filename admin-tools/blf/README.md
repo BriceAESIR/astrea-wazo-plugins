@@ -145,6 +145,18 @@ dans `app.js`.
   occupé par un autre agent ; une touche programmable ne marche que sur les
   postes de son propriétaire (wazo-agid compare l'utilisateur du code à
   l'appelant, appel coupé sinon).
+  **Vu en réel le 19/10/2026 (steven-seagull)** : utilisateurs et agents
+  supprimés puis recréés ; l'agent 8001 (id 3), connecté sur le poste 8002 par
+  une touche, a été supprimé sans être déconnecté. Sa ligne est restée dans
+  `agent_login_status` (base `asterisk`) : le poste était « occupé »
+  (`is_extension_in_use` de wazo-agentd → `status_already_in_use` → son
+  `pbx-invalid`), invisible dans la CLI agentd, Desktop et le portail (agent
+  inexistant). La suppression d'un agent dans confd ne fait que recharger
+  `app_queue` et publier un événement (code lu), sans déconnexion. Correction :
+  `delete from agent_login_status where agent_id = 3 and extension = '8002'`
+  (+ `agent_membership_status`, vide ici). Ensuite connexion OK, état partagé
+  avec Wazo Desktop (vérifié). Règle : déconnecter un agent avant de le
+  supprimer, lui ou son utilisateur.
 - La case Supervision est **masquée** (« Pas de supervision pour ce type de
   touche ») quand le type n'en a pas, dès qu'il est choisi dans le menu
   (0.30.1 : avant, elle gardait l'état de l'ancien type) ; elle est cochée d'office

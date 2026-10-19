@@ -137,7 +137,7 @@ const KEY_TYPES = {
     "Appelle la file d'attente (son numéro). Pas de supervision : numérotation rapide (vérifié). Pour se connecter à une file en tant qu'agent, utiliser le type « Agent »." },
   agent: { supDef: true, label: 'Agent', short: 'Agent', sup: true, noTpl: true,
     fields: [{ p: 'agent_id', list: 'agent', label: 'Agent' }, { p: 'action', label: 'Action', opts: [['toggle', 'Bascule (alterne)'], ['login', 'Connexion'], ['logout', 'Déconnexion']] }], help:
-    "Connecte ou déconnecte l'agent choisi sur le poste qui appuie (bascule = alterne). En pratique : l'agent de l'utilisateur, proposé en premier. Vérifié (dialplan, wazo-agid) : la touche ne fonctionne que sur les postes de l'utilisateur à qui elle appartient (sinon l'appel est coupé sans message) ; « Ce numéro de poste n'est pas valide » = agent introuvable, ou poste déjà occupé par un autre agent (un seul agent connecté à la fois par poste : déconnecter d'abord). Mot de passe d'agent éventuel demandé à la connexion. Refusé par Wazo dans les modèles de touches partagés. Voyant allumé quand l'agent est connecté : supposé, à tester." },
+    "Connecte ou déconnecte l'agent choisi sur le poste qui appuie (bascule = alterne). En pratique : l'agent de l'utilisateur, proposé en premier. Vérifié (dialplan, wazo-agid) : la touche ne fonctionne que sur les postes de l'utilisateur à qui elle appartient (sinon l'appel est coupé sans message) ; « Ce numéro de poste n'est pas valide » = agent introuvable, ou poste déjà occupé par un autre agent (un seul agent connecté à la fois par poste : déconnecter d'abord). Cas vu en réel (19/10/2026) : un agent supprimé (ou dont l'utilisateur a été supprimé) alors qu'il était connecté reste inscrit sur le poste et le bloque, sans apparaître nulle part. Diagnostic sur la stack : sudo -u postgres psql asterisk -c \"select agent_id, agent_number, extension from agent_login_status;\" — une ligne dont l'agent n'existe plus est à supprimer (delete from agent_login_status where agent_id = N). Toujours déconnecter un agent avant de le supprimer. Vérifié en réel : l'état est partagé avec Wazo Desktop (connexion par la touche visible dans l'appli). Mot de passe d'agent éventuel demandé à la connexion. Refusé par Wazo dans les modèles de touches partagés. Voyant allumé quand l'agent est connecté : supposé, à tester." },
   conference: { label: 'Conférence', short: 'Conférence', sup: true,
     fields: [{ p: 'conference_id', list: 'conference', label: 'Conférence' }], help:
     "Rejoint la salle de conférence. Avec la supervision, le voyant indiquerait que la salle est occupée (supposé, à tester)." },
@@ -2136,7 +2136,7 @@ async function applyDeploy() {
 // Format : { app, version, created, base, tenant, reason, entries: [{ uuid,
 // name, userfield, keys }] } — keys = touches propres (hors héritées).
 const BK_STORE = 'astrea-blf-last-backup';
-const APP_VERSION = '0.40.17';
+const APP_VERSION = '0.40.18';
 function makeBackup(reason, entries) {
   const bk = { app: 'astrea-blf', version: APP_VERSION, created: new Date().toISOString(), base: S.base, tenant: S.tenant, reason, entries };
   const json = JSON.stringify(bk, null, 1);
