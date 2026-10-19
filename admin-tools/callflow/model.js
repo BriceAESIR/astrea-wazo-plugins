@@ -21,8 +21,8 @@
 // Supposé, à vérifier en réel : les listes (GET /groups, /queues,
 // /switchboards, /schedules) contiennent déjà fallbacks, membres et
 // destinations ; sinon on lit le détail de chaque objet (ensureDetails).
-import { S, api, listAll, fullName } from '../common/core.js?v=0.40.13';
-import { comparePatterns, describePattern, userContext, rightsList, simulate, famLabel } from './dialsim.js?v=0.40.13';
+import { S, api, listAll, fullName } from '../common/core.js?v=0.40.14';
+import { comparePatterns, describePattern, userContext, rightsList, simulate, famLabel } from './dialsim.js?v=0.40.14';
 
 export const M = { lists: {}, by: {}, ext: new Map(), extAny: new Map(), rev: null, warns: [] };
 
@@ -1072,9 +1072,9 @@ export function buildTree(rootKey, dir, { maxDepth = 8, collapsed = new Set(), e
       // Retour sur la carte elle-même (SVI « touche 9 : réécouter ») : pas de lien, une mention.
       if (baseKey(k) === baseKey(n.key)) { e.self = true; continue; }
       // Objet déjà affiché : vraie boucle (il est sur le chemin qui mène ici)
-      // → lien en pointillé vers lui ; sinon c'est une autre route → carte
-      // répétée (demande de Brice : chaque fin possible visible, quitte à se
-      // répéter). Au-delà de MAX_NODES cartes, lien en pointillé.
+      // → lien en pointillé vers lui ; sinon c'est une autre route → lien plein
+      // vers SA carte (retour de Brice, 19/10/2026 : « Presque ! », l'ancienne
+      // carte répétée refaisait toute la suite). Au-delà de MAX_NODES cartes, lien en pointillé.
       let key = k;
       // Sorties qui convergent : plusieurs sorties d'une même carte vers le même objet
       // (motifs d'une règle → son trunk ; SVI « sans saisie », « saisie invalide » et
@@ -1085,6 +1085,10 @@ export function buildTree(rootKey, dir, { maxDepth = 8, collapsed = new Set(), e
         // Cartes d'arrivée (appelant, trunk, chaîne vers la carte choisie) : pas des boucles (ex. renvoi qui ressort par le trunk d'arrivée).
         let a = n; while (a && (a.entry || baseKey(a.key) !== k)) a = a.parent ? nodes.get(a.parent) : null;
         if (a || nodes.size >= MAX_NODES) { cross.push({ from: n.key, port: e.id, to: a ? a.key : k, edge: e, loop: !!a }); continue; }
+        // Convergence : toutes les routes vers un même objet rejoignent sa carte.
+        // Restent répétées : l'appel passé (chaîne de recherche du numéro) et les
+        // cartes d'arrivée de la simulation (appelant, trunk, chaîne vers la carte choisie).
+        if (dir !== 'dial' && !nodes.get(k).entry) { cross.push({ from: n.key, port: e.id, to: k, edge: e, merge: true }); continue; }
         let i = 1; while (nodes.has(`${k}~${i}`)) i++;
         key = `${k}~${i}`;
       }
