@@ -7,8 +7,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Mulish:wght@300..800&display=swap">
-<link rel="stylesheet" href="../common/style.css?v=0.40.10">
-<link rel="stylesheet" href="./migration.css?v=0.40.10">
+<link rel="stylesheet" href="../common/style.css?v=0.40.11">
+<link rel="stylesheet" href="./migration.css?v=0.40.11">
 <script>if (window.parent !== window) document.documentElement.classList.add('framed');</script>
 </head>
 <body>
@@ -37,10 +37,11 @@
         <button data-view="overview" class="active">Inventaire</button>
         <button data-view="checks">Vérification<span class="spacer"></span><span id="nav-checks" class="mg-count"></span></button>
         <button data-view="export">Export</button>
-        <button data-view="multisite">Bascule multisite</button>
-        <button data-view="threecx">Import 3CX</button>
+        <button data-view="multisite" id="nav-ms" hidden>Bascule multisite<span class="spacer"></span><span class="mg-count s-warn">test</span></button>
+        <button data-view="3cx">Import 3CX</button>
       </nav>
       <div id="sidefoot" class="muted small"></div>
+      <button id="beta-toggle" class="linkbtn small">Fonctions en test…</button>
     </aside>
 
     <section id="workbench">
@@ -107,7 +108,7 @@
         <div id="ms"></div>
       </div>
 
-      <div id="v-threecx" class="view" hidden>
+      <div id="v-3cx" class="view" hidden>
         <div class="phonehead">
           <div>
             <h2>Import 3CX</h2>
@@ -124,6 +125,6 @@
     <div class="btnrow right"><button id="modal-cancel">Annuler</button><button id="modal-ok" class="primary">Confirmer</button></div></div></div>
   <div id="toast" class="toast" hidden></div>
 </div>
-<script type="module" src="./app.js?v=0.40.10"></script>
+<script type="module" src="./app.js?v=0.40.11"></script>
 </body>
 </html>

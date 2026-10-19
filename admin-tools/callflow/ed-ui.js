@@ -3,7 +3,7 @@
 // résumé dans le titre, une colonne aérée, aide sous les champs, options rares
 // derrière une case à cocher. Styles : classes cf-ge-* de callflow.css, dans un
 // conteneur .cf-ed (largeur du dialogue).
-import { esc, helpButton, helpBox } from '../common/core.js?v=0.40.10';
+import { esc, helpButton, helpBox } from '../common/core.js?v=0.40.11';
 
 // Section dépliable : le résumé (data-sum) est rempli par l'éditeur (recap).
 export const sec = (id, title, body, { open = false, help = '' } = {}) => `<details class="cf-ge-sec" data-sec="${id}"${open ? ' open' : ''}>

@@ -2,12 +2,12 @@
 // vérification du paramétrage et export JSON. Lecture seule.
 // Cadrage : astrea-wazo-dev/docs/MIGRATION-ASSISTANT.md.
 // Inventaire : inventory.js ; contrôles : checks.js ; export : export.js.
-import { S, $, esc, toast, connect, showCompat, setReadonly, loaded, loadFailed, stackVersion, helpButton, helpBox, confirmModal, downloadJson } from '../common/core.js?v=0.40.10';
-import { I, SOURCES, CATEGORIES, loadInventory, ctxLabel } from './inventory.js?v=0.40.10';
-import { runChecks, SEV } from './checks.js?v=0.40.10';
-import { buildExport, exportFileName } from './export.js?v=0.40.10';
-import { initMultisite, renderMultisite, loadJournalFile } from './multisite-ui.js?v=0.40.10';
-import { initThreecx, renderThreecx } from './threecx-ui.js?v=0.40.10';
+import { S, $, esc, toast, connect, showCompat, setReadonly, loaded, loadFailed, stackVersion, helpButton, helpBox, confirmModal, downloadJson } from '../common/core.js?v=0.40.11';
+import { I, SOURCES, CATEGORIES, loadInventory, ctxLabel } from './inventory.js?v=0.40.11';
+import { runChecks, SEV } from './checks.js?v=0.40.11';
+import { buildExport, exportFileName } from './export.js?v=0.40.11';
+import { initMultisite, renderMultisite, loadJournalFile } from './multisite-ui.js?v=0.40.11';
+import { init3cx, render3cx } from './3cx-ui.js?v=0.40.11';
 
 const TESTED_STACK = ['26.07'];
 const VIEW_KEY = 'astrea-migration-view-v1';
@@ -67,7 +67,7 @@ function renderAll() {
   renderChecks();
   renderExport();
   renderMultisite().catch((e) => console.error('[astrea] multisite', e));
-  renderThreecx();
+  render3cx();
   renderNavCounts();
   showView(A.view);
   const d = I.loadedAt;
@@ -77,16 +77,34 @@ function renderAll() {
 // ---------------------------------------------------------------------------
 // Navigation
 // ---------------------------------------------------------------------------
-const VIEWS = ['overview', 'checks', 'export', 'multisite', 'threecx'];
+const VIEWS = ['overview', 'checks', 'export', 'multisite', '3cx'];
+// Bascule multisite masquée tant qu'elle n'est pas testée en réel (décision de
+// Brice, 19/10/2026) : affichée avec ?beta=1, ou après confirmation via le lien
+// « Fonctions en test… » (retenu dans le navigateur ; dans le portail, l'adresse
+// du cadre vient du manifest et ne peut pas porter ?beta=1).
+const BETA_KEY = 'astrea-migration-beta';
+const BETA = { on: new URLSearchParams(location.search).has('beta') };
+try { BETA.on = BETA.on || localStorage.getItem(BETA_KEY) === '1'; } catch { /* */ }
+function applyBeta() {
+  $('nav-ms').hidden = !BETA.on;
+  $('beta-toggle').textContent = BETA.on ? 'Masquer les fonctions en test' : 'Fonctions en test…';
+  if (!BETA.on && A.view === 'multisite') showView('overview');
+}
+$('beta-toggle').onclick = () => {
+  const set = (on) => { BETA.on = on; try { localStorage.setItem(BETA_KEY, on ? '1' : '0'); } catch { /* */ } applyBeta(); };
+  if (BETA.on) return set(false);
+  confirmModal('<h3>Afficher les fonctions en test ?</h3><p>La <strong>bascule multisite</strong> modifie les contextes et les numéros du tenant. Elle n\'a été testée que sur un faux serveur : ne l\'utilisez que sur un tenant de test, export et journal à l\'appui.</p>', () => set(true), 'Afficher');
+};
 function showView(v) {
-  if (!VIEWS.includes(v)) v = 'overview';
+  if (!VIEWS.includes(v) || (v === 'multisite' && !BETA.on)) v = 'overview';
   A.view = v;
   try { localStorage.setItem(VIEW_KEY, v); } catch { /* */ }
   for (const b of $('nav').querySelectorAll('button')) b.classList.toggle('active', b.dataset.view === v);
   for (const x of VIEWS) $(`v-${x}`).hidden = x !== v;
 }
+applyBeta();
 initMultisite({ reload: () => boot() });
-initThreecx();
+init3cx();
 $('ms-jfile').onchange = (e) => { const f = e.target.files?.[0]; if (f) loadJournalFile(f); e.target.value = ''; };
 $('nav').addEventListener('click', (e) => { const b = e.target.closest('button[data-view]'); if (b) showView(b.dataset.view); });
 $('reload').onclick = () => boot();

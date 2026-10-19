@@ -1,13 +1,13 @@
 // Migration Assistant — vue « Import 3CX » (lot 4, première étape : analyse et
-// fiche de reprise, sans écriture dans Wazo). Lecteur : threecx.js.
-import { $, esc, toast, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.10';
-import { I } from './inventory.js?v=0.40.10';
-import { parse3cx, issuesOf, schedulesOf, destText, periodsText, wazoUsersCsv, redacted, nameOf, STRATEGY, STRATEGY_FR, KIND_FR } from './threecx.js?v=0.40.10';
+// fiche de reprise, sans écriture dans Wazo). Lecteur : 3cx.js.
+import { $, esc, toast, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.11';
+import { I } from './inventory.js?v=0.40.11';
+import { parse3cx, issuesOf, schedulesOf, destText, periodsText, wazoUsersCsv, redacted, nameOf, STRATEGY, STRATEGY_FR, KIND_FR } from './3cx.js?v=0.40.11';
 
 const X = { m: null, file: '', blfOffset: 1 };
 const SEV_FR = { error: 'Erreur', warn: 'À vérifier', info: 'Info' };
 
-export function initThreecx() {
+export function init3cx() {
   $('x3-file').onchange = (e) => {
     const f = e.target.files?.[0]; e.target.value = '';
     if (!f) return;
@@ -20,7 +20,7 @@ export function initThreecx() {
   };
 }
 // Rafraîchit la comparaison avec le tenant après une relecture de l'inventaire.
-export function renderThreecx() { if (X.m) draw(); }
+export function render3cx() { if (X.m) draw(); }
 
 function table(head, rows, cls = '') {
   return `<div class="tablewrap x3-table ${cls}"><table class="diff"><thead><tr>${head.map((h) => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${rows.join('') || `<tr><td colspan="${head.length}" class="muted">Aucun.</td></tr>`}</tbody></table></div>`;

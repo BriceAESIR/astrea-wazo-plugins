@@ -6,6 +6,9 @@
 .mg-count.s-error { background: color-mix(in srgb, var(--danger) 14%, var(--panel)); color: var(--danger); }
 .mg-count.s-warn { background: color-mix(in srgb, var(--warn) 16%, var(--panel)); color: var(--warn); }
 #sidefoot { margin-top: 16px; line-height: 1.5; }
+.linkbtn { display: inline; min-width: 0; padding: 0; margin-top: 8px; border: 0; background: none; color: var(--muted); text-transform: none; letter-spacing: normal; font-weight: 400; text-decoration: underline; cursor: pointer; }
+.linkbtn:hover:not(:disabled) { background: none; color: var(--accent); }
+#nav-ms .mg-count { margin-left: 6px; }
 #progress { margin: 0 0 12px; }
 
 /* Inventaire : une carte par catégorie */
@@ -104,8 +107,8 @@ input.short { width: 110px !important; }
 @media print {
   .topbar, #sidebar, .noprint, .helpbtn, .compat, #lookwarn { display: none !important; }
   #main, #main.no-detail { display: block !important; }
-  .view:not(#v-threecx) { display: none !important; }
-  #v-threecx { display: block !important; }
+  .view:not(#v-3cx) { display: none !important; }
+  #v-3cx { display: block !important; }
   .x3-sec { break-inside: auto; }
   .x3-table { border: 0; }
   .x3-table tr { break-inside: avoid; }
