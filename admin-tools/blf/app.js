@@ -131,7 +131,7 @@ const KEY_TYPES = {
     "Appelle le groupe d'appel (son numéro). Pas de supervision : Wazo écrit toujours une numérotation rapide (vérifié). Pour entrer ou sortir du groupe, utiliser « Membre d'un groupe »." },
   groupmember: { supDef: true, label: "Membre d'un groupe", short: 'Membre groupe', sup: true,
     fields: [{ p: 'group_id', list: 'group', label: 'Groupe' }, { p: 'action', label: 'Action', opts: ACTIONS_TOGGLE('Entrer dans le groupe', 'Sortir du groupe') }], help:
-    "Fait entrer ou sortir du groupe choisi l'utilisateur du poste (bascule = alterne entre les deux). Vérifié : Wazo code l'utilisateur, l'action et le groupe dans la touche. Voyant allumé quand il est membre : supposé, à tester." },
+    "Fait entrer ou sortir du groupe choisi l'utilisateur du poste (bascule = alterne). Vérifié (wazo-agid, dialplan) : il devient membre « dynamique » dans Asterisk, sans modifier les membres du groupe enregistrés dans Wazo ; il n'apparaît donc pas dans la liste des membres du portail. Le voyant s'allume quand il est dans le groupe. À choisir OU un membre fixe du groupe (ajouté dans la fiche du groupe) : la touche ne peut pas faire sortir un membre fixe (supposé, comportement d'Asterisk : à tester). Après un redémarrage d'Asterisk, les entrées par touche peuvent être perdues (à tester)." },
   queue: { label: "File d'attente", short: 'File', sup: false,
     fields: [{ p: 'queue_id', list: 'queue', label: 'File' }], help:
     "Appelle la file d'attente (son numéro). Pas de supervision : numérotation rapide (vérifié). Pour se connecter à une file en tant qu'agent, utiliser le type « Agent »." },
@@ -167,6 +167,33 @@ const KEY_TYPES = {
   onlinerec: { label: 'Enregistrement en ligne', short: 'Enregistrement', sup: false, fields: [], help:
     "Démarre ou arrête l'enregistrement de l'appel en cours. Pas de supervision : numérotation rapide (vérifié). L'enregistrement doit être autorisé pour l'utilisateur (supposé)." },
 };
+// Membres fixes d'un groupe (confd : members.users[].uuid), par id de groupe.
+// Une touche « Membre d'un groupe » ne peut pas faire sortir un membre fixe.
+// La liste /groups contient peut-être les membres (non vérifié) ; sinon
+// lecture du groupe. Erreur de lecture = ensemble vide (pas d'alerte).
+const GROUP_FIXED = new Map();
+async function loadGroupFixed(ids) {
+  await Promise.all([...new Set(ids)].filter((id) => !GROUP_FIXED.has(id)).map(async (id) => {
+    try {
+      const listed = (S.named.group || []).find((g) => g.id === id);
+      const g = listed?.members ? listed : await api('GET', `/groups/${id}`);
+      GROUP_FIXED.set(id, new Set((g.members?.users || []).map((m) => m.uuid)));
+    } catch (e) { console.warn('[astrea] membres du groupe', id, e.message); GROUP_FIXED.set(id, new Set()); }
+  }));
+}
+// Touches « Membre d'un groupe » d'un jeu de touches dont l'utilisateur est
+// membre fixe : [{ p, gid }]. undefined si des groupes restent à lire.
+function fixedMemberHits(uuid, keys) {
+  const hits = [];
+  for (const [p, k] of Object.entries(keys)) {
+    if (k?.destination.type !== 'groupmember') continue;
+    const f = GROUP_FIXED.get(k.destination.group_id);
+    if (!f) return undefined;
+    if (f.has(uuid)) hits.push({ p: Number(p), gid: k.destination.group_id });
+  }
+  return hits;
+}
+const groupName = (id) => { const g = (S.named.group || []).find((x) => x.id === id); return g ? LISTS.group.name(g) : `#${id}`; };
 // Liste utilisée par un type pour un paramètre donné (ex. park_position → parking).
 const listOf = (type) => (KEY_TYPES[type]?.fields || []).filter((f) => f.list).map((f) => f.list);
 function supOf(d) {
@@ -592,7 +619,7 @@ const lineCache = new Map(); // id de ligne → ligne confd (position, device_id
 // Oublie ce qui est en cache pour un poste (relu au prochain accès) : options
 // provd et positions de ses lignes. Sans argument : tous les postes.
 function forgetDevice(dev) {
-  if (!dev) { lineCache.clear(); provdLinesCache.clear(); provdLabelsCache.clear(); return; }
+  if (!dev) { lineCache.clear(); provdLinesCache.clear(); provdLabelsCache.clear(); GROUP_FIXED.clear(); return; }
   provdLinesCache.delete(dev.id); provdLabelsCache.delete(dev.id);
   for (const x of S.users) for (const l of x.lines || []) if (l.device_id === dev.id) lineCache.delete(l.id);
 }
@@ -659,6 +686,7 @@ function shiftLineClashes(slots, orig, lineKeys) {
 let selectSeq = 0;
 async function selectUser(u, devIdx = 0) {
   const seq = ++selectSeq; // clics rapides : seule la dernière demande s'applique
+  GROUP_FIXED.clear(); // membres fixes relus (modifiables dans le portail entre-temps)
   const devs = userDevices(u);
   if (devIdx >= devs.length) devIdx = 0;
   const dev = devs[devIdx] || null;
@@ -908,6 +936,16 @@ function renderEditor() {
       const over = capD != null ? used.filter((p) => p > capD) : [];
       if (over.length) warns.push(`<span class="error">Positions ${over.join(', ')} au-delà de la capacité du ${esc(devLabel(d))} (${capD} touches, modules compris) : absentes sur ce poste.</span>`);
       else if (capD == null) warns.push(`Capacité du ${esc(devLabel(d))} inconnue : vérifiez que les touches y tiennent.`);
+    }
+  }
+  if (!isTpl) {
+    const slotMap = Object.fromEntries(c.slots.map((k, i) => [i + 1, k]).filter(([, k]) => k));
+    const hits = fixedMemberHits(c.user.uuid, slotMap);
+    if (hits === undefined) {
+      const ids = Object.values(slotMap).filter((k) => k.destination.type === 'groupmember').map((k) => k.destination.group_id);
+      ensureNamed('groupmember').then(() => loadGroupFixed(ids)).then(() => { if (S.cur === c) renderEditor(); });
+    } else if (hits.length) {
+      warns.push(`<span class="error">${hits.map((h) => `Touche ${h.p}`).join(', ')} « Membre d'un groupe » : ${esc(fullName(c.user))} est <strong>membre fixe</strong> du groupe ${hits.map((h) => `« ${esc(groupName(h.gid))} »`).filter((v, i, a) => a.indexOf(v) === i).join(', ')} dans Wazo. La touche ne pourra pas l'en faire sortir (supposé, comportement d'Asterisk : à tester). Choisir l'un ou l'autre : retirer l'utilisateur des membres du groupe pour le gérer par touche, ou supprimer la touche.</span>`);
     }
   }
   if (c.clash) warns.push(`${c.clash} touche(s) étaient placées dans Wazo sur des positions de ligne (masquées par les touches ligne) : elles ont été décalées juste après les lignes. Vérifiez puis enregistrez pour corriger.`);
@@ -1938,6 +1976,10 @@ async function previewDeploy() {
   if (!KI.loaded) { btn.textContent = 'Lecture des étiquettes…'; await loadKeyIndex(); } // libellés des touches posées
   D.plan = [];
   const rows = [];
+  // Groupes visés par des touches « Membre d'un groupe » de la source : membres fixes lus d'avance.
+  GROUP_FIXED.clear();
+  const gmIds = Object.values(D.src || {}).filter((k) => k?.destination.type === 'groupmember').map((k) => k.destination.group_id);
+  if (gmIds.length) { btn.textContent = 'Lecture des groupes…'; await ensureNamed('groupmember'); await loadGroupFixed(gmIds); }
   for (const [i, u] of users.entries()) {
     btn.textContent = `Lecture ${i + 1}/${users.length}…`;
     try {
@@ -1965,8 +2007,11 @@ async function previewDeploy() {
           if (hit.length) sharedNote = `<span class="error">masque la ligne du compte en position ${hit.join(', ')}</span>`;
         }
       }
+      await loadGroupFixed(Object.values(keys).filter((k) => k?.destination.type === 'groupmember').map((k) => k.destination.group_id)); // touches déjà posées (mode à la suite)
+      const fixed = fixedMemberHits(u.uuid, keys) || [];
       const notes = [
         sharedNote,
+        fixed.length && `<span class="error">membre fixe de ${[...new Set(fixed.map((h) => `« ${esc(groupName(h.gid))} »`))].join(', ')} : la touche ${fixed.map((h) => h.p).join(', ')} ne pourra pas l'en faire sortir</span>`,
         linesChanged && `touches ligne ${lineKeysOf(u)} → ${lines}`,
         linesSkipped && `<span class="error">touches ligne multiples non gérées pour cette marque : ${lineKeysOf(u) + 1 === D.srcLines ? `position ${D.srcLines} laissée vide` : `positions ${lineKeysOf(u) + 1}–${D.srcLines} laissées vides`}</span>`,
         selfRemoved && 'sa propre touche retirée', inh && `${inh} héritée(s) inchangée(s)`,
@@ -2016,7 +2061,7 @@ async function applyDeploy() {
 // Format : { app, version, created, base, tenant, reason, entries: [{ uuid,
 // name, userfield, keys }] } — keys = touches propres (hors héritées).
 const BK_STORE = 'astrea-blf-last-backup';
-const APP_VERSION = '0.40.14';
+const APP_VERSION = '0.40.15';
 function makeBackup(reason, entries) {
   const bk = { app: 'astrea-blf', version: APP_VERSION, created: new Date().toISOString(), base: S.base, tenant: S.tenant, reason, entries };
   const json = JSON.stringify(bk, null, 1);

@@ -118,6 +118,18 @@ dans `app.js`.
   une annonce dans les enregistrements du locataire (« Enregistrer une
   annonce ») ; `directoryaccess` : aucun contexte dans le dialplan actuel, sans
   effet probable (supposé) ; `pickup` : groupe d'interception (supposé).
+- Membre d'un groupe (0.40.15) : vérifié dans wazo-agid (`group_member.py`) et
+  le dialplan (`extensions_lib_group.conf`) : la touche ajoute / retire un
+  membre **dynamique** Asterisk (`AddQueueMember` / `RemoveQueueMember`), sans
+  toucher aux membres du groupe enregistrés dans confd (absent de la liste du
+  portail) ; le voyant est mis à jour (`phone_progfunckey_devstate`). Un membre
+  **fixe** du groupe (fiche du groupe) ne peut pas être retiré par la touche
+  (supposé, Asterisk refuse de retirer un membre statique : à tester) → choisir
+  l'un OU l'autre. L'appli lit les membres fixes (`members.users[].uuid` de
+  `/groups`, ou `GET /groups/{id}`) et alerte dans l'éditeur et dans l'aperçu
+  du déploiement en masse. À tester : survie des entrées par touche à un
+  redémarrage d'Asterisk (`persistentmembers`), et lien avec Wazo Desktop
+  (même état que la touche ?).
 - La case Supervision est **masquée** (« Pas de supervision pour ce type de
   touche ») quand le type n'en a pas, dès qu'il est choisi dans le menu
   (0.30.1 : avant, elle gardait l'état de l'ancien type) ; elle est cochée d'office

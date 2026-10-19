@@ -10,12 +10,12 @@
 //  - trunks : PUT /outcalls/{id}/trunks {trunks:[{id}]}, ordre = priorité.
 // wazo-agid (outgoingfeatures.py) : seuls strip_digits et external_prefix
 // changent le numéro envoyé ; « prefix » est lu mais pas appliqué.
-import { $, esc, confirmModal, helpButton, helpBox, canWrite } from '../common/core.js?v=0.40.14';
+import { $, esc, confirmModal, helpButton, helpBox, canWrite } from '../common/core.js?v=0.40.15';
 // Création de l'autorisation « interdit-118 » liée au tenant des données chargées (tapi, model.js).
-import { M, listOf, nodeInfo, tapi as api } from './model.js?v=0.40.14';
-import { sec, field, check, setSums, openSec } from './ed-ui.js?v=0.40.14';
-import { bindNewSchedule, schedValue } from './create.js?v=0.40.14';
-import { describePattern, comparePatterns, dialedNumber, matches, famLabel } from './dialsim.js?v=0.40.14';
+import { M, listOf, nodeInfo, tapi as api } from './model.js?v=0.40.15';
+import { sec, field, check, setSums, openSec } from './ed-ui.js?v=0.40.15';
+import { bindNewSchedule, schedValue } from './create.js?v=0.40.15';
+import { describePattern, comparePatterns, dialedNumber, matches, famLabel } from './dialsim.js?v=0.40.15';
 
 export const OUTCALL_FIELDS = ['name', 'description', 'enabled', 'ring_time', 'internal_caller_id', 'preprocess_subroutine'];
 const DP = ['exten', 'strip_digits', 'external_prefix', 'prefix', 'caller_id'];
