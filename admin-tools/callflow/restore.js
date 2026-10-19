@@ -7,17 +7,17 @@
 // montrés une seule fois (jamais enregistrés dans un fichier).
 // Non restauré automatiquement : un numéro interne changé (risque de collision
 // si le numéro a été réattribué) — signalé.
-import { S, $, esc, toast, confirmModal, downloadJson, fullName } from '../common/core.js?v=0.40.8';
+import { S, $, esc, toast, confirmModal, downloadJson, fullName } from '../common/core.js?v=0.40.9';
 // Restauration liée au tenant des données chargées (tapi, model.js).
-import { M, tapi as api } from './model.js?v=0.40.8';
-import { cleanDest } from './write.js?v=0.40.8';
-import { redact, SECRET_KEYS } from './ed-ui.js?v=0.40.8';
-import { GROUP_FIELDS } from './group-editor.js?v=0.40.8';
-import { QUEUE_FIELDS } from './queue-editor.js?v=0.40.8';
-import { IVR_FIELDS } from './ivr-editor.js?v=0.40.8';
-import { SB_FIELDS } from './sb-editor.js?v=0.40.8';
-import { INCALL_FIELDS, USER_FIELDS, VM_FIELDS, CONF_FIELDS, SCHED_FIELDS } from './obj-editors.js?v=0.40.8';
-import { OUTCALL_FIELDS } from './outcall-editor.js?v=0.40.8';
+import { M, tapi as api } from './model.js?v=0.40.9';
+import { cleanDest } from './write.js?v=0.40.9';
+import { redact, SECRET_KEYS } from './ed-ui.js?v=0.40.9';
+import { GROUP_FIELDS } from './group-editor.js?v=0.40.9';
+import { QUEUE_FIELDS } from './queue-editor.js?v=0.40.9';
+import { IVR_FIELDS } from './ivr-editor.js?v=0.40.9';
+import { SB_FIELDS } from './sb-editor.js?v=0.40.9';
+import { INCALL_FIELDS, USER_FIELDS, VM_FIELDS, CONF_FIELDS, SCHED_FIELDS } from './obj-editors.js?v=0.40.9';
+import { OUTCALL_FIELDS } from './outcall-editor.js?v=0.40.9';
 
 const HIDDEN = '***';
 // Audit du 16/10/2026 : la sauvegarde est un fichier que l'on peut modifier ; on ne
@@ -76,6 +76,7 @@ const sub = (path) => {
 function undo(e, secrets) {
   const m = e.method || 'PUT', p = e.path, b = e.before;
   if (!safePath(p) || !['PUT', 'POST', 'DELETE'].includes(m)) return { skip: 'chemin ou méthode refusé (sauvegarde modifiée ?)' };
+  if (e.supprime) return { skip: 'objet supprimé : à recréer à la main (ses réglages sont dans cette sauvegarde, il aura un nouvel identifiant)' };
   if (e.numero && /^\/users\/[^/]+\/voicemails/.test(p)) return { skip: 'utilisateur associé ou retiré d\'une messagerie : à remettre à la main' };
   if (e.numero) return { skip: /^\/outcalls\//.test(p) || /^\/extensions\//.test(p) ? 'motif ou numéro (règle sortante, SDA) ajouté, retiré ou modifié : à remettre à la main' : 'numéro interne changé : à remettre à la main (l\'ancien numéro a pu être réattribué)' };
   if (R('^/(incalls|users|groups|queues|outcalls)/ID/schedules/[0-9]+$').test(p) || R('^/(users|groups|outcalls)/ID/callpermissions/[0-9]+$').test(p)) return [{ method: m === 'DELETE' ? 'PUT' : 'DELETE', path: p }];

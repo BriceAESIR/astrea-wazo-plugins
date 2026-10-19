@@ -3,22 +3,22 @@
 // déposer (lot 2a, brouillon puis aperçu, sauvegarde, écriture).
 // Cadrage : astrea-wazo-dev/docs/CALLFLOW-MANAGER.md.
 // Modèle (sources confd vérifiées) : model.js ; canevas : canvas.js ; écriture : write.js.
-import { S, $, esc, fullName, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.40.8';
-import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, loadTrunkOperators, scanGroupKeys, buildTree, landingAt, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel, periodText, STRATEGY, QSTRAT, baseKey, gateOf, loadBlocklist, blockedBy, dialUser, entryChains, isGlob, numMatch, showNum } from './model.js?v=0.40.8';
-import { createCanvas } from './canvas.js?v=0.40.8';
-import { getDest, setDest, sameValue, prepare, execute } from './write.js?v=0.40.8';
-import { openScheduleEditor } from './sched-editor.js?v=0.40.8';
-import { openGroupEditor, groupCfgDiff } from './group-editor.js?v=0.40.8';
-import { openQueueEditor, queueCfgDiff, agentName } from './queue-editor.js?v=0.40.8';
-import { openIvrEditor, ivrCfgDiff } from './ivr-editor.js?v=0.40.8';
-import { openSbEditor, sbCfgDiff } from './sb-editor.js?v=0.40.8';
-import { redact } from './ed-ui.js?v=0.40.8';
-import { openRestore } from './restore.js?v=0.40.8';
-import { openIncallEditor, incallCfgDiff, openUserEditor, userCfgDiff, openVmEditor, vmCfgDiff, openConfEditor, confCfgDiff, openSchedGenEditor, schedCfgDiff } from './obj-editors.js?v=0.40.8';
-import { openDestEditor, ENTITY_DEST } from './dest-editor.js?v=0.40.8';
-import { openOutcallEditor, outcallCfgDiff } from './outcall-editor.js?v=0.40.8';
-import { openCreate, openCreateIncall, CREATABLE, LABEL, bindNewSchedule, schedValue } from './create.js?v=0.40.8';
-import { simulate, userContext, simPath } from './dialsim.js?v=0.40.8';
+import { S, $, esc, fullName, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.40.9';
+import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, loadTrunkOperators, scanGroupKeys, buildTree, landingAt, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel, periodText, STRATEGY, QSTRAT, baseKey, gateOf, loadBlocklist, blockedBy, dialUser, entryChains, isGlob, numMatch, showNum, usagesOf, destTarget } from './model.js?v=0.40.9';
+import { createCanvas } from './canvas.js?v=0.40.9';
+import { getDest, setDest, sameValue, prepare, execute } from './write.js?v=0.40.9';
+import { openScheduleEditor, pickerHtml, bindPicker, readPicker } from './sched-editor.js?v=0.40.9';
+import { openGroupEditor, groupCfgDiff } from './group-editor.js?v=0.40.9';
+import { openQueueEditor, queueCfgDiff, agentName } from './queue-editor.js?v=0.40.9';
+import { openIvrEditor, ivrCfgDiff } from './ivr-editor.js?v=0.40.9';
+import { openSbEditor, sbCfgDiff } from './sb-editor.js?v=0.40.9';
+import { redact } from './ed-ui.js?v=0.40.9';
+import { openRestore } from './restore.js?v=0.40.9';
+import { openIncallEditor, incallCfgDiff, openUserEditor, userCfgDiff, openVmEditor, vmCfgDiff, openConfEditor, confCfgDiff, openSchedGenEditor, schedCfgDiff } from './obj-editors.js?v=0.40.9';
+import { openDestEditor, ENTITY_DEST } from './dest-editor.js?v=0.40.9';
+import { openOutcallEditor, outcallCfgDiff } from './outcall-editor.js?v=0.40.9';
+import { openCreate, openCreateIncall, CREATABLE, LABEL, bindNewSchedule, schedValue } from './create.js?v=0.40.9';
+import { simulate, userContext, simPath } from './dialsim.js?v=0.40.9';
 
 const TESTED_STACK = ['26.07'];
 const NAV = [
@@ -158,6 +158,8 @@ function draw(keepView = false) {
   const sig = C.simR ? `${C.root}|${td}|${C.simR.steps.map((s) => s.key).join('>')}` : '';
   if (sig && sig !== C.simSig) C.canvas.fit(simKeys());
   C.simSig = sig;
+  // Cartes dont la suppression est dans le brouillon.
+  for (const el of document.querySelectorAll('.cf-node[data-key]')) el.classList.toggle('cf-deleting', !!M.deleting?.has(baseKey(el.dataset.key)));
   renderTime();
   renderFollow();
   autoScanKeys();
@@ -479,9 +481,10 @@ function showDetail(n) {
       const own = schedOwner(n.key), ot = ownerTitle({ key: own }), has = (entity(own).obj.schedules || []).length;
       return `<div class="dsec"><h4>Horaire de ${esc(ot)}</h4><div class="btnrow"><button id="d-sched" title="Choisir quel horaire est vérifié avant ${esc(ot)} (ne change pas les heures de l'horaire ; brouillon)">${has ? 'Remplacer par un autre horaire…' : 'Associer un horaire…'}</button>${entity(n.key).owner ? `<button id="d-unsched" class="danger" title="${esc(ot)} n'aura plus d'horaire : ses appels passent toujours (brouillon ; touche Suppr)">Retirer l'horaire de ${esc(ot)}</button>` : ''}</div></div>`;
     })() : ''}
-    ${C.edit && C.dir === 'out' && cfgOfNode(n) ? `<div class="btnrow"><button id="d-group" class="primary" title="Toutes les options de l'objet, en sections dépliables (brouillon)">${CFG_LABEL[cfgOfNode(n).k]}</button></div>` : ''}
+    ${C.dir === 'out' && cfgOfNode(n) && (C.edit || !S.readonly) ? `<div class="btnrow"><button id="d-group" class="primary" title="Toutes les options de l'objet, en sections dépliables (brouillon)${C.edit ? '' : ' ; passe en mode édition'}">${CFG_LABEL[cfgOfNode(n).k]}</button></div>` : ''}
     ${C.edit && n.key.startsWith('schedule:') ? (() => { const sc = entity(n.key).obj; const u = schedUsage(sc); return `<div class="btnrow"><button id="d-periods" class="primary" title="Change les heures d'ouverture, la destination si fermé et les fermetures exceptionnelles de l'horaire « ${esc(sc.name)} ». ${u > 1 ? `Il est utilisé par ${u} objets : tous sont concernés.` : 'Le changement vaut pour tout objet qui utilise cet horaire.'} (brouillon)">Modifier les heures de « ${esc(sc.name)} »…</button></div>${u > 1 ? `<p class="small muted">Horaire partagé par ${u} objets : modifier ses heures les concerne tous.</p>` : ''}`; })() : ''}
     ${C.edit && C.dir === 'out' && !entity(n.key).owner && incomingPort(n) ? `<div class="btnrow"><button id="d-replace" title="Choisir une autre destination pour la sortie « ${esc(incomingPort(n).p.label)} » de ${esc(ownerTitle(incomingPort(n).n))} (brouillon)">Remplacer…</button><button id="d-remove" class="danger" title="Vide la sortie « ${esc(incomingPort(n).p.label)} » de ${esc(ownerTitle(incomingPort(n).n))} (brouillon ; touche Suppr)">Retirer de cette sortie</button></div>` : ''}
+    ${C.edit && C.dir === 'out' && delOfNode(n) ? `<div class="btnrow"><button id="d-del" class="danger" title="Montre où l'objet est utilisé, propose un remplacement pour chaque usage, puis le supprime de Wazo à la fin de « Appliquer… » (brouillon)">${M.deleting?.has(delOfNode(n)) ? 'Suppression prévue (brouillon)' : delOfNode(n).startsWith('schedule:') ? `Supprimer l'horaire « ${esc(entity(delOfNode(n)).obj.name)} »…` : 'Supprimer…'}</button></div>` : ''}
     ${C.edit && !n.leaf && (baseKey(n.key).startsWith('trunk:') || (baseKey(n.key).startsWith('context:') && entity(n.key).obj?.type === 'incall')) ? '<div class="btnrow"><button id="d-newinc" title="Créer une SDA à partir des plages déclarées dans ce contexte entrant (numéros sans SDA)">Créer une SDA dans ce contexte…</button></div>' : ''}
     ${n.leaf ? '' : `<div class="dsec"><h4>Arrive depuis</h4>${refs}</div>`}
     ${n.leaf ? '' : `<div class="btnrow">${baseKey(n.key) !== C.root ? '<button id="d-root" class="primary">Partir de cette carte</button>' : ''}<button id="d-in">${C.dir === 'in' && n.key === C.root ? 'Où vont les appels' : 'Qui arrive ici'}</button></div>`}`;
@@ -493,7 +496,9 @@ function showDetail(n) {
   const ds = $('d-sched'); if (ds) ds.onclick = () => openSchedule(schedOwner(n.key));
   const du = $('d-unsched'); if (du) du.onclick = removeSelected;
   const dp = $('d-periods'); if (dp) dp.onclick = () => openPeriods(entity(n.key).id);
-  const dg = $('d-group'); if (dg) dg.onclick = () => openCfg(cfgOfNode(n));
+  // Hors mode édition (retour de Brice : « je vois pas où modifier la SDA ») : le bouton passe en mode édition puis ouvre le réglage.
+  const dd = $('d-del'); if (dd) dd.onclick = () => (M.deleting?.has(delOfNode(n)) ? toast('Suppression déjà dans le brouillon : retirez-la du brouillon pour l\'annuler.', 6000) : openDelete(delOfNode(n)));
+  const dg = $('d-group'); if (dg) dg.onclick = () => { const c = cfgOfNode(n); if (!C.edit) setEdit(true); openCfg(c); };
   const dni = $('d-newinc'); if (dni) dni.onclick = () => { const o = entity(n.key).obj; newIncall(o?.type === 'incall' ? o.name : o?.context); };
   const i = $('d-in'); if (i) i.onclick = () => { if (baseKey(n.key) !== C.root) setRoot(n.key); setDir(C.dir === 'in' && baseKey(n.key) === C.root ? 'out' : 'in'); };
   for (const li of $('d-body').querySelectorAll('.cf-refs li')) li.onclick = () => setRoot(li.dataset.key);
@@ -657,8 +662,10 @@ function openDest(t, preset = {}) {
     periods: sched ? { name: sched.name, shared: schedUsage(sched), open: () => openPeriods(sched.id) } : null },
   (d) => addDraft(p.w, d, { where: whereOf(n, p), slot: p.label }));
 }
+const VM_ACCESS = { personal: 'personnelle', global: 'partagée' };
 // Libellé d'une valeur du brouillon (destination, horaire associé, plages).
 function valLabel(w, v) {
+  if (w.k === 'del') return v ? 'SUPPRIMÉ de Wazo (définitif)' : 'conservé';
   if (w.k === 'group_cfg') {
     // Résumé comparable avant / après d'un réglage de groupe.
     const f = v?.fields || {};
@@ -698,10 +705,10 @@ function valLabel(w, v) {
   // Réglages simples (obj-editors.js) : liste des champs renseignés.
   // Codes jamais affichés (SECRET_KEYS) : « *** ».
   if (/^(incall|vm|conf|schedgen)_cfg$/.test(w.k)) {
-    const FL = { name: 'nom', number: 'n°', context: 'contexte', email: 'e-mail', description: 'description', timezone: 'fuseau', enabled: 'activé', password: 'code', pin: 'code participant', admin_pin: 'code animateur',
+    const FL = { name: 'nom', number: 'n°', context: 'contexte', accesstype: 'type', email: 'e-mail', description: 'description', timezone: 'fuseau', enabled: 'activé', password: 'code', pin: 'code participant', admin_pin: 'code animateur',
       language: 'langue', max_messages: 'messages max.', attach_audio: 'pièce jointe', delete_messages: 'suppression après envoi', ask_password: 'demande du code', pager: 'pager', max_users: 'participants max.', record: 'enregistrée',
       music_on_hold: 'musique', preprocess_subroutine: 'sous-routine', caller_id_mode: 'nom affiché', caller_id_name: 'texte', greeting_sound: 'accueil', quiet_join_leave: 'arrivées silencieuses', announce_join_leave: 'annonce des arrivées', announce_user_count: 'nombre annoncé', announce_only_user: '« vous êtes seul »' };
-    return Object.entries(redact(v?.fields || {})).filter(([, x]) => x !== null && x !== '' && x !== false).map(([k, x]) => (x === true ? FL[k] || k : `${FL[k] || k} ${x}`)).join(' · ') || '—';
+    return Object.entries(redact(v?.fields || {})).filter(([, x]) => x !== null && x !== '' && x !== false).map(([k, x]) => (x === true ? FL[k] || k : `${FL[k] || k} ${VM_ACCESS[x] || x}`)).join(' · ') || '—';
   }
   if (w.k !== 'sched_periods') return destLabel(v);
   const o = (v?.open_periods || []).map(periodText).join(' ; ') || 'aucune plage (toujours fermé)';
@@ -789,7 +796,99 @@ const openCfg = (c) => {
   if (c.k === 'group') openGroupFor(c.id); else if (c.k === 'queue') openQueueFor(c.id); else if (c.k === 'ivr') openIvrFor(c.id); else if (c.k === 'switchboard') openSbFor(c.id);
   else if (c.k === 'user') openUserFor(c.id); else if (c.k === 'outcall') openOutcallFor(c.id); else openSimpleFor(c.k, c.id);
 };
-// Objet réglable concerné par une carte : le groupe / la file / le SVI, leur
+// ---------------------------------------------------------------------------
+// Supprimer un objet (demande de Brice, 19/10/2026 : « montrer où il est
+// utilisé, et proposer un remplacement »). Chaque usage reçoit un remplacement
+// (brouillon habituel), puis la suppression est la DERNIÈRE écriture
+// (write.js : sautée si un remplacement a échoué).
+// Vérifié dans wazo-confd / xivo-dao :
+//  - aucun refus, sauf une messagerie encore associée à des utilisateurs
+//    (AssociatedToUser) → ils sont d'abord dissociés ou déplacés ;
+//  - les destinations qui pointaient vers l'objet (SDA, débordements, SVI) sont
+//    effacées par Wazo (une touche de SVI disparaît) ; la fermeture et les
+//    fermetures exceptionnelles d'un horaire, elles, restent pointées vers un
+//    objet disparu → tout est remplacé ici avant ;
+//  - touches de fonction visant l'objet, membres, horaire associé,
+//    autorisations : supprimés par Wazo ; numéros seulement libérés (supprimés
+//    ensuite par le module) ; messagerie : messages effacés.
+// ---------------------------------------------------------------------------
+const DEL_TYPES = new Set(['group', 'queue', 'ivr', 'switchboard', 'conference', 'voicemail', 'schedule', 'outcall', 'incall']);
+const DEL_NOTE = {
+  group: 'Wazo supprime aussi ses membres, son horaire associé, ses autorisations d\'appel et les touches de fonction des postes qui le visent (BLF, inscription).',
+  queue: 'Wazo supprime aussi ses membres (agents et utilisateurs), son horaire associé et les touches de fonction des postes qui la visent.',
+  ivr: 'Wazo supprime aussi ses touches.',
+  switchboard: 'Wazo supprime aussi la liste de ses opérateurs.',
+  conference: 'Wazo supprime aussi les touches de fonction des postes qui la visent.',
+  voicemail: 'Wazo efface aussi les messages enregistrés dans la boîte.',
+  schedule: 'Wazo retire aussi l\'horaire des objets qui l\'utilisent.',
+  outcall: 'Wazo supprime aussi ses motifs, ses trunks associés, son horaire et ses autorisations d\'appel.',
+  incall: 'Wazo supprime aussi son horaire associé.',
+};
+function delOfNode(n) {
+  if (!n || n.leaf) return null;
+  const k = baseKey(n.key); const e = entity(k);
+  // Carte horaire « condition » (devant l'objet qu'elle garde) : c'est l'horaire lui-même qu'on supprime.
+  if (e.type === 'schedule' && e.obj) return `schedule:${e.id}`;
+  return !e.owner && e.obj && DEL_TYPES.has(e.type) ? k : null;
+}
+function openDelete(k) {
+  const { type, obj } = entity(k); if (!obj) return;
+  const what = `${TYPES[type]?.label || type} « ${nodeInfo(k).title} »`;
+  const us = usagesOf(k);
+  const fromTxt = (u) => { if (!u.from) return 'Utilisateur'; const i = nodeInfo(u.from); return `${TYPES[i.type]?.label || ''} ${i.title}`.trim(); };
+  const isSelf = (d) => { const t = destTarget(d); return !!t?.key && (entity(t.key).owner || baseKey(t.key)) === k; };
+  const otherVm = (M.lists.voicemail || []).filter((v) => v !== obj && v.accesstype !== 'global');
+  const otherSched = listOf('schedule').filter((x) => x.key !== k);
+  const dests = us.map((u, i) => [u, i]).filter(([u]) => u.kind === 'dest');
+  const ctl = (u, i) => {
+    if (u.kind === 'dest') return pickerHtml(`del-r${i}`, null);
+    if (u.kind === 'sched') return `<select data-dsch="${i}"><option value="">Aucun : toujours ouvert</option>${otherSched.map((x) => `<option value="${esc(x.key.slice(9))}">${esc(x.title)}</option>`).join('')}</select>`;
+    if (u.kind === 'vmuser') return `<select data-dvm="${i}"><option value="">Aucune messagerie</option>${otherVm.map((v) => `<option value="${v.id}">${esc(v.name)}</option>`).join('')}</select>`;
+    return '<span class="small muted">à modifier à la main</span>';
+  };
+  confirmModal(`<div class="cf-ed">
+    <div class="cf-ge-head"><div><h3>Supprimer ${esc(what)}</h3><div class="small muted">${us.length ? `Utilisé à ${us.length} endroit${us.length > 1 ? 's' : ''} : choisissez un remplacement pour chacun.` : 'Utilisé nulle part dans ce que le module lit.'}</div></div></div>
+    <div class="warn"><span><strong>Définitif.</strong> La suppression est la dernière écriture de « Appliquer… », faite seulement si tous les remplacements ont réussi. ${esc(DEL_NOTE[type] || '')}${['group', 'queue', 'conference', 'outcall', 'incall'].includes(type) && (obj.extensions || []).length ? ' Ses numéros sont aussi supprimés (Wazo les garderait, libres mais pris).' : ''} La sauvegarde JSON garde ses réglages, mais un objet recréé aura un nouvel identifiant.</span></div>
+    ${dests.length > 1 ? `<div class="cf-ge-f"><span class="cf-ge-l">Remplacer partout par</span><span class="cf-ge-row">${pickerHtml('del-all', null)}<button type="button" id="del-allb">Appliquer à toutes les sorties</button></span></div>` : ''}
+    ${us.length ? `<table class="cf-del-t"><thead><tr><th>Où</th><th>Usage</th><th>Remplacé par</th></tr></thead><tbody>${us.map((u, i) => `<tr><td>${esc(fromTxt(u))}</td><td>${esc(u.label)}</td><td>${ctl(u, i)}</td></tr>`).join('')}</tbody></table>
+    ${dests.length ? '<p class="small muted">Sortie laissée sur « Aucune » : l\'appel n\'y va plus (touche de SVI : retirée du menu).</p>' : ''}${us.some((u) => u.kind === 'info') ? '<p class="small muted">Renvois et numéros à faire sonner (texte libre) : à corriger à la main.</p>' : ''}` : ''}
+    <p id="del-err" class="error small"></p></div>`, () => {
+    const box = $('modal-body');
+    const err = (m) => { $('del-err').textContent = m; return false; };
+    const plan = [];
+    for (const [u, i] of us.map((x, j) => [x, j])) {
+      if (u.kind === 'dest') {
+        let d; try { d = readPicker(`del-r${i}`); } catch (e) { return err(`${fromTxt(u)} · ${u.label} : ${e.message}`); }
+        if (d && isSelf(d)) return err(`${fromTxt(u)} · ${u.label} : choisissez un autre objet que celui qu'on supprime.`);
+        plan.push(() => addDraft(u.w, d, { where: fromTxt(u), slot: u.label }));
+      }
+      if (u.kind === 'sched') { const s = box.querySelector(`[data-dsch="${i}"]`).value; plan.push(() => addDraft(u.w, s ? { type: 'schedule', schedule_id: Number(s) } : null, { where: fromTxt(u), slot: 'Horaire' })); }
+    }
+    // Messagerie : utilisateurs déplacés vers une autre boîte ou dissociés (obligatoire avant la suppression, vérifié).
+    const vmu = us.map((u, i) => [u, i]).filter(([u]) => u.kind === 'vmuser');
+    if (vmu.length) {
+      const vmAdd = (v, uuids, rm) => { const w = { k: 'vm_cfg', id: String(v.id), f: 'cfg', key: `vm_cfg:${v.id}:cfg` }; const cur = C.draft.get(w.key)?.after || getDest(w); const users = rm ? [] : [...new Set([...(cur.users || []), ...uuids])].sort(); addDraft(w, { ...cur, users }, { where: `Messagerie ${v.name}`, slot: 'Réglages de la messagerie' }); };
+      const to = new Map();
+      for (const [u, i] of vmu) { const t = box.querySelector(`[data-dvm="${i}"]`).value; if (t) { if (!to.has(t)) to.set(t, []); to.get(t).push(u.uuid); } }
+      plan.push(() => vmAdd(obj, [], true));
+      for (const [id, uuids] of to) plan.push(() => vmAdd(M.by.voicemail.get(String(id)), uuids, false));
+    }
+    for (const p of plan) p();
+    addDraft({ k: 'del', id: k, f: 'del', key: `del:${k}:del` }, true, { where: what, slot: 'Suppression' });
+    toast(`Suppression de ${what} ajoutée au brouillon (avec ses remplacements). Rien n'est écrit avant « Appliquer… ».`, 7000);
+    return true;
+  }, 'Ajouter la suppression au brouillon');
+  for (const [, i] of dests) bindPicker(`del-r${i}`);
+  if ($('del-all')) {
+    bindPicker('del-all');
+    $('del-allb').onclick = () => {
+      let d; try { d = readPicker('del-all'); } catch (e) { $('del-err').textContent = e.message; return; }
+      if (d && isSelf(d)) { $('del-err').textContent = 'Choisissez un autre objet que celui qu\'on supprime.'; return; }
+      $('del-err').textContent = '';
+      for (const [, i] of dests) { $(`del-r${i}`).outerHTML = pickerHtml(`del-r${i}`, d); bindPicker(`del-r${i}`); }
+    };
+  }
+}// Objet réglable concerné par une carte : le groupe / la file / le SVI, leur
 // carte « membres » ou une mini-carte membre.
 const cfgOfNode = (n) => {
   if (!n) return null;
@@ -874,7 +973,7 @@ async function applyDraft() {
       // Format 2 (16/10/2026) : une ligne par écriture, avec méthode, état d'avant et
       // contenu envoyé — ce qu'il faut à « Restaurer… » (restore.js) pour la défaire.
       { outil: 'Call Flow Manager', format: 2, serveur: S.base, tenant: S.tenant, date: new Date().toISOString(), codes: 'masqués (***) : non restaurables depuis ce fichier',
-        ecritures: redact(writes.map((o) => ({ method: o.method || 'PUT', path: o.path, before: o.before ?? null, body: o.body ?? null, ...(o.run ? { numero: true } : {}) }))) });
+        ecritures: redact(writes.map((o) => ({ method: o.method || 'PUT', path: o.path, before: o.before ?? null, body: o.body ?? null, ...(o.final ? { supprime: true } : o.run ? { numero: true } : {}) }))) });
     const res = await execute(ops);
     const bad = res.filter((x) => !x.ok);
     console.info('[astrea] Call Flow : écriture', res);
@@ -882,7 +981,8 @@ async function applyDraft() {
     try { await reload(); } catch (e) { loadFailed(e); }
     draw(true);
     setTimeout(() => {
-      if (!bad.length) toast(`${res.filter((x) => x.ok && !x.skipped).length} objet${writes.length > 1 ? 's' : ''} mis à jour.`, 5000);
+      const nDel = writes.filter((w) => w.final).length, nUp = res.filter((x) => x.ok && !x.skipped).length - nDel;
+      if (!bad.length) toast([nUp ? `${nUp} objet${nUp > 1 ? 's' : ''} mis à jour` : '', nDel ? `${nDel} objet${nDel > 1 ? 's' : ''} supprimé${nDel > 1 ? 's' : ''}` : ''].filter(Boolean).join(', ') + '.', 5000);
       else confirmModal(`<h3>Écriture partielle</h3><p>${bad.length} erreur${bad.length > 1 ? 's' : ''} ; le graphe a été relu depuis le serveur.</p><ul class="small">${bad.map((b) => `<li><code>${esc(b.path)}</code> : ${esc(b.error)}</li>`).join('')}</ul>`, () => true, 'Fermer');
     }, 0);
     return true;

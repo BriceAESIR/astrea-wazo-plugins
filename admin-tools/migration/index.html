@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Migration Assistant · Astrea Admin Tools</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Mulish:wght@300..800&display=swap">
+<link rel="stylesheet" href="../common/style.css?v=0.40.9">
+<link rel="stylesheet" href="./migration.css?v=0.40.9">
+<script>if (window.parent !== window) document.documentElement.classList.add('framed');</script>
+</head>
+<body>
+<div id="app">
+  <header class="topbar">
+    <div class="brand">Migration Assistant</div>
+    <div id="conn" class="conn muted">Connexion…</div>
+  </header>
+
+  <!-- Connexion hors portail (tests) -->
+  <section id="standalone" class="card narrow" hidden>
+    <h2>Connexion directe</h2>
+    <p class="muted">Page ouverte hors du portail Wazo : connectez-vous à un serveur pour tester.</p>
+    <label>Serveur <input id="sa-host" placeholder="https://wazo.client.fr"></label>
+    <label>Identifiant <input id="sa-user" autocomplete="username"></label>
+    <label>Mot de passe <input id="sa-pass" type="password" autocomplete="current-password"></label>
+    <p class="muted small">ou</p>
+    <label>Token existant <input id="sa-token"></label>
+    <button id="sa-go" class="primary">Se connecter</button>
+    <p id="sa-err" class="error"></p>
+  </section>
+
+  <main id="main" class="no-detail" hidden>
+    <aside id="sidebar">
+      <nav class="sidenav" id="nav">
+        <button data-view="overview" class="active">Inventaire</button>
+        <button data-view="checks">Vérification<span class="spacer"></span><span id="nav-checks" class="mg-count"></span></button>
+        <button data-view="export">Export</button>
+        <button data-view="multisite">Bascule multisite</button>
+      </nav>
+      <div id="sidefoot" class="muted small"></div>
+    </aside>
+
+    <section id="workbench">
+      <div id="compat" class="compat" role="alert" hidden></div>
+      <div id="progress" class="muted small" hidden></div>
+      <div id="lookwarn"></div>
+
+      <div id="v-overview" class="view">
+        <div class="phonehead">
+          <div>
+            <h2>Inventaire du tenant</h2>
+            <div class="muted small">Tout ce que l'API confd du tenant permet de lire, avec le token du portail. Lecture seule : rien n'est modifié.</div>
+          </div>
+          <div class="btnrow"><button id="reload">Relire</button></div>
+        </div>
+        <div id="inv"></div>
+      </div>
+
+      <div id="v-checks" class="view" hidden>
+        <div class="phonehead">
+          <div>
+            <div class="titlerow"><h2>Vérification du paramétrage</h2><span id="checks-help"></span></div>
+            <div class="muted small">Contrôles calculés sur l'inventaire. Clic sur un contrôle : liste des objets concernés.</div>
+          </div>
+          <div class="btnrow"><button id="csv">Rapport CSV</button></div>
+        </div>
+        <div id="checks-helpbox"></div>
+        <div class="mg-filters">
+          <label class="inline"><input type="checkbox" data-sev="error" checked> Erreurs</label>
+          <label class="inline"><input type="checkbox" data-sev="warn" checked> Avertissements</label>
+          <label class="inline"><input type="checkbox" data-sev="info" checked> Informations</label>
+          <label class="inline"><input type="checkbox" id="f-ok"> Contrôles sans problème</label>
+        </div>
+        <div id="checks"></div>
+      </div>
+
+      <div id="v-export" class="view" hidden>
+        <div class="phonehead">
+          <div>
+            <div class="titlerow"><h2>Export du tenant</h2><span id="export-help"></span></div>
+            <div class="muted small">Fichier JSON de toute la configuration lue : sauvegarde avant une bascule, et source de la future restauration Wazo vers Wazo.</div>
+          </div>
+        </div>
+        <div id="export-helpbox"></div>
+        <div class="card mg-card">
+          <label class="inline"><input type="checkbox" id="x-secrets"> Inclure les mots de passe (comptes SIP, messageries, codes)</label>
+          <p class="muted small" id="x-secrets-help"></p>
+          <label class="inline"><input type="checkbox" id="x-report" checked> Joindre le rapport de vérification</label>
+          <div id="x-summary" class="muted small"></div>
+          <div class="btnrow"><button id="x-go" class="primary">Télécharger l'export</button></div>
+        </div>
+        <h3>Hors de l'export</h3>
+        <ul class="mg-list small" id="x-out"></ul>
+      </div>
+
+      <div id="v-multisite" class="view" hidden>
+        <div class="phonehead">
+          <div>
+            <h2>Bascule monosite → multisite</h2>
+            <div class="muted small">Un contexte interne par site, le contexte actuel devient le commun. Aperçu complet avant écriture, export automatique, annulation possible.</div>
+          </div>
+          <div class="btnrow"><label class="filebtn"><input type="file" id="ms-jfile" accept=".json,application/json" hidden><span>Annuler depuis un journal…</span></label></div>
+        </div>
+        <div id="ms"></div>
+      </div>
+    </section>
+  </main>
+
+  <div id="modal" class="modal" hidden><div class="modal-box"><div id="modal-body"></div>
+    <div class="btnrow right"><button id="modal-cancel">Annuler</button><button id="modal-ok" class="primary">Confirmer</button></div></div></div>
+  <div id="toast" class="toast" hidden></div>
+</div>
+<script type="module" src="./app.js?v=0.40.9"></script>
+</body>
+</html>

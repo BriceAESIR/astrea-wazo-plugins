@@ -10,8 +10,8 @@
 // PCM. Les autres (gsm, g722…) ne sont pas lisibles : message, pas d'erreur
 // silencieuse. Supposé : un son système dans un sous-dossier (« digits/1 »)
 // passe encodé (%2F) dans l'URL — à tester en réel.
-import { S, toast } from '../common/core.js?v=0.40.8';
-import { M, sameTenant } from './model.js?v=0.40.8';
+import { S, toast } from '../common/core.js?v=0.40.9';
+import { M, sameTenant } from './model.js?v=0.40.9';
 
 let audio = null, playing = null, url = null;
 function stop() {

@@ -12,13 +12,13 @@
 // Toujours : relire juste avant d'écrire, ne rien écrire si c'est identique,
 // une seule écriture par objet.
 // Appels liés au tenant des données chargées (tapi, model.js : arrêt si le portail change de tenant).
-import { M, tapi as api } from './model.js?v=0.40.8';
-import { groupCfgOf, applyGroupCfg, GROUP_FIELDS } from './group-editor.js?v=0.40.8';
-import { queueCfgOf, applyQueueCfg, QUEUE_FIELDS, optionsList } from './queue-editor.js?v=0.40.8';
-import { ivrCfgOf, applyIvrCfg, IVR_FIELDS } from './ivr-editor.js?v=0.40.8';
-import { sbCfgOf, applySbCfg, SB_FIELDS } from './sb-editor.js?v=0.40.8';
-import { incallCfgOf, applyIncallCfg, INCALL_FIELDS, userCfgOf, applyUserCfg, USER_FIELDS, vmCfgOf, applyVmCfg, VM_FIELDS, confCfgOf, applyConfCfg, CONF_FIELDS, schedCfgOf, applySchedCfg, SCHED_FIELDS } from './obj-editors.js?v=0.40.8';
-import { outcallCfgOf, applyOutcallCfg, OUTCALL_FIELDS } from './outcall-editor.js?v=0.40.8';
+import { M, tapi as api } from './model.js?v=0.40.9';
+import { groupCfgOf, applyGroupCfg, GROUP_FIELDS } from './group-editor.js?v=0.40.9';
+import { queueCfgOf, applyQueueCfg, QUEUE_FIELDS, optionsList } from './queue-editor.js?v=0.40.9';
+import { ivrCfgOf, applyIvrCfg, IVR_FIELDS } from './ivr-editor.js?v=0.40.9';
+import { sbCfgOf, applySbCfg, SB_FIELDS } from './sb-editor.js?v=0.40.9';
+import { incallCfgOf, applyIncallCfg, INCALL_FIELDS, userCfgOf, applyUserCfg, USER_FIELDS, vmCfgOf, applyVmCfg, VM_FIELDS, confCfgOf, applyConfCfg, CONF_FIELDS, schedCfgOf, applySchedCfg, SCHED_FIELDS } from './obj-editors.js?v=0.40.9';
+import { outcallCfgOf, applyOutcallCfg, OUTCALL_FIELDS } from './outcall-editor.js?v=0.40.9';
 
 // Réglages « simples » (obj-editors.js) : un PUT partiel des champs modifiés.
 const SIMPLE = {
@@ -85,11 +85,13 @@ function holder(w) {
 // Éditeur d'horaire : plages + destination « si fermé » ensemble.
 const periodsOf = (s) => JSON.parse(JSON.stringify({ open_periods: s?.open_periods || [], exceptional_periods: s?.exceptional_periods || [], closed_destination: s?.closed_destination || null }));
 // Égalité d'une valeur du brouillon (destination, horaire associé ou plages).
-const CFG_KINDS = new Set(['sched_periods', 'group_cfg', 'queue_cfg', 'ivr_cfg', 'sb_cfg', 'user_cfg', 'outcall_cfg', ...Object.keys(SIMPLE)]);
+const CFG_KINDS = new Set(['del', 'sched_periods', 'group_cfg', 'queue_cfg', 'ivr_cfg', 'sb_cfg', 'user_cfg', 'outcall_cfg', ...Object.keys(SIMPLE)]);
 // SVI : destinations nettoyées (comparaison et écriture sur les seuls champs d'entrée).
 const normIvr = (v) => v && { ...v, timeout_destination: cleanDest(v.timeout_destination), invalid_destination: cleanDest(v.invalid_destination), abort_destination: cleanDest(v.abort_destination), choices: (v.choices || []).map((c) => ({ exten: String(c.exten), destination: cleanDest(c.destination) })) };
 export const sameValue = (w, a, b) => (w.k === 'ivr_cfg' ? JSON.stringify(normIvr(a)) === JSON.stringify(normIvr(b)) : CFG_KINDS.has(w.k) ? JSON.stringify(a) === JSON.stringify(b) : sameDest(a, b));
 export function getDest(w) {
+  // Suppression d'un objet (w.id = clé de l'objet) : true si prévue dans le brouillon.
+  if (w.k === 'del') return !!M.deleting?.has(w.id);
   // group_cfg (lot 2c) : réglage complet d'un groupe (voir group-editor.js).
   if (w.k === 'group_cfg') return JSON.parse(JSON.stringify(groupCfgOf(M.groupByUuid?.get(w.id) || {})));
   if (w.k === 'queue_cfg') return JSON.parse(JSON.stringify(queueCfgOf(M.by.queue?.get(String(w.id)) || {})));
@@ -104,6 +106,7 @@ export function getDest(w) {
   const h = holder(w); return h?.[0]?.[h[1]] || null;
 }
 export function setDest(w, d) {
+  if (w.k === 'del') { M.deleting ||= new Set(); if (d) M.deleting.add(w.id); else M.deleting.delete(w.id); return; }
   if (w.k === 'group_cfg') { const g = M.groupByUuid?.get(w.id); if (g && d) applyGroupCfg(g, JSON.parse(JSON.stringify(d))); return; }
   if (w.k === 'queue_cfg') { const q = M.by.queue?.get(String(w.id)); if (q && d) applyQueueCfg(q, JSON.parse(JSON.stringify(d))); return; }
   if (SIMPLE[w.k]) { const o = SIMPLE[w.k].obj(w.id); if (o && d) SIMPLE[w.k].apply(o, JSON.parse(JSON.stringify(d))); return; }
@@ -150,10 +153,32 @@ function opsOf(entries) {
 }
 // Lit l'état actuel sur le serveur et calcule ce qu'il faut envoyer.
 // Renvoie [{ path, before, body, changed }].
+// Suppression d'un objet (après ses remplacements). Vérifié dans wazo-confd /
+// xivo-dao (persistors group, queue, conference, outcall, incall) : les
+// numéros de l'objet ne sont pas supprimés, seulement libérés (type user,
+// typeval 0) et restent pris dans leur contexte → supprimés ici aussi pour
+// pouvoir les réutiliser. Échec signalé sans annuler la suppression.
+async function deleteObject(t, path, before) {
+  await api('DELETE', path);
+  const exts = (before?.extensions || []).filter((e) => e?.id);
+  const bad = [];
+  for (const e of exts) { try { await api('DELETE', `/extensions/${e.id}`); } catch { bad.push(e.exten); } }
+  if (bad.length) throw new Error(`objet supprimé, mais numéro(s) ${bad.join(', ')} non libéré(s) : à supprimer dans le portail (Extensions)`);
+}
+// Suppression (dernière écriture) : route de chaque type, vérifiée dans wazo-confd.
+const DEL_PATH = { group: (o) => `/groups/${o.uuid}`, queue: (o) => `/queues/${o.id}`, ivr: (o) => `/ivr/${o.id}`, switchboard: (o) => `/switchboards/${o.uuid}`, conference: (o) => `/conferences/${o.id}`, voicemail: (o) => `/voicemails/${o.id}`, schedule: (o) => `/schedules/${o.id}`, outcall: (o) => `/outcalls/${o.id}`, incall: (o) => `/incalls/${o.id}` };
 export async function prepare(entries) {
-  const out = [];
+  const out = [], finals = [];
   for (const op of opsOf(entries)) {
-    if (FB_KEYS[op.k]) {
+    if (op.k === 'del') {
+      // Toujours après toutes les autres écritures (remplacements d'abord) ;
+      // final : sautée si une écriture précédente a échoué (execute).
+      if (!op.entries[op.entries.length - 1].after) continue;
+      const { t, o } = ownerOf(op.id); const path = DEL_PATH[t]?.(o); if (!path) continue;
+      const before = await api('GET', path);
+      finals.push({ method: 'DELETE', path, before, changed: true, final: true, run: async () => deleteObject(t, path, before) });
+      continue;
+    }    if (FB_KEYS[op.k]) {
       const path = FB_PATH[op.k](op.id);
       const before = (await api('GET', path)) || {};
       const body = {};
@@ -280,7 +305,11 @@ export async function prepare(entries) {
         const bu = (before?.users || []).map((u) => u.uuid);
         // Retraits AVANT les réglages (passage en « partagée » : plus aucun utilisateur), ajouts après.
         const at = out.length - 1;
-        for (const uuid of bu.filter((x) => !a.users.includes(x)).reverse()) out.splice(at, 0, { method: 'DELETE', path: `/users/${uuid}/voicemails`, before: { users: before.users }, changed: true, run: async () => api('DELETE', `/users/${uuid}/voicemails`) });
+        for (const uuid of bu.filter((x) => !a.users.includes(x)).reverse()) out.splice(at, 0, { method: 'DELETE', path: `/users/${uuid}/voicemails`, before: { users: before.users }, changed: true, run: async () => {
+          // Seulement s'il est encore sur cette boîte (il a pu être déplacé vers une autre juste avant).
+          const cur = await api('GET', `/users/${uuid}/voicemails`);
+          if ((cur?.items || []).some((v) => String(v.id) === String(op.id))) await api('DELETE', `/users/${uuid}/voicemails`);
+        } });
         for (const uuid of a.users.filter((x) => !bu.includes(x))) out.push({ path: `/users/${uuid}/voicemails/${op.id}`, before: { users: before?.users || [] }, changed: true, run: async () => {
           const cur = await api('GET', `/users/${uuid}/voicemails`);
           if ((cur?.items || []).some((v) => String(v.id) !== String(op.id))) await api('DELETE', `/users/${uuid}/voicemails`);
@@ -395,7 +424,7 @@ export async function prepare(entries) {
       if (cur === next) out.push({ path: `${base}/schedules`, before: { schedules: before?.schedules || [] }, changed: false });
     }
   }
-  return out;
+  return [...out, ...finals];
 }
 // Écrit les opérations modifiées, une à une, dans l'ordre ; renvoie [{ path, ok, error }].
 export async function execute(ops) {
@@ -403,6 +432,8 @@ export async function execute(ops) {
   for (const op of ops) {
     if (!op.changed) { res.push({ path: op.path, ok: true, skipped: true }); continue; }
     const m = op.method || 'PUT';
+    // Suppression : seulement si tous les remplacements ont été écrits.
+    if (op.final && res.some((r) => !r.ok)) { res.push({ path: `${m} ${op.path}`, ok: false, error: 'non supprimé : une écriture précédente a échoué (l\'objet est encore utilisé)' }); continue; }
     try {
       if (op.run) await op.run(); else await api(m, op.path, m === 'DELETE' || !op.body ? undefined : op.body);
       res.push({ path: `${m} ${op.path}`, ok: true });

@@ -8,8 +8,8 @@
 // Même champ partout (création et éditeurs complets) : liste des numéros
 // libres, plages du contexte choisi et premier numéro libre, mis à jour au
 // changement de contexte.
-import { esc } from '../common/core.js?v=0.40.8';
-import { M } from './model.js?v=0.40.8';
+import { esc } from '../common/core.js?v=0.40.9';
+import { M, showNum } from './model.js?v=0.40.9';
 
 export const RANGE_KEY = { group: 'group_ranges', queue: 'queue_ranges', conference: 'conference_room_ranges' };
 const RANGE_NAME = { group: 'groupes', queue: 'files d\'attente', conference: 'conférences' };
@@ -107,7 +107,7 @@ export function incallNumberHtml({ exten = '', pattern = false, field }) {
   return `<div class="cf-ge-f"><span class="cf-ge-l">Format du numéro *</span><span class="cf-ge-row">
       <label class="inline"><input type="radio" name="inc-fmt" value="num"${pattern ? '' : ' checked'}> Numéro</label>
       <label class="inline"><input type="radio" name="inc-fmt" value="pat"${pattern ? ' checked' : ''}> Motif (dial pattern)</label></span></div>
-    <span id="inc-num"${pattern ? ' hidden' : ''}>${field('Numéro *', `<input data-inc="num" value="${pattern ? '' : esc(exten)}" inputmode="numeric" list="inc-num-l" autocomplete="off" placeholder="tel que reçu de l'opérateur, ex. 33978247652"><datalist id="inc-num-l"></datalist>`, '')}</span>
+    <span id="inc-num"${pattern ? ' hidden' : ''}><span class="cf-ge-2">${field('Numéro *', `<input data-inc="num" value="${pattern ? '' : esc(exten)}" inputmode="numeric" list="inc-num-l" autocomplete="off" placeholder="tel que reçu de l'opérateur, ex. 33978247652"><datalist id="inc-num-l"></datalist>`, '')}${field('Numéros libres du contexte', '<select id="inc-free"></select>', 'Numéros des plages SDA sans SDA : le choisir remplit le champ.')}</span></span>
     <span id="inc-pat"${pattern ? '' : ' hidden'}>${field('Motif *', `<input data-inc="pat" value="${pattern ? esc(exten) : ''}" placeholder="ex. _3397824765X">`, 'Plusieurs numéros vers la même destination : « _ » puis X (0-9), Z (1-9), N (2-9), [1-5], « . » (un ou plusieurs chiffres). Pas de contrôle de plage pour un motif (vérifié dans confd).')}</span>
     <p class="small muted cf-nf-hint" id="inc-h"></p>`;
 }
@@ -125,9 +125,14 @@ export function bindIncallNumber(box, ctxOrFn, own = '') {
     const l = incallRanges(ctx); const free = [];
     for (const r of l) { const len = String(r.start).length; for (let n = BigInt(r.start), e = BigInt(r.end || r.start); n <= e && free.length < MAX_FREE; n += 1n) { const x = n.toString().padStart(len, '0'); if (x === own || !M.ext.has(`${x}@${ctx}`)) free.push(x); } }
     box.querySelector('#inc-num-l').innerHTML = free.map((x) => `<option value="${esc(x)}">`).join('');
+    const fs = box.querySelector('#inc-free');
+    if (fs) fs.innerHTML = `<option value="">${free.length ? 'Choisir un numéro libre…' : 'aucun numéro libre'}</option>${free.map((x) => `<option value="${esc(x)}">${esc(showNum(x))}${showNum(x).replace(/\s/g, '') !== x ? ` · ${esc(x)}` : ''}${x === own ? ' (actuel)' : ''}</option>`).join('')}`;
     const c = M.by.context?.get(ctx);
     box.querySelector('#inc-h').textContent = pat ? 'Motif : pas de plage à respecter.' : !c ? '' : l.length ? `Plages SDA de ${c.label || ctx} : ${l.map(rangeTxt).join(', ')}. ${free.length ? `${free.length >= MAX_FREE ? `${MAX_FREE} et plus` : free.length} sans SDA, premier : ${free[0]}.` : 'Tous les numéros ont déjà une SDA.'}` : `Aucune plage SDA dans ${c.label || ctx} : seul un motif est possible. Déclarez une plage dans le portail (Contextes).`;
   };
-  box.addEventListener('change', (e) => { if (e.target.name === 'inc-fmt' || e.target.matches('[data-c="ctx"]')) upd(); });
+  box.addEventListener('change', (e) => {
+    if (e.target.id === 'inc-free' && e.target.value) { const i = box.querySelector('[data-inc="num"]'); i.value = e.target.value; i.dispatchEvent(new Event('input', { bubbles: true })); e.target.value = ''; return; }
+    if (e.target.name === 'inc-fmt' || e.target.matches('[data-c="ctx"]')) upd();
+  });
   upd();
 }

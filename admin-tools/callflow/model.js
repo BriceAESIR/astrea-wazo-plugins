@@ -21,8 +21,8 @@
 // Supposé, à vérifier en réel : les listes (GET /groups, /queues,
 // /switchboards, /schedules) contiennent déjà fallbacks, membres et
 // destinations ; sinon on lit le détail de chaque objet (ensureDetails).
-import { S, api, listAll, fullName } from '../common/core.js?v=0.40.8';
-import { comparePatterns, describePattern, userContext, rightsList, simulate, famLabel } from './dialsim.js?v=0.40.8';
+import { S, api, listAll, fullName } from '../common/core.js?v=0.40.9';
+import { comparePatterns, describePattern, userContext, rightsList, simulate, famLabel } from './dialsim.js?v=0.40.9';
 
 export const M = { lists: {}, by: {}, ext: new Map(), extAny: new Map(), rev: null, warns: [] };
 
@@ -158,7 +158,7 @@ export async function loadAll() {
   M.userByUuid = new Map(M.lists.user.map((u) => [u.uuid, u]));
   indexExtensions();
   // Caches liés au tenant : remis à zéro (la liste de blocage restait celle du tenant précédent).
-  M.rev = null; M.keys = null; M.live = null; M.liveState = ''; M.sounds = null; M.blocklist = undefined;
+  M.rev = null; M.keys = null; M.live = null; M.liveState = ''; M.sounds = null; M.blocklist = undefined; M.deleting = null;
   return M;
 }
 // ---------------------------------------------------------------------------
@@ -871,6 +871,52 @@ export function reverseIndex() {
     }
   }
   return M.rev;
+}
+
+// ---------------------------------------------------------------------------
+// Suppression d'un objet (demande de Brice, 19/10/2026 : « montrer où il est
+// utilisé, et proposer un remplacement ») : tous les endroits lus qui
+// l'utilisent, avec leur adresse d'écriture du brouillon (w).
+//   kind 'dest'   : sortie d'une carte (remplaçable par une autre destination) ;
+//   kind 'sched'  : objet gardé par l'horaire (remplaçable par un autre horaire) ;
+//   kind 'vmuser' : utilisateur associé à la messagerie ;
+//   kind 'info'   : usage lu mais non modifiable ici (renvoi en texte libre,
+//                   numéro à faire sonner d'un groupe).
+// ---------------------------------------------------------------------------
+const wOf = (k, id, f) => ({ k, id, f, key: `${k}:${id}:${f}` });
+export const assocW = (owner) => wOf('sched_assoc', owner, 'schedule');
+export function usagesOf(k) {
+  const tk = baseKey(k); const { type, obj } = entity(tk); const out = [];
+  const hit = (d) => { const t = destTarget(d); if (!t?.key) return false; const e = entity(t.key); return (e.owner || baseKey(t.key)) === tk; };
+  const add = (from, slot, d, w, label) => { if (hit(d)) out.push({ kind: 'dest', from, label: label || SLOTS[slot]?.label || slot, dest: d, w }); };
+  for (const o of M.lists.incall || []) add(key('incall', o), 'destination', o.destination, wOf('incall', o.id, 'destination'));
+  for (const o of M.lists.user || []) for (const s of ['noanswer', 'busy', 'congestion', 'fail']) add(key('user', o), s, fb(o, s), wOf('user_fb', o.uuid, s));
+  for (const o of M.lists.group || []) for (const s of ['noanswer', 'congestion']) add(key('group', o), s, fb(o, s), wOf('group_fb', o.uuid, s));
+  for (const o of M.lists.queue || []) {
+    for (const s of ['noanswer', 'busy', 'congestion', 'fail']) add(key('queue', o), s, fb(o, s), wOf('queue_fb', o.id, s));
+    add(key('queue', o), 'wait_time', o.wait_time_destination, wOf('queue', o.id, 'wait_time_destination'));
+    add(key('queue', o), 'wait_ratio', o.wait_ratio_destination, wOf('queue', o.id, 'wait_ratio_destination'));
+  }
+  for (const o of M.lists.switchboard || []) add(key('switchboard', o), 'noanswer', fb(o, 'noanswer'), wOf('sb_fb', o.uuid, 'noanswer'));
+  for (const o of M.lists.ivr || []) {
+    for (const c of o.choices || []) add(key('ivr', o), 'choice', c.destination, wOf('ivr_choice', o.id, c.exten), `Touche ${c.exten}`);
+    add(key('ivr', o), 'ivr_timeout', o.timeout_destination, wOf('ivr', o.id, 'timeout_destination'));
+    add(key('ivr', o), 'ivr_invalid', o.invalid_destination, wOf('ivr', o.id, 'invalid_destination'));
+    add(key('ivr', o), 'ivr_abort', o.abort_destination, wOf('ivr', o.id, 'abort_destination'));
+  }
+  for (const o of M.lists.schedule || []) {
+    add(key('schedule', o), 'closed', o.closed_destination, wOf('sched', o.id, 'closed'));
+    (o.exceptional_periods || []).forEach((p, i) => add(key('schedule', o), 'exception', p.destination, wOf('sched_exc', o.id, i), `Fermeture exceptionnelle ${i + 1}`));
+  }
+  // Horaire : objets qu'il garde (un seul horaire par objet, vérifié).
+  if (type === 'schedule') for (const t of ['incall', 'user', 'group', 'queue', 'outcall']) for (const o of M.lists[t] || []) if ((o.schedules || []).some((s) => String(s.id) === String(obj?.id))) out.push({ kind: 'sched', from: key(t, o), label: 'Horaire', w: assocW(key(t, o)) });
+  // Messagerie : utilisateurs qui la consultent depuis leur poste.
+  if (type === 'voicemail') for (const u of obj?.users || []) out.push({ kind: 'vmuser', from: M.userByUuid?.get(u.uuid) ? key('user', M.userByUuid.get(u.uuid)) : null, uuid: u.uuid, label: 'Messagerie de l\'utilisateur' });
+  // Renvois (texte libre) et numéros à faire sonner d'un groupe vers le numéro de l'objet : lus, non modifiables ici.
+  const viaNum = (num) => { const kk = M.extAny.get(String(num || '')); return kk && baseKey(kk) === tk; };
+  for (const u of M.lists.user || []) for (const [f, l] of [['unconditional', 'Renvoi immédiat'], ['busy', 'Renvoi si occupé'], ['noanswer', 'Renvoi si pas de réponse']]) if (u.forwards?.[f]?.enabled && viaNum(u.forwards[f].destination)) out.push({ kind: 'info', from: key('user', u), label: `${l} vers ${u.forwards[f].destination}` });
+  for (const g of M.lists.group || []) for (const x of g.members?.extensions || []) if (viaNum(x.exten)) out.push({ kind: 'info', from: key('group', g), label: `Numéro à faire sonner ${x.exten}` });
+  return out;
 }
 
 // ---------------------------------------------------------------------------
