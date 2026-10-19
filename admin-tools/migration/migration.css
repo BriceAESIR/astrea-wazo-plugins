@@ -104,6 +104,59 @@ input.short { width: 110px !important; }
 .x3-cols { columns: 3 220px; }
 #x3 code { font-size: .75rem; }
 
+/* Import 3CX : onglets et brouillon modifiable */
+.x3-tabs { display: flex; flex-wrap: wrap; gap: 0; margin: 0 0 16px; border-bottom: 1px solid var(--line); }
+.x3-tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; padding: 8px 14px; color: var(--muted); text-transform: none; letter-spacing: normal; font-size: .875rem; font-weight: 500; background: none; }
+.x3-tabs button:hover:not(:disabled) { background: var(--hover); color: var(--ink); }
+.x3-tabs button.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+.x3-tabs .mg-count { margin-left: 6px; }
+.x3-fiche-bar { align-items: center; margin: 0 0 12px; }
+.x3-fiche-bar .spacer { flex: 1; }
+#x3-body .titlerow { margin-bottom: 8px; }
+#x3-body h3 { margin: 0; }
+.x3-q { width: 200px !important; margin-left: auto; }
+.x3-h { margin: 20px 0 8px !important; }
+.x3-edit-wrap { overflow: auto; max-height: calc(100vh - 260px); border: 1px solid var(--line); border-radius: var(--radius); }
+.x3-edit { width: 100%; margin: 0; font-size: .8125rem; border-collapse: separate; border-spacing: 0; }
+.x3-edit thead th { position: sticky; top: 0; z-index: 2; background: var(--panel); box-shadow: inset 0 -1px 0 var(--line); white-space: nowrap; }
+.x3-edit td { vertical-align: top; padding: 4px 6px; border-bottom: 1px solid var(--line); }
+.x3-edit td.x3-c { text-align: center; }
+.x3-edit tr.sel td { background: color-mix(in srgb, var(--accent) 8%, var(--panel)); }
+.x3-edit tr.x3-off td { color: var(--muted); background: color-mix(in srgb, var(--ink) 3%, var(--panel)); }
+.x3-edit tr.x3-error td:first-child { color: var(--danger); font-weight: 600; }
+.x3-edit tr.x3-warn td:first-child { color: var(--warn); font-weight: 600; }
+.x3-edit input:not([type="checkbox"]), .x3-edit select { height: 28px; font-size: .8125rem; min-width: 90px; }
+.x3-edit input.x3-mail { min-width: 210px; }
+.x3-edit input.x3-guess { font-style: italic; }
+.x3-short { width: 64px !important; min-width: 64px !important; }
+.x3-num { width: 120px !important; min-width: 100px !important; }
+.x3-key { width: 36px !important; min-width: 36px !important; text-align: center; }
+.x3-dest { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-width: 190px; }
+.x3-dest select { flex: 1; min-width: 170px; }
+.x3-dest.bad select { color: var(--danger); box-shadow: inset 0 -1px 0 var(--danger); }
+.x3-note { font-size: .6875rem; padding: 0 5px; border-radius: 8px; background: color-mix(in srgb, var(--accent) 12%, var(--panel)); color: var(--accent); cursor: help; }
+.x3-mini { display: inline-flex; align-items: center; gap: 2px; margin: 0 0 0 6px; font-size: .6875rem; color: var(--muted); }
+.x3-chips { display: flex; flex-wrap: wrap; gap: 4px; min-width: 220px; }
+.x3-chip { display: inline-flex; align-items: center; gap: 2px; padding: 0 2px 0 8px; border-radius: 12px; background: var(--tile); font-size: .75rem; white-space: nowrap; }
+.x3-chip.bad { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, var(--panel)); }
+.x3-chip button { min-width: 0; padding: 0 6px; border: 0; background: none; color: var(--muted); font-size: .875rem; line-height: 1.4; }
+.x3-add { width: auto !important; min-width: 110px !important; }
+.x3-choice { display: flex; align-items: center; gap: 4px; margin: 0 0 4px; }
+.x3-link { min-width: 0; padding: 0; border: 0; background: none; color: var(--accent); text-transform: none; letter-spacing: normal; font-weight: 500; }
+.x3-bulk { display: flex; flex-wrap: wrap; align-items: end; gap: 8px 14px; margin: 0 0 8px; padding: 8px 12px; border: 1px solid var(--line); border-radius: var(--radius); background: color-mix(in srgb, var(--accent) 5%, var(--panel)); font-size: .8125rem; }
+.x3-bulk-hint { margin: 0 0 8px; }
+.x3-edit input.x3-mac { width: 150px; min-width: 150px; font-family: ui-monospace, Consolas, monospace; }
+.x3-edit input.x3-mac.bad { color: var(--danger); box-shadow: inset 0 -1px 0 var(--danger); }
+.x3-edit input.x3-desc { min-width: 200px; }
+.x3-edit input.x3-auto { color: var(--muted); }
+.x3-warn { color: var(--warn); }
+.x3-edit td.x3-nowrap { white-space: nowrap; }
+.x3-bulk select#xb-dest, .x3-bulk select#xd-dest { max-width: 260px; }
+.x3-edit select[data-p$=".mode"], .x3-edit select[data-p$=".target"] { min-width: 140px; }
+.x3-bulk label { display: flex; flex-direction: column; gap: 2px; margin: 0; font-size: .75rem; color: var(--muted); }
+.x3-bulk select, .x3-bulk input { height: 28px; font-size: .8125rem; width: auto; min-width: 90px; }
+#x3-body .mg-card h4 { margin: 0 0 8px; }
+
 /* Impression de la fiche (retour de Brice, 19/10/2026 : en portrait, le tableau
    des utilisateurs était coupé après « Messagerie », 3 postes par page, et les
    SDA s'empilaient une par ligne). Paysage, tableaux à la largeur de la page,

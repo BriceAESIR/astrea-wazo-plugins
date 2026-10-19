@@ -12,8 +12,8 @@
 //    queue_label, voicemail_name, ivr_name… ajoutés par confd.
 // Supposé, à vérifier en réel : le token du portail peut lire /moh,
 // /voicemails, /callpermissions, /schedules (sinon libellés techniques).
-import { S, $, esc, toast, api, listAll, connect, fullName, setReadonly, showCompat, loaded, loadFailed, canWrite, confirmModal, downloadJson, helpButton, helpBox } from '../common/core.js?v=0.40.12';
-import { SETTINGS, settingById, same, LANG, subLabel, authApi } from './settings.js?v=0.40.12';
+import { S, $, esc, toast, api, listAll, connect, fullName, setReadonly, showCompat, loaded, loadFailed, canWrite, confirmModal, downloadJson, helpButton, helpBox } from '../common/core.js?v=0.40.13';
+import { SETTINGS, settingById, same, LANG, subLabel, authApi, IDX, readLines } from './settings.js?v=0.40.13';
 
 const A = { auth: new Map(), authErr: '', users: [], byId: new Map(), moh: new Map(), groups: new Map(), vms: new Map(), perms: new Map(), scheds: new Map(), queues: new Map(), sbs: new Map(), contexts: [], callerOpts: [], callerOptsErr: '', lr: null, picked: new Set(), sort: { col: 'name', dir: 1 }, sel: null, scope: null, cols: null };
 
@@ -116,11 +116,14 @@ const ALL_COLS = [
   { id: 'groups', label: 'Groupes', grp: 'Groupes et droits', def: true, get: (u) => names(u.groups, groupLabel) },
   { id: 'perms', label: 'Droits d\'appel', grp: 'Groupes et droits', get: (u) => names(u.call_permissions, (c) => c.name) },
   { id: 'sched', label: 'Horaire', grp: 'Groupes et droits', get: (u) => names(u.schedules, (s) => s.name || `#${s.id}`) },
+  // Clé = types de lignes : un utilisateur sans WebRTC parmi des SIP + WebRTC ressort en écart.
+  { id: 'lines', label: 'Lignes', grp: 'Lignes', def: true, get: (u) => { const ls = readLines(u); return ls.length ? { t: settingById('lines').text(ls), k: ls.map((l) => l.type).sort().join('+') } : { t: 'Aucune', k: '', c: 'none' }; } },
 ];
 // Même rangement que le catalogue (settings.js, LAYOUT) ; Compte en lecture seule.
 const COL_LAYOUT = [
   ['Utilisateur', ['name', 'exten', 'email', 'mobile', 'cidint', 'sub', 'lang']],
   ['Compte (applications)', ['apps', 'login']],
+  ['Lignes', ['lines']],
   ['Services voix', ['dnd', 'incallfilter', 'ring', 'simul', 'moh']],
   ['Renvois d\'appel (utilisateur)', ['fwd_busy', 'fwd_unc', 'fwd_noans']],
   ['Renvois par défaut (admin)', ['fb_busy', 'fb_cong', 'fb_fail', 'fb_noans']],
@@ -130,13 +133,15 @@ const COL_LAYOUT = [
   ['Horaires', ['sched', 'tz']],
 ];
 // Infobulle des colonnes = aide du réglage correspondant (sauf tip propre).
-const COL_SETTING = { email: 'email', mobile: 'mobile_phone_number', cidint: 'caller_id', sub: 'subscription_type', lang: 'language', tz: 'timezone', login: 'auth_username', dnd: 'dnd', incallfilter: 'incallfilter', ring: 'ring_seconds', simul: 'simultaneous_calls', moh: 'music_on_hold', fwd_busy: 'fwd_busy', fwd_unc: 'fwd_unconditional', fwd_noans: 'fwd_noanswer', fb_busy: 'fb_busy', fb_cong: 'fb_congestion', fb_fail: 'fb_fail', fb_noans: 'fb_noanswer', callerid: 'outgoing_caller_id', perms: 'call_permissions', vm: 'voicemail', groups: 'groups', sched: 'schedule' };
+const COL_SETTING = { email: 'email', mobile: 'mobile_phone_number', cidint: 'caller_id', sub: 'subscription_type', lang: 'language', tz: 'timezone', login: 'auth_username', dnd: 'dnd', incallfilter: 'incallfilter', ring: 'ring_seconds', simul: 'simultaneous_calls', moh: 'music_on_hold', fwd_busy: 'fwd_busy', fwd_unc: 'fwd_unconditional', fwd_noans: 'fwd_noanswer', fb_busy: 'fb_busy', fb_cong: 'fb_congestion', fb_fail: 'fb_fail', fb_noans: 'fb_noanswer', lines: 'lines', callerid: 'outgoing_caller_id', perms: 'call_permissions', vm: 'voicemail', groups: 'groups', sched: 'schedule' };
 const COLS = COL_LAYOUT.flatMap(([grp, ids]) => ids.map((id) => { const c = ALL_COLS.find((x) => x.id === id); return { ...c, grp, tip: c.tip || settingById(COL_SETTING[id])?.help || '' }; }));
 // v4 (0.27.3, colonne Accès applications) : nouvelles colonnes par défaut, l'ancien choix est ignoré.
 // (0.27.5 : rangement des groupes changé, mêmes identifiants : choix conservé.)
-const COLS_KEY = 'astrea-users-cols-v4';
+// v5 (0.40.13) : colonne Lignes ajoutée au choix v4.
+const COLS_KEY = 'astrea-users-cols-v5';
 function loadCols() {
   try { const c = JSON.parse(localStorage.getItem(COLS_KEY)); if (Array.isArray(c)) return new Set(c); } catch { /* stockage indisponible */ }
+  try { const c = JSON.parse(localStorage.getItem('astrea-users-cols-v4')); if (Array.isArray(c)) return new Set([...c, 'lines']); } catch { /* */ }
   return new Set(COLS.filter((c) => c.def).map((c) => c.id));
 }
 function saveCols() { try { localStorage.setItem(COLS_KEY, JSON.stringify([...A.cols])); } catch { /* */ } }
@@ -203,14 +208,22 @@ async function loadCallerOpts(users) {
 }
 async function reload() {
   const warns = [];
-  const [users, moh, groups, vms, perms, scheds, queues, sbs, contexts] = await Promise.all([
+  const [users, moh, groups, vms, perms, scheds, queues, sbs, contexts, lines, extens, devices, tpls] = await Promise.all([
     loadUsers(), lookup('/moh', 'Libellés des musiques d\'attente', warns), lookup('/groups', 'Libellés des groupes', warns), lookup('/voicemails', 'Détails des messageries', warns),
     lookup('/callpermissions', 'Droits d\'appel', warns), lookup('/schedules', 'Horaires', warns),
-    lookup('/queues', 'Files d\'attente', null), lookup('/switchboards', 'Standards', null), lookup('/contexts', 'Contextes', null), checkLiveReload(), loadAuth(),
+    lookup('/queues', 'Files d\'attente', null), lookup('/switchboards', 'Standards', null), lookup('/contexts', 'Contextes', null),
+    lookup('/lines', 'Détails des lignes', warns), lookup('/extensions', 'Numéros', warns), lookup('/devices', 'Appareils', null), lookup('/endpoints/sip/templates', 'Modèles SIP', warns),
+    checkLiveReload(), loadAuth(),
   ]);
   A.queues = new Map(queues.map((q) => [q.id, q]));
   A.sbs = new Map(sbs.map((s) => [s.uuid, s]));
   A.contexts = contexts.filter((c) => c.type !== 'incall' && c.type !== 'outcall').sort((a, b) => (a.label || a.name).localeCompare(b.label || b.name, 'fr'));
+  // Lignes (settings.js) : type WebRTC, numéros pris, appareils, modèles SIP du tenant.
+  IDX.lines = new Map(lines.map((l) => [l.id, l]));
+  IDX.exts = new Map(extens.map((e) => [`${e.context}|${e.exten}`, e]));
+  IDX.devices = new Map(devices.map((d) => [d.id, d]));
+  IDX.contexts = A.contexts;
+  IDX.tpl = { global: tpls.find((t) => t.label === 'global')?.uuid, webrtc: tpls.find((t) => t.label === 'webrtc')?.uuid };
   await loadCallerOpts(users);
   selfCheck(users);
   A.users = users.sort((a, b) => fullName(a).localeCompare(fullName(b), 'fr'));
@@ -363,6 +376,7 @@ function openPassword(u) {
 function openEdit(id) {
   const u = A.byId.get(A.sel), s = settingById(id);
   if (!u || !s || !canWrite()) return;
+  IDX.pending.clear();
   const cur = s.read(u);
   confirmModal(`<div class="titlerow"><h3>${esc(s.label)}</h3>${s.help ? helpButton('m-help', 'Que fait ce réglage ?') : ''}</div>${s.help ? helpBox('m-help', s.help) : ''}<p class="muted small">${esc(fullName(u))}</p><div id="m-form">${s.form(ctx(), cur, u)}</div><div id="m-prev" class="mprev"></div>`, async () => {
     let spec;
@@ -456,7 +470,13 @@ function openMass() {
     const s = list()[W.step - 1];
     if (s && $('m-form')) W.vals[s.id] = Object.fromEntries([...$('m-form').querySelectorAll('input[id], select[id]')].map((e) => [e.id, e.type === 'checkbox' || e.type === 'radio' ? e.checked : e.value]));
   };
-  const preview = (s) => { try { $('m-prev').innerHTML = planHtml(s, plan(s, s.parse(ctx()).target, users)); } catch (e) { $('m-prev').innerHTML = `<p class="error small">${esc(e.message)}</p>`; } };
+  // Lignes créées par l'étape Lignes : comptées pour l'étape Groupes.
+  const markPending = () => {
+    IDX.pending.clear();
+    const sl = settingById('lines'), sp = W.specs.lines;
+    if (sp && W.ids.includes('lines')) for (const u of users) { const nx = sp.target(sl.read(u), u); if (nx?.length && !sl.check(u, nx)) IDX.pending.add(u.uuid); }
+  };
+  const preview = (s) => { markPending(); try { $('m-prev').innerHTML = planHtml(s, plan(s, s.parse(ctx()).target, users)); } catch (e) { $('m-prev').innerHTML = `<p class="error small">${esc(e.message)}</p>`; } };
   const back = '<div class="btnrow"><button type="button" id="m-back">← Précédent</button><button type="button" id="m-skip">Passer ce réglage</button></div>';
   const render = () => {
     const n = W.ids.length;
@@ -483,6 +503,7 @@ function openMass() {
       $('m-form').onchange = () => preview(s);
       preview(s);
     } else {
+      markPending();
       W.steps = list().map((s) => ({ s, desc: W.specs[s.id].desc, p: plan(s, W.specs[s.id].target, users) }));
       $('modal-body').innerHTML = `${head('Récapitulatif')}<div class="mprev tall">${recapHtml(W.steps)}</div>
         <p class="muted small">Chaque utilisateur est relu juste avant l'écriture. Une sauvegarde des valeurs actuelles est téléchargée avant la première écriture (« Restaurer… » pour revenir en arrière).</p>${back}`;
@@ -527,6 +548,7 @@ async function runMass(items, users, desc, { batch = false, download = true } = 
   let unchanged = 0, ok = 0, lrNote = '';
   const needAuth = items.some((it) => it.s.auth);
   A.running = true;
+  IDX.pending.clear();
   try {
     for (const [i, u0] of users.entries()) {
       toast(`Lecture ${i + 1}/${users.length}…`, 60000);
@@ -539,6 +561,8 @@ async function runMass(items, users, desc, { batch = false, download = true } = 
           if (next === undefined || same(cur, next)) { unchanged++; continue; }
           const err = it.s.check?.(u, next);
           if (err) skipped.push([fullName(u), it.s.label, err]); else todo.push({ u, it, cur, next });
+          // Ligne créée avant l'étape Groupes : l'utilisateur pourra y être ajouté.
+          if (!err && it.s.id === 'lines' && next?.length) IDX.pending.add(u.uuid);
         }
       } catch (e) { failed.push([fullName(u0), 'lecture', e.message]); }
     }
@@ -565,7 +589,7 @@ async function runMass(items, users, desc, { batch = false, download = true } = 
         if (lrOff) lrNote = await restoreLiveReload(todo.filter((x) => x.done && x.it.s.heavy));
       }
     }
-  } finally { A.running = false; }
+  } finally { A.running = false; IDX.pending.clear(); }
   $('massres').innerHTML = `<div class="massres${failed.length ? ' bad' : ''}"><strong>${esc(desc)}</strong> : ${ok} modification(s) écrite(s), ${unchanged} déjà à la valeur${skipped.length ? `, ${skipped.length} ignorée(s) (impossible)` : ''}${failed.length ? `, ${failed.length} en erreur` : ''}.${todo.length ? (download ? ' Sauvegarde téléchargée.' : ' Sauvegarde gardée dans le navigateur (« Restaurer… »).') : ''}
     ${lrNote ? `<div class="small">${esc(lrNote)}.</div>` : ''}
     ${failed.map(([n, s, m]) => `<div class="small error">${esc(n)} · ${esc(s)} : ${esc(m)}</div>`).join('')}

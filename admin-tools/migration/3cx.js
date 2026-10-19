@@ -214,8 +214,8 @@ function routesOf(n) {
 // Correspondance avec Wazo
 // ---------------------------------------------------------------------------
 // Nom à reprendre : celui de 3CX, sauf s'il ne contient que des initiales
-// (« NS ») et que l'e-mail est de la forme prenom.nom@ : on propose alors le
-// nom déduit de l'e-mail (« Nathalie Soulard »), marqué « déduit ».
+// (« JM ») et que l'e-mail est de la forme prenom.nom@ : on propose alors le
+// nom déduit de l'e-mail (« Jeanne Martin »), marqué « déduit ».
 const cap = (s) => s.split('-').map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join('-');
 export function nameOf(e) {
   const first = e.first || ''; const last = e.last || '';

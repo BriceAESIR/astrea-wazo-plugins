@@ -8,9 +8,9 @@
 //  - live reload coupé pendant toute l'opération, réactivé AVANT le dernier
 //    déplacement (une écriture identique ne recharge rien, lu dans le notifier) ;
 //  - journal de chaque écriture, annulation depuis le journal.
-import { S, api, ApiError } from '../common/core.js?v=0.40.12';
-import { I, sameTenant } from './inventory.js?v=0.40.12';
-import { patternMatch } from './checks.js?v=0.40.12';
+import { S, api, ApiError } from '../common/core.js?v=0.40.13';
+import { I, sameTenant } from './inventory.js?v=0.40.13';
+import { patternMatch } from './checks.js?v=0.40.13';
 
 export const JOURNAL_FORMAT = 'astrea-multisite-journal';
 const JOURNAL_KEY = 'astrea-migration-ms-journal-v1';

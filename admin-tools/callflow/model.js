@@ -21,8 +21,8 @@
 // Supposé, à vérifier en réel : les listes (GET /groups, /queues,
 // /switchboards, /schedules) contiennent déjà fallbacks, membres et
 // destinations ; sinon on lit le détail de chaque objet (ensureDetails).
-import { S, api, listAll, fullName } from '../common/core.js?v=0.40.12';
-import { comparePatterns, describePattern, userContext, rightsList, simulate, famLabel } from './dialsim.js?v=0.40.12';
+import { S, api, listAll, fullName } from '../common/core.js?v=0.40.13';
+import { comparePatterns, describePattern, userContext, rightsList, simulate, famLabel } from './dialsim.js?v=0.40.13';
 
 export const M = { lists: {}, by: {}, ext: new Map(), extAny: new Map(), rev: null, warns: [] };
 
@@ -1076,9 +1076,11 @@ export function buildTree(rootKey, dir, { maxDepth = 8, collapsed = new Set(), e
       // répétée (demande de Brice : chaque fin possible visible, quitte à se
       // répéter). Au-delà de MAX_NODES cartes, lien en pointillé.
       let key = k;
-      // Sorties qui convergent (motifs d'une règle → son trunk) : la 2e sortie et les
-      // suivantes rejoignent la carte créée par la 1re (lien plein, pas de carte répétée).
-      if (e.merge && n.mergeTo?.[k]) { cross.push({ from: n.key, port: e.id, to: n.mergeTo[k], edge: e, merge: true }); continue; }
+      // Sorties qui convergent : plusieurs sorties d'une même carte vers le même objet
+      // (motifs d'une règle → son trunk ; SVI « sans saisie », « saisie invalide » et
+      // « trop d'essais » → même horaire, retour de Brice 19/10/2026) : la 2e sortie et
+      // les suivantes rejoignent la carte créée par la 1re (lien plein, pas de suite répétée).
+      if (!e.to.leaf && n.mergeTo?.[k]) { cross.push({ from: n.key, port: e.id, to: n.mergeTo[k], edge: e, merge: true }); continue; }
       if (nodes.has(k)) {
         // Cartes d'arrivée (appelant, trunk, chaîne vers la carte choisie) : pas des boucles (ex. renvoi qui ressort par le trunk d'arrivée).
         let a = n; while (a && (a.entry || baseKey(a.key) !== k)) a = a.parent ? nodes.get(a.parent) : null;
@@ -1091,7 +1093,7 @@ export function buildTree(rootKey, dir, { maxDepth = 8, collapsed = new Set(), e
       nodes.set(key, child);
       n.kids.push(child);
       queue.push(child);
-      if (e.merge) (n.mergeTo ||= {})[k] = key;
+      if (!e.to.leaf) (n.mergeTo ||= {})[k] = key;
     }
   }
   // (0.36.1) Plus de liens « membres → pas de réponse » : la durée du groupe

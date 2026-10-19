@@ -64,6 +64,18 @@ Cadrage, sources et décisions : `docs/USER-MANAGER.md` (dépôt de dev).
   principale, confirmée) ; bouton « Changer le mot de passe… » (sans l'ancien,
   sessions fermées, pas de restauration possible).
 
+## Lignes
+- Colonne « Lignes » de l'audit (type, numéro, appareil) et réglage « Lignes »
+  de la fiche et de l'assistant.
+- Assistant : ajouter une ligne SIP, WebRTC (applications Wazo) ou les deux
+  sur le même numéro ; numéros proposés à la suite dans les plages du
+  contexte (numéro actuel repris), modifiables ; changer le numéro ; supprimer.
+  Une ligne créée à l'étape Lignes permet l'ajout à un groupe à l'étape Groupes
+  de la même opération.
+- Fiche : numéro et appareil de chaque ligne, suppression, ajout.
+- Identifiant et mot de passe SIP générés au hasard. Une restauration recrée
+  les lignes supprimées avec de nouveaux identifiants (postes à resynchroniser).
+
 Le CSV (export, création) arrive ensuite.
 ## Droits utilisés
 Lecture : `confd.users.read`, plus, pour les libellés, `confd.moh.read`,
@@ -71,6 +83,8 @@ Lecture : `confd.users.read`, plus, pour les libellés, `confd.moh.read`,
 et `confd.schedules.read`. Écriture : `confd.users.{id}.update`,
 `…services.*`, `…forwards.*`, `…groups.update`, `…callpermissions.*`,
 `…schedules.*`, `…fallbacks.update`, `confd.voicemails.{id}.update`,
-`confd.configuration.live_reload.read|update` (non vérifiés en réel pour le token du portail). Si l'un d'eux est refusé,
+`confd.configuration.live_reload.read|update`, et pour les lignes
+`confd.lines.*`, `confd.extensions.*`, `confd.devices.read`,
+`confd.endpoints.sip.templates.read`, `…lines.{id}.update` (non vérifiés en réel pour le token du portail). Si l'un d'eux est refusé,
 l'audit fonctionne quand même et affiche les valeurs techniques, avec un
 avertissement.

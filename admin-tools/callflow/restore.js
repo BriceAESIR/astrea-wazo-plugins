@@ -7,17 +7,17 @@
 // montrés une seule fois (jamais enregistrés dans un fichier).
 // Non restauré automatiquement : un numéro interne changé (risque de collision
 // si le numéro a été réattribué) — signalé.
-import { S, $, esc, toast, confirmModal, downloadJson, fullName } from '../common/core.js?v=0.40.12';
+import { S, $, esc, toast, confirmModal, downloadJson, fullName } from '../common/core.js?v=0.40.13';
 // Restauration liée au tenant des données chargées (tapi, model.js).
-import { M, tapi as api } from './model.js?v=0.40.12';
-import { cleanDest } from './write.js?v=0.40.12';
-import { redact, SECRET_KEYS } from './ed-ui.js?v=0.40.12';
-import { GROUP_FIELDS } from './group-editor.js?v=0.40.12';
-import { QUEUE_FIELDS } from './queue-editor.js?v=0.40.12';
-import { IVR_FIELDS } from './ivr-editor.js?v=0.40.12';
-import { SB_FIELDS } from './sb-editor.js?v=0.40.12';
-import { INCALL_FIELDS, USER_FIELDS, VM_FIELDS, CONF_FIELDS, SCHED_FIELDS } from './obj-editors.js?v=0.40.12';
-import { OUTCALL_FIELDS } from './outcall-editor.js?v=0.40.12';
+import { M, tapi as api } from './model.js?v=0.40.13';
+import { cleanDest } from './write.js?v=0.40.13';
+import { redact, SECRET_KEYS } from './ed-ui.js?v=0.40.13';
+import { GROUP_FIELDS } from './group-editor.js?v=0.40.13';
+import { QUEUE_FIELDS } from './queue-editor.js?v=0.40.13';
+import { IVR_FIELDS } from './ivr-editor.js?v=0.40.13';
+import { SB_FIELDS } from './sb-editor.js?v=0.40.13';
+import { INCALL_FIELDS, USER_FIELDS, VM_FIELDS, CONF_FIELDS, SCHED_FIELDS } from './obj-editors.js?v=0.40.13';
+import { OUTCALL_FIELDS } from './outcall-editor.js?v=0.40.13';
 
 const HIDDEN = '***';
 // Audit du 16/10/2026 : la sauvegarde est un fichier que l'on peut modifier ; on ne

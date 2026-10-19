@@ -5,10 +5,10 @@
 // renvoie la destination au brouillon (onSave). Champs vérifiés dans le schéma
 // des destinations de wazo-confd (ring_time, greeting, skip_instructions,
 // filename, skip, no_answer, cause, exten + context).
-import { $, esc, confirmModal, helpButton, helpBox } from '../common/core.js?v=0.40.12';
-import { TYPES, M, listOf, destLabel } from './model.js?v=0.40.12';
-import { fillSoundSelect } from './sched-editor.js?v=0.40.12';
-import { sec, field, check, setSums, openSec } from './ed-ui.js?v=0.40.12';
+import { $, esc, confirmModal, helpButton, helpBox } from '../common/core.js?v=0.40.13';
+import { TYPES, M, listOf, destLabel } from './model.js?v=0.40.13';
+import { fillSoundSelect } from './sched-editor.js?v=0.40.13';
+import { sec, field, check, setSums, openSec } from './ed-ui.js?v=0.40.13';
 
 export const DEST_TYPES = [
   ['user', 'Utilisateur'], ['group', 'Groupe'], ['queue', 'File d\'attente'], ['ivr', 'SVI'], ['voicemail', 'Messagerie'],
@@ -29,7 +29,8 @@ const THELP = {
   sound: 'Joue un fichier son puis raccroche.',
   hangup: 'Termine l\'appel avec la tonalité choisie.',
 };
-const GREET = [['', 'Par défaut'], ['unavailable', 'Indisponible'], ['busy', 'Occupé']];
+// Vérifié (confd helpers/destination.py) : busy → option « b » d'Asterisk, unavailable → « u », rien sinon.
+const GREET = [['unavailable', 'Indisponible'], ['busy', 'Occupé'], ['', 'Aucun (consignes seulement)']];
 const CAUSE = [['normal', 'Tonalité normale'], ['busy', 'Occupé'], ['congestion', 'Encombré']];
 const opt = (list, cur) => list.map(([k, l]) => `<option value="${esc(k)}"${(cur ?? '') === k ? ' selected' : ''}>${esc(l)}</option>`).join('');
 
@@ -67,7 +68,7 @@ export function openDestEditor(o, onSave) {
       parts.push(`<div id="dd-ringbox" class="cf-ge-sub"${s?.ring_time != null ? '' : ' hidden'}>${field('Durée (s)', `<input id="dd-ring" type="number" min="0" step="1" value="${esc(s?.ring_time ?? '')}" placeholder="ex. 20">`)}</div>`);
     }
     if (type === 'voicemail') {
-      parts.push(field('Message d\'accueil', `<select id="dd-greet">${opt(GREET, s?.greeting || '')}</select>`, 'Message enregistré par le titulaire de la messagerie.'));
+      parts.push(field('Message d\'accueil', `<select id="dd-greet">${opt(GREET, s?.greeting || '')}</select>`, 'Indisponible / Occupé : joue le message enregistré dans la messagerie (Messages d\'accueil) ; s\'il n\'existe pas, Asterisk annonce « <Prénom et nom enregistré> est indisponible / en ligne » (supposé). Aucun : pas de message personnel, seulement « laissez votre message après le bip ».'));
       parts.push(check('dd-skip', 'Ne pas lire les instructions', 'Bip direct après le message d\'accueil.', !!s?.skip_instructions));
     }
     if (type === 'sound') {
@@ -119,7 +120,7 @@ export function openDestEditor(o, onSave) {
     else if (type === 'sound') S.obj = [sel('dd-file') || 'à choisir'];
     else if (type === 'hangup') S.obj = [sel('dd-cause')];
     S.opt = [$('dd-ringon')?.checked ? `sonne ${$('dd-ring').value || '?'} s` : RINGS.has(type) ? 'durée de l\'objet' : '',
-      type === 'voicemail' ? `accueil ${sel('dd-greet') || 'par défaut'}` : '', $('dd-skip')?.checked ? 'sans instructions' : '',
+      type === 'voicemail' ? ($('dd-greet')?.value ? `accueil ${sel('dd-greet')}` : 'sans message d\'accueil') : '', $('dd-skip')?.checked ? 'sans instructions' : '',
       $('dd-sskip')?.checked ? 'interruptible' : '', $('dd-noans')?.checked ? 'sans décrocher' : ''];
     if (P) S.per = [P.shared > 1 ? `partagé par ${P.shared} objets` : ''];
     setSums(box, S);

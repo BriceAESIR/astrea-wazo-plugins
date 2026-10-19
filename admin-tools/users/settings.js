@@ -19,7 +19,7 @@
 //                     rechargement à redéclencher à la fin ('user')
 // Routes et sémantique vérifiées dans le code de wazo-confd (13/10/2026),
 // voir docs/USER-MANAGER.md. Écritures non encore testées en réel.
-import { S, api, esc, fullName } from '../common/core.js?v=0.40.12';
+import { S, api, esc, fullName } from '../common/core.js?v=0.40.13';
 
 // Comparaison indépendante de l'ordre des clés (objets relus vs construits).
 const canon = (v) => (Array.isArray(v) ? v.map(canon) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, canon(v[k])])) : v ?? null);
@@ -392,7 +392,278 @@ const authEmails = {
   },
 };
 
+// ---------------------------------------------------------------------------
+// Lignes (lu dans le code de wazo-confd le 19/10/2026) :
+//  - POST /lines {context, endpoint_sip: {templates, auth_section_options},
+//    extensions: [{exten, context}]} crée ligne + endpoint + numéro en un appel
+//    (numéro existant repris s'il est libre d'usage : lignes multiples d'un
+//    même utilisateur) ; nom technique de l'endpoint généré par confd, pas
+//    l'identifiant ni le mot de passe SIP (générés ici, comme l'import CSV) ;
+//  - WebRTC = endpoint SIP avec les modèles « global » + « webrtc » du tenant
+//    (WebRTCCreator de l'import) ; GET /lines donne is_webrtc, pas GET /users ;
+//  - PUT /users/{uuid}/lines/{id} : la ligne doit avoir un endpoint ; un numéro
+//    ne peut pas être partagé avec la ligne d'un autre utilisateur ;
+//  - numéro : contexte de type internal et dans ses plages « utilisateurs » ;
+//  - DELETE /lines/{id}?recursive=true dissocie utilisateur et numéro (numéro
+//    supprimé s'il ne sert plus) et supprime l'endpoint ; refusé tant qu'un
+//    appareil est associé (DELETE /lines/{id}/devices/{device} avant) ; confd
+//    retire les inscriptions aux groupes et files passées par cette ligne ;
+//  - PUT /extensions/{id} {exten} partiel : change le numéro de toutes les
+//    lignes qui le partagent.
+// Index remplis par app.js au chargement (check() n'a pas le contexte).
+// ---------------------------------------------------------------------------
+export const IDX = { lines: new Map(), exts: new Map(), devices: new Map(), contexts: [], tpl: {}, pending: new Set() };
+const LTYPE = { sip: 'SIP', webrtc: 'WebRTC', sccp: 'SCCP', custom: 'Custom' };
+const lineType = (l) => (l.endpoint_sccp ? 'sccp' : l.endpoint_custom ? 'custom' : IDX.lines.get(l.id)?.is_webrtc ? 'webrtc' : 'sip');
+// Valeur du réglage : lignes de l'utilisateur, triées par id ; les nouvelles
+// (sans id) à la fin. ext_id = numéro à modifier en place.
+export const readLines = (u) => (u.lines || []).map((l) => {
+  const e = (l.extensions || [])[0] || {}, x = IDX.lines.get(l.id);
+  return { id: l.id, type: lineType(l), exten: e.exten || '', context: e.context || l.context || x?.context || '', ext_id: e.id ?? null, device: l.device_id ?? x?.device_id ?? null };
+}).sort((a, b) => a.id - b.id);
+export const deviceName = (id) => { const d = IDX.devices.get(id); return d ? [d.vendor, d.model].filter(Boolean).join(' ') + (d.mac ? ` · ${d.mac}` : '') || id : `appareil ${String(id).slice(0, 8)}`; };
+const lineText = (l) => `${LTYPE[l.type] || l.type} ${l.exten || 'sans numéro'}${l.device ? ` (${deviceName(l.device)})` : ''}${l.id ? '' : ' (nouvelle)'}`;
+const internalCtx = (c) => c.contexts.filter((x) => x.type === 'internal');
+const ctxText = (cx) => (cx ? `${cx.label || cx.name}${(cx.user_ranges || []).length ? ` (${cx.user_ranges.map((r) => (r.start === r.end ? r.start : `${r.start}-${r.end}`)).join(', ')})` : ''}` : '');
+const inRange = (cx, n) => /^\d+$/.test(n) && (cx?.user_ranges || []).some((r) => Number(n) >= Number(r.start) && Number(n) <= Number(r.end));
+// Numéro utilisé par autre chose que les lignes de cet utilisateur.
+function takenBy(u, exten, context) {
+  const e = IDX.exts.get(`${context}|${exten}`);
+  if (!e) return '';
+  const mine = new Set((u.lines || []).map((l) => l.id)), ls = (e.lines || []).map((l) => l.id);
+  if (ls.length && ls.every((id) => mine.has(id))) return '';
+  const o = ls.length ? IDX.lines.get(ls[0])?.users?.[0] : null;
+  const what = ls.length ? (o ? fullName(o) : 'une autre ligne') : e.group ? `groupe ${e.group.name}` : e.queue ? `file ${e.queue.label || e.queue.name}` : e.conference ? 'conférence' : e.parking_lot ? 'parking' : e.incall ? 'appel entrant' : e.outcall ? 'appel sortant' : 'autre usage';
+  return `numéro ${exten} déjà pris (${what})`;
+}
+// Numéros libres à la suite (plages du contexte, numéros déjà pris sautés).
+const usedIn = (ctxName) => new Set([...IDX.exts.values()].filter((e) => e.context === ctxName).map((e) => e.exten));
+function defaultStart(ctxName) {
+  const cx = IDX.contexts.find((x) => x.name === ctxName), rs = cx?.user_ranges || [];
+  if (!rs.length) return '';
+  const used = [...usedIn(ctxName)].filter((n) => inRange(cx, n)).map(Number);
+  return String(used.length ? Math.max(...used) + 1 : Number(rs[0].start));
+}
+function nextFree(ctxName, from, count, reserved = new Set()) {
+  const cx = IDX.contexts.find((x) => x.name === ctxName), rs = cx?.user_ranges || [];
+  const used = usedIn(ctxName), out = [];
+  if (!rs.length) return out;
+  const max = Math.max(...rs.map((r) => Number(r.end)));
+  const ok = (n) => inRange(cx, String(n)) && !used.has(String(n)) && !reserved.has(String(n));
+  let n = Number(from) || Number(rs[0].start);
+  for (; out.length < count && n <= max; n++) if (ok(n)) out.push(String(n));
+  // Fin de plage atteinte : on repart du début pour les trous.
+  for (n = Math.min(...rs.map((r) => Number(r.start))); out.length < count && n < (Number(from) || 0); n++) if (ok(n) && !out.includes(String(n))) out.push(String(n));
+  return out;
+}
+const firstExten = (u, ctxName) => readLines(u).find((l) => l.exten && (!ctxName || l.context === ctxName))?.exten || '';
+let LF = { users: [], cur: [] }; // cibles du formulaire affiché (wire)
+const LTYPES_NEW = [['sip', 'SIP (poste de bureau, DECT, softphone tiers)'], ['webrtc', 'WebRTC (applications Wazo : web, bureau, mobile)'], ['both', 'SIP + WebRTC (deux lignes, même numéro)']];
+function freeDevices(keep = []) {
+  const used = new Set([...IDX.lines.values()].map((l) => l.device_id).filter(Boolean));
+  return [...IDX.devices.values()].filter((d) => !used.has(d.id) || keep.includes(d.id)).sort((a, b) => String(a.mac || '').localeCompare(String(b.mac || '')));
+}
+const deviceOptions = (sel) => options([['', 'Aucun'], ...freeDevices([sel].filter(Boolean)).map((d) => [d.id, deviceName(d.id)])], sel || '');
+const defaultCtx = (c) => {
+  const n = {};
+  for (const u of c.users) for (const l of readLines(u)) if (l.context) n[l.context] = (n[l.context] || 0) + 1;
+  const best = Object.entries(n).sort((a, b) => b[1] - a[1])[0]?.[0];
+  return internalCtx(c).some((x) => x.name === best) ? best : internalCtx(c)[0]?.name || '';
+};
+const numCheck = (n) => { if (n && !/^\d{1,40}$/.test(n)) throw new Error(`Numéro invalide : ${n} (chiffres seulement).`); };
+// Remplit les numéros proposés. Ajouter : numéro actuel, sinon libres à la suite.
+// Changer le numéro : numéros actuels (rien ne change tant qu'on n'a rien saisi),
+// ou à la suite avec le bouton (seq).
+function fillNumbers(seq = false) {
+  const act = $v('m-la') || 'add', ctxName = $v('m-lc'), from = $v('m-lstart');
+  if (act === 'renum' && !seq) { for (const u of LF.users) { const el = document.getElementById(`m-ln-${u.id}`); if (el) el.value = firstExten(u); } document.getElementById('m-form')?.dispatchEvent(new Event('change')); return; }
+  const need = LF.users.filter((u) => !(act === 'add' && firstExten(u, ctxName)) && !(act === 'renum' && !firstExten(u)));
+  const free = nextFree(ctxName, from || defaultStart(ctxName), need.length);
+  for (const u of LF.users) {
+    const el = document.getElementById(`m-ln-${u.id}`);
+    if (!el) continue;
+    el.value = act === 'add' && firstExten(u, ctxName) ? firstExten(u, ctxName) : act === 'renum' && !firstExten(u) ? '' : free.shift() || '';
+  }
+  document.getElementById('m-form')?.dispatchEvent(new Event('change'));
+}
+const linesSetting = {
+  id: 'lines', label: 'Lignes', heavy: true, reload: 'user', showsCurrent: true,
+  available: (c) => internalCtx(c).length > 0,
+  prefill: () => ({}),
+  read: readLines,
+  text: (v) => (v?.length ? v.map(lineText).join(' · ') : 'aucune'),
+  form: (c, cur, u, users) => {
+    const targets = users || (u ? [u] : []);
+    LF = { users: targets, cur: cur ?? (targets[0] ? readLines(targets[0]) : []) };
+    const cx = defaultCtx(c);
+    const ctxSel = `<label>Contexte <select id="m-lc">${options(internalCtx(c).map((x) => [x.name, ctxText(x)]), cx)}</select></label>`;
+    if (targets.length <= 1) {
+      // Fiche : éditeur des lignes de l'utilisateur + ajout.
+      const t = targets[0];
+      const rows = LF.cur.map((l) => `<tr><td>${esc(LTYPE[l.type] || l.type)}</td><td><input id="m-le-${l.id}" value="${esc(l.exten)}" inputmode="numeric" size="8"></td>
+        <td>${l.type === 'webrtc' ? '<span class="muted small">(applications)</span>' : `<select id="m-ld-${l.id}">${deviceOptions(l.device)}</select>`}</td>
+        <td><label class="inline"><input type="checkbox" id="m-lx-${l.id}"> supprimer</label></td></tr>`).join('');
+      const start = t ? firstExten(t, cx) || nextFree(cx, defaultStart(cx), 1)[0] || '' : '';
+      return `${LF.cur.length ? `<table class="diff"><tr><th>Type</th><th>Numéro</th><th>Appareil</th><th></th></tr>${rows}</table>` : '<p class="muted small">Aucune ligne : l\'utilisateur ne peut ni appeler, ni être appelé, ni être membre d\'un groupe.</p>'}
+        <h4 class="side-title">Ajouter une ligne</h4>
+        <label>Type <select id="m-lt">${options([['', 'Aucune'], ...LTYPES_NEW])}</select></label>
+        <div data-lnew>${ctxSel}<label>Numéro <input id="m-ln-${t?.id}" value="${esc(start)}" inputmode="numeric" size="8"></label>
+        <label>Appareil (ligne SIP) <select id="m-lnd">${deviceOptions('')}</select></label>
+        <p class="muted small">Même numéro qu'une ligne existante = lignes multiples (tous ses postes sonnent). Identifiant et mot de passe SIP générés au hasard.</p></div>
+        <p class="muted small">Supprimer la ligne principale retire l'utilisateur des groupes et files (inscriptions liées à la ligne). Appareils proposés : ceux du tenant sans ligne.</p>`;
+    }
+    return `<label>Action <select id="m-la">${options([['add', 'Ajouter une ligne'], ['renum', 'Changer le numéro'], ['del', 'Supprimer des lignes']])}</select></label>
+      <div data-la="add"><label>Type <select id="m-lt">${options(LTYPES_NEW)}</select></label>
+        <label class="inline"><input type="checkbox" id="m-lskip" checked> Ignorer les utilisateurs qui ont déjà une ligne de ce type</label>${ctxSel}</div>
+      <div data-la="del"><label>Lignes à supprimer <select id="m-ldt">${options([['all', 'Toutes les lignes'], ['sip', 'Lignes SIP'], ['webrtc', 'Lignes WebRTC'], ['sccp', 'Lignes SCCP']])}</select></label>
+        <div class="warn">Appareils dissociés, numéros libérés s'ils ne servent plus, identifiants SIP perdus (une restauration recrée des lignes avec de nouveaux identifiants : postes à reprovisionner). L'utilisateur est retiré des groupes et files liés à la ligne supprimée.</div></div>
+      <div data-lnum><div class="btnrow"><label>À partir de <input id="m-lstart" inputmode="numeric" size="8" placeholder="${esc(defaultStart(cx))}"></label><button type="button" id="m-lprop">Numéroter à la suite</button></div>
+        <table class="diff"><tr><th>Utilisateur</th><th>Lignes actuelles</th><th>Numéro</th></tr>${targets.map((x) => `<tr><td>${esc(fullName(x))}</td><td class="muted">${esc(linesSetting.text(readLines(x)))}</td><td><input id="m-ln-${x.id}" inputmode="numeric" size="8"></td></tr>`).join('')}</table>
+        <p class="muted small">Ajouter : numéro actuel repris s'il en a un (lignes multiples), sinon numéros libres à la suite dans les plages du contexte. Numéro vide = utilisateur ignoré. Changer le numéro : modifie le numéro de toutes ses lignes qui le partagent.</p></div>`;
+  },
+  wire: () => {
+    const la = document.getElementById('m-la');
+    if (!la) { // fiche
+      const f = () => { document.querySelector('[data-lnew]').hidden = !$v('m-lt'); };
+      document.getElementById('m-lt').addEventListener('change', f); f();
+      return;
+    }
+    const show = () => { document.querySelectorAll('[data-la]').forEach((x) => (x.hidden = x.dataset.la !== la.value)); document.querySelector('[data-lnum]').hidden = la.value === 'del'; };
+    la.addEventListener('change', () => { show(); fillNumbers(); });
+    document.getElementById('m-lc').addEventListener('change', () => { document.getElementById('m-lstart').placeholder = defaultStart($v('m-lc')); fillNumbers(); });
+    document.getElementById('m-lprop').onclick = () => fillNumbers(true);
+    show();
+    // Premier affichage (rien de saisi) : numéros proposés.
+    if (LF.users.every((u) => !$v(`m-ln-${u.id}`))) fillNumbers();
+  },
+  parse: (c) => {
+    const ctxName = $v('m-lc'), cx = c.contexts.find((x) => x.name === ctxName);
+    if (!document.getElementById('m-la')) {
+      // Fiche
+      const u = LF.users[0], edits = new Map(), del = new Set();
+      for (const l of LF.cur) {
+        if (document.getElementById(`m-lx-${l.id}`)?.checked) { del.add(l.id); continue; }
+        const n = $v(`m-le-${l.id}`).trim();
+        numCheck(n);
+        edits.set(l.id, { exten: n || l.exten, device: document.getElementById(`m-ld-${l.id}`) ? $v(`m-ld-${l.id}`) || null : l.device });
+      }
+      for (const a of LF.cur) for (const b of LF.cur) if (a.ext_id && a.ext_id === b.ext_id && edits.has(a.id) && edits.has(b.id) && edits.get(a.id).exten !== edits.get(b.id).exten) throw new Error(`Les lignes qui partagent le numéro ${a.exten} doivent garder le même numéro.`);
+      const t = $v('m-lt'), n = u ? $v(`m-ln-${u.id}`).trim() : '';
+      if (t) { numCheck(n); if (!n) throw new Error('Numéro de la nouvelle ligne obligatoire.'); if (!cx) throw new Error('Aucun contexte interne.'); }
+      const dev = $v('m-lnd') || null;
+      const added = !t ? [] : (t === 'both' ? ['sip', 'webrtc'] : [t]).map((ty) => ({ type: ty, exten: n, context: ctxName, device: ty === 'sip' ? dev : null }));
+      const devs = [...[...edits.values()].map((e) => e.device), ...added.map((l) => l.device)].filter(Boolean);
+      if (new Set(devs).size !== devs.length) throw new Error('Le même appareil est choisi pour deux lignes.');
+      const changed = LF.cur.filter((l) => edits.has(l.id)), renum = changed.filter((l) => edits.get(l.id).exten !== l.exten), redev = changed.filter((l) => (edits.get(l.id).device || null) !== (l.device || null));
+      const parts = [del.size ? `${del.size} supprimée(s)` : '', renum.length ? `numéro ${[...new Set(renum.map((l) => edits.get(l.id).exten))].join(', ')}` : '', redev.length ? 'appareil modifié' : '', added.length ? `ajout ${added.map((l) => LTYPE[l.type]).join(' + ')} ${n}` : ''].filter(Boolean);
+      return {
+        target: (cur) => [...cur.filter((l) => !del.has(l.id)).map((l) => (edits.has(l.id) ? { ...l, ...edits.get(l.id) } : l)), ...added],
+        desc: `Lignes : ${parts.join(', ') || 'modification'}`,
+      };
+    }
+    const act = $v('m-la');
+    if (act === 'del') {
+      const t = $v('m-ldt');
+      return { target: (cur) => cur.filter((l) => !(t === 'all' || l.type === t)), desc: `Lignes : supprimer ${t === 'all' ? 'toutes les lignes' : `les lignes ${LTYPE[t]}`}` };
+    }
+    const nums = new Map(LF.users.map((u) => [u.id, $v(`m-ln-${u.id}`).trim()]));
+    for (const n of nums.values()) numCheck(n);
+    const seen = new Map();
+    for (const [id, n] of nums) {
+      if (!n) continue;
+      const u = LF.users.find((x) => x.id === id);
+      // Ajout : un même numéro ne peut servir qu'à un utilisateur (sauf le sien).
+      if (seen.has(n) && !(act === 'add' && firstExten(u, ctxName) === n)) throw new Error(`Numéro ${n} donné à deux utilisateurs (${seen.get(n)}, ${fullName(u)}).`);
+      seen.set(n, fullName(u));
+    }
+    if (act === 'renum') {
+      return {
+        target: (cur, u) => {
+          const n = nums.get(u.id), old = cur.find((l) => l.exten)?.exten;
+          return !n || !old ? cur : cur.map((l) => (l.exten === old ? { ...l, exten: n } : l));
+        },
+        desc: 'Lignes : changer le numéro',
+      };
+    }
+    if (!cx) throw new Error('Aucun contexte interne dans ce tenant.');
+    const t = $v('m-lt'), types = t === 'both' ? ['sip', 'webrtc'] : [t], skip = document.getElementById('m-lskip')?.checked;
+    return {
+      target: (cur, u) => {
+        const n = nums.get(u.id);
+        if (!n) return cur;
+        const add = types.filter((ty) => !(skip && cur.some((l) => l.type === ty))).map((ty) => ({ type: ty, exten: n, context: ctxName, device: null }));
+        return add.length ? [...cur, ...add] : cur;
+      },
+      desc: `Lignes : ajouter ${types.map((x) => LTYPE[x]).join(' + ')} (${cx.label || cx.name})`,
+    };
+  },
+  check: (u, next) => {
+    const cur = readLines(u), byId = new Map(cur.map((l) => [l.id, l]));
+    for (const l of next || []) {
+      const o = l.id != null ? byId.get(l.id) : null;
+      if (o && o.exten === l.exten) continue;
+      if (!o && l.type !== 'sip' && l.type !== 'webrtc') return `création d'une ligne ${LTYPE[l.type] || l.type} non gérée`;
+      if (!o && !IDX.tpl.global) return 'modèle SIP « global » du tenant introuvable';
+      if (!o && l.type === 'webrtc' && !IDX.tpl.webrtc) return 'modèle SIP « webrtc » du tenant introuvable';
+      if (!l.exten) return 'aucun numéro';
+      const cx = IDX.contexts.find((x) => x.name === l.context);
+      if (!cx) return `contexte ${l.context || '?'} introuvable`;
+      if (!inRange(cx, l.exten)) return `numéro ${l.exten} hors des plages du contexte ${ctxText(cx)}`;
+      const t = takenBy(u, l.exten, l.context);
+      if (t) return t;
+    }
+    return '';
+  },
+  write: async (u, next, cur) => {
+    const byId = new Map(cur.map((l) => [l.id, l]));
+    const keep = new Set(next.filter((l) => l.id != null && byId.has(l.id)).map((l) => l.id));
+    // 1. Suppressions (appareil dissocié d'abord, sinon refus de confd).
+    for (const l of cur) {
+      if (keep.has(l.id)) continue;
+      if (l.device) await api('DELETE', `/lines/${l.id}/devices/${l.device}`);
+      await api('DELETE', `/lines/${l.id}?recursive=true`);
+    }
+    // 2. Numéros et appareils des lignes gardées.
+    const done = new Set();
+    for (const l of next) {
+      const o = l.id != null && byId.get(l.id);
+      if (!o) continue;
+      if (l.exten !== o.exten) {
+        if (o.ext_id) { if (!done.has(o.ext_id)) { done.add(o.ext_id); await api('PUT', `/extensions/${o.ext_id}`, { exten: l.exten }); } }
+        else {
+          const ex = IDX.exts.get(`${o.context}|${l.exten}`) || await api('POST', '/extensions', { exten: l.exten, context: o.context });
+          await api('PUT', `/lines/${l.id}/extensions/${ex.id}`);
+        }
+      }
+      if ((l.device || null) !== (o.device || null)) {
+        if (o.device) await api('DELETE', `/lines/${l.id}/devices/${o.device}`);
+        if (l.device) await api('PUT', `/lines/${l.id}/devices/${l.device}`);
+      }
+    }
+    // 3. Créations (et lignes d'une sauvegarde qui n'existent plus).
+    for (const l of next) {
+      if (l.id != null && byId.has(l.id)) continue;
+      const templates = (l.type === 'webrtc' ? [IDX.tpl.global, IDX.tpl.webrtc] : [IDX.tpl.global]).map((uuid) => ({ uuid }));
+      const line = await api('POST', '/lines', {
+        context: l.context,
+        endpoint_sip: { templates, auth_section_options: [['username', rnd(8, 'abcdefghijklmnopqrstuvwxyz')], ['password', rnd(16, 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789')]] },
+        extensions: l.exten ? [{ exten: l.exten, context: l.context }] : [],
+      });
+      try { await api('PUT', `/users/${u.uuid}/lines/${line.id}`); } catch (e) {
+        // Ligne orpheline : supprimée pour ne pas bloquer le numéro.
+        try { await api('DELETE', `/lines/${line.id}?recursive=true`); } catch { /* signalé par l'erreur d'origine */ }
+        throw e;
+      }
+      if (l.device) {
+        try { await api('PUT', `/lines/${line.id}/devices/${l.device}`); } catch (e) { throw new Error(`ligne ${l.exten} créée, mais appareil non associé : ${e.message}`); }
+      }
+    }
+  },
+};
+const rnd = (n, cs) => { const b = new Uint32Array(n); crypto.getRandomValues(b); return [...b].map((x) => cs[x % cs.length]).join(''); };
+
 const ALL_SETTINGS = [
+  linesSetting,
   authEnabled, authUsername, authMethod, authEmails,
   textField('firstname', 'Prénom', { required: true }),
   textField('lastname', 'Nom'),
@@ -453,7 +724,8 @@ const ALL_SETTINGS = [
     ...membership((c) => [...c.groups.values()].map((g) => [g.uuid, g.label || g.name]).sort((a, b) => a[1].localeCompare(b[1], 'fr')), (u) => sortedIds(u.groups, 'uuid'), 'Groupes d\'appel', (a) => [...a].sort()),
     read: (u) => sortedIds(u.groups, 'uuid'),
     text: (v, c) => (v?.length ? v.map((x) => c.groups.get(x)?.label || x).join(', ') : '—'),
-    check: (u, v) => (v?.length && !(u.lines || []).length ? 'aucune ligne : ne peut pas être membre d\'un groupe' : ''),
+    // IDX.pending : ligne créée plus tôt dans la même opération (étape Lignes).
+    check: (u, v) => (v?.length && !(u.lines || []).length && !IDX.pending.has(u.uuid) ? 'aucune ligne : ne peut pas être membre d\'un groupe (étape Lignes pour en créer une)' : ''),
     write: (u, v) => api('PUT', `/users/${u.uuid}/groups`, { groups: v.map((uuid) => ({ uuid })) }),
   },
   {
@@ -516,6 +788,7 @@ const HELP = {
   outgoing_caller_id: 'Numéro présenté aux correspondants externes : par défaut (règle du tenant ou de la ligne), anonyme, un numéro du tenant, la SDA de l\'utilisateur, ou un autre numéro (l\'opérateur peut refuser un numéro qui n\'appartient pas au client).',
   call_permissions: 'Droits d\'appel : listes de numéros autorisés ou interdits (avec mot de passe éventuel), définies dans le portail. L\'utilisateur est soumis à tous ceux qui lui sont associés.',
   voicemail: 'Boîte vocale de l\'utilisateur (une boîte peut être partagée). Les réglages de la boîte (code, e-mail, options) se font dans Messageries vocales.',
+  lines: 'Lignes téléphoniques de l\'utilisateur : sans ligne, il ne peut ni appeler, ni être appelé, ni être membre d\'un groupe. SIP : poste de bureau, DECT ou softphone tiers (identifiants SIP générés au hasard). WebRTC : applications Wazo (web, bureau, mobile). Plusieurs lignes sur le même numéro sonnent ensemble. Le numéro doit être libre et dans une plage « utilisateurs » du contexte. Supprimer une ligne libère son numéro, dissocie son appareil et retire l\'utilisateur des groupes et files liés à cette ligne.',
   groups: 'Groupes d\'appel dont l\'utilisateur est membre : ses postes sonnent quand le groupe est appelé. Il faut une ligne pour être membre.',
   schedule: 'Plage horaire de l\'utilisateur : hors plage, ses appels vont vers la destination « fermé » de la plage. Un seul horaire par utilisateur.',
 };
@@ -525,6 +798,7 @@ const HELP = {
 const LAYOUT = [
   ['Utilisateur', ['firstname', 'lastname', 'email', 'mobile_phone_number', 'description', 'caller_id', 'enabled', 'subscription_type', 'language']],
   ['Compte (applications)', ['auth_enabled', 'auth_username', 'auth_method', 'auth_emails']],
+  ['Lignes', ['lines']],
   ['Services voix', ['dnd', 'incallfilter', 'ring_seconds', 'simultaneous_calls', 'music_on_hold']],
   ['Renvois d\'appel (utilisateur)', ['fwd_busy', 'fwd_unconditional', 'fwd_noanswer']],
   ['Renvois par défaut (admin)', ['fb_busy', 'fb_congestion', 'fb_fail', 'fb_noanswer']],
