@@ -21,8 +21,8 @@
 // Supposé, à vérifier en réel : les listes (GET /groups, /queues,
 // /switchboards, /schedules) contiennent déjà fallbacks, membres et
 // destinations ; sinon on lit le détail de chaque objet (ensureDetails).
-import { S, api, listAll, fullName } from '../common/core.js?v=0.40.20';
-import { comparePatterns, describePattern, userContext, rightsList, simulate, famLabel } from './dialsim.js?v=0.40.20';
+import { S, api, listAll, fullName } from '../common/core.js?v=0.40.21';
+import { comparePatterns, describePattern, userContext, rightsList, simulate, famLabel } from './dialsim.js?v=0.40.21';
 
 export const M = { lists: {}, by: {}, ext: new Map(), extAny: new Map(), rev: null, warns: [] };
 
@@ -431,7 +431,8 @@ export function destTarget(d) {
   }
 }
 // Durée de sonnerie portée par la destination (user, group, queue, switchboard).
-const ringNote = (d) => (d?.ring_time ? `sonne ${d.ring_time} s` : '');
+// + musique de distribution d'un appel vers un utilisateur (moh_uuid, 20/10/2026).
+const ringNote = (d) => [d?.ring_time ? `sonne ${d.ring_time} s` : '', d?.moh_uuid ? `musique ${((M.lists.moh || []).find((m) => m.uuid === d.moh_uuid) || {}).label || 'choisie'}` : ''].filter(Boolean).join(' · ');
 // Libellé lisible d'une destination (aperçu avant / après du brouillon).
 export function destLabel(d) {
   const t = destTarget(d);

@@ -5,14 +5,17 @@
 // renvoie la destination au brouillon (onSave). Champs vérifiés dans le schéma
 // des destinations de wazo-confd (ring_time, greeting, skip_instructions,
 // filename, skip, no_answer, cause, exten + context).
-import { $, esc, confirmModal, helpButton, helpBox } from '../common/core.js?v=0.40.20';
-import { TYPES, M, listOf, destLabel } from './model.js?v=0.40.20';
-import { fillSoundSelect } from './sched-editor.js?v=0.40.20';
-import { sec, field, check, setSums, openSec } from './ed-ui.js?v=0.40.20';
+import { $, esc, confirmModal, helpButton, helpBox } from '../common/core.js?v=0.40.21';
+import { TYPES, M, listOf, destLabel } from './model.js?v=0.40.21';
+import { fillSoundSelect } from './sched-editor.js?v=0.40.21';
+import { sec, field, setSums, openSec } from './ed-ui.js?v=0.40.21';
+import { EXTRA_TYPES, destFieldsHtml, destOptsHtml, readDestExtra, bindDestExtra, hasOpts } from './dest-opts.js?v=0.40.21';
 
 export const DEST_TYPES = [
   ['user', 'Utilisateur'], ['group', 'Groupe'], ['queue', 'File d\'attente'], ['ivr', 'SVI'], ['voicemail', 'Messagerie'],
   ['switchboard', 'Standard'], ['conference', 'Conférence'], ['extension', 'Numéro'], ['sound', 'Fichier son'], ['hangup', 'Raccrocher'],
+  // Types complétés le 20/10/2026 (demande de Brice : « toutes les options ») : dest-opts.js.
+  ...EXTRA_TYPES,
 ];
 export const ENTITY_DEST = { user: 'user_id', group: 'group_id', queue: 'queue_id', ivr: 'ivr_id', voicemail: 'voicemail_id', conference: 'conference_id', switchboard: 'switchboard_uuid' };
 const RINGS = new Set(['user', 'group', 'queue', 'switchboard']);
@@ -28,6 +31,9 @@ const THELP = {
   extension: 'Un numéro composé dans un contexte : poste interne, autre site, numéro externe… Si le numéro correspond à un objet Wazo, le graphe le montre à sa place.',
   sound: 'Joue un fichier son puis raccroche.',
   hangup: 'Termine l\'appel avec la tonalité choisie.',
+  outcall: 'Fait sortir l\'appel par une règle sortante, vers le numéro indiqué (renvoi vers l\'extérieur, numéro d\'astreinte…).',
+  application: 'Application de Wazo : DISA, rappel DISA, annuaire, fax vers e-mail, consultation des messageries, application Stasis.',
+  custom: 'Commande du plan de numérotation Asterisk, pour un besoin particulier.',
 };
 // Vérifié (confd helpers/destination.py) : busy → option « b » d'Asterisk, unavailable → « u », rien sinon.
 const GREET = [['unavailable', 'Indisponible'], ['busy', 'Occupé'], ['', 'Aucun (consignes seulement)']];
@@ -59,26 +65,12 @@ export function openDestEditor(o, onSave) {
     }
     if (type === 'sound') return field('Fichier son', '<select id="dd-file"><option value="">Chargement des sons…</option></select>', 'Sons du tenant, puis sons système.');
     if (type === 'hangup') return field('Tonalité', `<select id="dd-cause">${opt(CAUSE, s?.cause || 'normal')}</select>`, 'Ce que l\'appelant entend avant la fin de l\'appel.');
+    if (EXTRA_TYPES.some(([t]) => t === type)) return destFieldsHtml(type, o.cur);
     return '<p class="small muted">Choisissez d\'abord un type de destination.</p>';
   };
-  const optBody = () => {
-    const s = same(); const parts = [];
-    if (RINGS.has(type)) {
-      parts.push(check('dd-ringon', 'Durée de sonnerie propre à cette sortie', 'Sinon : la durée réglée sur l\'objet lui-même (supposé : celle-ci prime quand elle est donnée).', s?.ring_time != null));
-      parts.push(`<div id="dd-ringbox" class="cf-ge-sub"${s?.ring_time != null ? '' : ' hidden'}>${field('Durée (s)', `<input id="dd-ring" type="number" min="0" step="1" value="${esc(s?.ring_time ?? '')}" placeholder="ex. 20">`)}</div>`);
-    }
-    if (type === 'voicemail') {
-      parts.push(field('Message d\'accueil', `<select id="dd-greet">${opt(GREET, s?.greeting || '')}</select>`, 'Indisponible / Occupé : joue le message enregistré dans la messagerie (Messages d\'accueil) ; s\'il n\'existe pas, Asterisk annonce « <Prénom et nom enregistré> est indisponible / en ligne » (supposé). Aucun : pas de message personnel, seulement « laissez votre message après le bip ».'));
-      parts.push(check('dd-skip', 'Ne pas lire les instructions', 'Bip direct après le message d\'accueil.', !!s?.skip_instructions));
-    }
-    if (type === 'sound') {
-      parts.push(check('dd-sskip', 'L\'appelant peut l\'interrompre', 'Une touche arrête la lecture.', !!s?.skip));
-      parts.push(check('dd-noans', 'Sans décrocher', 'Le son est joué avant que l\'appel soit décroché (pré-décroché).', !!s?.no_answer));
-    }
-    return parts.join('');
-  };
-  const hasOpt = () => RINGS.has(type) || type === 'voicemail' || type === 'sound';
-  const optOpen = () => { const s = same(); return !!(s && (s.ring_time != null || s.greeting || s.skip_instructions || s.skip || s.no_answer)); };
+  const optBody = () => destOptsHtml(type, o.cur);
+  const hasOpt = () => hasOpts(type);
+  const optOpen = () => { const s = same(); return !!(s && (s.ring_time != null || s.moh_uuid || s.greeting || s.skip_instructions || s.skip || s.no_answer || s.timeout != null)); };
   const main = () => `${sec('obj', type ? label(type) : 'Objet', objBody(), { open: true })}${hasOpt() ? sec('opt', 'Options', optBody(), { open: optOpen() }) : ''}`;
   const chips = () => DEST_TYPES.map(([t, l]) => `<button type="button" class="cf-chip t-${t}${t === type ? ' on' : ''}" data-type="${t}" title="${esc(THELP[t] || '')}"><span class="cf-badge">${esc(TYPES[t]?.badge || '?')}</span>${esc(l)}</button>`).join('');
   const P = o.periods;
@@ -97,15 +89,17 @@ export function openDestEditor(o, onSave) {
     if (ENTITY_DEST[type]) {
       const v = $('dd-obj').value; if (!v) return err('Choisissez un objet dans la liste.');
       d = { type, [ENTITY_DEST[type]]: type === 'switchboard' ? v : Number(v) };
-      if ($('dd-ringon')?.checked) { const r = $('dd-ring').value.trim(); if (!/^\d+$/.test(r)) return err('Durée de sonnerie : un nombre entier de secondes.', 'opt'); d.ring_time = Number(r); }
-      if (type === 'voicemail') { if ($('dd-greet').value) d.greeting = $('dd-greet').value; if ($('dd-skip').checked) d.skip_instructions = true; }
     } else if (type === 'extension') {
       const x = $('dd-exten').value.trim(); if (!/^[0-9*#]{1,255}$/.test(x)) return err('Numéro : chiffres, * et # seulement.');
       d = { type, exten: x, context: $('dd-ctx').value };
     } else if (type === 'sound') {
       const f = $('dd-file').value.trim(); if (!f) return err('Choisissez un fichier son.');
-      d = { type, filename: f, skip: $('dd-sskip').checked, no_answer: $('dd-noans').checked };
+      d = { type, filename: f };
     } else if (type === 'hangup') d = { type, cause: $('dd-cause').value };
+    else if (EXTRA_TYPES.some(([t]) => t === type)) d = { type };
+    // Champs et options communs (dest-opts.js).
+    try { Object.assign(d, readDestExtra(type, box)); } catch (x) { return err(x.message, EXTRA_TYPES.some(([t]) => t === type) ? 'obj' : 'opt'); }
+    if (d.type === 'hangup' && d.cause === 'normal') delete d.timeout; // timeout : occupé / encombré seulement (vérifié)
     onSave(d);
     return true;
   }, canDest ? 'Ajouter au brouillon' : 'Fermer');
@@ -119,9 +113,10 @@ export function openDestEditor(o, onSave) {
     else if (type === 'extension') S.obj = [$('dd-exten')?.value.trim() || 'à saisir', sel('dd-ctx') ? `depuis ${sel('dd-ctx')}` : ''];
     else if (type === 'sound') S.obj = [sel('dd-file') || 'à choisir'];
     else if (type === 'hangup') S.obj = [sel('dd-cause')];
-    S.opt = [$('dd-ringon')?.checked ? `sonne ${$('dd-ring').value || '?'} s` : RINGS.has(type) ? 'durée de l\'objet' : '',
-      type === 'voicemail' ? ($('dd-greet')?.value ? `accueil ${sel('dd-greet')}` : 'sans message d\'accueil') : '', $('dd-skip')?.checked ? 'sans instructions' : '',
-      $('dd-sskip')?.checked ? 'interruptible' : '', $('dd-noans')?.checked ? 'sans décrocher' : ''];
+    const xv = (k) => box.querySelector(`[data-x="${k}"]`);
+    S.opt = [xv('ring')?.value ? `sonne ${xv('ring').value} s` : RINGS.has(type) ? 'durée de l\'objet' : '', xv('moh')?.value ? `musique ${xv('moh').selectedOptions[0].text}` : '', xv('htime')?.value ? `pendant ${xv('htime').value} s` : '',
+      type === 'voicemail' ? (xv('greet')?.value ? `accueil ${xv('greet').selectedOptions[0].text}` : 'sans message d\'accueil') : '', xv('vskip')?.checked ? 'sans instructions' : '',
+      xv('sskip')?.checked ? 'interruptible' : '', xv('noans')?.checked ? 'sans décrocher' : ''];
     if (P) S.per = [P.shared > 1 ? `partagé par ${P.shared} objets` : ''];
     setSums(box, S);
   };
@@ -139,10 +134,8 @@ export function openDestEditor(o, onSave) {
     recap();
   };
   box.addEventListener('input', recap);
-  box.addEventListener('change', (e) => {
-    if (e.target.id === 'dd-ringon') { $('dd-ringbox').hidden = !e.target.checked; if (e.target.checked) $('dd-ring').focus(); }
-    recap();
-  });
+  box.addEventListener('change', recap);
+  bindDestExtra(box);
   box.addEventListener('click', (e) => {
     const c = e.target.closest('[data-type]');
     if (c) {

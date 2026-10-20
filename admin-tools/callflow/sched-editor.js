@@ -21,9 +21,10 @@
 //    modifiable (15/10/2026) ;
 //  - fermeture liée à un jour de semaine ou valable tous les mois : conservée
 //    telle quelle et listée (supprimable).
-import { $, esc, confirmModal, helpButton, helpBox } from '../common/core.js?v=0.40.20';
-import { M, listOf, destLabel, loadSounds, soundName } from './model.js?v=0.40.20';
-import { attachPlay } from './sound-play.js?v=0.40.20';
+import { $, esc, confirmModal, helpButton, helpBox } from '../common/core.js?v=0.40.21';
+import { M, listOf, destLabel, loadSounds, soundName } from './model.js?v=0.40.21';
+import { attachPlay } from './sound-play.js?v=0.40.21';
+import { EXTRA_TYPES, destFieldsHtml, destOptsHtml, readDestExtra, bindDestExtra, hasOpts } from './dest-opts.js?v=0.40.21';
 
 const SLOT = 15, N = 96;
 const DAYS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
@@ -123,7 +124,7 @@ function excFromRows(rows, hol) {
 // ---------------------------------------------------------------------------
 // Choix d'une destination (« Si fermé », chaque fermeture, fériés)
 // ---------------------------------------------------------------------------
-const DTYPES = [['voicemail', 'Messagerie'], ['sound', 'Fichier son'], ['hangup', 'Raccrocher'], ['user', 'Utilisateur'], ['group', 'Groupe'], ['queue', 'File d\'attente'], ['ivr', 'SVI'], ['switchboard', 'Standard'], ['conference', 'Conférence'], ['extension', 'Numéro'], ['none', 'Aucune']];
+const DTYPES = [['voicemail', 'Messagerie'], ['sound', 'Fichier son'], ['hangup', 'Raccrocher'], ['user', 'Utilisateur'], ['group', 'Groupe'], ['queue', 'File d\'attente'], ['ivr', 'SVI'], ['switchboard', 'Standard'], ['conference', 'Conférence'], ['extension', 'Numéro'], ...EXTRA_TYPES, ['none', 'Aucune']];
 const IDF = { user: 'user_id', group: 'group_id', queue: 'queue_id', ivr: 'ivr_id', voicemail: 'voicemail_id', conference: 'conference_id', switchboard: 'switchboard_uuid' };
 // La destination d'origine est gardée (data-orig) : un type que ce menu ne
 // propose pas (application, commande, règle sortante…) reste « inchangé », et
@@ -134,7 +135,14 @@ export function pickerHtml(id, cur) {
   const t = known ? cur?.type || 'none' : 'keep';
   return `<span class="cf-dp" id="${id}" data-orig="${esc(cur ? JSON.stringify(cur) : '')}"><select data-dt>${known ? '' : `<option value="keep" selected>Inchangée : ${esc(destLabel(cur))}</option>`}${DTYPES.map(([k, l]) => `<option value="${k}"${k === t ? ' selected' : ''}>${esc(l)}</option>`).join('')}</select><span data-dx>${pickerExtra(t, cur)}</span></span>`;
 }
+// Champs et options du type (dest-opts.js, demande de Brice du 20/10/2026 : toutes les options).
 function pickerExtra(t, cur) {
+  const s = cur?.type === t ? cur : null;
+  const opts = hasOpts(t) ? `<details class="cf-dp-opt"${s && (s.ring_time != null || s.moh_uuid || s.greeting || s.skip_instructions || s.skip || s.no_answer || s.timeout != null) ? ' open' : ''}><summary>Options</summary>${destOptsHtml(t, cur)}</details>` : '';
+  const extra = EXTRA_TYPES.some(([k]) => k === t) ? `<span class="cf-dp-x">${destFieldsHtml(t, cur)}</span>` : '';
+  return pickerBase(t, cur) + extra + opts;
+}
+function pickerBase(t, cur) {
   if (IDF[t]) {
     const sel = cur?.type === t ? String(cur[IDF[t]]) : '';
     return `<select data-do>${listOf(t).map((x) => { const id = x.key.slice(x.key.indexOf(':') + 1); return `<option value="${esc(id)}"${id === sel ? ' selected' : ''}>${esc(x.title)}${x.sub ? ` — ${esc(x.sub)}` : ''}</option>`; }).join('')}</select>`;
@@ -161,6 +169,7 @@ export const setObjSelectHook = (fn) => { objSelectHook = fn; };
 export function bindPicker(id) {
   const el = $(id); if (!el) return;
   const fill = () => { const s = el.querySelector('[data-df]'); if (s) fillSoundSelect(s, s.dataset.cur); const o = el.querySelector('[data-do]'); if (o) objSelectHook?.(o, el.querySelector('[data-dt]').value); };
+  bindDestExtra(el);
   el.querySelector('[data-dt]').onchange = (e) => { el.querySelector('[data-dx]').innerHTML = pickerExtra(e.target.value, null); el.parentElement?.querySelectorAll(':scope > .cf-sch-new').forEach((b) => b.remove()); fill(); };
   fill();
 }
@@ -169,12 +178,13 @@ export function readPicker(id) {
   let orig = null; try { orig = el.dataset.orig ? JSON.parse(el.dataset.orig) : null; } catch { /* */ }
   if (t === 'keep') return orig;
   if (t === 'none') return null;
-  let d = null;
+  let d = EXTRA_TYPES.some(([k]) => k === t) ? { type: t } : null;
   if (IDF[t]) { const v = el.querySelector('[data-do]')?.value; if (!v || v === 'new') throw new Error('Choisissez un objet pour la destination.'); d = { type: t, [IDF[t]]: t === 'switchboard' ? v : Number(v) }; }
   if (t === 'hangup') d = { type: t, cause: el.querySelector('[data-dc]').value };
   if (t === 'sound') { const f = el.querySelector('[data-df]').value; if (!f) throw new Error('Choisissez un fichier son.'); d = { type: t, filename: f }; }
   if (t === 'extension') { const x = el.querySelector('[data-de]').value.trim(); if (!/^[0-9*#]+$/.test(x)) throw new Error('Numéro : chiffres, * et #.'); d = { type: t, exten: x, context: el.querySelector('[data-dctx]').value }; }
-  // Même type et même objet : on garde les réglages d'origine non affichés.
+  if (d) { Object.assign(d, readDestExtra(t, el.querySelector('[data-dx]'))); if (t === 'hangup' && d.cause === 'normal') delete d.timeout; }
+  // Même type et même objet : on garde les réglages d'origine non affichés (ex. règle de compétences d'une file).
   if (d && orig?.type === t && (!IDF[t] || String(orig[IDF[t]]) === String(d[IDF[t]]))) return { ...orig, ...d };
   return d;
 }
