@@ -17,12 +17,12 @@
 //    linéaire ; les utilisateurs sonnent avant les numéros) ;
 //  - une seule extension, contexte internal, dans les group_ranges ; un seul
 //    horaire ; plusieurs autorisations d'appels.
-import { $, esc, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.40.18';
-import { M, STRATEGY, listOf, linearRound } from './model.js?v=0.40.18';
-import { pickerHtml, bindPicker, readPicker } from './sched-editor.js?v=0.40.18';
-import { sec, field } from './ed-ui.js?v=0.40.18';
-import { bindNewSchedule, schedValue } from './create.js?v=0.40.18';
-import { numberFieldHtml, bindNumberField, checkNumber } from './numbers.js?v=0.40.18';
+import { $, esc, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.40.19';
+import { M, STRATEGY, listOf, linearRound } from './model.js?v=0.40.19';
+import { pickerHtml, bindPicker, readPicker } from './sched-editor.js?v=0.40.19';
+import { sec, field } from './ed-ui.js?v=0.40.19';
+import { bindNewSchedule, schedValue } from './create.js?v=0.40.19';
+import { numberFieldHtml, bindNumberField, checkNumber } from './numbers.js?v=0.40.19';
 
 const STRATS = ['all', 'linear', 'random', 'least_recent', 'fewest_calls', 'memorized_round_robin', 'weight_random'];
 const STRAT_HELP = {

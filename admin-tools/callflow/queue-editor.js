@@ -18,12 +18,12 @@
 //    présent sort sans notifier Asterisk : pour changer priorité ou pénalité,
 //    write.js retire puis rajoute le membre ;
 //  - une seule extension, contexte internal, dans les queue_ranges.
-import { $, esc, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.40.18';
-import { M, listOf, QSTRAT } from './model.js?v=0.40.18';
-import { pickerHtml, bindPicker, readPicker, fillSoundSelect } from './sched-editor.js?v=0.40.18';
-import { sec, field, setSums, openSec } from './ed-ui.js?v=0.40.18';
-import { bindNewSchedule, schedValue } from './create.js?v=0.40.18';
-import { numberFieldHtml, bindNumberField, checkNumber } from './numbers.js?v=0.40.18';
+import { $, esc, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.40.19';
+import { M, listOf, QSTRAT } from './model.js?v=0.40.19';
+import { pickerHtml, bindPicker, readPicker, fillSoundSelect } from './sched-editor.js?v=0.40.19';
+import { sec, field, setSums, openSec } from './ed-ui.js?v=0.40.19';
+import { bindNewSchedule, schedValue } from './create.js?v=0.40.19';
+import { numberFieldHtml, bindNumberField, checkNumber } from './numbers.js?v=0.40.19';
 
 const QSTRAT_HELP = {
   ringall: 'Tous les agents disponibles sonnent ensemble ; le premier qui décroche prend l\'appel.',

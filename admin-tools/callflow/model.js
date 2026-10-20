@@ -21,8 +21,8 @@
 // Supposé, à vérifier en réel : les listes (GET /groups, /queues,
 // /switchboards, /schedules) contiennent déjà fallbacks, membres et
 // destinations ; sinon on lit le détail de chaque objet (ensureDetails).
-import { S, api, listAll, fullName } from '../common/core.js?v=0.40.18';
-import { comparePatterns, describePattern, userContext, rightsList, simulate, famLabel } from './dialsim.js?v=0.40.18';
+import { S, api, listAll, fullName } from '../common/core.js?v=0.40.19';
+import { comparePatterns, describePattern, userContext, rightsList, simulate, famLabel } from './dialsim.js?v=0.40.19';
 
 export const M = { lists: {}, by: {}, ext: new Map(), extAny: new Map(), rev: null, warns: [] };
 
@@ -1312,7 +1312,7 @@ export function facts(k, leafInfo) {
         ['Choix', (o.choices || []).map((c) => c.exten).join(', ')]);
       break;
     case 'schedule':
-      f.push(['Fuseau', o.timezone], ['Actif', o.enabled === false ? 'non' : 'oui'], ['Ouvert', (o.open_periods || []).map(periodText).join(' ; ') || '—'],
+      f.push(['Fuseau', o.timezone || 'aucun : fuseau du serveur (heures possiblement décalées)'], ['Actif', o.enabled === false ? 'non' : 'oui'], ['Ouvert', (o.open_periods || []).map(periodText).join(' ; ') || '—'],
         ['Fermetures exceptionnelles', (o.exceptional_periods || []).map(periodText).join(' ; ') || '—'],
         ['Utilisé par', ['incalls', 'users', 'groups', 'queues', 'outcalls'].map((x) => (o[x] || []).length).reduce((a, b) => a + b, 0) || '—']);
       break;

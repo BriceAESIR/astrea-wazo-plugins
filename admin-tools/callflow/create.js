@@ -14,12 +14,12 @@
 //  - horaire : closed_destination obligatoire ; listes de jours / mois non vides.
 // Extension : POST /extensions {exten, context} puis PUT /<objet>/{id}/extensions/{ext}
 // (une seule par objet, contexte internal).
-import { $, esc, toast, confirmModal } from '../common/core.js?v=0.40.18';
+import { $, esc, toast, confirmModal } from '../common/core.js?v=0.40.19';
 // Créations liées au tenant des données chargées (tapi, model.js).
-import { M, tapi as api } from './model.js?v=0.40.18';
-import { pickerHtml, bindPicker, readPicker, fillSoundSelect, setObjSelectHook } from './sched-editor.js?v=0.40.18';
-import { field, secretField, bindSecrets } from './ed-ui.js?v=0.40.18';
-import { RANGE_KEY as RANGE, numberFieldHtml, bindNumberField, checkNumber, incallNumberHtml, bindIncallNumber, readIncallNumber, checkIncallNumber } from './numbers.js?v=0.40.18';
+import { M, tapi as api } from './model.js?v=0.40.19';
+import { pickerHtml, bindPicker, readPicker, fillSoundSelect, setObjSelectHook } from './sched-editor.js?v=0.40.19';
+import { field, secretField, bindSecrets, tzSelect } from './ed-ui.js?v=0.40.19';
+import { RANGE_KEY as RANGE, numberFieldHtml, bindNumberField, checkNumber, incallNumberHtml, bindIncallNumber, readIncallNumber, checkIncallNumber } from './numbers.js?v=0.40.19';
 
 export const CREATABLE = new Set(['group', 'queue', 'ivr', 'switchboard', 'voicemail', 'conference', 'schedule', 'outcall']);
 export const LABEL = { group: 'un groupe d\'appel', queue: 'une file d\'attente', ivr: 'un SVI', switchboard: 'un standard', voicemail: 'une messagerie', conference: 'une conférence', schedule: 'un horaire', outcall: 'une règle sortante' };
@@ -191,7 +191,7 @@ function formHtml(type, pfx) {
     conference: () => `${field('Nom', '<input data-c="name" maxlength="128" placeholder="ex. Réunion">')}${num}`,
     // Règle sortante (vérifié, confd outcall/schema.py : seul name est obligatoire) ; motifs et trunks ensuite (« Régler la règle sortante… », assistant France).
     outcall: () => field('Nom *', '<input data-c="name" maxlength="128" placeholder="ex. Sortie Unyc">', 'Motifs (assistant France), trunks, horaire et autorisations : dans le réglage complet, ouvert juste après.'),
-    schedule: () => `<div class="cf-ge-2">${field('Nom *', '<input data-c="name" maxlength="128" placeholder="ex. Horaires bureau">')}${field('Heures d\'ouverture', `<select data-c="preset">${Object.entries(PRESETS).map(([k, [l]]) => `<option value="${k}">${esc(l)}</option>`).join('')}</select>`, 'Point de départ : à affiner ensuite sur la carte horaire (« Modifier les heures… »).')}</div><div class="cf-ge-f"><span class="cf-ge-l">Si fermé *</span>${pickerHtml(`${pfx}-closed`, { type: 'hangup', cause: 'normal' })}</div>`,
+    schedule: () => `<div class="cf-ge-2">${field('Nom *', '<input data-c="name" maxlength="128" placeholder="ex. Horaires bureau">')}${field('Heures d\'ouverture', `<select data-c="preset">${Object.entries(PRESETS).map(([k, [l]]) => `<option value="${k}">${esc(l)}</option>`).join('')}</select>`, 'Point de départ : à affiner ensuite sur la carte horaire (« Modifier les heures… »).')}</div>${field('Fuseau horaire', tzSelect('data-c="tz"', 'Europe/Paris'), 'Les heures d\'ouverture sont dans ce fuseau. Sans fuseau, Wazo prend celui du serveur (décalage possible).')}<div class="cf-ge-f"><span class="cf-ge-l">Si fermé *</span>${pickerHtml(`${pfx}-closed`, { type: 'hangup', cause: 'normal' })}</div>`,
   };
   return forms[type]();
 }
@@ -230,7 +230,8 @@ async function submitForm(type, root, pfx) {
     if (!v('name')) return err('Nom obligatoire.');
     if ((M.lists.schedule || []).some((s) => s.name === v('name'))) return err('Un horaire porte déjà ce nom.');
     let closed; try { closed = readPicker(`${pfx}-closed`); } catch (e) { return err(e.message); }
-    body = { name: v('name'), closed_destination: closed || { type: 'none' }, open_periods: PRESETS[v('preset')][1], exceptional_periods: [] }; path = '/schedules';
+    // Fuseau Europe/Paris par défaut (retour de Brice, 20/10/2026 : horaire créé sans fuseau → heures du serveur, en plein déploiement).
+    body = { name: v('name'), timezone: v('tz') || null, closed_destination: closed || { type: 'none' }, open_periods: PRESETS[v('preset')][1], exceptional_periods: [] }; path = '/schedules';
   }
   let created;
   try { created = await api('POST', path, body); } catch (e) { return err(`Création refusée par Wazo : ${e.message}`); }

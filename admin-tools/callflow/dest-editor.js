@@ -5,10 +5,10 @@
 // renvoie la destination au brouillon (onSave). Champs vérifiés dans le schéma
 // des destinations de wazo-confd (ring_time, greeting, skip_instructions,
 // filename, skip, no_answer, cause, exten + context).
-import { $, esc, confirmModal, helpButton, helpBox } from '../common/core.js?v=0.40.18';
-import { TYPES, M, listOf, destLabel } from './model.js?v=0.40.18';
-import { fillSoundSelect } from './sched-editor.js?v=0.40.18';
-import { sec, field, check, setSums, openSec } from './ed-ui.js?v=0.40.18';
+import { $, esc, confirmModal, helpButton, helpBox } from '../common/core.js?v=0.40.19';
+import { TYPES, M, listOf, destLabel } from './model.js?v=0.40.19';
+import { fillSoundSelect } from './sched-editor.js?v=0.40.19';
+import { sec, field, check, setSums, openSec } from './ed-ui.js?v=0.40.19';
 
 export const DEST_TYPES = [
   ['user', 'Utilisateur'], ['group', 'Groupe'], ['queue', 'File d\'attente'], ['ivr', 'SVI'], ['voicemail', 'Messagerie'],

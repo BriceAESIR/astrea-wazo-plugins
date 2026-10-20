@@ -3,7 +3,7 @@
 // résumé dans le titre, une colonne aérée, aide sous les champs, options rares
 // derrière une case à cocher. Styles : classes cf-ge-* de callflow.css, dans un
 // conteneur .cf-ed (largeur du dialogue).
-import { esc, helpButton, helpBox } from '../common/core.js?v=0.40.18';
+import { esc, helpButton, helpBox } from '../common/core.js?v=0.40.19';
 
 // Section dépliable : le résumé (data-sum) est rempli par l'éditeur (recap).
 export const sec = (id, title, body, { open = false, help = '' } = {}) => `<details class="cf-ge-sec" data-sec="${id}"${open ? ' open' : ''}>
@@ -17,6 +17,9 @@ export const check = (id, label, help, on, attr = '') => `<label class="cf-ge-b"
 export function setSums(box, S) {
   for (const [k, a] of Object.entries(S)) { const el = box.querySelector(`[data-sum="${k}"]`); if (el) el.textContent = a.filter(Boolean).join(' · '); }
 }
+// Fuseaux horaires du navigateur (liste complète si disponible). Option vide = fuseau du serveur.
+const zones = () => { try { return Intl.supportedValuesOf('timeZone'); } catch { return ['Europe/Paris', 'Europe/Brussels', 'Europe/Zurich', 'Europe/Luxembourg', 'America/Montreal', 'Indian/Reunion', 'America/Martinique', 'America/Guadeloupe', 'Pacific/Noumea', 'UTC']; } };
+export const tzSelect = (attr, cur) => `<select ${attr}><option value="">Fuseau du serveur</option>${zones().map((z) => `<option value="${esc(z)}"${cur === z ? ' selected' : ''}>${esc(z)}</option>`).join('')}${cur && !zones().includes(cur) ? `<option value="${esc(cur)}" selected>${esc(cur)}</option>` : ''}</select>`;
 // Ouvre une section (erreur de saisie).
 export const openSec = (box, id) => { const d = box.querySelector(`[data-sec="${id}"]`); if (d) d.open = true; };
 

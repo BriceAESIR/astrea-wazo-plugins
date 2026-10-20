@@ -10,13 +10,13 @@
 // Codes (messagerie, conférence) : champ masqué avec « Afficher » / « Générer » ;
 // jamais en clair dans le brouillon, l'aperçu ni la sauvegarde JSON (redact).
 // Le mot de passe de connexion d'un utilisateur reste dans User Manager.
-import { $, esc, toast, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.40.18';
-import { M } from './model.js?v=0.40.18';
-import { fillSoundSelect, pickerHtml, bindPicker, readPicker } from './sched-editor.js?v=0.40.18';
-import { GREETINGS, greetingExists, playGreeting, saveGreeting, deleteGreeting, toWav8k, moTxt } from './sound-play.js?v=0.40.18';
-import { incallNumberHtml, bindIncallNumber, readIncallNumber, checkIncallNumber } from './numbers.js?v=0.40.18';
-import { sec, field, check, setSums, openSec, secretField, bindSecrets } from './ed-ui.js?v=0.40.18';
-import { bindNewSchedule, schedValue } from './create.js?v=0.40.18';
+import { $, esc, toast, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.40.19';
+import { M } from './model.js?v=0.40.19';
+import { fillSoundSelect, pickerHtml, bindPicker, readPicker } from './sched-editor.js?v=0.40.19';
+import { GREETINGS, greetingExists, playGreeting, saveGreeting, deleteGreeting, toWav8k, moTxt } from './sound-play.js?v=0.40.19';
+import { incallNumberHtml, bindIncallNumber, readIncallNumber, checkIncallNumber } from './numbers.js?v=0.40.19';
+import { sec, field, check, setSums, openSec, secretField, bindSecrets, tzSelect } from './ed-ui.js?v=0.40.19';
+import { bindNewSchedule, schedValue } from './create.js?v=0.40.19';
 
 const pickFields = (o, keys) => { const f = {}; for (const k of keys) f[k] = o?.[k] ?? null; return f; };
 const diffKeys = (a, b, keys, L) => keys.filter((k) => JSON.stringify(a?.fields?.[k] ?? null) !== JSON.stringify(b?.fields?.[k] ?? null)).map((k) => L[k] || k);
@@ -25,9 +25,6 @@ const cidOpts = (cur) => [['', 'Inchangé : nom de l\'appelant seul'], ['prepend
 const head = (id, title, sub, help) => `<div class="cf-ge-head"><div><h3>${esc(title)}</h3>${sub ? `<div class="small muted">${esc(sub)}</div>` : ''}</div>${helpButton(id, 'Aide')}</div>${helpBox(id, `${help} Les modifications vont dans le brouillon ; « Appliquer… » relit l'objet et n'écrit que ce qui change.`)}`;
 const val = (box, sel) => box.querySelector(sel)?.value?.trim() ?? '';
 const intOrNull = (s, min, max) => (s === '' ? null : /^\d+$/.test(s) && Number(s) >= min && (max == null || Number(s) <= max) ? Number(s) : undefined);
-// Fuseaux horaires du navigateur (liste complète si disponible).
-const zones = () => { try { return Intl.supportedValuesOf('timeZone'); } catch { return ['Europe/Paris', 'Europe/Brussels', 'Europe/Zurich', 'Europe/Luxembourg', 'America/Montreal', 'Indian/Reunion', 'America/Martinique', 'America/Guadeloupe', 'Pacific/Noumea', 'UTC']; } };
-const tzSelect = (attr, cur) => `<select ${attr}><option value="">Fuseau du serveur</option>${zones().map((z) => `<option value="${esc(z)}"${cur === z ? ' selected' : ''}>${esc(z)}</option>`).join('')}${cur && !zones().includes(cur) ? `<option value="${esc(cur)}" selected>${esc(cur)}</option>` : ''}</select>`;
 
 // ---------------------------------------------------------------------------
 // SDA : mêmes options que le formulaire du portail (retour de Brice,
@@ -343,6 +340,7 @@ export function openSchedGenEditor(o, used, onSave, openHours) {
     ${sec('gen', 'Général', `
       ${field('Nom', `<input data-f="name" value="${esc(f.name || '')}" maxlength="128">`)}
       ${field('Fuseau horaire', tzSelect('data-f="timezone"', f.timezone), 'Les heures sont celles de ce fuseau.')}
+      <p class="warn small" id="sge-tzw"${f.timezone ? ' hidden' : ''}><span>Aucun fuseau : Wazo applique celui du serveur, les heures peuvent être décalées. Choisissez Europe/Paris.</span></p>
       ${check('sge-en', 'Horaire activé', '', f.enabled !== false)}
       <div class="btnrow"><button type="button" id="sge-hours">Modifier les heures…</button></div>`, { open: true })}
     </div>`, () => {
@@ -351,7 +349,7 @@ export function openSchedGenEditor(o, used, onSave, openHours) {
     return true;
   }, 'Ajouter au brouillon');
   const box = $('modal-body');
-  const recap = () => setSums(box, { gen: [val(box, '[data-f="name"]'), box.querySelector('[data-f="timezone"]').value || 'fuseau du serveur', $('sge-en').checked ? '' : 'DÉSACTIVÉ'] });
+  const recap = () => { $('sge-tzw').hidden = !!box.querySelector('[data-f="timezone"]').value; setSums(box, { gen: [val(box, '[data-f="name"]'), box.querySelector('[data-f="timezone"]').value || 'fuseau du serveur', $('sge-en').checked ? '' : 'DÉSACTIVÉ'] }); };
   box.addEventListener('input', recap); box.addEventListener('change', recap);
   $('sge-hours').onclick = openHours;
   recap();
