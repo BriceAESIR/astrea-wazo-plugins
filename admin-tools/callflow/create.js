@@ -14,12 +14,12 @@
 //  - horaire : closed_destination obligatoire ; listes de jours / mois non vides.
 // Extension : POST /extensions {exten, context} puis PUT /<objet>/{id}/extensions/{ext}
 // (une seule par objet, contexte internal).
-import { $, esc, toast, confirmModal } from '../common/core.js?v=0.40.19';
+import { $, esc, toast, confirmModal } from '../common/core.js?v=0.40.20';
 // Créations liées au tenant des données chargées (tapi, model.js).
-import { M, tapi as api } from './model.js?v=0.40.19';
-import { pickerHtml, bindPicker, readPicker, fillSoundSelect, setObjSelectHook } from './sched-editor.js?v=0.40.19';
-import { field, secretField, bindSecrets, tzSelect } from './ed-ui.js?v=0.40.19';
-import { RANGE_KEY as RANGE, numberFieldHtml, bindNumberField, checkNumber, incallNumberHtml, bindIncallNumber, readIncallNumber, checkIncallNumber } from './numbers.js?v=0.40.19';
+import { M, tapi as api } from './model.js?v=0.40.20';
+import { pickerHtml, bindPicker, readPicker, fillSoundSelect, setObjSelectHook } from './sched-editor.js?v=0.40.20';
+import { field, secretField, bindSecrets, tzSelect, langSelect } from './ed-ui.js?v=0.40.20';
+import { RANGE_KEY as RANGE, numberFieldHtml, bindNumberField, checkNumber, incallNumberHtml, bindIncallNumber, readIncallNumber, checkIncallNumber } from './numbers.js?v=0.40.20';
 
 export const CREATABLE = new Set(['group', 'queue', 'ivr', 'switchboard', 'voicemail', 'conference', 'schedule', 'outcall']);
 export const LABEL = { group: 'un groupe d\'appel', queue: 'une file d\'attente', ivr: 'un SVI', switchboard: 'un standard', voicemail: 'une messagerie', conference: 'une conférence', schedule: 'un horaire', outcall: 'une règle sortante' };
@@ -183,11 +183,13 @@ const NA = { ext: 'data-c="exten"', ctx: 'data-c="ctx"' };
 function formHtml(type, pfx) {
   const num = RANGE[type] ? numberFieldHtml(type, { ctxList: internal(), attrs: NA, prefill: true, field, pfx }) : '';
   const forms = {
-    group: () => `${field('Nom *', '<input data-c="label" maxlength="128" placeholder="ex. Accueil">', 'Lettres sans accent, chiffres, espace, - _ .')}${field('Stratégie', `<select data-c="strategy">${opts(GSTRATS)}</select>`)}${num}`,
+    // Durées proposées explicitement (retour de Brice, 20/10/2026 : laissées vides, Wazo
+    // appliquait 15 s de sonnerie par membre et 5 s de pause sans le dire).
+    group: () => `${field('Nom *', '<input data-c="label" maxlength="128" placeholder="ex. Accueil">', 'Lettres sans accent, chiffres, espace, - _ .')}${field('Stratégie', `<select data-c="strategy">${opts(GSTRATS)}</select>`)}<div class="cf-ge-3">${field('Durée totale (s)', '<input type="number" min="0" step="1" data-c="to" placeholder="illimitée">', 'Avant « pas de réponse ». Vide ou 0 : sonne indéfiniment.')}${field('Sonnerie par membre (s)', '<input type="number" min="0" step="1" data-c="ut" value="15">', '15 = défaut de Wazo. 0 = sans coupure, jusqu\'à la durée totale.')}${field('Pause de réessai (s)', '<input type="number" min="0" step="1" data-c="rd" value="5">', '5 = défaut de Wazo. 0 = aucune pause.')}</div>${num}`,
     queue: () => `<div class="cf-ge-2">${field('Nom affiché', '<input data-c="label" maxlength="128" placeholder="ex. Support">')}${field('Nom technique *', '<input data-c="name" maxlength="128" placeholder="ex. support">', 'Sans espace ni accent : lettres, chiffres, - _ .')}</div>${field('Stratégie', `<select data-c="strategy">${opts(QSTRATS)}</select>`)}${num}`,
     ivr: () => `${field('Nom *', '<input data-c="name" maxlength="128" placeholder="ex. Menu principal">')}${field('Message du menu *', `<select data-c="menu" id="${pfx}-menu"><option value="">Chargement des sons…</option></select>`, '« Tapez 1 pour… ». Les touches se règlent ensuite (« Régler le SVI… »).')}`,
     switchboard: () => field('Nom *', '<input data-c="name" maxlength="128" placeholder="ex. Standard">', 'Opérateurs, délai et débordement : « Régler le standard… » ensuite.'),
-    voicemail: () => `${field('Nom *', '<input data-c="name" maxlength="80" placeholder="ex. Messagerie accueil">')}<div class="cf-ge-2">${field('Numéro *', '<input data-c="number" inputmode="numeric" placeholder="ex. 8000">', 'Numéro de la boîte, souvent celui du poste. Pas de plage à respecter, mais unique dans le contexte.')}${field('Contexte *', ctxSel('data-c="ctx"'))}</div>${field('Utilisateur associé (facultatif)', `<select data-c="vmuser"><option value="">Aucun</option>${(M.lists.user || []).slice().sort((a, b) => userName(a).localeCompare(userName(b), 'fr')).map((u) => { const cur = (M.lists.voicemail || []).find((x) => (x.users || []).some((y) => y.uuid === u.uuid)); return `<option value="${esc(u.uuid)}">${esc(userName(u))}${cur ? ` (a « ${esc(cur.name)} » : elle lui sera retirée)` : ''}</option>`; }).join('')}</select>`, 'Pour consulter la boîte depuis son poste. Autres utilisateurs et messages d\'accueil : dans le réglage de la messagerie (carte, mode édition).')}${field('E-mail (facultatif)', '<input type="email" data-c="email" placeholder="aucun">')}${secretField('data-c="password"', 'Code (facultatif)', '', 'Chiffres. Masqué partout, jamais dans une sauvegarde.')}`,
+    voicemail: () => `${field('Nom *', '<input data-c="name" maxlength="80" placeholder="ex. Messagerie accueil">')}<div class="cf-ge-2">${field('Numéro *', '<input data-c="number" inputmode="numeric" placeholder="ex. 8000">', 'Numéro de la boîte, souvent celui du poste. Pas de plage à respecter, mais unique dans le contexte.')}${field('Contexte *', ctxSel('data-c="ctx"'))}</div>${field('Utilisateur associé (facultatif)', `<select data-c="vmuser"><option value="">Aucun</option>${(M.lists.user || []).slice().sort((a, b) => userName(a).localeCompare(userName(b), 'fr')).map((u) => { const cur = (M.lists.voicemail || []).find((x) => (x.users || []).some((y) => y.uuid === u.uuid)); return `<option value="${esc(u.uuid)}">${esc(userName(u))}${cur ? ` (a « ${esc(cur.name)} » : elle lui sera retirée)` : ''}</option>`; }).join('')}</select>`, 'Pour consulter la boîte depuis son poste. Autres utilisateurs et messages d\'accueil : dans le réglage de la messagerie (carte, mode édition).')}<div class="cf-ge-2">${field('Langue des messages', langSelect('data-c="lang"', 'fr_FR'), 'Vide : langue du serveur (souvent l\'anglais).')}${field('Fuseau horaire', tzSelect('data-c="vtz"', 'Europe/Paris'), 'Heure annoncée des messages.')}</div>${field('E-mail (facultatif)', '<input type="email" data-c="email" placeholder="aucun">')}${secretField('data-c="password"', 'Code (facultatif)', '', 'Chiffres. Masqué partout, jamais dans une sauvegarde.')}`,
     conference: () => `${field('Nom', '<input data-c="name" maxlength="128" placeholder="ex. Réunion">')}${num}`,
     // Règle sortante (vérifié, confd outcall/schema.py : seul name est obligatoire) ; motifs et trunks ensuite (« Régler la règle sortante… », assistant France).
     outcall: () => field('Nom *', '<input data-c="name" maxlength="128" placeholder="ex. Sortie Unyc">', 'Motifs (assistant France), trunks, horaire et autorisations : dans le réglage complet, ouvert juste après.'),
@@ -210,7 +212,12 @@ async function submitForm(type, root, pfx) {
   const ex = v('exten'), ctx = v('ctx');
   if (RANGE[type] && checkNumber(ctx, type, ex)) return err(checkNumber(ctx, type, ex));
   let body, path;
-  if (type === 'group') { if (!/^[-_.a-zA-Z0-9 ]{1,128}$/.test(v('label'))) return err('Nom : obligatoire, sans accents (lettres, chiffres, espace, - _ .).'); body = { label: v('label'), ring_strategy: v('strategy') }; path = '/groups'; }
+  if (type === 'group') {
+    if (!/^[-_.a-zA-Z0-9 ]{1,128}$/.test(v('label'))) return err('Nom : obligatoire, sans accents (lettres, chiffres, espace, - _ .).');
+    for (const k of ['to', 'ut', 'rd']) if (v(k) !== '' && !/^\d+$/.test(v(k))) return err('Durées : nombres entiers positifs.');
+    const n = (k) => (v(k) === '' ? null : Number(v(k)));
+    body = { label: v('label'), ring_strategy: v('strategy'), timeout: n('to'), user_timeout: n('ut'), retry_delay: n('rd') }; path = '/groups';
+  }
   if (type === 'queue') {
     if (!/^[-_.a-zA-Z0-9]{1,128}$/.test(v('name'))) return err('Nom technique : obligatoire, sans espace ni accent.');
     if ([...(M.lists.queue || []), ...(M.lists.group || [])].some((x) => x.name === v('name'))) return err('Ce nom technique existe déjà (file ou groupe).');
@@ -222,7 +229,8 @@ async function submitForm(type, root, pfx) {
     if (!v('name')) return err('Nom obligatoire.'); if (!/^[0-9]{1,40}$/.test(v('number'))) return err('Numéro : chiffres seulement.');
     if ((M.lists.voicemail || []).some((x) => String(x.number) === v('number') && x.context === ctx)) return err(`Une messagerie porte déjà le numéro ${v('number')} dans ce contexte.`);
     if (v('password') && !/^[0-9]{1,80}$/.test(v('password'))) return err('Code : chiffres seulement.');
-    body = { name: v('name'), number: v('number'), context: ctx, ...(v('email') ? { email: v('email') } : {}), ...(v('password') ? { password: v('password') } : {}) }; path = '/voicemails';
+    // Langue fr_FR et fuseau Europe/Paris proposés (même piège que le fuseau des horaires, 20/10/2026).
+    body = { name: v('name'), number: v('number'), context: ctx, language: v('lang') || null, timezone: v('vtz') || null, ...(v('email') ? { email: v('email') } : {}), ...(v('password') ? { password: v('password') } : {}) }; path = '/voicemails';
   }
   if (type === 'conference') { body = { name: v('name') || null }; path = '/conferences'; }
   if (type === 'outcall') { if (!v('name')) return err('Nom obligatoire.'); body = { name: v('name') }; path = '/outcalls'; }

@@ -3,7 +3,7 @@
 // résumé dans le titre, une colonne aérée, aide sous les champs, options rares
 // derrière une case à cocher. Styles : classes cf-ge-* de callflow.css, dans un
 // conteneur .cf-ed (largeur du dialogue).
-import { esc, helpButton, helpBox } from '../common/core.js?v=0.40.19';
+import { esc, helpButton, helpBox } from '../common/core.js?v=0.40.20';
 
 // Section dépliable : le résumé (data-sum) est rempli par l'éditeur (recap).
 export const sec = (id, title, body, { open = false, help = '' } = {}) => `<details class="cf-ge-sec" data-sec="${id}"${open ? ' open' : ''}>
@@ -20,6 +20,9 @@ export function setSums(box, S) {
 // Fuseaux horaires du navigateur (liste complète si disponible). Option vide = fuseau du serveur.
 const zones = () => { try { return Intl.supportedValuesOf('timeZone'); } catch { return ['Europe/Paris', 'Europe/Brussels', 'Europe/Zurich', 'Europe/Luxembourg', 'America/Montreal', 'Indian/Reunion', 'America/Martinique', 'America/Guadeloupe', 'Pacific/Noumea', 'UTC']; } };
 export const tzSelect = (attr, cur) => `<select ${attr}><option value="">Fuseau du serveur</option>${zones().map((z) => `<option value="${esc(z)}"${cur === z ? ' selected' : ''}>${esc(z)}</option>`).join('')}${cur && !zones().includes(cur) ? `<option value="${esc(cur)}" selected>${esc(cur)}</option>` : ''}</select>`;
+// Langues des messages (messagerie). Option vide = langue du serveur (piège : souvent l'anglais).
+export const LANGS = [['fr_FR', 'Français (France)'], ['fr_CA', 'Français (Canada)'], ['en_US', 'Anglais (États-Unis)'], ['en_GB', 'Anglais (Royaume-Uni)'], ['de_DE', 'Allemand'], ['es_ES', 'Espagnol'], ['it_IT', 'Italien'], ['nl_NL', 'Néerlandais']];
+export const langSelect = (attr, cur) => `<select ${attr}><option value="">Langue du serveur</option>${LANGS.map(([k, l]) => `<option value="${k}"${cur === k ? ' selected' : ''}>${esc(l)}</option>`).join('')}${cur && !LANGS.some(([k]) => k === cur) ? `<option value="${esc(cur)}" selected>${esc(cur)}</option>` : ''}</select>`;
 // Ouvre une section (erreur de saisie).
 export const openSec = (box, id) => { const d = box.querySelector(`[data-sec="${id}"]`); if (d) d.open = true; };
 

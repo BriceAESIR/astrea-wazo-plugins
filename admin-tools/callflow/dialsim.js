@@ -12,7 +12,7 @@
 //    « prefix » est lu mais pas appliqué.
 // Supposé : effet exact des autorisations d'appels et d'un horaire sur une
 // règle sortante (affichés à titre indicatif).
-import { M, scheduleState, whenOf, entity, groupMemberList } from './model.js?v=0.40.19';
+import { M, scheduleState, whenOf, entity, groupMemberList } from './model.js?v=0.40.20';
 
 // Motif → liste d'éléments { set: chaînes de caractères, size } | { dot } | { bang } ; null si numéro exact.
 export function parsePattern(p) {
@@ -337,7 +337,7 @@ export function simPath(tree, w, match, { blocked = null } = {}) {
           R.ring.set(hub.key, '');
           const chain = []; subtree(hub, (c) => { R.ring.set(c.key, ''); if (c.info?.member && !c.info.member.dnd) chain.push(c); });
           if (type === 'group' && o.ring_strategy === 'linear' && chain.length) {
-            const ut = o.user_timeout ?? 15, rd = o.retry_delay ?? 0, lim = tmax || chain.length * (ut + rd);
+            const ut = o.user_timeout ?? 15, rd = o.retry_delay ?? 5, /* vide = 15 / 5 (constaté en réel, 20/10/2026) */ lim = tmax || chain.length * (ut + rd);
             for (let j = 0, s = 0; s < lim && j < 60; j++, s += ut + rd) {
               const c = chain[j % chain.length]; const prev = R.ring.get(c.key);
               R.ring.set(c.key, `${prev ? `${prev}, ` : ''}${t + s} → ${t + Math.min(s + ut, lim)} s`);

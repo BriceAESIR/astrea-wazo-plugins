@@ -3,22 +3,22 @@
 // déposer (lot 2a, brouillon puis aperçu, sauvegarde, écriture).
 // Cadrage : astrea-wazo-dev/docs/CALLFLOW-MANAGER.md.
 // Modèle (sources confd vérifiées) : model.js ; canevas : canvas.js ; écriture : write.js.
-import { S, $, esc, fullName, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.40.19';
-import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, loadTrunkOperators, scanGroupKeys, buildTree, landingAt, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel, periodText, STRATEGY, QSTRAT, baseKey, gateOf, loadBlocklist, blockedBy, dialUser, entryChains, isGlob, numMatch, showNum, usagesOf, destTarget } from './model.js?v=0.40.19';
-import { createCanvas } from './canvas.js?v=0.40.19';
-import { getDest, setDest, sameValue, prepare, execute } from './write.js?v=0.40.19';
-import { openScheduleEditor, pickerHtml, bindPicker, readPicker } from './sched-editor.js?v=0.40.19';
-import { openGroupEditor, groupCfgDiff } from './group-editor.js?v=0.40.19';
-import { openQueueEditor, queueCfgDiff, agentName } from './queue-editor.js?v=0.40.19';
-import { openIvrEditor, ivrCfgDiff } from './ivr-editor.js?v=0.40.19';
-import { openSbEditor, sbCfgDiff } from './sb-editor.js?v=0.40.19';
-import { redact } from './ed-ui.js?v=0.40.19';
-import { openRestore } from './restore.js?v=0.40.19';
-import { openIncallEditor, incallCfgDiff, openUserEditor, userCfgDiff, openVmEditor, vmCfgDiff, openConfEditor, confCfgDiff, openSchedGenEditor, schedCfgDiff } from './obj-editors.js?v=0.40.19';
-import { openDestEditor, ENTITY_DEST } from './dest-editor.js?v=0.40.19';
-import { openOutcallEditor, outcallCfgDiff } from './outcall-editor.js?v=0.40.19';
-import { openCreate, openCreateIncall, CREATABLE, LABEL, bindNewSchedule, schedValue } from './create.js?v=0.40.19';
-import { simulate, userContext, simPath } from './dialsim.js?v=0.40.19';
+import { S, $, esc, fullName, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.40.20';
+import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, loadTrunkOperators, scanGroupKeys, buildTree, landingAt, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel, periodText, STRATEGY, QSTRAT, baseKey, gateOf, loadBlocklist, blockedBy, dialUser, entryChains, isGlob, numMatch, showNum, usagesOf, destTarget, tapi } from './model.js?v=0.40.20';
+import { createCanvas } from './canvas.js?v=0.40.20';
+import { getDest, setDest, sameValue, prepare, execute } from './write.js?v=0.40.20';
+import { openScheduleEditor, pickerHtml, bindPicker, readPicker } from './sched-editor.js?v=0.40.20';
+import { openGroupEditor, groupCfgDiff } from './group-editor.js?v=0.40.20';
+import { openQueueEditor, queueCfgDiff, agentName } from './queue-editor.js?v=0.40.20';
+import { openIvrEditor, ivrCfgDiff } from './ivr-editor.js?v=0.40.20';
+import { openSbEditor, sbCfgDiff } from './sb-editor.js?v=0.40.20';
+import { redact } from './ed-ui.js?v=0.40.20';
+import { openRestore } from './restore.js?v=0.40.20';
+import { openIncallEditor, incallCfgDiff, openUserEditor, userCfgDiff, openVmEditor, vmCfgDiff, openConfEditor, confCfgDiff, openSchedGenEditor, schedCfgDiff } from './obj-editors.js?v=0.40.20';
+import { openDestEditor, ENTITY_DEST } from './dest-editor.js?v=0.40.20';
+import { openOutcallEditor, outcallCfgDiff } from './outcall-editor.js?v=0.40.20';
+import { openCreate, openCreateIncall, CREATABLE, LABEL, bindNewSchedule, schedValue } from './create.js?v=0.40.20';
+import { simulate, userContext, simPath } from './dialsim.js?v=0.40.20';
 
 const TESTED_STACK = ['26.07'];
 const NAV = [
@@ -669,7 +669,7 @@ function valLabel(w, v) {
   if (w.k === 'group_cfg') {
     // Résumé comparable avant / après d'un réglage de groupe.
     const f = v?.fields || {};
-    return [`« ${f.label || '?'} »`, f.enabled === false ? 'DÉSACTIVÉ' : '', STRATEGY[f.ring_strategy] || f.ring_strategy, f.timeout ? `${f.timeout} s au total` : 'sans limite', `${f.user_timeout ?? '?'} s / membre`, `pause ${f.retry_delay ?? 0} s`,
+    return [`« ${f.label || '?'} »`, f.enabled === false ? 'DÉSACTIVÉ' : '', STRATEGY[f.ring_strategy] || f.ring_strategy, f.timeout ? `${f.timeout} s au total` : 'sans limite', f.user_timeout == null ? '15 s / membre (défaut)' : `${f.user_timeout} s / membre`, f.retry_delay == null ? 'pause 5 s (défaut)' : `pause ${f.retry_delay} s`,
       `${(v?.users || []).length + (v?.exts || []).length} membre(s) : ${[...(v?.users || []).map((m) => fullName(M.userByUuid.get(m.uuid)) || m.uuid), ...(v?.exts || []).map((m) => m.exten)].join(', ') || 'aucun'}`,
       v?.extension ? `n° ${v.extension.exten}` : 'sans numéro', f.max_calls ? `max ${f.max_calls} appels` : '', f.music_on_hold ? `musique ${f.music_on_hold}` : 'sonnerie',
       (v?.perms || []).length ? `${v.perms.length} autorisation(s)` : ''].filter(Boolean).join(' · ');
@@ -791,9 +791,23 @@ function openUserFor(uuid) {
 }
 const CFG_LABEL = { group: 'Régler le groupe…', queue: 'Régler la file d\'attente…', ivr: 'Régler le SVI…', switchboard: 'Régler le standard…', incall: 'Régler la SDA…', user: 'Régler l\'utilisateur…', voicemail: 'Régler la messagerie…', conference: 'Régler la conférence…', schedule: 'Régler l\'horaire…', outcall: 'Régler la règle sortante…' };
 const CFG_DIFF = { group_cfg: groupCfgDiff, queue_cfg: queueCfgDiff, ivr_cfg: ivrCfgDiff, sb_cfg: sbCfgDiff, incall_cfg: incallCfgDiff, user_cfg: userCfgDiff, vm_cfg: vmCfgDiff, conf_cfg: confCfgDiff, schedgen_cfg: schedCfgDiff, outcall_cfg: outcallCfgDiff };
-const openCfg = (c) => {
+// Relire l'objet dans Wazo avant d'ouvrir son réglage (retour de Brice, 20/10/2026 :
+// « interroger ce qu'il y a déjà ») : l'éditeur part de l'état actuel du serveur, pas
+// de celui du chargement de la page (modification faite ailleurs entre-temps).
+// Pas de relecture si l'objet a déjà des modifications au brouillon (la copie locale
+// les porte). Utilisateur compris : la fiche confd porte aussi renvois et services.
+const CFG_PATH = { user: (o) => `/users/${o.uuid}`, group: (o) => `/groups/${o.uuid}`, queue: (o) => `/queues/${o.id}`, ivr: (o) => `/ivr/${o.id}`, switchboard: (o) => `/switchboards/${o.uuid}`, outcall: (o) => `/outcalls/${o.id}`, incall: (o) => `/incalls/${o.id}`, voicemail: (o) => `/voicemails/${o.id}`, conference: (o) => `/conferences/${o.id}`, schedule: (o) => `/schedules/${o.id}` };
+async function refreshObj(c) {
+  const o = c.k === 'group' ? M.groupByUuid?.get(c.id) : c.k === 'user' ? M.userByUuid?.get(c.id) : M.by[c.k]?.get(String(c.id));
+  const path = o && CFG_PATH[c.k]?.(o); if (!path) return;
+  const ks = `${c.k}:${c.k === 'switchboard' ? o.uuid : o.id}`;
+  const ids = new Set([String(c.id), String(o.id), String(o.uuid), ks]);
+  if ([...C.draft.values()].some((e) => ids.has(String(e.w.id)))) return;
+  try { const fresh = await tapi('GET', path); if (fresh) { Object.assign(o, fresh); M.rev = null; } } catch (e) { toast(`Relecture dans Wazo impossible (${e.message}) : réglage ouvert avec les valeurs du chargement.`, 6000); }
+}
+const openCfg = async (c) => {
   if (!c) return;
-  if (c.k === 'group') openGroupFor(c.id); else if (c.k === 'queue') openQueueFor(c.id); else if (c.k === 'ivr') openIvrFor(c.id); else if (c.k === 'switchboard') openSbFor(c.id);
+  await refreshObj(c);  if (c.k === 'group') openGroupFor(c.id); else if (c.k === 'queue') openQueueFor(c.id); else if (c.k === 'ivr') openIvrFor(c.id); else if (c.k === 'switchboard') openSbFor(c.id);
   else if (c.k === 'user') openUserFor(c.id); else if (c.k === 'outcall') openOutcallFor(c.id); else openSimpleFor(c.k, c.id);
 };
 // ---------------------------------------------------------------------------

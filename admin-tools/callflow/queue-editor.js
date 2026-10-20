@@ -18,12 +18,12 @@
 //    présent sort sans notifier Asterisk : pour changer priorité ou pénalité,
 //    write.js retire puis rajoute le membre ;
 //  - une seule extension, contexte internal, dans les queue_ranges.
-import { $, esc, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.40.19';
-import { M, listOf, QSTRAT } from './model.js?v=0.40.19';
-import { pickerHtml, bindPicker, readPicker, fillSoundSelect } from './sched-editor.js?v=0.40.19';
-import { sec, field, setSums, openSec } from './ed-ui.js?v=0.40.19';
-import { bindNewSchedule, schedValue } from './create.js?v=0.40.19';
-import { numberFieldHtml, bindNumberField, checkNumber } from './numbers.js?v=0.40.19';
+import { $, esc, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.40.20';
+import { M, listOf, QSTRAT } from './model.js?v=0.40.20';
+import { pickerHtml, bindPicker, readPicker, fillSoundSelect } from './sched-editor.js?v=0.40.20';
+import { sec, field, setSums, openSec } from './ed-ui.js?v=0.40.20';
+import { bindNewSchedule, schedValue } from './create.js?v=0.40.20';
+import { numberFieldHtml, bindNumberField, checkNumber } from './numbers.js?v=0.40.20';
 
 const QSTRAT_HELP = {
   ringall: 'Tous les agents disponibles sonnent ensemble ; le premier qui décroche prend l\'appel.',
@@ -124,8 +124,8 @@ export function openQueueEditor(q, onSave) {
       <p class="small muted cf-ge-note" id="qe-strat-h">${esc(QSTRAT_HELP[o.strategy || 'ringall'] || '')}</p>
       <div class="cf-ge-3">
         ${num('timeout', 'Durée totale (s)', 'Avant le débordement « pas de réponse ». Vide ou 0 : sans limite.', 'illimitée')}
-        ${onum('timeout', 'Sonnerie par agent (s)', 'Option Asterisk timeout.', '15')}
-        ${onum('retry', 'Pause de réessai (s)', 'Attente entre deux tentatives.', '5')}
+        ${onum('timeout', 'Sonnerie par agent (s)', 'Option Asterisk timeout. Vide = 15 s (défaut, vérifié dans xivo-dao). 0 = sans coupure, jusqu\'à la durée totale.', 'vide = 15')}
+        ${onum('retry', 'Pause de réessai (s)', 'Attente entre deux tentatives. Vide = 5 s (défaut, vérifié dans xivo-dao). 0 = aucune pause.', 'vide = 5')}
       </div>
       <div id="qe-tour" class="cf-ge-tour" hidden></div>
       <div class="cf-ge-3">

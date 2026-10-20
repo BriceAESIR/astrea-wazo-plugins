@@ -10,13 +10,13 @@
 // Codes (messagerie, conférence) : champ masqué avec « Afficher » / « Générer » ;
 // jamais en clair dans le brouillon, l'aperçu ni la sauvegarde JSON (redact).
 // Le mot de passe de connexion d'un utilisateur reste dans User Manager.
-import { $, esc, toast, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.40.19';
-import { M } from './model.js?v=0.40.19';
-import { fillSoundSelect, pickerHtml, bindPicker, readPicker } from './sched-editor.js?v=0.40.19';
-import { GREETINGS, greetingExists, playGreeting, saveGreeting, deleteGreeting, toWav8k, moTxt } from './sound-play.js?v=0.40.19';
-import { incallNumberHtml, bindIncallNumber, readIncallNumber, checkIncallNumber } from './numbers.js?v=0.40.19';
-import { sec, field, check, setSums, openSec, secretField, bindSecrets, tzSelect } from './ed-ui.js?v=0.40.19';
-import { bindNewSchedule, schedValue } from './create.js?v=0.40.19';
+import { $, esc, toast, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.40.20';
+import { M } from './model.js?v=0.40.20';
+import { fillSoundSelect, pickerHtml, bindPicker, readPicker } from './sched-editor.js?v=0.40.20';
+import { GREETINGS, greetingExists, playGreeting, saveGreeting, deleteGreeting, toWav8k, moTxt } from './sound-play.js?v=0.40.20';
+import { incallNumberHtml, bindIncallNumber, readIncallNumber, checkIncallNumber } from './numbers.js?v=0.40.20';
+import { sec, field, check, setSums, openSec, secretField, bindSecrets, tzSelect, langSelect } from './ed-ui.js?v=0.40.20';
+import { bindNewSchedule, schedValue } from './create.js?v=0.40.20';
 
 const pickFields = (o, keys) => { const f = {}; for (const k of keys) f[k] = o?.[k] ?? null; return f; };
 const diffKeys = (a, b, keys, L) => keys.filter((k) => JSON.stringify(a?.fields?.[k] ?? null) !== JSON.stringify(b?.fields?.[k] ?? null)).map((k) => L[k] || k);
@@ -167,7 +167,6 @@ export const applyVmCfg = (o, v) => {
   for (const x of M.lists.voicemail || []) if (x !== o) x.users = (x.users || []).filter((u) => !v.users.includes(u.uuid));
   o.users = v.users.map((uuid) => { const u = M.userByUuid?.get(uuid); return { uuid, firstname: u?.firstname || '', lastname: u?.lastname || '' }; });
 };
-const LANGS = [['fr_FR', 'Français (France)'], ['fr_CA', 'Français (Canada)'], ['en_US', 'Anglais (États-Unis)'], ['en_GB', 'Anglais (Royaume-Uni)'], ['de_DE', 'Allemand'], ['es_ES', 'Espagnol'], ['it_IT', 'Italien'], ['nl_NL', 'Néerlandais']];
 export function openVmEditor(o, onSave) {
   const f = vmCfgOf(o).fields;
   const ctx = (M.lists.context || []).filter((c) => c.type === 'internal');
@@ -202,9 +201,10 @@ export function openVmEditor(o, onSave) {
       ${field('Pager (e-mail court)', `<input data-f="pager" value="${esc(f.pager || '')}" maxlength="80" placeholder="aucun">`)}`, { open: true })}
     ${sec('opt', 'Options', `
       <div class="cf-ge-2">
-        ${field('Langue', `<select data-f="language"><option value="">Langue du serveur</option>${LANGS.map(([k, l]) => `<option value="${k}"${f.language === k ? ' selected' : ''}>${esc(l)}</option>`).join('')}${f.language && !LANGS.some(([k]) => k === f.language) ? `<option value="${esc(f.language)}" selected>${esc(f.language)}</option>` : ''}</select>`)}
+        ${field('Langue', langSelect('data-f="language"', f.language), 'Langue des messages de la boîte. Vide : langue du serveur (souvent l\'anglais).')}
         ${field('Fuseau horaire', tzSelect('data-f="timezone"', f.timezone), 'Pour l\'heure annoncée des messages.')}
       </div>
+      <p class="warn small" id="vme-lw"${f.language && f.timezone ? ' hidden' : ''}><span>Langue ou fuseau vide : Wazo prend ceux du serveur (messages possiblement en anglais, heure décalée). Choisissez Français et Europe/Paris.</span></p>
       ${field('Nombre maximum de messages', `<input type="number" min="0" step="1" data-f="max_messages" value="${esc(f.max_messages ?? '')}" placeholder="défaut du serveur">`)}
       ${secretField('data-f="password"', 'Code de la messagerie', f.password, 'Chiffres seulement. Vide : pas de code.')}
       ${b('ask_password', 'Demander le code à la consultation', 'Décoché : accès direct depuis le poste du titulaire.')}`)}
@@ -275,6 +275,7 @@ export function openVmEditor(o, onSave) {
   bindSecrets(box);
   box.addEventListener('input', () => { $('vme-err').textContent = ''; recap(); });
   box.addEventListener('change', recap);
+  box.addEventListener('change', () => { $('vme-lw').hidden = !!(box.querySelector('[data-f="language"]').value && box.querySelector('[data-f="timezone"]').value); });
   recap();
 }
 export const vmCfgDiff = (a, b) => [...diffKeys(a, b, VM_FIELDS, { name: 'nom', number: 'numéro', context: 'contexte', accesstype: 'type', email: 'e-mail', language: 'langue', timezone: 'fuseau', pager: 'pager', max_messages: 'messages max.', attach_audio: 'pièce jointe', delete_messages: 'suppression après envoi', ask_password: 'demande du code', enabled: 'activée', password: 'code' }), ...(JSON.stringify(a?.users || []) !== JSON.stringify(b?.users || []) ? ['utilisateurs'] : [])].join(', ');

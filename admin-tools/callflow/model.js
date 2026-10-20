@@ -21,8 +21,8 @@
 // Supposé, à vérifier en réel : les listes (GET /groups, /queues,
 // /switchboards, /schedules) contiennent déjà fallbacks, membres et
 // destinations ; sinon on lit le détail de chaque objet (ensureDetails).
-import { S, api, listAll, fullName } from '../common/core.js?v=0.40.19';
-import { comparePatterns, describePattern, userContext, rightsList, simulate, famLabel } from './dialsim.js?v=0.40.19';
+import { S, api, listAll, fullName } from '../common/core.js?v=0.40.20';
+import { comparePatterns, describePattern, userContext, rightsList, simulate, famLabel } from './dialsim.js?v=0.40.20';
 
 export const M = { lists: {}, by: {}, ext: new Map(), extAny: new Map(), rev: null, warns: [] };
 
@@ -486,7 +486,7 @@ export function edgesOf(k) {
       // stratégie) ou chaîne « un par un ». Durée totale vide ou 0 = le groupe
       // sonne indéfiniment (vérifié : Queue() sans timeout, api.yml confd).
       return [
-        { slot: 'members', label: SLOTS.members.label, help: SLOTS.members.help, note: [STRATEGY[o.ring_strategy] || o.ring_strategy, o.user_timeout ? `${o.user_timeout} s chacun` : ''].filter(Boolean).join(' · '), to: groupFlow(o), cfg: { k: 'group', id: o.uuid } },
+        { slot: 'members', label: SLOTS.members.label, help: SLOTS.members.help, note: [STRATEGY[o.ring_strategy] || o.ring_strategy, o.user_timeout === 0 ? 'sans coupure par membre' : `${o.user_timeout ?? GROUP_DEF.user_timeout} s chacun${o.user_timeout == null ? ' (défaut)' : ''}`].filter(Boolean).join(' · '), to: groupFlow(o), cfg: { k: 'group', id: o.uuid } },
         fbOut('group_fb', o.uuid, o, 'noanswer', o.timeout ? after(o.timeout) : 'jamais : sonne indéfiniment (durée totale vide)'),
         fbOut('group_fb', o.uuid, o, 'congestion', o.max_calls ? `plus de ${o.max_calls} appel${o.max_calls > 1 ? 's' : ''} en cours` : '')];
     case 'queue': {
@@ -621,7 +621,10 @@ const ORDER = { random: 'un à la fois, au hasard', least_recent: 'un à la fois
 // Durée d'un tour complet en stratégie « un par un » : chaque membre sonne
 // user_timeout puis la pause retry_delay (dialplan group-linear). Au-delà, le
 // premier membre resonne. NPD exclus du calcul par l'appelant s'il le souhaite.
-export const linearRound = (n, ut, rd) => (n > 0 ? n * ((ut ?? 15) + (rd ?? 0)) : 0);
+// Champ vide (null) = valeurs d'Asterisk : 15 s de sonnerie par membre, 5 s de pause
+// (constaté en réel par Brice, 20/10/2026 : groupe laissé « vide » → 15 / 5 ; 0 corrige).
+export const GROUP_DEF = { user_timeout: 15, retry_delay: 5 };
+export const linearRound = (n, ut, rd) => (n > 0 ? n * ((ut ?? GROUP_DEF.user_timeout) + (rd ?? GROUP_DEF.retry_delay)) : 0);
 const STRAT_HELP_SHORT = {
   random: 'Asterisk choisit un membre au hasard, le fait sonner, puis un autre s\'il ne répond pas.',
   least_recent: 'Asterisk fait sonner d\'abord le membre qui a raccroché depuis le plus longtemps.',
@@ -634,7 +637,7 @@ const STRAT_HELP_SHORT = {
 function groupFlow(o) {
   const hub = membersLeaf('group', o);
   const list = groupMemberList(o);
-  const ut = o.user_timeout, rd = o.retry_delay;
+  const ut = o.user_timeout ?? GROUP_DEF.user_timeout, rd = o.retry_delay ?? GROUP_DEF.retry_delay;
   const gk = `group:${o.id}`;
   const badge = (m) => [m.kind === 'live' ? 'inscrit par touche' : '', m.kind === 'ext' ? 'numéro' : '', m.dnd ? 'NPD : ne sonne pas' : '', m.unknown ? 'utilisateur inconnu' : '', m.exten && m.kind === 'user' ? m.exten : ''].filter(Boolean).join(' · ');
   const card = (m, extra = {}) => leaf('member', m.name.replace(/^Numéro /, ''), badge(m), { dnd: m.dnd, live: m.kind === 'live', group: gk, member: m, ...extra });
@@ -1300,7 +1303,7 @@ export function facts(k, leafInfo) {
     }
     case 'group':
       f.push(['Numéro', exts], ['Nom technique', o.name], ['Stratégie', STRATEGY[o.ring_strategy] || o.ring_strategy], ['Durée du groupe', sec(o.timeout), 'Durée totale de sonnerie du groupe avant le débordement « pas de réponse ».'],
-        ['Sonnerie par membre', sec(o.user_timeout), 'Durée de sonnerie de chaque membre (stratégies un par un).'], ['Pause entre tours', sec(o.retry_delay)], ['Appels max', o.max_calls || 'illimité'],
+        ['Sonnerie par membre', o.user_timeout == null ? `${GROUP_DEF.user_timeout} s (vide : valeur par défaut d'Asterisk)` : o.user_timeout === 0 ? '0 : sans coupure, jusqu\'à la durée totale' : sec(o.user_timeout), 'Durée de sonnerie de chaque membre (stratégies un par un).'], ['Pause entre tours', o.retry_delay == null ? `${GROUP_DEF.retry_delay} s (vide : valeur par défaut d'Asterisk)` : o.retry_delay === 0 ? '0 : aucune' : sec(o.retry_delay)], ['Appels max', o.max_calls || 'illimité'],
         ['Musique d\'attente', o.music_on_hold], ['Horaire', scheds], ['Membres', members(o.members).join(', ') || '—']);
       break;
     case 'queue':

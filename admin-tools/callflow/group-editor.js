@@ -17,12 +17,12 @@
 //    linéaire ; les utilisateurs sonnent avant les numéros) ;
 //  - une seule extension, contexte internal, dans les group_ranges ; un seul
 //    horaire ; plusieurs autorisations d'appels.
-import { $, esc, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.40.19';
-import { M, STRATEGY, listOf, linearRound } from './model.js?v=0.40.19';
-import { pickerHtml, bindPicker, readPicker } from './sched-editor.js?v=0.40.19';
-import { sec, field } from './ed-ui.js?v=0.40.19';
-import { bindNewSchedule, schedValue } from './create.js?v=0.40.19';
-import { numberFieldHtml, bindNumberField, checkNumber } from './numbers.js?v=0.40.19';
+import { $, esc, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.40.20';
+import { M, STRATEGY, listOf, linearRound } from './model.js?v=0.40.20';
+import { pickerHtml, bindPicker, readPicker } from './sched-editor.js?v=0.40.20';
+import { sec, field } from './ed-ui.js?v=0.40.20';
+import { bindNewSchedule, schedValue } from './create.js?v=0.40.20';
+import { numberFieldHtml, bindNumberField, checkNumber } from './numbers.js?v=0.40.20';
 
 const STRATS = ['all', 'linear', 'random', 'least_recent', 'fewest_calls', 'memorized_round_robin', 'weight_random'];
 const STRAT_HELP = {
@@ -105,8 +105,8 @@ export function openGroupEditor(g, onSave) {
       <p class="small muted cf-ge-note" id="ge-strat-h">${esc(STRAT_HELP[f.ring_strategy] || '')}</p>
       <div class="cf-ge-3">
         ${num('timeout', 'Durée totale (s)', 'Avant le débordement « pas de réponse ». Vide ou 0 : sonne indéfiniment.', 'illimitée')}
-        ${num('user_timeout', 'Sonnerie par membre (s)', 'Combien de temps chaque membre sonne.', '15')}
-        ${num('retry_delay', 'Pause de réessai (s)', 'Attente après une sonnerie sans réponse : après chaque membre en « un par un ».', '5')}
+        ${num('user_timeout', 'Sonnerie par membre (s)', 'Combien de temps chaque membre sonne avant une pause. Vide = 15 s (défaut d\'Asterisk, constaté). 0 = sans coupure : sonne jusqu\'à la durée totale.', 'vide = 15')}
+        ${num('retry_delay', 'Pause de réessai (s)', 'Attente après une sonnerie sans réponse (après chaque membre en « un par un »). Vide = 5 s (défaut d\'Asterisk, constaté). 0 = aucune pause.', 'vide = 5')}
       </div>
       <div id="ge-tour" class="cf-ge-tour" hidden></div>
       ${bool('ring_in_use')}`, { help: 'Vérifié dans le code Wazo : « sonnerie par membre » = timeout de chaque membre ; « pause » = retry ; « durée totale » = délai de Queue() (ou du Dial en « un par un ») avant le débordement « pas de réponse ». En « un par un » (dialplan group-linear), la pause a lieu après CHAQUE membre : un tour complet = nombre de membres × (sonnerie + pause). Pour les autres stratégies (file Asterisk), la pause sépare deux tentatives (supposé, non vérifié dans Asterisk).' })}
@@ -181,7 +181,7 @@ export function openGroupEditor(g, onSave) {
     const dnd = users.filter((m) => isDnd(m.uuid)).length;
     const S = {
       gen: [val('[data-f="label"]') || '(sans nom)', val('[data-ext]') ? `n° ${val('[data-ext]')}` : 'sans numéro', on('[data-b="enabled"]') ? '' : 'DÉSACTIVÉ'],
-      ring: [STRATEGY[val('[data-f="ring_strategy"]')], Number(val('[data-f="timeout"]')) ? `${val('[data-f="timeout"]')} s au total` : 'sans limite', `${val('[data-f="user_timeout"]') || 15} s par membre`],
+      ring: [STRATEGY[val('[data-f="ring_strategy"]')], Number(val('[data-f="timeout"]')) ? `${val('[data-f="timeout"]')} s au total` : 'sans limite', (val('[data-f="user_timeout"]') === '0' ? 'sans coupure par membre' : `${val('[data-f="user_timeout"]') || '15 (défaut)'} s par membre`), val('[data-f="retry_delay"]') === '' ? 'pause 5 s (défaut)' : `pause ${val('[data-f="retry_delay"]')} s`],
       mem: [`${users.length} utilisateur${users.length > 1 ? 's' : ''}`, exts.length && $('ge-exton')?.checked ? `${exts.length} numéro${exts.length > 1 ? 's' : ''}` : '', dnd ? `${dnd} en NPD` : ''],
       fb: [`sans réponse : ${pick('ge-noans')}`, Number(val('[data-f="max_calls"]')) ? `max ${val('[data-f="max_calls"]')} appels` : ''],
       opt: [box.querySelector('[data-f="music_on_hold"]')?.selectedOptions[0]?.value ? `musique ${box.querySelector('[data-f="music_on_hold"]').selectedOptions[0].text}` : 'sonnerie', val('[data-f="caller_id_mode"]') ? `nom « ${val('[data-f="caller_id_name"]')} »` : ''],
@@ -198,7 +198,7 @@ export function openGroupEditor(g, onSave) {
     const el = $('ge-tour'); if (!el) return;
     const n = users.length + ($('ge-exton')?.checked ? exts.length : 0);
     if (val('[data-f="ring_strategy"]') !== 'linear' || !n) { el.hidden = true; return; }
-    const ut = Number(val('[data-f="user_timeout"]') || 15), rd = Number(val('[data-f="retry_delay"]') || 0), step = ut + rd;
+    const ut = Number(val('[data-f="user_timeout"]') || 15), rd = Number(val('[data-f="retry_delay"]') || 5), step = ut + rd;
     const tour = linearRound(n, ut, rd), cur = Number(val('[data-f="timeout"]') || 0);
     const reached = cur ? Math.min(n, Math.ceil(cur / step)) : n;
     const now = cur === tour ? '<strong>réglée sur un tour complet.</strong>'
