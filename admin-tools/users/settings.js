@@ -19,7 +19,7 @@
 //                     rechargement à redéclencher à la fin ('user')
 // Routes et sémantique vérifiées dans le code de wazo-confd (13/10/2026),
 // voir docs/USER-MANAGER.md. Écritures non encore testées en réel.
-import { S, api, esc, fullName } from '../common/core.js?v=0.40.21';
+import { S, api, esc, fullName } from '../common/core.js?v=0.40.22';
 
 // Comparaison indépendante de l'ordre des clés (objets relus vs construits).
 const canon = (v) => (Array.isArray(v) ? v.map(canon) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, canon(v[k])])) : v ?? null);
@@ -644,9 +644,14 @@ const linesSetting = {
     for (const l of next) {
       if (l.id != null && byId.has(l.id)) continue;
       const templates = (l.type === 'webrtc' ? [IDX.tpl.global, IDX.tpl.webrtc] : [IDX.tpl.global]).map((uuid) => ({ uuid }));
+      // Nom de l'endpoint = identifiant d'authentification, comme l'import de Wazo
+      // (vérifié, wazo-confd user_import/creators.py : 'name': fields['username']).
+      // Deux valeurs différentes = ligne qui ne s'authentifie pas (retour de Brice,
+      // 21/10/2026, lignes WebRTC : 4 h de diagnostic).
+      const sipName = rnd(8, 'abcdefghijklmnopqrstuvwxyz');
       const line = await api('POST', '/lines', {
         context: l.context,
-        endpoint_sip: { templates, auth_section_options: [['username', rnd(8, 'abcdefghijklmnopqrstuvwxyz')], ['password', rnd(16, 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789')]] },
+        endpoint_sip: { name: sipName, templates, auth_section_options: [['username', sipName], ['password', rnd(16, 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789')]] },
         extensions: l.exten ? [{ exten: l.exten, context: l.context }] : [],
       });
       try { await api('PUT', `/users/${u.uuid}/lines/${line.id}`); } catch (e) {
