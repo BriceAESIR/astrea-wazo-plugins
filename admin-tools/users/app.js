@@ -12,8 +12,8 @@
 //    queue_label, voicemail_name, ivr_name… ajoutés par confd.
 // Supposé, à vérifier en réel : le token du portail peut lire /moh,
 // /voicemails, /callpermissions, /schedules (sinon libellés techniques).
-import { S, $, esc, toast, api, listAll, connect, fullName, setReadonly, showCompat, loaded, loadFailed, canWrite, confirmModal, downloadJson, helpButton, helpBox } from '../common/core.js?v=0.40.22';
-import { SETTINGS, settingById, same, LANG, subLabel, authApi, IDX, readLines } from './settings.js?v=0.40.22';
+import { S, $, esc, toast, api, listAll, connect, fullName, setReadonly, showCompat, loaded, loadFailed, canWrite, confirmModal, downloadJson, helpButton, helpBox } from '../common/core.js?v=0.40.23';
+import { SETTINGS, settingById, same, LANG, subLabel, authApi, IDX, readLines } from './settings.js?v=0.40.23';
 
 const A = { auth: new Map(), authErr: '', users: [], byId: new Map(), moh: new Map(), groups: new Map(), vms: new Map(), perms: new Map(), scheds: new Map(), queues: new Map(), sbs: new Map(), contexts: [], callerOpts: [], callerOptsErr: '', lr: null, picked: new Set(), sort: { col: 'name', dir: 1 }, sel: null, scope: null, cols: null };
 
@@ -26,6 +26,7 @@ const mohLabel = (name) => (!name ? '' : name === 'default' ? 'Par défaut' : A.
 // outgoing_caller_id : jetons « default » / « anonymous » acceptés par confd.
 const callerId = (v) => (!v ? '' : v === 'default' ? 'Par défaut' : v === 'anonymous' ? 'Anonyme' : v);
 const HANGUP ={ busy: 'occupé', congestion: 'encombré', normal: 'normal' };
+const GREET = { busy: 'occupé', unavailable: 'indisponible' };
 // Destination confd (débordements) → texte lisible.
 function destText(d) {
   if (!d || !d.type || d.type === 'none') return '';
@@ -35,7 +36,7 @@ function destText(d) {
     case 'user': { const n = [d.user_firstname, d.user_lastname].filter(Boolean).join(' ') || fullName(A.byId.get(d.user_id)) || `#${d.user_id}`; return `Utilisateur ${n}`; }
     case 'group': { const g = [...A.groups.values()].find((x) => x.id === d.group_id); return `Groupe ${d.group_label || g?.label || d.group_name || g?.name || `#${d.group_id}`}`; }
     case 'queue': return `File ${d.queue_label || A.queues.get(d.queue_id)?.label || `#${d.queue_id}`}`;
-    case 'voicemail': return `Messagerie ${d.voicemail_name || A.vms.get(d.voicemail_id)?.name || `#${d.voicemail_id}`}`;
+    case 'voicemail': return `Messagerie ${d.voicemail_name || A.vms.get(d.voicemail_id)?.name || `#${d.voicemail_id}`}${GREET[d.greeting] ? ` (message ${GREET[d.greeting]})` : ''}`;
     case 'ivr': return `SVI ${d.ivr_name || `#${d.ivr_id}`}`;
     case 'conference': return `Conférence ${d.conference_name || `#${d.conference_id}`}`;
     // Contexte omis : nom technique (ctx-…) illisible, vu en réel le 13/10/2026.
@@ -64,7 +65,7 @@ function fwd(u, k) {
 // clé pour tous, sinon chaque utilisateur sortirait en écart.
 function fb(u, k) {
   const d = u.fallbacks?.[`${k}_destination`];
-  if (d?.type === 'voicemail' && u.voicemail && d.voicemail_id === u.voicemail.id) return { t: 'Sa messagerie', k: 'self-vm' };
+  if (d?.type === 'voicemail' && u.voicemail && d.voicemail_id === u.voicemail.id) return { t: `Sa messagerie${GREET[d.greeting] ? ` (message ${GREET[d.greeting]})` : ''}`, k: `self-vm|${d.greeting || ''}` };
   const t = destText(d);
   return t ? { t, k: t } : { t: '—', k: '', c: 'none' };
 }

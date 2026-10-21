@@ -19,7 +19,7 @@
 //                     rechargement à redéclencher à la fin ('user')
 // Routes et sémantique vérifiées dans le code de wazo-confd (13/10/2026),
 // voir docs/USER-MANAGER.md. Écritures non encore testées en réel.
-import { S, api, esc, fullName } from '../common/core.js?v=0.40.22';
+import { S, api, esc, fullName } from '../common/core.js?v=0.40.23';
 
 // Comparaison indépendante de l'ordre des clés (objets relus vs construits).
 const canon = (v) => (Array.isArray(v) ? v.map(canon) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, canon(v[k])])) : v ?? null);
@@ -139,17 +139,24 @@ const fallback = (k, label) => ({
     <div data-dt="switchboard"><label>Standard <select id="m-ds">${options([...c.sbs.values()].map((s) => [s.uuid, s.name]).sort((a, b) => a[1].localeCompare(b[1], 'fr')))}</select></label></div>
     <div data-dt="extension"><label>Numéro <input id="m-dn" inputmode="tel" placeholder="0612345678"></label>
       <label>Contexte <select id="m-dc">${options([['@line', 'Celui de la ligne de chaque utilisateur'], ...c.contexts.map((x) => [x.name, `${x.label || x.name}${x.type ? ` (${x.type})` : ''}`])])}</select></label></div>
-    <div data-dt="hangup"><label>Cause <select id="m-dh">${options([['normal', 'Normale'], ['busy', 'Occupé'], ['congestion', 'Encombré']])}</select></label></div>`,
+    <div data-dt="hangup"><label>Cause <select id="m-dh">${options([['normal', 'Normale'], ['busy', 'Occupé'], ['congestion', 'Encombré']])}</select></label></div>
+    <div data-dt="selfvm"><label>Message d'accueil <select id="m-dvg">${options([['busy', 'Occupé'], ['unavailable', 'Indisponible'], ['', 'Non précisé (choix de la messagerie)']], k === 'busy' ? 'busy' : 'unavailable')}</select></label></div>`,
   wire: () => showSub('m-dt', 'data-dt'),
   parse: (c) => {
     const t = $v('m-dt');
     const fixed = (d) => ({ target: () => d, desc: `Renvoi par défaut ${label} : ${c.destText(d) || 'aucun'}` });
     if (t === 'none') return fixed(null);
-    if (t === 'selfvm') return {
-      // Déjà sur sa propre messagerie : on garde tel quel (message d'accueil inclus).
-      target: (cur, u) => (cur?.type === 'voicemail' && u.voicemail && cur.voicemail_id === u.voicemail.id ? cur : { type: 'voicemail', voicemail_id: u.voicemail?.id ?? null, skip_instructions: false }),
-      desc: `Renvoi par défaut ${label} : sa propre messagerie`,
-    };
+    if (t === 'selfvm') {
+      // Message d'accueil (greeting, schéma VoicemailDestinationSchema : busy,
+      // unavailable ou null) choisi et affiché, pas laissé au défaut caché.
+      // Déjà sur sa propre messagerie : consignes (skip_instructions) gardées.
+      const g = $v('m-dvg') || null;
+      const gt = { busy: 'message « occupé »', unavailable: 'message « indisponible »' }[g] || 'message non précisé';
+      return {
+        target: (cur, u) => (cur?.type === 'voicemail' && u.voicemail && cur.voicemail_id === u.voicemail.id ? normDest({ ...cur, greeting: g }) : normDest({ type: 'voicemail', voicemail_id: u.voicemail?.id ?? null, skip_instructions: false, greeting: g })),
+        desc: `Renvoi par défaut ${label} : sa propre messagerie (${gt})`,
+      };
+    }
     const need = (v, what) => { if (!v) throw new Error(`Aucun(e) ${what} disponible.`); return v; };
     if (t === 'user') return fixed({ type: 'user', user_id: Number(need($v('m-du'), 'utilisateur')) });
     if (t === 'group') return fixed({ type: 'group', group_id: Number(need($v('m-dg'), 'groupe')) });
@@ -163,7 +170,7 @@ const fallback = (k, label) => ({
   },
   prefill: (v, u) => {
     if (!v) return { 'm-dt': 'none' };
-    if (v.type === 'voicemail' && u?.voicemail && v.voicemail_id === u.voicemail.id) return { 'm-dt': 'selfvm' };
+    if (v.type === 'voicemail' && u?.voicemail && v.voicemail_id === u.voicemail.id) return { 'm-dt': 'selfvm', 'm-dvg': v.greeting || '' };
     const f = { user: ['m-du', v.user_id], group: ['m-dg', v.group_id], queue: ['m-dq', v.queue_id], switchboard: ['m-ds', v.switchboard_uuid], hangup: ['m-dh', v.cause] }[v.type];
     if (f) return { 'm-dt': v.type, [f[0]]: f[1] };
     if (v.type === 'extension') return { 'm-dt': 'extension', 'm-dn': v.exten, 'm-dc': v.context };
@@ -189,8 +196,9 @@ const fallback = (k, label) => ({
 // est trop récente (26.10) pour être présente partout : non utilisée.
 // SDA() renvoie null si l'utilisateur n'a pas d'appel entrant : « impossible ».
 const SDA = (u) => (u.incalls || []).flatMap((i) => i.extensions || []).map((e) => String(e.exten || '').replace(/^_/, '')).find((x) => /^\+?\d+$/.test(x)) || null;
-// Même règle que confd (format_caller_id) : sans nom, le numéro seul.
-const cidFmt = (number, name) => { const n = String(name || '').replace(/"/g, '').trim(); return n ? `"${n}" <${number}>` : String(number); };
+// Même règle que confd (user_callerid/service.py, format_caller_id) : sans nom,
+// ou si `"Nom" <numéro>` dépasse 80 caractères (taille de la colonne), le numéro seul.
+const cidFmt = (number, name) => { const n = String(name || '').replace(/"/g, '').trim(); const f = n ? `"${n}" <${number}>` : ''; return f && f.length <= 80 ? f : String(number); };
 const CID_TYPE = { main: 'numéro principal', shared: 'numéro partagé' };
 const callerIdSetting = {
   id: 'outgoing_caller_id', label: 'Identification de l\'appelant sortant', grp: 'Appels sortants', ...userField('outgoing_caller_id'),
@@ -413,6 +421,31 @@ const authEmails = {
 // Index remplis par app.js au chargement (check() n'a pas le contexte).
 // ---------------------------------------------------------------------------
 export const IDX = { lines: new Map(), exts: new Map(), devices: new Map(), contexts: [], tpl: {}, pending: new Set() };
+
+// Appartenance aux groupes, groupe par groupe : PUT /groups/{uuid}/members/users
+// avec la liste complète relue juste avant, priorités conservées (confd garde
+// le membre existant, group_member/resource.py _find_or_create_member).
+// PAS PUT /users/{uuid}/groups : il recrée toutes les appartenances de
+// l'utilisateur avec la position 0 (xivo-dao associate_all_groups, relation
+// group_members en delete-orphan, lu le 21/10/2026), ce qui casse l'ordre des
+// groupes à sonnerie linéaire. Ajout : en fin de liste, ou à la priorité donnée.
+async function groupMembers(g) {
+  const grp = await api('GET', `/groups/${g}`);
+  return (grp?.members?.users || []).map((m) => ({ uuid: m.uuid, priority: m.priority ?? 0 }));
+}
+async function setGroups(u, v, cur, prio = {}) {
+  for (const g of v.filter((x) => !cur.includes(x))) {
+    const users = await groupMembers(g);
+    if (users.some((m) => m.uuid === u.uuid)) continue;
+    users.push({ uuid: u.uuid, priority: prio[g] ?? users.reduce((n, m) => Math.max(n, m.priority + 1), 0) });
+    await api('PUT', `/groups/${g}/members/users`, { users });
+  }
+  for (const g of cur.filter((x) => !v.includes(x))) {
+    const users = await groupMembers(g);
+    if (!users.some((m) => m.uuid === u.uuid)) continue;
+    await api('PUT', `/groups/${g}/members/users`, { users: users.filter((m) => m.uuid !== u.uuid) });
+  }
+}
 const LTYPE = { sip: 'SIP', webrtc: 'WebRTC', sccp: 'SCCP', custom: 'Custom' };
 const lineType = (l) => (l.endpoint_sccp ? 'sccp' : l.endpoint_custom ? 'custom' : IDX.lines.get(l.id)?.is_webrtc ? 'webrtc' : 'sip');
 // Valeur du réglage : lignes de l'utilisateur, triées par id ; les nouvelles
@@ -510,13 +543,13 @@ const linesSetting = {
         <div data-lnew>${ctxSel}<label>Numéro <input id="m-ln-${t?.id}" value="${esc(start)}" inputmode="numeric" size="8"></label>
         <label>Appareil (ligne SIP) <select id="m-lnd">${deviceOptions('')}</select></label>
         <p class="muted small">Même numéro qu'une ligne existante = lignes multiples (tous ses postes sonnent). Identifiant et mot de passe SIP générés au hasard.</p></div>
-        <p class="muted small">Supprimer la ligne principale retire l'utilisateur des groupes et files (inscriptions liées à la ligne). Appareils proposés : ceux du tenant sans ligne.</p>`;
+        <p class="muted small">Supprimer une ligne : groupes repris (même position) s'il en reste une, files d'attente non reprises. Appareils proposés : ceux du tenant sans ligne.</p>`;
     }
     return `<label>Action <select id="m-la">${options([['add', 'Ajouter une ligne'], ['renum', 'Changer le numéro'], ['del', 'Supprimer des lignes']])}</select></label>
       <div data-la="add"><label>Type <select id="m-lt">${options(LTYPES_NEW)}</select></label>
         <label class="inline"><input type="checkbox" id="m-lskip" checked> Ignorer les utilisateurs qui ont déjà une ligne de ce type</label>${ctxSel}</div>
       <div data-la="del"><label>Lignes à supprimer <select id="m-ldt">${options([['all', 'Toutes les lignes'], ['sip', 'Lignes SIP'], ['webrtc', 'Lignes WebRTC'], ['sccp', 'Lignes SCCP']])}</select></label>
-        <div class="warn">Appareils dissociés, numéros libérés s'ils ne servent plus, identifiants SIP perdus (une restauration recrée des lignes avec de nouveaux identifiants : postes à reprovisionner). L'utilisateur est retiré des groupes et files liés à la ligne supprimée.</div></div>
+        <div class="warn">Appareils dissociés, numéros libérés s'ils ne servent plus, identifiants SIP perdus (une restauration recrée des lignes avec de nouveaux identifiants : postes à reprovisionner). Groupes repris (même position) s'il reste une ligne à l'utilisateur ; files d'attente non reprises.</div></div>
       <div data-lnum><div class="btnrow"><label>À partir de <input id="m-lstart" inputmode="numeric" size="8" placeholder="${esc(defaultStart(cx))}"></label><button type="button" id="m-lprop">Numéroter à la suite</button></div>
         <table class="diff"><tr><th>Utilisateur</th><th>Lignes actuelles</th><th>Numéro</th></tr>${targets.map((x) => `<tr><td>${esc(fullName(x))}</td><td class="muted">${esc(linesSetting.text(readLines(x)))}</td><td><input id="m-ln-${x.id}" inputmode="numeric" size="8"></td></tr>`).join('')}</table>
         <p class="muted small">Ajouter : numéro actuel repris s'il en a un (lignes multiples), sinon numéros libres à la suite dans les plages du contexte. Numéro vide = utilisateur ignoré. Changer le numéro : modifie le numéro de toutes ses lignes qui le partagent.</p></div>`;
@@ -617,6 +650,14 @@ const linesSetting = {
   write: async (u, next, cur) => {
     const byId = new Map(cur.map((l) => [l.id, l]));
     const keep = new Set(next.filter((l) => l.id != null && byId.has(l.id)).map((l) => l.id));
+    // Supprimer une ligne retire l'utilisateur des groupes passés par elle
+    // (xivo-dao user_line delete_queue_member), même s'il garde une autre ligne.
+    // Appartenances et priorités relues avant, reprises à la fin s'il lui reste
+    // une ligne (le portail, lui, les perd).
+    const grpPrio = {};
+    if (cur.some((l) => !keep.has(l.id))) {
+      for (const g of (u.groups || []).map((x) => x.uuid)) { const m = (await groupMembers(g)).find((x) => x.uuid === u.uuid); if (m) grpPrio[g] = m.priority; }
+    }
     // 1. Suppressions (appareil dissocié d'abord, sinon refus de confd).
     for (const l of cur) {
       if (keep.has(l.id)) continue;
@@ -663,16 +704,59 @@ const linesSetting = {
         try { await api('PUT', `/lines/${line.id}/devices/${l.device}`); } catch (e) { throw new Error(`ligne ${l.exten} créée, mais appareil non associé : ${e.message}`); }
       }
     }
+    // 4. Groupes perdus par une suppression : repris s'il reste une ligne.
+    if (Object.keys(grpPrio).length) {
+      const f = await api('GET', `/users/${u.uuid}`);
+      const now = (f.groups || []).map((x) => x.uuid), lost = Object.keys(grpPrio).filter((g) => !now.includes(g));
+      if ((f.lines || []).length && lost.length) await setGroups(f, [...now, ...lost], now, grpPrio);
+    }
   },
 };
 const rnd = (n, cs) => { const b = new Uint32Array(n); crypto.getRandomValues(b); return [...b].map((x) => cs[x % cs.length]).join(''); };
 
+// Prénom, nom, e-mail : l'import de Wazo les écrit dans confd ET dans le compte
+// des applications (user_import/csvparse.py, USER_RULES et WAZO_USER_RULES :
+// firstname, lastname, email → email_address). PUT /users/{uuid} seul ne touche
+// pas wazo-auth : on fait les deux, comme l'import (lu le 21/10/2026).
+// L'identifiant interne `"Prénom Nom"` est posé par Wazo à la création
+// (xivo-dao fill_caller_id) puis jamais mis à jour : s'il est resté à cette
+// valeur, il suit le nouveau nom (affiché dans le formulaire).
+const cidDefault = (fn, ln) => `"${[fn, ln].filter(Boolean).join(' ')}"`;
+const nameField = (field, label, opts) => ({
+  ...textField(field, label, { ...opts, hint: 'Aussi écrit dans le compte des applications, comme l\'import de Wazo. L\'identifiant de l\'appelant (interne) suit s\'il est resté « Prénom Nom ».' }),
+  auth: true, // compte relu avant écriture
+  write: async (u, v) => {
+    const body = { [field]: v };
+    const nu = { ...u, [field]: v };
+    if (u.caller_id === cidDefault(u.firstname, u.lastname) && nu.firstname) body.caller_id = cidDefault(nu.firstname, nu.lastname);
+    await api('PUT', `/users/${u.uuid}`, body);
+    if (u._auth) await authPut(u, { [field]: v });
+  },
+});
+const directoryEmail = {
+  ...textField('email', 'E-mail (annuaire)', { re: /^[^@\s]+@[^@\s]+\.[^@\s]+$/, max: 254, hint: 'Courriel public, visible dans les annuaires. Unique sur tout le serveur (tous les clients). Comme l\'import de Wazo, il est aussi reporté dans les adresses du compte des applications : l\'ancienne adresse y est remplacée (principale et confirmation gardées) ; compte sans adresse : ajoutée comme principale confirmée.' }),
+  auth: true,
+  write: async (u, v, cur) => {
+    await api('PUT', `/users/${u.uuid}`, { email: v });
+    if (!u._auth) return;
+    const mails = mailList(u._auth.emails);
+    const i = cur ? mails.findIndex((m) => m.address.toLowerCase() === String(cur).toLowerCase()) : -1;
+    let next = null;
+    if (i >= 0) next = v ? mails.map((m, j) => (j === i ? { ...m, address: v } : m)) : mails.filter((_, j) => j !== i);
+    else if (!mails.length && v) next = [{ address: v, main: true, confirmed: true }];
+    if (!next || mails.some((m, j) => j !== i && m.address.toLowerCase() === String(v || '').toLowerCase())) return; // déjà présente
+    if (next.length && !next.some((m) => m.main)) next[0].main = true;
+    await authApi('PUT', `/admin/users/${u.uuid}/emails`, { emails: mailList(next) });
+    u._auth = { ...u._auth, emails: next };
+  },
+};
+
 const ALL_SETTINGS = [
   linesSetting,
   authEnabled, authUsername, authMethod, authEmails,
-  textField('firstname', 'Prénom', { required: true }),
-  textField('lastname', 'Nom'),
-  textField('email', 'E-mail (annuaire)', { re: /^[^@\s]+@[^@\s]+\.[^@\s]+$/, max: 254, hint: 'Courriel public, visible dans les annuaires. Doit être unique sur tout le serveur (tous les clients).' }),
+  nameField('firstname', 'Prénom', { required: true }),
+  nameField('lastname', 'Nom'),
+  directoryEmail,
   textField('mobile_phone_number', 'Mobile', { re: /^\+?[0-9*#]+$/, max: 80, check: (u, v) => (!v && u.mobile_fallback_enabled ? 'le renvoi vers le mobile est activé : impossible de vider le numéro' : '') }),
   textField('description', 'Description', { max: 1000 }),
   callerName,
@@ -722,16 +806,15 @@ const ALL_SETTINGS = [
     text: (v) => v || '—',
   },
   {
-    // PUT /users/{uuid}/groups remplace TOUTE la liste : on part de la liste
-    // relue juste avant l'écriture. Un utilisateur sans ligne ne peut pas
-    // être membre d'un groupe (refus de confd).
+    // Écriture groupe par groupe (setGroups, priorités conservées). Un
+    // utilisateur sans ligne ne peut pas être membre d'un groupe (refus de confd).
     id: 'groups', label: 'Groupes d\'appel', grp: 'Groupes et droits', heavy: true, reload: 'user', available: (c) => c.groups.size > 0,
     ...membership((c) => [...c.groups.values()].map((g) => [g.uuid, g.label || g.name]).sort((a, b) => a[1].localeCompare(b[1], 'fr')), (u) => sortedIds(u.groups, 'uuid'), 'Groupes d\'appel', (a) => [...a].sort()),
     read: (u) => sortedIds(u.groups, 'uuid'),
     text: (v, c) => (v?.length ? v.map((x) => c.groups.get(x)?.label || x).join(', ') : '—'),
     // IDX.pending : ligne créée plus tôt dans la même opération (étape Lignes).
     check: (u, v) => (v?.length && !(u.lines || []).length && !IDX.pending.has(u.uuid) ? 'aucune ligne : ne peut pas être membre d\'un groupe (étape Lignes pour en créer une)' : ''),
-    write: (u, v) => api('PUT', `/users/${u.uuid}/groups`, { groups: v.map((uuid) => ({ uuid })) }),
+    write: (u, v, cur) => setGroups(u, v, cur || []),
   },
   {
     // Association idempotente, une route par droit (pas de remplacement).
@@ -793,8 +876,8 @@ const HELP = {
   outgoing_caller_id: 'Numéro présenté aux correspondants externes : par défaut (règle du tenant ou de la ligne), anonyme, un numéro du tenant, la SDA de l\'utilisateur, ou un autre numéro (l\'opérateur peut refuser un numéro qui n\'appartient pas au client).',
   call_permissions: 'Droits d\'appel : listes de numéros autorisés ou interdits (avec mot de passe éventuel), définies dans le portail. L\'utilisateur est soumis à tous ceux qui lui sont associés.',
   voicemail: 'Boîte vocale de l\'utilisateur (une boîte peut être partagée). Les réglages de la boîte (code, e-mail, options) se font dans Messageries vocales.',
-  lines: 'Lignes téléphoniques de l\'utilisateur : sans ligne, il ne peut ni appeler, ni être appelé, ni être membre d\'un groupe. SIP : poste de bureau, DECT ou softphone tiers (identifiants SIP générés au hasard). WebRTC : applications Wazo (web, bureau, mobile). Plusieurs lignes sur le même numéro sonnent ensemble. Le numéro doit être libre et dans une plage « utilisateurs » du contexte. Supprimer une ligne libère son numéro, dissocie son appareil et retire l\'utilisateur des groupes et files liés à cette ligne.',
-  groups: 'Groupes d\'appel dont l\'utilisateur est membre : ses postes sonnent quand le groupe est appelé. Il faut une ligne pour être membre.',
+  lines: 'Lignes téléphoniques de l\'utilisateur : sans ligne, il ne peut ni appeler, ni être appelé, ni être membre d\'un groupe. SIP : poste de bureau, DECT ou softphone tiers (identifiants SIP générés au hasard). WebRTC : applications Wazo (web, bureau, mobile). Plusieurs lignes sur le même numéro sonnent ensemble. Le numéro doit être libre et dans une plage « utilisateurs » du contexte. Supprimer une ligne libère son numéro et dissocie son appareil ; confd retire l\'utilisateur des groupes et files liés à cette ligne : User Manager remet les groupes (même position) s\'il lui reste une ligne, pas les files.',
+  groups: 'Groupes d\'appel dont l\'utilisateur est membre : ses postes sonnent quand le groupe est appelé. Il faut une ligne pour être membre. Ajout en fin de liste des membres ; la position des autres membres et celle de l\'utilisateur dans ses autres groupes ne changent pas.',
   schedule: 'Plage horaire de l\'utilisateur : hors plage, ses appels vont vers la destination « fermé » de la plage. Un seul horaire par utilisateur.',
 };
 
