@@ -11,9 +11,9 @@
 //    envoyé = liste complète.
 // Le format des champs *_sound n'est pas documenté : on garde la valeur lue et
 // on propose les sons du tenant (même valeur que destination.filename, supposé).
-import { $, esc, confirmModal, helpButton, helpBox } from '../common/core.js?v=0.40.23';
-import { pickerHtml, bindPicker, readPicker, fillSoundSelect } from './sched-editor.js?v=0.40.23';
-import { sec, field, setSums, openSec } from './ed-ui.js?v=0.40.23';
+import { $, esc, confirmModal, helpButton, helpBox } from '../common/core.js?v=0.40.24';
+import { pickerHtml, bindPicker, readPicker, fillSoundSelect } from './sched-editor.js?v=0.40.24';
+import { sec, field, setSums, openSec } from './ed-ui.js?v=0.40.24';
 
 export const IVR_FIELDS = ['name', 'description', 'greeting_sound', 'menu_sound', 'invalid_sound', 'abort_sound', 'timeout', 'max_tries'];
 const DESTS = ['timeout_destination', 'invalid_destination', 'abort_destination'];

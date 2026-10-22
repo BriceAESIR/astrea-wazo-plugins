@@ -37,9 +37,11 @@ export const CATALOG = [
   },
   {
     id: 'adminpw', label: 'Mot de passe admin propre à l\'appareil', kinds: ['phone', 'dect'], reboot: true, secret: true, offText: 'Mot de passe du modèle de provisionnement de la stack.',
-    help: 'Mot de passe de l\'utilisateur « admin » de l\'interface web, à la place de celui du modèle de provisionnement (commun à toute la stack). Paramètre static.security.user_password = admin:<mot de passe>. 1 à 32 caractères ASCII, sans espace ni « : ». Il reste visible en clair dans le fichier de configuration de l\'appareil et dans provd (comme celui du modèle aujourd\'hui). Un changement redémarre l\'appareil.',
+    help: 'Mot de passe du compte administrateur de l\'interface web, à la place de celui du modèle de provisionnement (commun à toute la stack). Paramètre static.security.user_password = <compte>:<mot de passe>, où <compte> est le nom du compte admin défini par le modèle (« admin » par défaut). 1 à 32 caractères ASCII, sans espace ni « : ». Il reste visible en clair dans le fichier de configuration de l\'appareil et dans provd (comme celui du modèle aujourd\'hui). Un changement redémarre l\'appareil.',
+    // user : nom du compte admin du modèle de provisionnement, fixé par l'appli
+    // à l'enregistrement (app.js adminUser) ; absent (≤ 0.40.23) = « admin ».
     fields: [{ key: 'pwd', label: 'Mot de passe', type: 'password', def: '' }],
-    params: (v) => ({ 'static.security.user_password': `admin:${v.pwd}` }),
+    params: (v) => ({ 'static.security.user_password': `${v.user || 'admin'}:${v.pwd}` }),
   },
   {
     id: 'autoprov', label: 'Provisionnement planifié (hebdomadaire)', kinds: ['phone', 'dect'], offText: 'Désactivé (défaut Yealink) : l\'appareil se provisionne au démarrage et sur synchronisation.',

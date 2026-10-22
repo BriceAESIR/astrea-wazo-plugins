@@ -7,13 +7,14 @@
 //  - PUT/DELETE /lines/{id}/devices/{device_id} : association refusée si la
 //    ligne a déjà un appareil (déplacer = dissocier puis associer) ou si la
 //    position est prise ; la ligne doit avoir un utilisateur et une extension ;
-//  - PUT /lines/{id} (objet complet) ne contrôle PAS l'unicité de la position
-//    sur l'appareil : l'appli la vérifie elle-même ;
-//  - confd régénère la config provd, mais ne synchronise pas l'appareil.
-// Supposé, à vérifier en réel : GET /lines renvoie device_id et position ;
-// un PUT /lines/{id} avec l'objet relu par GET est accepté.
-import { S, $, esc, toast, api, listAll, confirmModal, connect, fullName, canWrite, setReadonly, showCompat, loaded, loadFailed, provd, provdDevice, updateProvdOptions, downloadJson, calldGet } from '../common/core.js?v=0.40.23';
-import { CATALOG, randomPassword, checkField } from './catalog.js?v=0.40.23';
+//  - PUT /lines/{id} ne contrôle PAS l'unicité de la position sur l'appareil :
+//    l'appli la vérifie elle-même ;
+//  - confd régénère la config provd, mais ne synchronise pas l'appareil ;
+//  - un appareil qui n'a plus aucune ligne est remis en autoprov : options
+//    provd et modèle de provisionnement perdus (voir snapshotDevices()).
+// Audit du 21/10/2026 (wazo-confd master, xivo-dao) : docs/PHONE-MANAGER.md.
+import { S, $, esc, toast, api, listAll, confirmModal, connect, fullName, canWrite, setReadonly, showCompat, loaded, loadFailed, provd, provdDevice, updateProvdOptions, downloadJson, calldGet } from '../common/core.js?v=0.40.24';
+import { CATALOG, randomPassword, checkField } from './catalog.js?v=0.40.24';
 
 // Comptes SIP par modèle (_NB_SIP_ACCOUNTS / plugin-info des plugins provd).
 const DECT_MAX = {
@@ -310,21 +311,65 @@ function wireDragDrop() {
 // ---------------------------------------------------------------------------
 // Écritures
 // ---------------------------------------------------------------------------
-// Position d'une ligne : objet complet relu puis réécrit (PUT /lines/{id}).
+// Position d'une ligne : PUT /lines/{id} avec { position } SEUL. confd charge
+// le corps en partiel (line/middleware.py parse_and_update, LineListSchema,
+// partial=True) : les champs absents ne sont pas touchés. Renvoyer l'objet
+// relu par GET (jusqu'à la 0.40.23) repassait caller_id_name / caller_id_num
+// dans les setters xivo-dao (linefeatures.py), qui reconstruisent le callerid
+// de l'endpoint SIP, et échouait en 400 si l'un des deux était vide.
 async function setPosition(lineId, pos) {
   const l = await api('GET', `/lines/${lineId}`);
   if (l.position === pos) return;
-  l.position = pos;
-  await api('PUT', `/lines/${lineId}`, l);
+  await api('PUT', `/lines/${lineId}`, { position: pos });
+}
+// Remise en autoprov (vérifié dans wazo-confd : device/update.py
+// ProvdUpdater.update, device/model.py reset_autoprov, device/generators.py) :
+// dès qu'un appareil n'a plus aucune ligne, confd efface TOUTES ses options
+// provd (astrea_*, switchboard) et remplace sa config par une config autoprov ;
+// à la réassociation, la config est recréée sans template_id, donc sur
+// « defaultconfigdevice » : le modèle de provisionnement de l'appareil est
+// perdu. Le portail fait la même chose quand on retire la dernière ligne.
+// Un déplacement Astrea peut vider un appareil un instant (Wazo impose de
+// dissocier avant de réassocier) : modèle et options sont relevés avant et
+// remis après sur les appareils qui ont de nouveau au moins une ligne.
+async function snapshotDevices(ids) {
+  const out = new Map();
+  for (const id of new Set(ids.filter(Boolean))) {
+    try {
+      const [dev, pd] = await Promise.all([api('GET', `/devices/${id}`), provdDevice(id)]);
+      out.set(id, { template_id: dev.template_id || null, options: pd.options || {} });
+    } catch (e) { out.set(id, { err: e.message }); console.warn('[astrea] relevé appareil', id, e.message); }
+  }
+  return out;
+}
+// Renvoie les remises faites (texte). Un appareil resté sans ligne n'est pas
+// touché : l'autoprov est alors voulu, comme dans le portail.
+async function restoreDevices(snap) {
+  if (!snap.size) return [];
+  const lines = await listAll('/lines');
+  const done = [];
+  for (const [id, s] of snap) {
+    if (!lines.some((l) => l.device_id === id)) continue;
+    const name = devById(id)?.mac || id;
+    if (s.err) { done.push(`${name} : état d'avant illisible (${s.err}), vérifiez son modèle de provisionnement et ses options`); continue; }
+    const what = [];
+    const dev = await api('GET', `/devices/${id}`);
+    if ((dev.template_id || null) !== s.template_id) { await api('PUT', `/devices/${id}`, { template_id: s.template_id }); what.push('modèle de provisionnement'); }
+    if (await updateProvdOptions(id, (o) => { for (const [k, v] of Object.entries(s.options)) if (!(k in o)) o[k] = v; })) what.push('options');
+    if (what.length) done.push(`${name} : ${what.join(' et ')} remis après le passage en autoprov`);
+  }
+  return done;
 }
 // Met la ligne sur `devId` au compte `pos` (dissocie d'abord l'appareil actuel).
-// En cas d'échec après dissociation, tente de la remettre où elle était.
+// En cas d'échec après dissociation, tente de la remettre où elle était (et
+// rend à cet appareil modèle et options si l'autoprov les a effacés).
 async function placeLine(lineId, devId, pos) {
   await reloadLines();
   const line = D.lines.find((l) => l.id === lineId);
   if (!line) throw new Error(`ligne ${lineId} introuvable`);
   if (usedPositions(devId, lineId).has(pos)) throw new Error(`le compte ${pos} de cette base vient d'être pris : rechargez.`);
   const from = { dev: line.device_id, pos: line.position };
+  const snap = await snapshotDevices([from.dev]);
   if (from.dev) await api('DELETE', `/lines/${lineId}/devices/${from.dev}`);
   try {
     await setPosition(lineId, pos);
@@ -332,6 +377,7 @@ async function placeLine(lineId, devId, pos) {
   } catch (e) {
     if (from.dev) {
       try { await setPosition(lineId, from.pos); await api('PUT', `/lines/${lineId}/devices/${from.dev}`); e.message += ' (ligne remise à sa place d\'origine)'; } catch { e.message += ' (ATTENTION : la ligne n\'a pas pu être remise sur son appareil d\'origine)'; }
+      try { const n = await restoreDevices(snap); if (n.length) e.message += ` ; ${n.join(' ; ')}`; } catch (e2) { e.message += ` ; remise du modèle / des options impossible : ${e2.message}`; }
     }
     throw e;
   }
@@ -344,8 +390,9 @@ async function syncDevices(ids) {
   }
 }
 const syncBox = (checked = true) => `<label class="inline"><input type="checkbox" id="m-sync"${checked ? ' checked' : ''}> Synchroniser les appareils concernés (redémarrage possible des bases et postes)</label>`;
+// fn peut renvoyer un complément (texte) à afficher avec le message de réussite.
 async function run(label, fn) {
-  try { await fn(); toast(label); } catch (e) { toast(e.message, 9000); console.error(e); }
+  try { const extra = await fn(); toast(extra ? `${label}. ${extra}` : label, extra ? 12000 : undefined); } catch (e) { toast(e.message, 12000); console.error(e); }
   try { await reload(); } catch (e) { toast(e.message, 6000); }
 }
 
@@ -390,7 +437,7 @@ function openAssign() {
       if (!li || li.classList.contains('off')) return;
       pick = items[Number(li.dataset.i)];
       const other = pick.line.device_id && pick.line.device_id !== d.id ? devById(pick.line.device_id) : null;
-      $('m-note').innerHTML = other ? `<div class="warn">Cette ligne est provisionnée sur ${esc(devLabel(other))}. Wazo n'associe une ligne qu'à un seul appareil : elle sera retirée de cet appareil (il ne la recevra plus par provisionnement).</div>` : '';
+      $('m-note').innerHTML = other ? `<div class="warn">Cette ligne est provisionnée sur ${esc(devLabel(other))}. Wazo n'associe une ligne qu'à un seul appareil : elle sera retirée de cet appareil (il ne la recevra plus par provisionnement).</div>${D.lines.filter((l) => l.device_id === other.id).length === 1 ? lastLineWarn(other) : ''}` : '';
       draw();
     };
   };
@@ -418,8 +465,9 @@ function hasPending() {
   toast('Des déplacements sont en attente : enregistrez-les ou annulez-les d\'abord.', 5000);
   return true;
 }
-// Dernière ligne retirée d'une base : confd remet l'appareil en autoprov.
-const lastLineWarn = (d) => `<div class="warn"><span class="error">C'est la dernière ligne de ${esc(baseName(d))} : Wazo remet alors la base en mode autoprovisionnement (configuration d'attente, plus aucun compte).</span></div>`;
+// Dernière ligne retirée d'un appareil : confd le remet en autoprov (voir
+// snapshotDevices) ; comme dans le portail, ce qui est effacé n'est pas remis.
+const lastLineWarn = (d) => `<div class="warn"><span class="error">C'est la dernière ligne de ${esc(baseName(d))}. Wazo remet alors l'appareil en autoprovisionnement : plus aucun compte, options Astrea effacées (VLAN, mot de passe, provisionnement planifié…, touches ligne), et modèle de provisionnement ramené au modèle par défaut quand une ligne lui sera réaffectée. Si son VLAN vient de son modèle ou d'Astrea, l'appareil peut devenir injoignable.</span></div>`;
 const who = (l) => `${lineUsers(l).map(fullName).join(', ') || 'Ligne sans utilisateur'} ${lineNumber(l)}`.trim();
 // Enregistre tous les déplacements : contrôle final (pas de doublon, maximum
 // du modèle), relecture des lignes (rien n'a bougé entre-temps), puis :
@@ -454,12 +502,23 @@ function savePlan() {
         if (fresh.some((l) => !moving.has(l.id) && l.device_id === c.to.dev && l.position === c.to.pos)) throw new Error(`Compte ${c.to.pos} de ${baseName(devById(c.to.dev))} pris entre-temps : rien n'a été écrit.`);
       }
       const cross = changes.filter((c) => c.to.dev !== c.line.device_id);
+      // Bases d'origine : un instant sans ligne entre les dissociations et les
+      // réassociations → autoprov (voir snapshotDevices).
+      const snap = await snapshotDevices(cross.map((c) => c.line.device_id));
+      let notes = [];
       try {
         for (const c of cross) if (c.line.device_id) await api('DELETE', `/lines/${c.line.id}/devices/${c.line.device_id}`);
         for (const c of changes) await setPosition(c.line.id, c.to.pos);
         for (const c of cross) await api('PUT', `/lines/${c.line.id}/devices/${c.to.dev}`);
-      } catch (e) { e.message += ' — écriture interrompue : l\'état réel est rechargé, vérifiez les bases concernées.'; throw e; }
+      } catch (e) {
+        e.message += ' — écriture interrompue : l\'état réel est rechargé, vérifiez les bases concernées.';
+        try { notes = await restoreDevices(snap); } catch (e2) { notes = [`remise du modèle / des options impossible : ${e2.message}`]; }
+        if (notes.length) e.message += ` ${notes.join(' ; ')}.`;
+        throw e;
+      }
+      try { notes = await restoreDevices(snap); } catch (e) { notes = [`ATTENTION, remise du modèle / des options impossible : ${e.message}`]; }
       if (sync) await syncDevices(devs);
+      return notes.join(' ; ');
     });
   }, 'Enregistrer');
 }
@@ -486,6 +545,12 @@ async function deviceTemplate(d) {
   return cfg ? { id, label: cfg.label || cfg.raw_config?.label || id, raw: cfg.raw_config || {} } : { id, label: id, raw: null };
 }
 const NOT_RESET = new Set(['vlan', 'adminpw']);
+// Compte admin de l'appareil. Les modèles Wazo (base.tpl / base-dect.tpl v86,
+// v87) écrivent static.security.user_name.admin = <admin_username> puis
+// user_password = <admin_username>:<admin_password> : le mot de passe
+// se pose sur le NOM du compte. Si le modèle renomme « admin », Astrea doit
+// viser ce nom, sinon son mot de passe ne s'applique à aucun compte.
+const adminUser = (tpl) => tpl?.raw?.admin_username || 'admin';
 // Préfixes MAC Yealink (OUI) relevés sur les parcs : la MAC donne la marque,
 // pas le modèle (le même préfixe sert aux postes et aux bases DECT). Liste
 // non exhaustive, à compléter.
@@ -493,7 +558,9 @@ const YEALINK_OUI = /^(00:15:65|80:5e:0c|80:5e:c0|24:9a:d8|44:db:d2|c4:fc:22)/i;
 const isYealink = (d) => /yealink/i.test(`${d.vendor} ${d.plugin}`) || YEALINK_OUI.test(d.mac || '');
 // Modèle inconnu (appareil déclaré par sa MAC, jamais connecté) : traité comme
 // un poste, sans les options propres à certains modèles.
-const kindOf = (d) => (!d ? null : isDect(d) ? 'dect' : isYealink(d) ? 'phone' : null);
+// Base DECT d'une autre marque (Gigaset) : pas de bloc Astrea dans son
+// template, les options n'auraient aucun effet → pas dans « Configuration ».
+const kindOf = (d) => (!d || !isYealink(d) ? null : isDect(d) ? 'dect' : 'phone');
 const modelLabel = (d) => d.model || 'modèle inconnu';
 // Appareils nommés par leur MAC (la description est un texte libre, souvent
 // long) ; la description reste au survol et dans la recherche.
@@ -550,6 +617,9 @@ async function selectDevice(id) {
     const s = pd.options?.astrea_settings;
     C.orig = s && typeof s === 'object' ? s : {};
     C.edit = JSON.parse(JSON.stringify(C.orig));
+    // Identifiant admin changé dans le modèle depuis l'enregistrement : le mot
+    // de passe Astrea viserait un compte qui n'existe plus → à réenregistrer.
+    if (tpl.raw && isOn(C.edit.adminpw) && (C.edit.adminpw.user || 'admin') !== adminUser(tpl)) C.edit.adminpw.user = adminUser(tpl);
   } catch (e) { toast(e.message, 8000); C.orig = {}; C.edit = {}; }
   C.loading = false;
   renderCfg();
@@ -577,6 +647,8 @@ function renderCfg() {
   $('c-tech').textContent = [stText(d), d.mac && `MAC ${d.mac}`, d.ip && `IP publique ${kindOf(d) === 'dect' ? 'de la base' : 'de l\'appareil'} ${d.ip}`, d.version && `firmware ${d.version}`, d.plugin && `plugin ${d.plugin}`, devUsers(d).length && `utilisateur(s) : ${devUsers(d).join(', ')}`].filter(Boolean).join(' · ');
   const warn = [];
   if (kindOf(d) === 'dect' && /v86\b/.test(d.plugin || '')) warn.push('Plugin v86 : il ne gère pas les bases DECT, les options ne seront pas appliquées.');
+  if (isOn(C.orig.adminpw) && isOn(C.edit.adminpw) && (C.orig.adminpw.user || 'admin') !== (C.edit.adminpw.user || 'admin')) warn.push(`Le modèle de provisionnement nomme le compte administrateur « ${C.edit.adminpw.user} » : le mot de passe Astrea, posé sur « ${C.orig.adminpw.user || 'admin'} », ne s'applique pas. Enregistrez pour le reposer sur le bon compte.`);
+  if (isOn(C.edit.adminpw) && C.tpl && !C.tpl.raw) warn.push('Modèle de provisionnement illisible : le mot de passe Astrea est posé sur le compte « admin », sans pouvoir vérifier que le modèle ne le renomme pas.');
   $('c-warn').innerHTML = warn.map((w) => `<div class="warn">${esc(w)}</div>`).join('');
   if (C.loading) { $('c-opts').innerHTML = '<p class="muted">Lecture de la configuration…</p>'; $('c-save').disabled = true; return; }
   $('c-opts').innerHTML = optsFor(d).map((o) => {
@@ -644,6 +716,7 @@ function saveCfg() {
   if (!canWrite()) return;
   const d = devById(C.sel);
   const next = JSON.parse(JSON.stringify(C.edit));
+  if (isOn(next.adminpw) && C.tpl?.raw) next.adminpw.user = adminUser(C.tpl);
   const errs = validate(next, d);
   if (errs.length) { toast(errs.join(' · '), 8000); return; }
   const before = buildParams(C.orig), after = buildParams(next);
@@ -710,18 +783,27 @@ function openBulk() {
   count();
 }
 async function bulkApply(ids, chosen, mode, sync) {
+  // Sauvegarde lue et téléchargée AVANT toute écriture (jusqu'à la 0.40.23,
+  // elle n'était téléchargée qu'à la fin : perdue si la page était fermée).
   const backup = [];
+  toast('Lecture des options actuelles…', 60000);
+  for (const id of ids) {
+    const dev = devById(id);
+    try { const o = (await provdDevice(id)).options || {}; backup.push({ id, mac: dev?.mac, model: dev?.model, astrea_settings: o.astrea_settings ?? null, astrea_params: o.astrea_params ?? null }); } catch (e) { backup.push({ id, mac: dev?.mac, error: e.message }); }
+  }
+  downloadJson(`astrea-phones-sauvegarde-${new Date().toISOString().replace(/[:.]/g, '-')}.json`, { app: 'astrea-phones', created: new Date().toISOString(), base: S.base, tenant: S.tenant, devices: backup });
   let ok = 0, ko = 0;
   for (const [i, id] of ids.entries()) {
     toast(`Appareil ${i + 1}/${ids.length}…`, 60000);
     const dev = devById(id);
     try {
+      // Mot de passe : compte admin du modèle de CET appareil (voir adminUser).
+      const tpl = mode === 'set' && chosen.some((o) => o.id === 'adminpw') ? await deviceTemplate(dev) : null;
       await updateProvdOptions(id, (opts) => {
-        backup.push({ id, mac: dev?.mac, model: dev?.model, astrea_settings: opts.astrea_settings ?? null, astrea_params: opts.astrea_params ?? null });
         const s = { ...(opts.astrea_settings || {}) };
         for (const o of chosen) {
           if (!optsFor(dev).includes(o)) continue;
-          if (mode === 'set') s[o.id] = o.id === 'adminpw' ? { pwd: randomPassword() } : JSON.parse(JSON.stringify(C.edit[o.id]));
+          if (mode === 'set') s[o.id] = o.id === 'adminpw' ? { pwd: randomPassword(), user: adminUser(tpl) } : JSON.parse(JSON.stringify(C.edit[o.id]));
           else if (NOT_RESET.has(o.id)) delete s[o.id];
           else s[o.id] = { __reset: 1 };
         }
@@ -731,7 +813,6 @@ async function bulkApply(ids, chosen, mode, sync) {
       ok++;
     } catch (e) { ko++; console.error(devName(dev || { id }), e); }
   }
-  downloadJson(`astrea-phones-sauvegarde-${new Date().toISOString().replace(/[:.]/g, '-')}.json`, { app: 'astrea-phones', created: new Date().toISOString(), base: S.base, tenant: S.tenant, devices: backup });
   toast(`${ok} appareil(s) mis à jour${ko ? `, ${ko} en erreur (console)` : ''}. Sauvegarde des options précédentes téléchargée.`, 9000);
 }
 

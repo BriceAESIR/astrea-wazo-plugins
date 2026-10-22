@@ -17,8 +17,8 @@
 //    custom (application_uuid).
 // Les champs portent data-x="…" : lus dans leur conteneur (pas d'id), donc
 // utilisables plusieurs fois dans un même dialogue.
-import { esc } from '../common/core.js?v=0.40.23';
-import { M } from './model.js?v=0.40.23';
+import { esc } from '../common/core.js?v=0.40.24';
+import { M } from './model.js?v=0.40.24';
 
 export const EXTRA_TYPES = [['outcall', 'Règle sortante'], ['application', 'Application'], ['custom', 'Commande']];
 export const APPS = [['disa', 'DISA : composer un numéro après un code'], ['callback_disa', 'Rappel DISA'], ['directory', 'Annuaire'], ['fax_to_mail', 'Fax vers e-mail'], ['voicemail', 'Consultation des messageries'], ['custom', 'Application Wazo (Stasis)']];

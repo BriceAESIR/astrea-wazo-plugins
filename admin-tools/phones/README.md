@@ -18,7 +18,7 @@ Sous-menu **Astrea Admin Tools > Phone Manager** (ex-DECT Manager), deux vues :
 ## Configuration des appareils
 - Options (fiche d'aide dans l'appli : description, valeurs, défaut Yealink) :
   VLAN WAN + priorité, mot de passe admin propre à l'appareil, provisionnement
-  planifié (hebdomadaire / répété), économiseur d'écran, AEC, VAD, CNG, TNS,
+  planifié (hebdomadaire / répété), économiseur d'écran, rétroéclairage, AEC, VAD, CNG, TNS,
   Acoustic Shield, volumes d'émission, périphérique de sonnerie. Une base DECT
   ne se voit proposer que les options qui la concernent.
 - Stockage : options provd de l'appareil `astrea_settings` (ce que l'appli
@@ -76,12 +76,19 @@ Plugin Yealink : **v87** (le v86 n'a aucun modèle DECT).
   un appareil ou si la position est prise ; la ligne doit avoir un
   utilisateur et une extension).
 - Retirer : `DELETE /lines/{id}/devices/{device_id}`.
-- Position : `PUT /lines/{id}` avec l'objet complet relu (confd ne vérifie pas
-  l'unicité de la position à ce moment-là : le module la vérifie, sur des
-  données relues juste avant l'écriture).
+- Position : `PUT /lines/{id}` avec `{ "position": N }` seul (confd charge le
+  corps en partiel ; renvoyer l'objet complet réécrivait le caller ID et
+  échouait si un champ était vide). confd ne vérifie pas l'unicité de la
+  position à ce moment-là : le module la vérifie, sur des données relues juste
+  avant l'écriture.
 - Déplacer (glisser-déposer) : dissociation des lignes qui changent de base,
   puis positions (`PUT /lines/{id}`), puis réassociation. Échanges sur une même
   base : positions seulement. Testé contre `tests/mock-dect.ps1`, pas encore en réel.
+- Appareil sans ligne, même un instant : confd le remet en autoprov (options
+  provd et modèle de provisionnement perdus). Après un déplacement, le module
+  remet modèle et options aux bases qui ont de nouveau une ligne ; la dernière
+  ligne retirée (comme dans le portail) déclenche un avertissement détaillé.
+  Audit complet : `docs/PHONE-MANAGER.md`.
 - Synchroniser : `GET /devices/{id}/synchronize` (confd ne le fait pas seul).
 
 ## À vérifier en réel (première installation)

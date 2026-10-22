@@ -19,7 +19,7 @@
 //                     rechargement à redéclencher à la fin ('user')
 // Routes et sémantique vérifiées dans le code de wazo-confd (13/10/2026),
 // voir docs/USER-MANAGER.md. Écritures non encore testées en réel.
-import { S, api, esc, fullName } from '../common/core.js?v=0.40.23';
+import { S, api, esc, fullName } from '../common/core.js?v=0.40.24';
 
 // Comparaison indépendante de l'ordre des clés (objets relus vs construits).
 const canon = (v) => (Array.isArray(v) ? v.map(canon) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, canon(v[k])])) : v ?? null);
@@ -238,6 +238,14 @@ const licence = {
   },
   parse: () => { const v = Number($v('m-v')); return { target: () => v, desc: `Licence : ${subLabel(v)}` }; },
   text: (v) => subLabel(v),
+  // Règles du portail (code du portail lu le 21/10/2026, contrôle au changement
+  // de licence et validation du formulaire utilisateur) ; confd, lui, accepte tout.
+  check: (u, v) => {
+    if (v === 0 && readLines(u).some((l) => l.type === 'webrtc')) return 'ligne WebRTC : licence Voix refusée par le portail (supprimer la ligne WebRTC d\'abord)';
+    if (u.agent && v !== 3) return 'agent associé : seule la licence Relation client est acceptée par le portail';
+    if ((v === 1 || v === 3) && !u.email) return 'e-mail (annuaire) vide : obligatoire pour cette licence dans le portail';
+    return '';
+  },
 };
 // Boîte vocale associée : les boîtes se configurent dans Messageries
 // vocales ; ici seulement l'association (une boîte peut être partagée par
@@ -280,11 +288,12 @@ const textField = (field, label, { required = false, re = null, max = 128, hint 
 const cidName = (v) => (String(v || '').match(/^"(.*)"/) || [])[1] ?? '';
 const callerName = {
   id: 'caller_id', label: 'Identifiant de l\'appelant (interne)', grp: 'Identité', single: true, ...userField('caller_id'),
-  form: () => '<label>Nom affiché <input id="m-v" maxlength="150"></label><p class="muted small">Nom affiché sur les postes des collègues lors des appels internes (par défaut prénom et nom). Les appels externes utilisent l\'identification de l\'appelant sortant.</p>',
+  form: () => '<label>Nom affiché <input id="m-v" maxlength="60"></label><p class="muted small">Nom affiché sur les postes des collègues lors des appels internes (par défaut prénom et nom). Les appels externes utilisent l\'identification de l\'appelant sortant.</p>',
   prefill: (v) => ({ 'm-v': cidName(v) }),
   parse: () => {
     const n = $v('m-v').trim().replace(/"/g, '');
     if (!n) throw new Error('Identifiant de l\'appelant : obligatoire.');
+    if (n.length > 60) throw new Error('Identifiant de l\'appelant : 60 caractères au plus (règle du portail).');
     return { target: (cur) => `"${n}"${String(cur || '').replace(/^"(.*)"/, '')}`, desc: `Identifiant de l'appelant (interne) : ${n}` };
   },
   text: (v) => cidName(v) || v || '—',
@@ -638,6 +647,7 @@ const linesSetting = {
       if (!o && l.type !== 'sip' && l.type !== 'webrtc') return `création d'une ligne ${LTYPE[l.type] || l.type} non gérée`;
       if (!o && !IDX.tpl.global) return 'modèle SIP « global » du tenant introuvable';
       if (!o && l.type === 'webrtc' && !IDX.tpl.webrtc) return 'modèle SIP « webrtc » du tenant introuvable';
+      if (!o && l.type === 'webrtc' && u.subscription_type === 0) return 'licence Voix : pas de ligne WebRTC (règle du portail)';
       if (!l.exten) return 'aucun numéro';
       const cx = IDX.contexts.find((x) => x.name === l.context);
       if (!cx) return `contexte ${l.context || '?'} introuvable`;
@@ -688,11 +698,12 @@ const linesSetting = {
       // Nom de l'endpoint = identifiant d'authentification, comme l'import de Wazo
       // (vérifié, wazo-confd user_import/creators.py : 'name': fields['username']).
       // Deux valeurs différentes = ligne qui ne s'authentifie pas (retour de Brice,
-      // 21/10/2026, lignes WebRTC : 4 h de diagnostic).
+      // 21/10/2026, lignes WebRTC : 4 h de diagnostic). Le portail fait de même et pose
+      // aussi le libellé égal au nom (code du portail, pbx.lines getEndpointData).
       const sipName = rnd(8, 'abcdefghijklmnopqrstuvwxyz');
       const line = await api('POST', '/lines', {
         context: l.context,
-        endpoint_sip: { name: sipName, templates, auth_section_options: [['username', sipName], ['password', rnd(16, 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789')]] },
+        endpoint_sip: { name: sipName, label: sipName, templates, auth_section_options: [['username', sipName], ['password', rnd(16, 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789')]] },
         extensions: l.exten ? [{ exten: l.exten, context: l.context }] : [],
       });
       try { await api('PUT', `/users/${u.uuid}/lines/${line.id}`); } catch (e) {
@@ -714,41 +725,28 @@ const linesSetting = {
 };
 const rnd = (n, cs) => { const b = new Uint32Array(n); crypto.getRandomValues(b); return [...b].map((x) => cs[x % cs.length]).join(''); };
 
-// Prénom, nom, e-mail : l'import de Wazo les écrit dans confd ET dans le compte
-// des applications (user_import/csvparse.py, USER_RULES et WAZO_USER_RULES :
-// firstname, lastname, email → email_address). PUT /users/{uuid} seul ne touche
-// pas wazo-auth : on fait les deux, comme l'import (lu le 21/10/2026).
-// L'identifiant interne `"Prénom Nom"` est posé par Wazo à la création
-// (xivo-dao fill_caller_id) puis jamais mis à jour : s'il est resté à cette
-// valeur, il suit le nouveau nom (affiché dans le formulaire).
-const cidDefault = (fn, ln) => `"${[fn, ln].filter(Boolean).join(' ')}"`;
+// Prénom, nom : le portail les écrit aussi dans le compte des applications
+// (code du portail lu le 21/10/2026, updateAuthUser : PUT /api/auth/0.1/users/{uuid}
+// avec firstname, lastname), comme l'import de Wazo (WAZO_USER_RULES).
+// PUT /users/{uuid} seul ne touche pas wazo-auth : on fait les deux.
+// L'identifiant de l'appelant (interne) ne suit pas : champ séparé dans le
+// portail (« Nom de l'appelant », 60 caractères), comme ici.
 const nameField = (field, label, opts) => ({
-  ...textField(field, label, { ...opts, hint: 'Aussi écrit dans le compte des applications, comme l\'import de Wazo. L\'identifiant de l\'appelant (interne) suit s\'il est resté « Prénom Nom ».' }),
+  ...textField(field, label, { ...opts, hint: 'Aussi écrit dans le compte des applications, comme le portail. L\'identifiant de l\'appelant (interne) ne change pas : il se modifie à part, comme dans le portail.' }),
   auth: true, // compte relu avant écriture
   write: async (u, v) => {
-    const body = { [field]: v };
-    const nu = { ...u, [field]: v };
-    if (u.caller_id === cidDefault(u.firstname, u.lastname) && nu.firstname) body.caller_id = cidDefault(nu.firstname, nu.lastname);
-    await api('PUT', `/users/${u.uuid}`, body);
+    await api('PUT', `/users/${u.uuid}`, { [field]: v });
     if (u._auth) await authPut(u, { [field]: v });
   },
 });
+// E-mail (annuaire) : le portail ne le reporte dans le compte des applications
+// qu'à la création (createAuthUser : email_address) ; à la modification, les
+// adresses du compte restent celles de l'onglet Compte. Même chose ici.
+// Règle du portail : obligatoire pour les licences Communication unifiée et
+// Relation client.
 const directoryEmail = {
-  ...textField('email', 'E-mail (annuaire)', { re: /^[^@\s]+@[^@\s]+\.[^@\s]+$/, max: 254, hint: 'Courriel public, visible dans les annuaires. Unique sur tout le serveur (tous les clients). Comme l\'import de Wazo, il est aussi reporté dans les adresses du compte des applications : l\'ancienne adresse y est remplacée (principale et confirmation gardées) ; compte sans adresse : ajoutée comme principale confirmée.' }),
-  auth: true,
-  write: async (u, v, cur) => {
-    await api('PUT', `/users/${u.uuid}`, { email: v });
-    if (!u._auth) return;
-    const mails = mailList(u._auth.emails);
-    const i = cur ? mails.findIndex((m) => m.address.toLowerCase() === String(cur).toLowerCase()) : -1;
-    let next = null;
-    if (i >= 0) next = v ? mails.map((m, j) => (j === i ? { ...m, address: v } : m)) : mails.filter((_, j) => j !== i);
-    else if (!mails.length && v) next = [{ address: v, main: true, confirmed: true }];
-    if (!next || mails.some((m, j) => j !== i && m.address.toLowerCase() === String(v || '').toLowerCase())) return; // déjà présente
-    if (next.length && !next.some((m) => m.main)) next[0].main = true;
-    await authApi('PUT', `/admin/users/${u.uuid}/emails`, { emails: mailList(next) });
-    u._auth = { ...u._auth, emails: next };
-  },
+  ...textField('email', 'E-mail (annuaire)', { re: /^[^@\s]+@[^@\s]+\.[^@\s]+$/, max: 254, hint: 'Courriel public, visible dans les annuaires. Unique sur tout le serveur (tous les clients). Comme dans le portail, les adresses du compte des applications ne changent pas (réglage « Adresses courriels »).' }),
+  check: (u, v) => (!v && (u.subscription_type === 1 || u.subscription_type === 3) ? 'obligatoire pour la licence Communication unifiée ou Relation client (règle du portail)' : ''),
 };
 
 const ALL_SETTINGS = [
