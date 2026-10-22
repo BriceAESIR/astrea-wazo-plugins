@@ -84,6 +84,29 @@ du serveur ouvert dans le portail, avec le token que fournit le portail.
 - Resynchronisation de tous ses postes.
 - Testé contre `tests/mock-dect.ps1` (T46S + T54W), pas encore en réel.
 
+## Sécurité des écritures (audit 0.40.24, 21-22/10/2026)
+
+Détail, sources Wazo et tests : `astrea-wazo-dev/docs/AUDIT-BLF-2026-10-21.md`.
+- **Relecture avant toute écriture** (poste, modèle, déploiement en masse,
+  étiquettes) : si les touches ont changé dans Wazo depuis l'ouverture ou
+  l'aperçu, rien n'est écrit (poste et modèle rechargés, utilisateur sauté
+  dans le déploiement).
+- **Contrôles confd faits avant l'envoi** : destination en double, libellé
+  (`;`, retour à la ligne, tabulation, 128 max), collègue introuvable, filtre
+  patron-secrétaire sans l'utilisateur, place de parking hors plage →
+  enregistrement bloqué avec un message par touche.
+- **Touches inconnues conservées** : tous les paramètres d'une destination
+  sont renvoyés, sauf les champs en lecture seule de confd.
+- **Signalé sans bloquer** : collègue sans ligne ou sans numéro (confd garde la
+  touche mais rien n'apparaît sur le poste), touche propre qui masque une
+  touche héritée, modèle existant (régénère les postes rattachés).
+- **Touches ligne** : effacées par Wazo si le poste perd sa dernière ligne ou
+  repasse en autoprov, et peut-être par l'enregistrement de la fiche Appareil
+  dans le portail (à vérifier). Refaire le réglage dans BLF Manager.
+- Test : `powershell -File tests\mock-blf.ps1`, puis
+  `http://localhost:18082/blf/index.html?tenant=t1` (serveur
+  `http://localhost:18082`, token `x`) ; journal des écritures sur `/mock/log`.
+
 ## Types de touches (0.30)
 
 Les 15 types de destination de Wazo sont proposés, avec un bouton **?** qui
@@ -131,13 +154,13 @@ dans `app.js`.
   redémarrage d'Asterisk (`persistentmembers`), et lien avec Wazo Desktop
   (même état que la touche ?).
 - **Tenant des destinations** (0.40.16) : les listes confd sont lues avec
-  `recurse=true` (sous-tenants compris). Une touche vers un groupe ou un agent
-  d'un autre tenant est acceptée par confd, mais wazo-agid le cherche dans le
-  tenant de l'utilisateur et répond « Ce numéro de poste n'est pas valide »
-  (son `pbx-invalid` ; vu en réel le 19/10/2026 sur Membre d'un groupe et
-  Agent). Les listes (et les collègues) ne proposent plus que le tenant de
-  l'utilisateur édité ; une touche existante vers un autre tenant est signalée
-  (éditeur et déploiement en masse).
+  `recurse=true` (sous-tenants compris). Les listes (et les collègues) ne
+  proposent que le tenant de l'utilisateur édité ; une touche existante vers
+  un autre tenant est signalée (éditeur et déploiement en masse).
+  **Correction du 21/10/2026** : confd vérifie lui-même le tenant de la
+  destination et refuse (400), sauf pour le filtrage patron-secrétaire (code
+  et tests confd). L'hypothèse du 19/10 (« acceptée par confd, refusée par le
+  poste ») était fausse : la cause était l'agent fantôme décrit ci-dessous.
 - **Agent** (0.40.16) : l'agent de l'utilisateur (`user.agent` de confd, fiche
   relue si la liste ne le donne pas) est proposé en tête et présélectionné ;
   alerte si la touche vise un autre agent ou si l'utilisateur n'en a pas.

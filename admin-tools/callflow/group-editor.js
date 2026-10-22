@@ -17,12 +17,12 @@
 //    linéaire ; les utilisateurs sonnent avant les numéros) ;
 //  - une seule extension, contexte internal, dans les group_ranges ; un seul
 //    horaire ; plusieurs autorisations d'appels.
-import { $, esc, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.40.24';
-import { M, STRATEGY, listOf, linearRound } from './model.js?v=0.40.24';
-import { pickerHtml, bindPicker, readPicker } from './sched-editor.js?v=0.40.24';
-import { sec, field } from './ed-ui.js?v=0.40.24';
-import { bindNewSchedule, schedValue } from './create.js?v=0.40.24';
-import { numberFieldHtml, bindNumberField, checkNumber } from './numbers.js?v=0.40.24';
+import { $, esc, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.40.25';
+import { M, STRATEGY, listOf, linearRound, groupTimes, groupTimesHelp } from './model.js?v=0.40.25';
+import { pickerHtml, bindPicker, readPicker } from './sched-editor.js?v=0.40.25';
+import { sec, field } from './ed-ui.js?v=0.40.25';
+import { bindNewSchedule, schedValue } from './create.js?v=0.40.25';
+import { numberFieldHtml, bindNumberField, checkNumber } from './numbers.js?v=0.40.25';
 
 const STRATS = ['all', 'linear', 'random', 'least_recent', 'fewest_calls', 'memorized_round_robin', 'weight_random'];
 const STRAT_HELP = {
@@ -105,9 +105,10 @@ export function openGroupEditor(g, onSave) {
       <p class="small muted cf-ge-note" id="ge-strat-h">${esc(STRAT_HELP[f.ring_strategy] || '')}</p>
       <div class="cf-ge-3">
         ${num('timeout', 'Durée totale (s)', 'Avant le débordement « pas de réponse ». Vide ou 0 : sonne indéfiniment.', 'illimitée')}
-        ${num('user_timeout', 'Sonnerie par membre (s)', 'Combien de temps chaque membre sonne avant une pause. Vide = 15 s (défaut d\'Asterisk, constaté). 0 = sans coupure : sonne jusqu\'à la durée totale.', 'vide = 15')}
-        ${num('retry_delay', 'Pause de réessai (s)', 'Attente après une sonnerie sans réponse (après chaque membre en « un par un »). Vide = 5 s (défaut d\'Asterisk, constaté). 0 = aucune pause.', 'vide = 5')}
+        ${num('user_timeout', 'Sonnerie par membre (s)', 'Combien de temps chaque membre sonne. Sens de vide et de 0 : ci-dessous.', '15')}
+        ${num('retry_delay', 'Pause de réessai (s)', 'Attente après une sonnerie sans réponse. Sens de vide et de 0 : ci-dessous.', '5')}
       </div>
+      <p class="small muted cf-ge-note" id="ge-times-h">${esc(groupTimesHelp(f.ring_strategy))}</p>
       <div id="ge-tour" class="cf-ge-tour" hidden></div>
       ${bool('ring_in_use')}`, { help: 'Vérifié dans le code Wazo : « sonnerie par membre » = timeout de chaque membre ; « pause » = retry ; « durée totale » = délai de Queue() (ou du Dial en « un par un ») avant le débordement « pas de réponse ». En « un par un » (dialplan group-linear), la pause a lieu après CHAQUE membre : un tour complet = nombre de membres × (sonnerie + pause). Pour les autres stratégies (file Asterisk), la pause sépare deux tentatives (supposé, non vérifié dans Asterisk).' })}
     ${sec('mem', 'Membres', `
@@ -147,6 +148,11 @@ export function openGroupEditor(g, onSave) {
       const s = box.querySelector(`[data-f="${k}"]`).value.trim();
       if (s === '') nf[k] = k === 'max_calls' ? 0 : null; else if (!/^\d+$/.test(s)) { open(k === 'max_calls' ? 'fb' : 'ring'); return err('Durées et appels maximum : nombres entiers positifs.'); } else nf[k] = Number(s);
     }
+    // Jamais de null caché pour la sonnerie et la pause (audit du 21/10/2026) : la valeur
+    // réellement appliquée par Wazo est écrite (groupTimes). En « un par un », une sonnerie
+    // vide ferait sonner le 1er membre sans fin et jamais les suivants : refusé, 0 si voulu.
+    if (nf.ring_strategy === 'linear' && nf.user_timeout == null) { open('ring'); return err('Sonnerie par membre : obligatoire en « un par un » (vide, seul le premier membre sonnerait). Mettez 0 si c\'est voulu.'); }
+    { const t = groupTimes({ user_timeout: nf.user_timeout, retry_delay: nf.retry_delay }, nf.ring_strategy); if (nf.user_timeout == null) nf.user_timeout = t.ut; if (nf.retry_delay == null) nf.retry_delay = t.rd; }
     nf.music_on_hold = box.querySelector('[data-f="music_on_hold"]').value || null;
     nf.caller_id_mode = box.querySelector('[data-f="caller_id_mode"]').value || null;
     nf.caller_id_name = nf.caller_id_mode ? box.querySelector('[data-f="caller_id_name"]').value.trim() || null : null;
@@ -175,13 +181,16 @@ export function openGroupEditor(g, onSave) {
   bindNewSchedule($('ge-sched'));
   const val = (sel) => box.querySelector(sel)?.value?.trim() || '';
   const on = (sel) => !!box.querySelector(sel)?.checked;
+  // Valeurs réellement appliquées par Wazo pour la saisie en cours (groupTimes, vérifié).
+  const numOrNull = (k) => (val(`[data-f="${k}"]`) === '' ? null : Number(val(`[data-f="${k}"]`)));
+  const formTimes = () => groupTimes({ user_timeout: numOrNull('user_timeout'), retry_delay: numOrNull('retry_delay') }, val('[data-f="ring_strategy"]'));
   const pick = (id) => { const el = $(id); const t = el?.querySelector('[data-dt]'); if (!t || t.value === 'none') return 'rien'; const o = el.querySelector('[data-do]'); const x = o?.selectedOptions?.[0]?.text; return `${t.selectedOptions[0].text.toLowerCase()}${x && o.value ? ` ${x}` : ''}`; };
   // Résumés des sections (titres), relus dans le formulaire.
   const recap = () => {
     const dnd = users.filter((m) => isDnd(m.uuid)).length;
     const S = {
       gen: [val('[data-f="label"]') || '(sans nom)', val('[data-ext]') ? `n° ${val('[data-ext]')}` : 'sans numéro', on('[data-b="enabled"]') ? '' : 'DÉSACTIVÉ'],
-      ring: [STRATEGY[val('[data-f="ring_strategy"]')], Number(val('[data-f="timeout"]')) ? `${val('[data-f="timeout"]')} s au total` : 'sans limite', (val('[data-f="user_timeout"]') === '0' ? 'sans coupure par membre' : `${val('[data-f="user_timeout"]') || '15 (défaut)'} s par membre`), val('[data-f="retry_delay"]') === '' ? 'pause 5 s (défaut)' : `pause ${val('[data-f="retry_delay"]')} s`],
+      ring: [STRATEGY[val('[data-f="ring_strategy"]')], Number(val('[data-f="timeout"]')) ? `${val('[data-f="timeout"]')} s au total` : 'sans limite', ...((t) => [t.ut ? `${t.ut} s par membre` : 'sans coupure par membre', `pause ${t.rd} s`])(formTimes())],
       mem: [`${users.length} utilisateur${users.length > 1 ? 's' : ''}`, exts.length && $('ge-exton')?.checked ? `${exts.length} numéro${exts.length > 1 ? 's' : ''}` : '', dnd ? `${dnd} en NPD` : ''],
       fb: [`sans réponse : ${pick('ge-noans')}`, Number(val('[data-f="max_calls"]')) ? `max ${val('[data-f="max_calls"]')} appels` : ''],
       opt: [box.querySelector('[data-f="music_on_hold"]')?.selectedOptions[0]?.value ? `musique ${box.querySelector('[data-f="music_on_hold"]').selectedOptions[0].text}` : 'sonnerie', val('[data-f="caller_id_mode"]') ? `nom « ${val('[data-f="caller_id_name"]')} »` : ''],
@@ -198,7 +207,8 @@ export function openGroupEditor(g, onSave) {
     const el = $('ge-tour'); if (!el) return;
     const n = users.length + ($('ge-exton')?.checked ? exts.length : 0);
     if (val('[data-f="ring_strategy"]') !== 'linear' || !n) { el.hidden = true; return; }
-    const ut = Number(val('[data-f="user_timeout"]') || 15), rd = Number(val('[data-f="retry_delay"]') || 5), step = ut + rd;
+    const { ut, rd } = formTimes(), step = ut + rd;
+    if (!ut) { el.innerHTML = '<div><strong>Sonnerie par membre vide ou 0 : seul le premier membre sonne, sans coupure.</strong><span class="small muted">En « un par un », mettez une durée (ex. 15 s) pour que les membres suivants sonnent.</span></div>'; el.hidden = false; return; }
     const tour = linearRound(n, ut, rd), cur = Number(val('[data-f="timeout"]') || 0);
     const reached = cur ? Math.min(n, Math.ceil(cur / step)) : n;
     const now = cur === tour ? '<strong>réglée sur un tour complet.</strong>'
@@ -213,7 +223,7 @@ export function openGroupEditor(g, onSave) {
   const redraw = () => { $('ge-users').innerHTML = userRows(); $('ge-uadd').innerHTML = addOpts(); $('ge-exts').innerHTML = extRows(); $('ge-exts').hidden = !exts.length; recap(); };
   box.addEventListener('input', recap);
   box.addEventListener('change', (e) => {
-    if (e.target.matches('[data-f="ring_strategy"]')) $('ge-strat-h').textContent = STRAT_HELP[e.target.value] || '';
+    if (e.target.matches('[data-f="ring_strategy"]')) { $('ge-strat-h').textContent = STRAT_HELP[e.target.value] || ''; $('ge-times-h').textContent = groupTimesHelp(e.target.value); }
     if (e.target.matches('[data-f="caller_id_mode"]')) $('ge-cidtxt').hidden = !e.target.value;
     if (e.target.id === 'ge-exton') { $('ge-extbox').hidden = !e.target.checked; $('ge-extwarn').hidden = e.target.checked || !exts.length; } recap(); });
   box.onclick = (e) => {

@@ -3,22 +3,22 @@
 // déposer (lot 2a, brouillon puis aperçu, sauvegarde, écriture).
 // Cadrage : astrea-wazo-dev/docs/CALLFLOW-MANAGER.md.
 // Modèle (sources confd vérifiées) : model.js ; canevas : canvas.js ; écriture : write.js.
-import { S, $, esc, fullName, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.40.24';
-import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, loadTrunkOperators, scanGroupKeys, buildTree, landingAt, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel, periodText, STRATEGY, QSTRAT, baseKey, gateOf, loadBlocklist, blockedBy, dialUser, entryChains, isGlob, numMatch, showNum, usagesOf, destTarget, tapi } from './model.js?v=0.40.24';
-import { createCanvas } from './canvas.js?v=0.40.24';
-import { getDest, setDest, sameValue, prepare, execute } from './write.js?v=0.40.24';
-import { openScheduleEditor, pickerHtml, bindPicker, readPicker } from './sched-editor.js?v=0.40.24';
-import { openGroupEditor, groupCfgDiff } from './group-editor.js?v=0.40.24';
-import { openQueueEditor, queueCfgDiff, agentName } from './queue-editor.js?v=0.40.24';
-import { openIvrEditor, ivrCfgDiff } from './ivr-editor.js?v=0.40.24';
-import { openSbEditor, sbCfgDiff } from './sb-editor.js?v=0.40.24';
-import { redact } from './ed-ui.js?v=0.40.24';
-import { openRestore } from './restore.js?v=0.40.24';
-import { openIncallEditor, incallCfgDiff, openUserEditor, userCfgDiff, openVmEditor, vmCfgDiff, openConfEditor, confCfgDiff, openSchedGenEditor, schedCfgDiff } from './obj-editors.js?v=0.40.24';
-import { openDestEditor, ENTITY_DEST } from './dest-editor.js?v=0.40.24';
-import { openOutcallEditor, outcallCfgDiff } from './outcall-editor.js?v=0.40.24';
-import { openCreate, openCreateIncall, CREATABLE, LABEL, bindNewSchedule, schedValue } from './create.js?v=0.40.24';
-import { simulate, userContext, simPath } from './dialsim.js?v=0.40.24';
+import { S, $, esc, fullName, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.40.25';
+import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, loadTrunkOperators, scanGroupKeys, buildTree, landingAt, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel, periodText, STRATEGY, QSTRAT, baseKey, gateOf, loadBlocklist, blockedBy, dialUser, entryChains, isGlob, numMatch, showNum, usagesOf, destTarget, tapi, groupTimes } from './model.js?v=0.40.25';
+import { createCanvas } from './canvas.js?v=0.40.25';
+import { getDest, setDest, sameValue, prepare, execute, conflictsOf } from './write.js?v=0.40.25';
+import { openScheduleEditor, pickerHtml, bindPicker, readPicker } from './sched-editor.js?v=0.40.25';
+import { openGroupEditor, groupCfgDiff } from './group-editor.js?v=0.40.25';
+import { openQueueEditor, queueCfgDiff, agentName } from './queue-editor.js?v=0.40.25';
+import { openIvrEditor, ivrCfgDiff } from './ivr-editor.js?v=0.40.25';
+import { openSbEditor, sbCfgDiff } from './sb-editor.js?v=0.40.25';
+import { redact } from './ed-ui.js?v=0.40.25';
+import { openRestore } from './restore.js?v=0.40.25';
+import { openIncallEditor, incallCfgDiff, openUserEditor, userCfgDiff, openVmEditor, vmCfgDiff, openConfEditor, confCfgDiff, openSchedGenEditor, schedCfgDiff } from './obj-editors.js?v=0.40.25';
+import { openDestEditor, ENTITY_DEST } from './dest-editor.js?v=0.40.25';
+import { openOutcallEditor, outcallCfgDiff } from './outcall-editor.js?v=0.40.25';
+import { openCreate, openCreateIncall, CREATABLE, LABEL, bindNewSchedule, schedValue } from './create.js?v=0.40.25';
+import { simulate, userContext, simPath } from './dialsim.js?v=0.40.25';
 
 const TESTED_STACK = ['26.07'];
 const NAV = [
@@ -669,7 +669,7 @@ function valLabel(w, v) {
   if (w.k === 'group_cfg') {
     // Résumé comparable avant / après d'un réglage de groupe.
     const f = v?.fields || {};
-    return [`« ${f.label || '?'} »`, f.enabled === false ? 'DÉSACTIVÉ' : '', STRATEGY[f.ring_strategy] || f.ring_strategy, f.timeout ? `${f.timeout} s au total` : 'sans limite', f.user_timeout == null ? '15 s / membre (défaut)' : `${f.user_timeout} s / membre`, f.retry_delay == null ? 'pause 5 s (défaut)' : `pause ${f.retry_delay} s`,
+    return [`« ${f.label || '?'} »`, f.enabled === false ? 'DÉSACTIVÉ' : '', STRATEGY[f.ring_strategy] || f.ring_strategy, f.timeout ? `${f.timeout} s au total` : 'sans limite', ...((t) => [t.ut ? `${t.ut} s / membre${f.user_timeout == null ? ' (vide)' : ''}` : 'sans coupure par membre', `pause ${t.rd} s${f.retry_delay == null ? ' (vide)' : ''}`])(groupTimes(f)),
       `${(v?.users || []).length + (v?.exts || []).length} membre(s) : ${[...(v?.users || []).map((m) => fullName(M.userByUuid.get(m.uuid)) || m.uuid), ...(v?.exts || []).map((m) => m.exten)].join(', ') || 'aucun'}`,
       v?.extension ? `n° ${v.extension.exten}` : 'sans numéro', f.max_calls ? `max ${f.max_calls} appels` : '', f.music_on_hold ? `musique ${f.music_on_hold}` : 'sonnerie',
       (v?.perms || []).length ? `${v.perms.length} autorisation(s)` : ''].filter(Boolean).join(' · ');
@@ -977,17 +977,21 @@ async function applyDraft() {
   if (!C.draft.size || !canWrite()) return;
   const entries = [...C.draft.values()];
   let ops;
-  try { ops = await prepare(entries.map((e) => ({ w: e.w, after: e.after }))); } catch (e) { toast(`Lecture avant écriture impossible : ${e.message}`, 8000); return; }
+  let conflicts = [];
+  try { ops = await prepare(entries.map((e) => ({ w: e.w, after: e.after }))); conflicts = await conflictsOf(entries); } catch (e) { toast(`Lecture avant écriture impossible : ${e.message}`, 8000); return; }
   const writes = ops.filter((o) => o.changed);
+  // Modifié ailleurs depuis l'édition (audit du 21/10/2026) : signalé avant d'écrire, jamais écrasé en silence.
+  const conflictBox = conflicts.length ? `<div class="warn"><span><strong>Modifié ailleurs depuis l'ouverture du réglage</strong> (portail, autre module, autre personne). « Appliquer » remettrait ces parties à l'état de votre brouillon : ${conflicts.map((c) => `${esc(c.e.where)} (${esc(c.parts.join(', '))})`).join(' ; ')}. Pour garder les changements faits ailleurs : Annuler, retirer l'entrée du brouillon, rouvrir le réglage (il relit le serveur).</span></div>` : '';
   const rows = entries.map((e) => `<tr><td>${esc(e.where)}</td><td>${esc(e.slot)}${CFG_DIFF[e.w.k] ? `<br><span class="small muted">Modifié : ${esc(CFG_DIFF[e.w.k](e.before, e.after) || '—')}</span>` : ''}</td><td>${esc(valLabel(e.w, e.before))}</td><td><strong>${esc(valLabel(e.w, e.after))}</strong></td></tr>`).join('');
   confirmModal(`<h3>Appliquer le brouillon</h3>
     <p class="small muted">${writes.length} écriture${writes.length > 1 ? 's' : ''} (une requête par partie modifiée)${ops.length > writes.length ? `, ${ops.length - writes.length} objet${ops.length - writes.length > 1 ? 's' : ''} déjà à jour sur le serveur` : ''}. Une sauvegarde JSON de l'état actuel est téléchargée avant d'écrire.</p>
+    ${conflictBox}
     <div class="cf-diffwrap"><table class="diff"><thead><tr><th>Objet</th><th>Sortie</th><th>Avant</th><th>Après</th></tr></thead><tbody>${rows}</tbody></table></div>`, async () => {
     downloadJson(`astrea-callflow-sauvegarde-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.json`,
       // Format 2 (16/10/2026) : une ligne par écriture, avec méthode, état d'avant et
       // contenu envoyé — ce qu'il faut à « Restaurer… » (restore.js) pour la défaire.
       { outil: 'Call Flow Manager', format: 2, serveur: S.base, tenant: S.tenant, date: new Date().toISOString(), codes: 'masqués (***) : non restaurables depuis ce fichier',
-        ecritures: redact(writes.map((o) => ({ method: o.method || 'PUT', path: o.path, before: o.before ?? null, body: o.body ?? null, ...(o.final ? { supprime: true } : o.run ? { numero: true } : {}) }))) });
+        ecritures: redact(writes.map((o) => ({ method: o.method || 'PUT', path: o.path, before: o.before ?? null, body: o.body ?? null, ...(o.final ? { supprime: true } : o.run && !o.restorable ? { numero: true } : {}) }))) });
     const res = await execute(ops);
     const bad = res.filter((x) => !x.ok);
     console.info('[astrea] Call Flow : écriture', res);
@@ -996,8 +1000,9 @@ async function applyDraft() {
     draw(true);
     setTimeout(() => {
       const nDel = writes.filter((w) => w.final).length, nUp = res.filter((x) => x.ok && !x.skipped).length - nDel;
-      if (!bad.length) toast([nUp ? `${nUp} objet${nUp > 1 ? 's' : ''} mis à jour` : '', nDel ? `${nDel} objet${nDel > 1 ? 's' : ''} supprimé${nDel > 1 ? 's' : ''}` : ''].filter(Boolean).join(', ') + '.', 5000);
-      else confirmModal(`<h3>Écriture partielle</h3><p>${bad.length} erreur${bad.length > 1 ? 's' : ''} ; le graphe a été relu depuis le serveur.</p><ul class="small">${bad.map((b) => `<li><code>${esc(b.path)}</code> : ${esc(b.error)}</li>`).join('')}</ul>`, () => true, 'Fermer');
+      const warns = res.filter((x) => x.warn);
+      if (!bad.length && !warns.length) toast([nUp ? `${nUp} objet${nUp > 1 ? 's' : ''} mis à jour` : '', nDel ? `${nDel} objet${nDel > 1 ? 's' : ''} supprimé${nDel > 1 ? 's' : ''}` : ''].filter(Boolean).join(', ') + '.', 5000);
+      else confirmModal(`<h3>${bad.length ? 'Écriture partielle' : 'Écrit, avec des avertissements'}</h3><p>${bad.length ? `${bad.length} erreur${bad.length > 1 ? 's' : ''} ; ` : ''}le graphe a été relu depuis le serveur.</p><ul class="small">${bad.map((b) => `<li><code>${esc(b.path)}</code> : ${esc(b.error)}</li>`).join('')}${warns.map((b) => `<li><code>${esc(b.path)}</code> : ${esc(b.warn)}</li>`).join('')}</ul>`, () => true, 'Fermer');
     }, 0);
     return true;
   }, 'Appliquer');

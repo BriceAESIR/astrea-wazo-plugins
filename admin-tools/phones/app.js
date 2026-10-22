@@ -13,8 +13,8 @@
 //  - un appareil qui n'a plus aucune ligne est remis en autoprov : options
 //    provd et modèle de provisionnement perdus (voir snapshotDevices()).
 // Audit du 21/10/2026 (wazo-confd master, xivo-dao) : docs/PHONE-MANAGER.md.
-import { S, $, esc, toast, api, listAll, confirmModal, connect, fullName, canWrite, setReadonly, showCompat, loaded, loadFailed, provd, provdDevice, updateProvdOptions, downloadJson, calldGet } from '../common/core.js?v=0.40.24';
-import { CATALOG, randomPassword, checkField } from './catalog.js?v=0.40.24';
+import { S, $, esc, toast, api, listAll, confirmModal, connect, fullName, canWrite, setReadonly, showCompat, loaded, loadFailed, provd, provdDevice, updateProvdOptions, downloadJson, calldGet } from '../common/core.js?v=0.40.25';
+import { CATALOG, randomPassword, checkField } from './catalog.js?v=0.40.25';
 
 // Comptes SIP par modèle (_NB_SIP_ACCOUNTS / plugin-info des plugins provd).
 const DECT_MAX = {

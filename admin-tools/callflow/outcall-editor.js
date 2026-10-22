@@ -10,12 +10,12 @@
 //  - trunks : PUT /outcalls/{id}/trunks {trunks:[{id}]}, ordre = priorité.
 // wazo-agid (outgoingfeatures.py) : seuls strip_digits et external_prefix
 // changent le numéro envoyé ; « prefix » est lu mais pas appliqué.
-import { $, esc, confirmModal, helpButton, helpBox, canWrite } from '../common/core.js?v=0.40.24';
+import { $, esc, confirmModal, helpButton, helpBox, canWrite } from '../common/core.js?v=0.40.25';
 // Création de l'autorisation « interdit-118 » liée au tenant des données chargées (tapi, model.js).
-import { M, listOf, nodeInfo, tapi as api } from './model.js?v=0.40.24';
-import { sec, field, check, setSums, openSec } from './ed-ui.js?v=0.40.24';
-import { bindNewSchedule, schedValue } from './create.js?v=0.40.24';
-import { describePattern, comparePatterns, dialedNumber, matches, famLabel } from './dialsim.js?v=0.40.24';
+import { M, listOf, nodeInfo, tapi as api } from './model.js?v=0.40.25';
+import { sec, field, check, setSums, openSec } from './ed-ui.js?v=0.40.25';
+import { bindNewSchedule, schedValue } from './create.js?v=0.40.25';
+import { describePattern, comparePatterns, dialedNumber, matches, famLabel } from './dialsim.js?v=0.40.25';
 
 export const OUTCALL_FIELDS = ['name', 'description', 'enabled', 'ring_time', 'internal_caller_id', 'preprocess_subroutine'];
 const DP = ['exten', 'strip_digits', 'external_prefix', 'prefix', 'caller_id'];
@@ -91,14 +91,15 @@ export function openOutcallEditor(o, onSave) {
       <div class="cf-oe-grp-f">
         <label>Retirer <input type="number" min="0" step="1" data-gf="strip_digits" value="${esc(r0.strip_digits ?? 0)}" title="Chiffres retirés en tête"> chiffre(s)</label>
         <label>Ajouter devant <input data-gf="external_prefix" value="${esc(r0.external_prefix || '')}" placeholder="rien" title="Ajouté devant, avant l'envoi au trunk"></label>
-        <label>Présenté <input data-gf="caller_id" value="${esc(r0.caller_id || '')}" placeholder="de l'appelant" title="Numéro présenté"></label>
+        <label>Présenté par défaut <input data-gf="caller_id" value="${esc(r0.caller_id || '')}" maxlength="80" placeholder="celui de l'utilisateur" title="Vérifié (wazo-agid outgoingfeatures) : utilisé seulement si l'utilisateur n'a pas son propre numéro sortant ; ignoré si « Présenter le numéro interne » est coché. 80 caractères au plus."></label>
       </div>
       <div class="cf-oe-chips">${rs.map((r) => `<span class="cf-oe-chip" data-row="${r.rid}" title="${esc(describePattern(r.exten))} · essayé en n° ${r.rank} par Asterisk"><small>${r.rank}</small><code>${esc(r.exten)}</code><button type="button" data-delrow="${r.rid}" aria-label="Retirer ${esc(r.exten)}">×</button></span>`).join('')}<input class="cf-oe-add" data-gadd="${gi}" placeholder="+ motif" spellcheck="false" title="Ajouter un motif à ce groupe (Entrée)"></div>
       <div class="small muted">${ex ? `ex. ${esc(ex)} → envoyé ${esc(dialedNumber(ex, { strip_digits: Number(r0.strip_digits || 0), external_prefix: r0.external_prefix }))}${r0.caller_id ? `, présenté ${esc(r0.caller_id)}` : ''}` : ''}</div></li>`;
   };
   const readRows = () => {}; // état déjà dans rows (mis à jour à la saisie)
   const listHtml = () => groupsOf().map(groupHtml).join('') || '<li class="muted">Aucun motif : aucun numéro ne part par cette règle</li>';
-  const PAT_RE = /^_?[0-9*#+XZNxzn.!\[\]-]+$/;
+  // Comme confd (EXTEN_OUTCALL_REGEX ^_?\+?[*#0-9_XxZzNn\[\].!-]*$) : « + » seulement en tête.
+  const PAT_RE = /^_?\+?[0-9*#XZNxzn.!\[\]_-]+$/;
   const trunkRows = () => trunks.map((id, i) => `<li><span class="cf-ge-n">${i + 1}</span><span>${esc(trunkName(id))}</span><span class="small muted">${i ? 'si le précédent échoue' : 'en premier'}</span><span class="spacer"></span><button class="icon" data-tup="${i}"${i ? '' : ' disabled'}>↑</button><button class="icon" data-tdown="${i}"${i < trunks.length - 1 ? '' : ' disabled'}>↓</button><button class="icon" data-tdel="${i}" title="Retirer ce trunk">×</button></li>`).join('') || '<li class="muted">Aucun trunk : les appels ne peuvent pas sortir</li>';
   const addT = () => `<option value="">Choisir un trunk à ajouter…</option>${(M.lists.trunk || []).filter((t) => !trunks.includes(t.id)).map((t) => `<option value="${t.id}">${esc(trunkName(t.id))}</option>`).join('')}`;
 
@@ -107,7 +108,7 @@ export function openOutcallEditor(o, onSave) {
     ${sec('gen', 'Général', `
       ${field('Nom *', `<input data-f="name" value="${esc(f.name || '')}" maxlength="128">`)}
       ${field('Description', `<input data-f="description" value="${esc(f.description || '')}">`)}
-      ${field('Durée de sonnerie (s)', `<input type="number" min="0" step="1" data-f="ring_time" value="${esc(f.ring_time ?? '')}" placeholder="défaut">`, 'Avant d\'abandonner l\'appel sortant.')}
+      ${field('Durée de sonnerie (s)', `<input type="number" min="0" step="1" data-f="ring_time" value="${esc(f.ring_time ?? '')}" placeholder="0">`, 'Avant d\'abandonner l\'appel sortant. 0 ou vide = sans limite (vérifié : wazo-agid, colonne hangupringtime à 0 par défaut).')}
       ${check('oe-en', 'Règle activée', '', f.enabled !== false)}
       ${check('oe-int', 'Présenter le numéro interne', 'Le correspondant voit le numéro interne de l\'appelant au lieu de son numéro public (rarement utile vers l\'extérieur).', !!f.internal_caller_id)}`, { open: true })}
     ${sec('pat', 'Motifs de numéros', `<ul class="cf-oe-grps" id="oe-rows">${listHtml()}</ul>
@@ -137,6 +138,7 @@ export function openOutcallEditor(o, onSave) {
       const sd = String(r.strip_digits ?? '').trim(); if (sd !== '' && !/^\d+$/.test(sd)) return err('Chiffres retirés : entier positif.', 'pat');
       // Vérifié (outcall_extension/resource.py) : chiffres, * et #, « + » possible en tête ; 64 caractères max.
       const xp = String(r.external_prefix || '').trim(); if (xp && (!/^\+?[0-9#*]*$/.test(xp) || xp.length > 64)) return err(`Préfixe ajouté « ${xp} » : chiffres, * et #, avec « + » possible en tête.`, 'pat');
+      if (String(r.caller_id || '').trim().length > 80) return err('Numéro présenté : 80 caractères au plus (limite confd).', 'pat');
       patterns.push({ id: r.id, exten, context: r.context || outCtx, strip_digits: Number(sd || 0), external_prefix: xp, prefix: r.prefix || '', caller_id: String(r.caller_id || '').trim() });
     }
     if (patterns.some((p) => !p.context)) return err('Aucun contexte « sortant » trouvé pour un nouveau motif.', 'pat');
@@ -198,7 +200,8 @@ export function openOutcallEditor(o, onSave) {
   });
   // --- Assistant France -----------------------------------------------------
   const permBox = () => box.querySelector('.cf-ge-perms');
-  const find118 = () => (M.lists.callpermission || []).find((p) => p.mode === 'deny' && (p.extensions || []).includes(BLOCK_118));
+  // Seulement une autorisation active (audit du 21/10/2026 : une autorisation désactivée ne bloque rien).
+  const find118 = () => (M.lists.callpermission || []).find((p) => p.mode === 'deny' && p.enabled !== false && (p.extensions || []).includes(BLOCK_118));
   const wizHtml = () => {
     readRows();
     const have = new Set(rows.map((r) => r.exten));

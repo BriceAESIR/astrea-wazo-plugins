@@ -21,8 +21,8 @@
 // Supposé, à vérifier en réel : les listes (GET /groups, /queues,
 // /switchboards, /schedules) contiennent déjà fallbacks, membres et
 // destinations ; sinon on lit le détail de chaque objet (ensureDetails).
-import { S, api, listAll, fullName } from '../common/core.js?v=0.40.24';
-import { comparePatterns, describePattern, userContext, rightsList, simulate, famLabel } from './dialsim.js?v=0.40.24';
+import { S, api, listAll, fullName, esc } from '../common/core.js?v=0.40.25';
+import { comparePatterns, describePattern, userContext, rightsList, simulate, famLabel } from './dialsim.js?v=0.40.25';
 
 export const M = { lists: {}, by: {}, ext: new Map(), extAny: new Map(), rev: null, warns: [] };
 
@@ -159,8 +159,25 @@ export async function loadAll() {
   indexExtensions();
   // Caches liés au tenant : remis à zéro (la liste de blocage restait celle du tenant précédent).
   M.rev = null; M.keys = null; M.live = null; M.liveState = ''; M.sounds = null; M.blocklist = undefined; M.deleting = null;
+  await loadVmZones();
   return M;
 }
+// Fuseaux des messageries (audit du 21/10/2026). Vérifié dans wazo-confd
+// (voicemail/validator.py : MemberOfSequence('timezone', static_voicemail.find_all_timezone)) :
+// le fuseau d'une messagerie est le NOM d'une « zonemessage » du serveur (ex. eu-fr),
+// pas un nom IANA (Europe/Paris refusé en 400). Liste : GET /asterisk/voicemail/zonemessages
+// (items {name, timezone, message}, ACL confd.asterisk.voicemail.zonemessages.read).
+// Lecture refusée : repli sur eu-fr (présent dans la base par défaut de Wazo, xivo-manage-db).
+export const VM_TZ_DEFAULT = 'eu-fr';
+async function loadVmZones() {
+  try { const r = await api('GET', '/asterisk/voicemail/zonemessages'); M.vmZones = (r?.items || []).filter((z) => z?.name); M.vmZonesErr = ''; } catch (e) { M.vmZones = [{ name: VM_TZ_DEFAULT, timezone: 'Europe/Paris' }]; M.vmZonesErr = e.message; console.info('[astrea] fuseaux des messageries illisibles, repli sur eu-fr', e); }
+}
+// Fuseau proposé pour une nouvelle messagerie : eu-fr, sinon la zone dont le fuseau est Europe/Paris.
+export const vmTzDefault = () => ((M.vmZones || []).some((z) => z.name === VM_TZ_DEFAULT) ? VM_TZ_DEFAULT : (M.vmZones || []).find((z) => z.timezone === 'Europe/Paris')?.name || '');
+export const vmTzSelect = (attr, cur) => {
+  const z = M.vmZones || [];
+  return `<select ${attr}><option value="">Fuseau du serveur</option>${z.map((x) => `<option value="${esc(x.name)}"${cur === x.name ? ' selected' : ''}>${esc(x.timezone ? `${x.timezone} (${x.name})` : x.name)}</option>`).join('')}${cur && !z.some((x) => x.name === cur) ? `<option value="${esc(cur)}" selected>${esc(cur)} (actuel)</option>` : ''}</select>`;
+};
 // ---------------------------------------------------------------------------
 // Opérateur d'un trunk (demande de Brice, 16/10/2026 : « regarde le champ
 // template »). Vérifié dans wazo-confd (endpoint_sip/schema.py) : GET
@@ -487,7 +504,7 @@ export function edgesOf(k) {
       // stratégie) ou chaîne « un par un ». Durée totale vide ou 0 = le groupe
       // sonne indéfiniment (vérifié : Queue() sans timeout, api.yml confd).
       return [
-        { slot: 'members', label: SLOTS.members.label, help: SLOTS.members.help, note: [STRATEGY[o.ring_strategy] || o.ring_strategy, o.user_timeout === 0 ? 'sans coupure par membre' : `${o.user_timeout ?? GROUP_DEF.user_timeout} s chacun${o.user_timeout == null ? ' (défaut)' : ''}`].filter(Boolean).join(' · '), to: groupFlow(o), cfg: { k: 'group', id: o.uuid } },
+        { slot: 'members', label: SLOTS.members.label, help: SLOTS.members.help, note: [STRATEGY[o.ring_strategy] || o.ring_strategy, ((t) => (t.ut ? `${t.ut} s chacun${o.user_timeout == null ? ' (défaut)' : ''}` : 'sans coupure par membre'))(groupTimes(o))].filter(Boolean).join(' · '), to: groupFlow(o), cfg: { k: 'group', id: o.uuid } },
         fbOut('group_fb', o.uuid, o, 'noanswer', o.timeout ? after(o.timeout) : 'jamais : sonne indéfiniment (durée totale vide)'),
         fbOut('group_fb', o.uuid, o, 'congestion', o.max_calls ? `plus de ${o.max_calls} appel${o.max_calls > 1 ? 's' : ''} en cours` : '')];
     case 'queue': {
@@ -622,10 +639,25 @@ const ORDER = { random: 'un à la fois, au hasard', least_recent: 'un à la fois
 // Durée d'un tour complet en stratégie « un par un » : chaque membre sonne
 // user_timeout puis la pause retry_delay (dialplan group-linear). Au-delà, le
 // premier membre resonne. NPD exclus du calcul par l'appelant s'il le souhaite.
-// Champ vide (null) = valeurs d'Asterisk : 15 s de sonnerie par membre, 5 s de pause
-// (constaté en réel par Brice, 20/10/2026 : groupe laissé « vide » → 15 / 5 ; 0 corrige).
-export const GROUP_DEF = { user_timeout: 15, retry_delay: 5 };
-export const linearRound = (n, ut, rd) => (n > 0 ? n * ((ut ?? GROUP_DEF.user_timeout) + (rd ?? GROUP_DEF.retry_delay)) : 0);
+// Sonnerie par membre et pause RÉELLES d'un groupe (audit du 21/10/2026, vérifié) :
+//  - « un par un » (dialplan extensions_lib_group.conf group-linear, wazo-agid
+//    groupfeatures._set_timeout) : sonnerie vide ou 0 → Dial sans délai (le 1er
+//    membre sonne jusqu'à la durée totale, les suivants jamais) ; pause vide ou 0 → 0 ;
+//  - autres stratégies (Queue() ; confgend queues.py saute les valeurs None) :
+//    vide → 15 s / 5 s (app_queue DEFAULT_TIMEOUT / DEFAULT_RETRY, constaté par Brice
+//    le 20/10/2026) ; pause ≤ 0 ramenée à 5 s (app_queue) ; sonnerie 0 → sans coupure.
+// ut = 0 : sans coupure.
+export function groupTimes(g, strat = g?.ring_strategy) {
+  const ut = g?.user_timeout, rd = g?.retry_delay;
+  if (strat === 'linear') return { ut: ut || 0, rd: rd || 0, lin: true };
+  return { ut: ut == null ? 15 : ut, rd: rd == null || rd <= 0 ? 5 : rd, lin: false };
+}
+// Texte de la règle selon la stratégie (aide des éditeurs).
+export const groupTimesHelp = (strat) => (strat === 'linear'
+  ? '« Un par un » : sonnerie par membre vide ou 0 = le premier membre sonne sans coupure jusqu\'à la durée totale, les suivants ne sonnent jamais ; mettez une valeur (ex. 15 s). Pause vide ou 0 = aucune pause entre deux membres. (Vérifié : dialplan group-linear de Wazo.)'
+  : 'Sonnerie par membre vide = 15 s, 0 = sans coupure. Pause vide = 5 s ; 0 est ramené à 5 s par Asterisk (pas de pause plus courte possible). (Vérifié : Asterisk app_queue ; 15 / 5 constatés en réel.)');
+// Durée d'un tour « un par un » ; 0 si un membre sonne sans coupure (pas de tour).
+export const linearRound = (n, ut, rd) => (n > 0 && ut > 0 ? n * (ut + (rd || 0)) : 0);
 const STRAT_HELP_SHORT = {
   random: 'Asterisk choisit un membre au hasard, le fait sonner, puis un autre s\'il ne répond pas.',
   least_recent: 'Asterisk fait sonner d\'abord le membre qui a raccroché depuis le plus longtemps.',
@@ -638,7 +670,8 @@ const STRAT_HELP_SHORT = {
 function groupFlow(o) {
   const hub = membersLeaf('group', o);
   const list = groupMemberList(o);
-  const ut = o.user_timeout ?? GROUP_DEF.user_timeout, rd = o.retry_delay ?? GROUP_DEF.retry_delay;
+  const { ut, rd } = groupTimes(o);
+  const utTxt = ut ? `${ut} s` : 'sans coupure';
   const gk = `group:${o.id}`;
   const badge = (m) => [m.kind === 'live' ? 'inscrit par touche' : '', m.kind === 'ext' ? 'numéro' : '', m.dnd ? 'NPD : ne sonne pas' : '', m.unknown ? 'utilisateur inconnu' : '', m.exten && m.kind === 'user' ? m.exten : ''].filter(Boolean).join(' · ');
   const card = (m, extra = {}) => leaf('member', m.name.replace(/^Numéro /, ''), badge(m), { dnd: m.dnd, live: m.kind === 'live', group: gk, member: m, ...extra });
@@ -649,7 +682,7 @@ function groupFlow(o) {
     // après CHAQUE membre, pas seulement entre deux tours ; un membre en NPD
     // est retiré de la liste (ni sonnerie ni pause).
     let next = null;
-    const step = `sinon, après ${ut ?? '?'} s${rd ? ` + pause ${rd} s` : ''}`;
+    const step = ut ? `sinon, après ${ut} s${rd ? ` + pause ${rd} s` : ''}` : 'jamais : le membre précédent sonne sans coupure (sonnerie par membre vide ou 0)';
     // Inscrits par touche : absents de la chaîne. linear_group_get_interfaces lit
     // les membres dans la base (user_queue_members, extension_queue_members),
     // or ces inscriptions n'existent que dans Asterisk (déduit, non testé).
@@ -665,19 +698,19 @@ function groupFlow(o) {
       next = c;
     }
     const tour = linearRound(chain.length, ut, rd);
-    hub.leaf.edges = [{ slot: 'first', label: 'Un par un, dans l\'ordre', note: `${ut ?? '?'} s chacun${rd ? ` + ${rd} s de pause` : ''}${tour ? ` · un tour ≈ ${tour} s` : ''}`, help: 'Stratégie linéaire : les membres sonnent l\'un après l\'autre, dans l\'ordre (utilisateurs puis numéros), avec la pause de réessai après chacun.', to: next },
+    hub.leaf.edges = [{ slot: 'first', label: 'Un par un, dans l\'ordre', note: ut ? `${ut} s chacun${rd ? ` + ${rd} s de pause` : ''}${tour ? ` · un tour ≈ ${tour} s` : ''}` : 'ATTENTION : sonnerie par membre vide ou 0, seul le 1er membre sonne', help: 'Stratégie linéaire : les membres sonnent l\'un après l\'autre, dans l\'ordre (utilisateurs puis numéros), avec la pause de réessai après chacun.', to: next },
       ...(liveN ? [{ slot: 'live', label: `${liveN} inscrit${liveN > 1 ? 's' : ''} par touche : non appelé${liveN > 1 ? 's' : ''}`, note: 'en « un par un »', help: 'La stratégie « un par un » de Wazo lit les membres dans sa base ; les inscriptions par touche de bascule n\'existent que dans Asterisk, elles ne sont donc pas appelées (déduit du code de wazo-agid, non testé).', to: null, info: true }] : [])];
   } else if (o.ring_strategy === 'all' || !o.ring_strategy) {
     // Éventail : tous sonnent ensemble, une mini-carte par membre.
     const how = 'sonnent ensemble';
-    hub.leaf.edges = list.map((m) => ({ slot: 'member', label: m.name, note: m.dnd ? 'NPD : ne sonne pas' : `${ut ?? '?'} s`, help: `Membre du groupe (${how}).`, to: card(m, { fan: true }) }));
+    hub.leaf.edges = list.map((m) => ({ slot: 'member', label: m.name, note: m.dnd ? 'NPD : ne sonne pas' : utTxt, help: `Membre du groupe (${how}).`, to: card(m, { fan: true }) }));
     hub.leaf.how = how;
   } else {
     // Autres stratégies (un à la fois, ordre choisi par Asterisk) : un seul
     // bloc qui contient les membres, sans mini-cartes (demande de Brice).
     const how = ORDER[o.ring_strategy] || o.ring_strategy;
     hub.leaf.edges = [
-      { slot: 'pick', label: `${how[0].toUpperCase()}${how.slice(1)}`, note: `${ut ?? '?'} s chacun, puis un autre${rd ? ` · pause ${rd} s entre deux tours` : ''}`, help: STRAT_HELP_SHORT[o.ring_strategy] || '', to: null, info: true },
+      { slot: 'pick', label: `${how[0].toUpperCase()}${how.slice(1)}`, note: `${utTxt} chacun, puis un autre · pause ${rd} s`, help: STRAT_HELP_SHORT[o.ring_strategy] || '', to: null, info: true },
       ...list.map((m) => ({ slot: 'member', label: m.name, note: badge(m) || (m.kind === 'user' ? 'membre' : ''), help: m.dnd ? 'En NPD : ce membre ne sonne pas, l\'appel n\'est pas renvoyé.' : `Membre du groupe (${how}).`, to: null, info: true, npd: m.dnd })),
     ];
     hub.leaf.how = how;
@@ -1304,7 +1337,7 @@ export function facts(k, leafInfo) {
     }
     case 'group':
       f.push(['Numéro', exts], ['Nom technique', o.name], ['Stratégie', STRATEGY[o.ring_strategy] || o.ring_strategy], ['Durée du groupe', sec(o.timeout), 'Durée totale de sonnerie du groupe avant le débordement « pas de réponse ».'],
-        ['Sonnerie par membre', o.user_timeout == null ? `${GROUP_DEF.user_timeout} s (vide : valeur par défaut d'Asterisk)` : o.user_timeout === 0 ? '0 : sans coupure, jusqu\'à la durée totale' : sec(o.user_timeout), 'Durée de sonnerie de chaque membre (stratégies un par un).'], ['Pause entre tours', o.retry_delay == null ? `${GROUP_DEF.retry_delay} s (vide : valeur par défaut d'Asterisk)` : o.retry_delay === 0 ? '0 : aucune' : sec(o.retry_delay)], ['Appels max', o.max_calls || 'illimité'],
+        ...((t) => [['Sonnerie par membre', `${t.ut ? `${t.ut} s` : 'sans coupure'}${o.user_timeout == null ? ' (champ vide)' : ''}`, groupTimesHelp(o.ring_strategy)], [t.lin ? 'Pause après chaque membre' : 'Pause entre deux tentatives', `${t.rd} s${o.retry_delay == null ? ' (champ vide)' : o.retry_delay !== t.rd ? ` (réglé à ${o.retry_delay}, ramené par Asterisk)` : ''}`]])(groupTimes(o)), ['Appels max', o.max_calls || 'illimité'], ['Durée remplacée par l\'appelant', 'possible', 'Vérifié (dialplan extensions_lib_group.conf) : la durée de sonnerie d\'une sortie vers ce groupe (SDA, débordement) remplace sa durée totale.'],
         ['Musique d\'attente', o.music_on_hold], ['Horaire', scheds], ['Membres', members(o.members).join(', ') || '—']);
       break;
     case 'queue':

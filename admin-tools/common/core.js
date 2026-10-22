@@ -94,10 +94,12 @@ export function downloadJson(name, data) {
   } catch (e) { console.warn('téléchargement', e); }
 }
 // RÈGLE DE BASE (skill wazo-plugins) : seulement le tenant courant. recurse=true
-// ramène aussi les sous-tenants ; confd accepte ensuite une référence vers un
-// autre tenant, mais la stack la refuse à l'usage (« Ce numéro de poste n'est
-// pas valide », touches Agent / Membre d'un groupe, 19/10/2026). Objet sans
-// tenant_uuid (sons…) : gardé. Tenant inconnu (S.tenant vide) : pas de filtre.
+// ramène aussi les sous-tenants : sans filtre, l'appli proposerait des objets
+// d'autres clients. confd refuse le plus souvent une référence hors tenant
+// (400 ; vérifié pour les touches de fonction, sauf filtrage patron-secrétaire),
+// mais pas toutes les écritures n'ont été vérifiées : on ne propose que le
+// tenant courant. Objet sans tenant_uuid (sons…) : gardé. Tenant inconnu
+// (S.tenant vide) : pas de filtre.
 // Lecture de tous les tenants : listAll(path, { allTenants: true }), à justifier.
 export const tenantOnly = (items, t = S.tenant) => (items || []).filter((o) => !t || !o?.tenant_uuid || o.tenant_uuid === t);
 export const listAll = async (path, { allTenants = false } = {}) => {

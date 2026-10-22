@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Mulish:wght@300..800&display=swap">
-<link rel="stylesheet" href="../common/style.css?v=0.40.24">
+<link rel="stylesheet" href="../common/style.css?v=0.40.25">
 <script>if (window.parent !== window) document.documentElement.classList.add('framed');</script>
 <style>
 /* Aide des types de touches (propre à BLF Manager). */
@@ -179,7 +179,7 @@
       </div>
       <p id="dt-help" class="helpbox small" hidden></p>
       <div id="dt-valuewrap"></div>
-      <label>Libellé <input id="dt-label"></label>
+      <label>Libellé <input id="dt-label" maxlength="128"></label>
       <label class="inline" id="dt-blfwrap"><input type="checkbox" id="dt-blf"> Supervision (BLF)</label>
       <p id="dt-nosup" class="muted small" hidden></p>
       <div class="btnrow">
@@ -199,6 +199,6 @@
     <div class="btnrow right"><button id="modal-cancel">Annuler</button><button id="modal-ok" class="primary">Confirmer</button></div></div></div>
   <div id="toast" class="toast" hidden></div>
 </div>
-<script type="module" src="./app.js?v=0.40.24"></script>
+<script type="module" src="./app.js?v=0.40.25"></script>
 </body>
 </html>

@@ -10,13 +10,13 @@
 // Codes (messagerie, conférence) : champ masqué avec « Afficher » / « Générer » ;
 // jamais en clair dans le brouillon, l'aperçu ni la sauvegarde JSON (redact).
 // Le mot de passe de connexion d'un utilisateur reste dans User Manager.
-import { $, esc, toast, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.40.24';
-import { M } from './model.js?v=0.40.24';
-import { fillSoundSelect, pickerHtml, bindPicker, readPicker } from './sched-editor.js?v=0.40.24';
-import { GREETINGS, greetingExists, playGreeting, saveGreeting, deleteGreeting, toWav8k, moTxt } from './sound-play.js?v=0.40.24';
-import { incallNumberHtml, bindIncallNumber, readIncallNumber, checkIncallNumber } from './numbers.js?v=0.40.24';
-import { sec, field, check, setSums, openSec, secretField, bindSecrets, tzSelect, langSelect } from './ed-ui.js?v=0.40.24';
-import { bindNewSchedule, schedValue } from './create.js?v=0.40.24';
+import { $, esc, toast, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.40.25';
+import { M, vmTzSelect } from './model.js?v=0.40.25';
+import { fillSoundSelect, pickerHtml, bindPicker, readPicker } from './sched-editor.js?v=0.40.25';
+import { GREETINGS, greetingExists, playGreeting, saveGreeting, deleteGreeting, toWav8k, moTxt } from './sound-play.js?v=0.40.25';
+import { incallNumberHtml, bindIncallNumber, readIncallNumber, checkIncallNumber } from './numbers.js?v=0.40.25';
+import { sec, field, check, setSums, openSec, secretField, bindSecrets, tzSelect, langSelect } from './ed-ui.js?v=0.40.25';
+import { bindNewSchedule, schedValue } from './create.js?v=0.40.25';
 
 const pickFields = (o, keys) => { const f = {}; for (const k of keys) f[k] = o?.[k] ?? null; return f; };
 const diffKeys = (a, b, keys, L) => keys.filter((k) => JSON.stringify(a?.fields?.[k] ?? null) !== JSON.stringify(b?.fields?.[k] ?? null)).map((k) => L[k] || k);
@@ -69,7 +69,7 @@ export function openIncallEditor(o, num, onSave) {
     let exten = ext ? String(ext.exten) : null;
     if (ext) {
       exten = readIncallNumber(box);
-      const bad = checkIncallNumber(ext.context, exten, String(ext.exten));
+      const bad = exten === String(ext.exten) ? '' : checkIncallNumber(ext.context, exten, String(ext.exten), true);
       if (bad) return err(bad, 'gen');
     }
     let destination; try { destination = readPicker('ice-dest'); } catch (e) { return err(e.message, 'dest'); }
@@ -196,13 +196,13 @@ export function openVmEditor(o, onSave) {
       ${GREETINGS.map(([g, l]) => `<div class="cf-vm-greet" data-g="${g}"><span class="cf-ge-l">${esc(l)}</span><span class="small muted" data-gs>…</span><span class="cf-ge-row"><button type="button" data-gplay hidden>Écouter</button><button type="button" data-gup>Envoyer un fichier…</button><button type="button" data-gdel hidden>Supprimer</button></span><input type="file" accept="audio/*,.wav,.mp3" data-gfile hidden><span class="cf-ge-row" data-gconf hidden></span><span class="small cf-vm-res" data-gres hidden></span></div>`).join('')}`)}
     ${sec('mail', 'Messages par e-mail', `
       ${field('E-mail', `<input type="email" data-f="email" value="${esc(f.email || '')}" maxlength="80" placeholder="aucun">`, 'Chaque nouveau message y est signalé.')}
-      ${b('attach_audio', 'Joindre le message audio', '')}
+      ${b('attach_audio', 'Joindre le message audio', 'Jamais réglé (case grisée à l\'ouverture) : réglage général du serveur.')}
       ${b('delete_messages', 'Supprimer le message après l\'envoi', 'Exige un e-mail et la pièce jointe (contrainte Wazo).')}
       ${field('Pager (e-mail court)', `<input data-f="pager" value="${esc(f.pager || '')}" maxlength="80" placeholder="aucun">`)}`, { open: true })}
     ${sec('opt', 'Options', `
       <div class="cf-ge-2">
         ${field('Langue', langSelect('data-f="language"', f.language), 'Langue des messages de la boîte. Vide : langue du serveur (souvent l\'anglais).')}
-        ${field('Fuseau horaire', tzSelect('data-f="timezone"', f.timezone), 'Pour l\'heure annoncée des messages.')}
+        ${field('Fuseau horaire', vmTzSelect('data-f="timezone"', f.timezone), 'Pour l\'heure annoncée des messages. Liste des fuseaux de messagerie du serveur (vérifié : confd refuse un nom comme Europe/Paris, il attend eu-fr).')}
       </div>
       <p class="warn small" id="vme-lw"${f.language && f.timezone ? ' hidden' : ''}><span>Langue ou fuseau vide : Wazo prend ceux du serveur (messages possiblement en anglais, heure décalée). Choisissez Français et Europe/Paris.</span></p>
       ${field('Nombre maximum de messages', `<input type="number" min="0" step="1" data-f="max_messages" value="${esc(f.max_messages ?? '')}" placeholder="défaut du serveur">`)}
@@ -337,7 +337,7 @@ export const applySchedCfg = (o, v) => Object.assign(o, v.fields);
 export function openSchedGenEditor(o, used, onSave, openHours) {
   const f = schedCfgOf(o).fields;
   confirmModal(`<div class="cf-ed">
-    ${head('sge-hb', `Horaire « ${o.name || o.id} »`, used > 1 ? `Partagé par ${used} objets` : '', 'Nom, fuseau et activation de l\'horaire. Désactivé, l\'horaire laisse toujours passer (ouvert, supposé). Les heures d\'ouverture et fermetures se règlent dans l\'éditeur d\'heures.')}
+    ${head('sge-hb', `Horaire « ${o.name || o.id} »`, used > 1 ? `Partagé par ${used} objets` : '', 'Nom, fuseau et activation de l\'horaire. Désactivé, l\'horaire laisse toujours passer (toujours ouvert, vérifié : wazo-agid AlwaysOpenedSchedule). Sans fuseau : celui du serveur (vérifié). Les heures d\'ouverture et fermetures se règlent dans l\'éditeur d\'heures.')}
     ${sec('gen', 'Général', `
       ${field('Nom', `<input data-f="name" value="${esc(f.name || '')}" maxlength="128">`)}
       ${field('Fuseau horaire', tzSelect('data-f="timezone"', f.timezone), 'Les heures sont celles de ce fuseau.')}

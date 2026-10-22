@@ -75,14 +75,6 @@ function vendorOf(dev) {
   const s = `${dev.vendor || ''} ${dev.plugin || ''}`.toLowerCase();
   return VENDORS[Object.keys(VENDORS).find((k) => s.includes(k))] || null;
 }
-const DEST_PARAMS = {
-  user: ['user_id'], group: ['group_id'], groupmember: ['group_id', 'action'],
-  queue: ['queue_id'], conference: ['conference_id'], paging: ['paging_id'],
-  service: ['service'], custom: ['exten'], forward: ['forward', 'exten'],
-  transfer: ['transfer'], park_position: ['parking_lot_id', 'position'],
-  parking: ['parking_lot_id'], bsfilter: ['filter_member_id'],
-  agent: ['agent_id', 'action'], onlinerec: [],
-};
 // Listes lues sur la stack pour choisir une destination (clé = S.named[clé]).
 const LISTS = {
   group: { url: '/groups', what: 'groupes', name: (x) => x.label || x.name },
@@ -213,9 +205,12 @@ function foreignAgentHits(u, keys) {
 const agentNum = (id) => (S.named.agent || []).find((a) => a.id === id)?.number || `#${id}`;
 const groupName = (id) => { const g = (S.named.group || []).find((x) => x.id === id); return g ? LISTS.group.name(g) : `#${id}`; };
 // Les listes sont lues avec recurse=true (sous-tenants compris). Une touche
-// doit viser un objet du tenant de son utilisateur : wazo-agid cherche groupe /
-// agent dans ce tenant et répond « Ce numéro de poste n'est pas valide » sinon
-// (vu en réel le 19/10/2026 ; confd accepte pourtant l'enregistrement).
+// doit viser un objet du tenant de son utilisateur : confd le vérifie et
+// refuse sinon (400, func_key validator + tests confd multi-tenant, lu le
+// 21/10/2026), sauf pour le filtrage patron-secrétaire (non vérifié par confd).
+// On ne propose donc que le tenant de l'utilisateur. (Correction : le
+// 19/10/2026 on avait cru à une touche acceptée vers un autre tenant ; la
+// vraie cause était un agent fantôme, voir l'aide du type Agent.)
 const curTenant = () => (S.cur?.tpl ? S.tenant : S.cur?.user?.tenant_uuid || S.tenant) || null;
 const inTenant = (x, t = curTenant()) => !t || !x?.tenant_uuid || x.tenant_uuid === t;
 const tenantItems = (l) => (S.named[l] || []).filter((x) => inTenant(x));
@@ -363,8 +358,11 @@ async function setDeviceLineKeys(devId, patch, labelsPatch) {
     if (Object.keys(nextLb).length) options.astrea_linelabels = nextLb; else delete options.astrea_linelabels;
     d.options = options;
     await provd('PUT', `/dev_mgr/devices/${devId}`, { device: d });
+    // provd reconfigure déjà le poste quand `options` change (_RECONF_KEYS,
+    // wazo-provd devices/device.py) : ce POST est redondant mais sans risque,
+    // gardé tel que validé en réel le 12/10/2026. Rien n'est envoyé sans changement.
+    await provd('POST', '/dev_mgr/reconfigure', { id: devId });
   }
-  await provd('POST', '/dev_mgr/reconfigure', { id: devId });
   provdLinesCache.set(devId, next);
   provdLabelsCache.set(devId, nextLb);
   return changed;
@@ -513,6 +511,9 @@ function showStandalone() {
     let host = $('sa-host').value.trim().replace(/\/+$/, '');
     if (!/^https?:\/\//.test(host)) host = `https://${host}`;
     S.base = host;
+    // Hors portail : client (tenant) facultatif dans l'adresse (?tenant=<uuid>),
+    // envoyé en Wazo-Tenant comme le fait le portail.
+    S.tenant = new URLSearchParams(location.search).get('tenant') || null;
     try {
       if ($('sa-token').value.trim()) {
         S.token = $('sa-token').value.trim();
@@ -708,23 +709,65 @@ function renderUserList() {
 // ---------------------------------------------------------------------------
 // Modèle d'un poste en cours d'édition
 // ---------------------------------------------------------------------------
+// Destination telle qu'on la renvoie à confd : tous ses paramètres, sauf les
+// champs en lecture seule ajoutés par confd à la lecture (schéma func_key :
+// href, user_firstname / user_lastname, group_name / group_label,
+// parking_lot_name, filter_member_firstname / _lastname). Un type ou un
+// paramètre inconnu de cette version est ainsi conservé tel quel, au lieu
+// d'être perdu à l'enregistrement. Clés triées : comparaison stable.
+const DEST_READONLY = /^(href|.+_(name|firstname|lastname|label))$/;
 function cleanDest(d) {
   const out = { type: d.type };
-  for (const p of DEST_PARAMS[d.type] || []) if (d[p] !== undefined && d[p] !== null) out[p] = d[p];
+  for (const p of Object.keys(d).sort()) {
+    const v = d[p];
+    if (p === 'type' || v === undefined || v === null || DEST_READONLY.test(p)) continue;
+    out[p] = v;
+  }
   return out;
 }
 function cleanKey(k) { return { blf: !!k.blf, label: k.label || null, destination: cleanDest(k.destination || {}) }; }
+// Règles confd vérifiées dans le code (func_key/schema.py, validator.py,
+// xivo-dao) : libellé sans « ; », retour à la ligne ni tabulation (400 sinon),
+// 128 caractères au plus (colonne SQL) ; deux touches vers la même destination
+// refusées dans un même jeu de touches (400 « destination already exists »),
+// même si l'une est en BLF et l'autre non.
+const LABEL_MAX = 128;
+const LABEL_BAD = /[;\r\n\t]/g;
+const cleanKeyLabel = (s) => String(s ?? '').replace(LABEL_BAD, ' ').slice(0, LABEL_MAX);
+// Problèmes qui feraient refuser l'écriture par confd : [{ p, msg }].
+function keysProblems(keys) {
+  const out = [], seen = new Map();
+  for (const [p, k] of Object.entries(keys)) {
+    if (!k) continue;
+    if (k.label && (LABEL_BAD.test(k.label) || k.label.length > LABEL_MAX)) out.push({ p: Number(p), msg: `libellé invalide (« ; », retour à la ligne, tabulation ou plus de ${LABEL_MAX} caractères)` });
+    LABEL_BAD.lastIndex = 0;
+    // Collègue introuvable dans ce client : confd refuserait tout le jeu de
+    // touches (destination vérifiée dans le tenant ; un utilisateur supprimé
+    // emporte normalement ses touches, cascade xivo-dao).
+    if (k.destination?.type === 'user' && S.users.length && !S.byId.has(k.destination.user_id)) out.push({ p: Number(p), msg: 'collègue introuvable dans ce client (supprimé ou autre client) : videz la touche' });
+    const sig = JSON.stringify(cleanDest(k.destination || {}));
+    if (seen.has(sig)) out.push({ p: Number(p), msg: `même destination que la touche ${seen.get(sig)} (Wazo refuse deux touches vers la même destination)` });
+    else seen.set(sig, Number(p));
+  }
+  return out;
+}
 const keySig = (k) => (k ? JSON.stringify(cleanKey(k)) : 'null');
 
 // Touches posées (dans Wazo) sur une position de ligne : elles seraient
-// masquées par la tuile « Ligne » puis perdues à l'enregistrement. On les
-// décale juste après les lignes (avertissement affiché, à enregistrer).
-function shiftLineClashes(slots, orig, lineKeys) {
+// masquées par la tuile « Ligne » puis perdues à l'enregistrement. Chacune
+// va dans la première case libre après les lignes (ni touche propre, ni
+// touche héritée) ; les autres touches ne bougent pas (avertissement affiché,
+// à enregistrer). Avant le 21/10/2026 : insertion qui décalait toutes les
+// touches suivantes.
+function shiftLineClashes(slots, orig, lineKeys, inherited = {}) {
   const clash = Object.keys(orig).map(Number).filter((p) => p <= lineKeys).sort((a, b) => a - b);
-  if (clash.length) {
-    const moved = clash.map((p) => slots[p - 1]);
-    clash.forEach((p) => { slots[p - 1] = null; });
-    slots.splice(lineKeys, 0, ...moved);
+  let free = lineKeys + 1;
+  for (const p of clash) {
+    const k = slots[p - 1];
+    slots[p - 1] = null;
+    while (slots[free - 1] || inherited[free]) free++;
+    while (slots.length < free) slots.push(null);
+    slots[free - 1] = k;
   }
   return clash.length;
 }
@@ -753,7 +796,7 @@ async function selectUser(u, devIdx = 0) {
   for (const [p, k] of Object.entries(data?.keys || {})) (k.inherited ? inherited : orig)[Number(p)] = cleanKey(k);
   const maxPos = Math.max(0, ...Object.keys(orig).map(Number), ...Object.keys(inherited).map(Number));
   const slots = Array.from({ length: Math.max(maxPos, lineKeys) }, (_, i) => (orig[i + 1] ? structuredClone(orig[i + 1]) : null));
-  const clash = shiftLineClashes(slots, orig, lineKeys);
+  const clash = shiftLineClashes(slots, orig, lineKeys, inherited);
   // Poste partagé : propriétaire = utilisateur de la plus petite position.
   const shared = devLines.length > 1 ? {
     owner: devLines[0].user,
@@ -879,7 +922,7 @@ function guardUnsaved(fn) {
 // ---------------------------------------------------------------------------
 function destText(k) {
   const d = k.destination;
-  if (d.type === 'user') { const t = S.byId.get(d.user_id); return t ? `${fullName(t)} · ${userExten(t)}` : 'utilisateur supprimé'; }
+  if (d.type === 'user') { const t = S.byId.get(d.user_id); return t ? `${fullName(t)} · ${userExten(t)}` : `utilisateur introuvable (#${d.user_id} : supprimé ou d'un autre client)`; }
   if (d.type === 'custom') return `Numéro ${d.exten}`;
   const t = KEY_TYPES[d.type];
   if (!t) return d.type;
@@ -986,10 +1029,23 @@ function renderEditor() {
   // Listes des destinations posées (noms lisibles, contrôle du tenant) : lues
   // au besoin, puis nouveau rendu.
   const keyMap = Object.fromEntries(c.slots.map((k, i) => [i + 1, k]).filter(([, k]) => k));
-  const missingTypes = [...new Set(Object.values(keyMap).map((k) => k.destination.type))].filter((t) => listOf(t).some((l) => !S.named[l]));
+  const missingTypes = [...new Set([...Object.values(keyMap), ...Object.values(c.inherited || {})].map((k) => k.destination.type))].filter((t) => listOf(t).some((l) => !S.named[l]));
   if (missingTypes.length) Promise.all(missingTypes.map(ensureNamed)).then(() => { if (S.cur === c) renderEditor(); });
   const foreignT = otherTenantHits(keyMap);
-  if (foreignT.length) warns.push(`<span class="error">${foreignT.map((h) => `Touche ${h.p} (${esc(h.what)})`).join(', ')} : vise un objet d'un <strong>autre client (tenant)</strong>. Wazo répondra « Ce numéro de poste n'est pas valide » sur le poste. Choisissez une destination de ce client.</span>`);
+  if (foreignT.length) warns.push(`<span class="error">${foreignT.map((h) => `Touche ${h.p} (${esc(h.what)})`).join(', ')} : vise un objet d'un <strong>autre client (tenant)</strong>. confd refusera l'enregistrement (destination vérifiée dans le client de l'utilisateur). Choisissez une destination de ce client.</span>`);
+  // Ce que confd refuserait (doublons, libellés) : enregistrement bloqué.
+  const probs = keysProblems(isTpl ? keyMap : targetKeys());
+  if (probs.length) warns.push(`<span class="error">${probs.map((x) => `Touche ${x.p} : ${esc(x.msg)}`).join('<br>')}<br><strong>Enregistrement bloqué tant que ce n'est pas corrigé.</strong></span>`);
+  c.blocked = probs.length > 0;
+  // Collègue sans ligne ou sans numéro : confd accepte la touche, mais elle
+  // n'est pas écrite sur le poste (device/funckey.py, UserConverter : return {}).
+  const silent = Object.entries(keyMap).filter(([, k]) => k.destination.type === 'user' && S.byId.has(k.destination.user_id))
+    .filter(([, k]) => { const t = S.byId.get(k.destination.user_id); return !(t.lines || []).length || !userExten(t); }).map(([p]) => p);
+  if (silent.length) warns.push(`Touche${silent.length > 1 ? 's' : ''} ${silent.join(', ')} : le collègue n'a pas de ligne ou pas de numéro. Wazo garde la touche mais ne l'écrit pas sur le poste (rien n'apparaît).`);
+  // Touche propre posée sur la position d'une touche héritée : elle la masque.
+  const masks = Object.keys(keyMap).filter((p) => c.inherited[p]);
+  if (masks.length) warns.push(`Touche${masks.length > 1 ? 's' : ''} ${masks.join(', ')} : posée sur la position d'une touche héritée du modèle partagé, qu'elle remplace sur le poste (vérifié dans confd : la touche propre l'emporte).`);
+  if (isTpl && c.tpl.id) warns.push(`Modèle existant : à l'enregistrement, Wazo régénère tout de suite les postes de tous les utilisateurs rattachés à ce modèle${c.tpl.users != null ? ` (${c.tpl.users} utilisateur${c.tpl.users > 1 ? 's' : ''})` : ''}.`);
   if (!isTpl) {
     const slotMap = keyMap;
     const hits = fixedMemberHits(c.user.uuid, slotMap);
@@ -1010,7 +1066,7 @@ function renderEditor() {
       warns.push(`<span class="error">${hits.map((h) => `Touche ${h.p}`).join(', ')} « Membre d'un groupe » : ${esc(fullName(c.user))} est <strong>membre fixe</strong> du groupe ${hits.map((h) => `« ${esc(groupName(h.gid))} »`).filter((v, i, a) => a.indexOf(v) === i).join(', ')} dans Wazo. La touche ne pourra pas l'en faire sortir (supposé, comportement d'Asterisk : à tester). Choisir l'un ou l'autre : retirer l'utilisateur des membres du groupe pour le gérer par touche, ou supprimer la touche.</span>`);
     }
   }
-  if (c.clash) warns.push(`${c.clash} touche(s) étaient placées dans Wazo sur des positions de ligne (masquées par les touches ligne) : elles ont été décalées juste après les lignes. Vérifiez puis enregistrez pour corriger.`);
+  if (c.clash) warns.push(`${c.clash} touche(s) étaient placées dans Wazo sur des positions de ligne (masquées par les touches ligne) : chacune a été déplacée vers la première case libre après les lignes, les autres touches restent en place. Vérifiez puis enregistrez pour corriger.`);
   $('warnings').innerHTML = warns.map((w) => `<div class="warn">${w}</div>`).join('');
 
   const used = Math.max(c.slots.length, ...Object.keys(c.inherited).map(Number), c.lineKeys);
@@ -1040,7 +1096,7 @@ function renderEditor() {
   const overflow = c.slots.map((k, i) => (k ? i + 1 : 0)).filter((p) => p > maxPos || (c.phoneVisible && p > c.phoneVisible && p <= cap.lk));
   if (overflow.length) $('warnings').insertAdjacentHTML('beforeend', `<div class="warn">Positions ${overflow.join(', ')} au-delà de la capacité affichée : elles ne seront pas visibles sur le téléphone.</div>`);
 
-  $('save').disabled = !isDirty() && !(!isTpl && misaligned().length);
+  $('save').disabled = c.blocked || (!isDirty() && !(!isTpl && misaligned().length));
   renderDetail();
   layout();
 }
@@ -1344,9 +1400,13 @@ async function loadFilterMembers() {
   const out = [];
   for (const f of await listAll('/callfilters')) {
     const full = f.surrogates ? f : await api('GET', `/callfilters/${f.id}`);
+    // Membres du filtre (patrons et secrétaires) : confd refuse la touche si
+    // l'utilisateur n'en fait pas partie (tests confd : missing_association
+    // User / BSFilter). Seuls les secrétaires exposent un member_id.
+    const members = [...(full.recipients?.users || []), ...(full.surrogates?.users || [])].map((m) => m.uuid).filter(Boolean);
     for (const s of full.surrogates?.users || []) {
       if (s.member_id == null) continue;
-      out.push({ id: s.member_id, tenant_uuid: full.tenant_uuid, name: `${full.name} · ${`${s.firstname || ''} ${s.lastname || ''}`.trim() || 'secrétaire'}` });
+      out.push({ id: s.member_id, tenant_uuid: full.tenant_uuid, members, name: `${full.name} · ${`${s.firstname || ''} ${s.lastname || ''}`.trim() || 'secrétaire'}` });
     }
   }
   return out;
@@ -1389,7 +1449,8 @@ function renderValueField(type, k) {
       const q = inp.value.trim().toLowerCase();
       // Jamais le propriétaire du poste : se superviser soi-même gâche une touche.
       const list = S.users.filter((u) => u.uuid !== c.user.uuid && inTenant(u) && (!q || `${fullName(u)} ${u.username || ''} ${userExten(u)}`.toLowerCase().includes(q))).slice(0, 30);
-      sugg.innerHTML = list.map((u) => `<li data-id="${u.id}">${esc(fullName(u))} <span class="muted">${esc(userExten(u))}</span></li>`).join('') || '<li class="muted">Aucun résultat</li>';
+      // Sans ligne ou sans numéro : confd accepte la touche mais ne l'écrit pas sur le poste.
+      sugg.innerHTML = list.map((u) => `<li data-id="${u.id}">${esc(fullName(u))} <span class="muted">${esc(userExten(u)) || ((u.lines || []).length ? 'sans numéro : touche absente du poste' : 'sans ligne : touche absente du poste')}</span></li>`).join('') || '<li class="muted">Aucun résultat</li>';
       sugg.hidden = false;
     };
     inp.onfocus = show; inp.oninput = show;
@@ -1424,6 +1485,12 @@ function renderValueField(type, k) {
         let v = cur[f.p];
         if (f.list) {
           let items = tenantItems(f.list);
+          // Filtrage patron-secrétaire : seulement les filtres dont l'utilisateur est membre.
+          if (f.list === 'bsfilter' && !c.tpl) {
+            const all = items.length;
+            items = items.filter((it) => !it.members || it.members.includes(c.user.uuid));
+            if (all && !items.length) return `<p class="warn small">${esc(fullName(c.user))} n'est membre d'aucun filtre patron-secrétaire : Wazo refuserait la touche. Ajoutez-le d'abord au filtre (patron ou secrétaire).</p>`;
+          }
           // Agent : celui de l'utilisateur en tête, repéré, et présélectionné
           // sur une nouvelle touche.
           if (f.list === 'agent' && !c.tpl) {
@@ -1432,7 +1499,9 @@ function renderValueField(type, k) {
             if (v === undefined && mine != null) v = mine;
             return `<label>${esc(f.label)} <select data-i="${i}"><option value="">—</option>${items.map((it) => `<option value="${it.id}" ${it.id === v ? 'selected' : ''}>${esc(LISTS.agent.name(it))}${it.id === mine ? ' (agent de cet utilisateur)' : ''}</option>`).join('')}</select></label>${mine == null ? '<p class="warn small">Cet utilisateur n\'a pas d\'agent dans Wazo : une touche Agent ne lui servira à rien (associer un agent dans sa fiche).</p>' : ''}`;
           }
-          if (!items.length) return `<p class="warn small">Aucun élément « ${esc(LISTS[f.list].what)} » sur cette stack.</p>`;
+          // Parking sans numéro : refusé par confd (tests d'intégration).
+          if (f.list === 'parking') items = items.filter((it) => !Array.isArray(it.extensions) || it.extensions.length);
+          if (!items.length) return `<p class="warn small">Aucun élément « ${esc(LISTS[f.list].what)} » utilisable pour ce client.</p>`;
           return `<label>${esc(f.label)} <select data-i="${i}"><option value="">—</option>${items.map((it) => `<option value="${it.id}" ${it.id === v ? 'selected' : ''}>${esc((LISTS[f.list].opt || LISTS[f.list].name)(it))}</option>`).join('')}</select></label>`;
         }
         if (f.opts) return `<label>${esc(f.label)} <select data-i="${i}">${k ? '' : '<option value="">—</option>'}${f.opts.map(([x, l]) => `<option value="${x}" ${x === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>`;
@@ -1457,6 +1526,12 @@ function renderValueField(type, k) {
           vals[f.p] = f.list || f.kind === 'int' ? Number(raw) : raw;
         }
         $('dt-parkhint').innerHTML = parkHint(type, vals);
+        // Place de parking : dans la plage du parking (tests confd : 400 sinon).
+        if (!missing && type === 'park_position') {
+          const lot = (S.named.parking || []).find((x) => x.id === vals.parking_lot_id);
+          const lo = Number(lot?.slots_start), hi = Number(lot?.slots_end);
+          if (lot?.slots_start && (vals.position < lo || vals.position > hi)) { toast(`Place ${vals.position} hors du parking (places ${lo} à ${hi}) : Wazo la refuserait.`, 6000); return; }
+        }
         if (!missing) commitGeneric(p, type, vals);
       }; });
     });
@@ -1526,7 +1601,15 @@ function wireDetail() {
       renderValueField(t, null);
     } else renderValueField(t, k);
   };
-  $('dt-label').oninput = () => { const k = S.cur.slots[S.sel - 1]; if (k) { k.label = $('dt-label').value || null; refreshTileOnly(); } };
+  $('dt-label').oninput = () => {
+    const k = S.cur.slots[S.sel - 1];
+    if (!k) return;
+    // Caractères refusés par confd (« ; », retour à la ligne, tabulation) remplacés, 128 max.
+    const raw = $('dt-label').value, v = cleanKeyLabel(raw);
+    if (v !== raw) { const pos = $('dt-label').selectionStart; $('dt-label').value = v; try { $('dt-label').setSelectionRange(pos, pos); } catch { /* */ } toast('« ; », retour à la ligne et tabulation ne sont pas acceptés par Wazo dans un libellé (128 caractères au plus).', 5000); }
+    k.label = v || null;
+    refreshTileOnly();
+  };
   $('dt-helpbtn').onclick = () => { const h = $('dt-help'); h.hidden = !h.hidden; $('dt-helpbtn').setAttribute('aria-expanded', String(!h.hidden)); };
   $('dt-blf').onchange = () => { const k = S.cur.slots[S.sel - 1]; if (k) { k.blf = $('dt-blf').checked; renderEditor(); } };
   $('dt-clear').onclick = () => { setKey(S.sel, null); renderEditor(); };
@@ -1623,9 +1706,21 @@ async function applyLineKeys(u, dev, n, labels) {
   await setDeviceLineKeys(dev.id, map, labels);
   await clearLegacyLineKeys(u);
 }
+// Touches propres actuelles dans Wazo, comparées à `orig` (état lu à
+// l'ouverture ou à l'aperçu). Renvoie null si identiques, sinon un résumé
+// (positions qui diffèrent).
+async function keysChangedSince(u, orig) {
+  const data = await api('GET', `/users/${u.uuid}/funckeys`);
+  const now = {};
+  for (const [p, k] of Object.entries(data?.keys || {})) if (!k.inherited) now[Number(p)] = cleanKey(k);
+  const a = normMap(now), b = normMap(orig);
+  const diff = [...new Set([...Object.keys(a), ...Object.keys(b)])].filter((p) => keySig(a[p]) !== keySig(b[p])).map(Number).sort((x, y) => x - y);
+  return diff.length ? `position${diff.length > 1 ? 's' : ''} ${diff.slice(0, 8).join(', ')}${diff.length > 8 ? '…' : ''}` : null;
+}
 function save() {
   if (!canWrite()) return;
   const c = S.cur;
+  if (c.blocked) { toast('Enregistrement bloqué : corrigez d\'abord les touches signalées en rouge (Wazo les refuserait).', 7000); return; }
   if (c.tpl) return saveTemplate();
   const target = targetKeys();
   const orig = normMap(c.orig);
@@ -1639,10 +1734,14 @@ function save() {
   const lkChanged = c.lineKeys !== c.origLineKeys || othersChanged.length > 0 || labelsChanged || mis.length > 0;
   const otherTargets = otherDevs(); // autres postes : compte 1 aligné
   const html = `<h3>Enregistrer ${esc(fullName(c.user))}</h3>
-    ${lkChanged ? `<p>Touches ligne${c.shared ? ' (compte 1)' : ''} : ${c.lineKeys === c.origLineKeys && mis.length ? `alignement de tous les postes sur <strong>${c.lineKeys}</strong>` : `${c.origLineKeys} → <strong>${c.lineKeys}</strong>`}${othersChanged.map((o) => ` ; compte ${o.pos} (${esc(fullName(o.user))}) : ${c.origOtherCounts[o.pos] || 1} → <strong>${c.otherCounts[o.pos]}</strong>`).join('')}${labelsChanged ? ` ; étiquettes : ${Object.keys({ ...oldLabels, ...newLabels }).filter((k) => oldLabels[k] !== newLabels[k]).map((k) => `compte ${k} « ${esc(newLabels[k] || 'numéro')} »`).join(', ')}` : ''}. Option du poste dans provd, appliquée par les lignes Astrea du base.tpl ; le poste est resynchronisé.${otherTargets.length ? `<br>Appliqué aussi sur : ${otherTargets.map((o) => esc(devLabel(o.d))).join(', ')}.` : ''}</p>` : ''}
+    ${lkChanged ? `<p>Touches ligne${c.shared ? ' (compte 1)' : ''} : ${c.lineKeys === c.origLineKeys && mis.length ? `alignement de tous les postes sur <strong>${c.lineKeys}</strong>` : c.lineKeys === c.origLineKeys ? `inchangé (${c.lineKeys})` : `${c.origLineKeys} → <strong>${c.lineKeys}</strong>`}${othersChanged.map((o) => ` ; compte ${o.pos} (${esc(fullName(o.user))}) : ${c.origOtherCounts[o.pos] || 1} → <strong>${c.otherCounts[o.pos]}</strong>`).join('')}${labelsChanged ? ` ; étiquettes : ${Object.keys({ ...oldLabels, ...newLabels }).filter((k) => oldLabels[k] !== newLabels[k]).map((k) => `compte ${k} « ${esc(newLabels[k] || 'numéro')} »`).join(', ')}` : ''}. Option du poste dans provd, appliquée par les lignes Astrea du base.tpl ; le poste est resynchronisé.${otherTargets.length ? `<br>Appliqué aussi sur : ${otherTargets.map((o) => esc(devLabel(o.d))).join(', ')}.` : ''}</p>` : ''}
     ${rows.length ? `<table class="diff"><tr><th>Pos.</th><th>Avant</th><th>Après</th></tr>${rows.join('')}</table>` : '<p class="muted">Aucune touche de fonction modifiée.</p>'}`;
   confirmModal(html, async () => {
     try {
+      // Relu avant toute écriture : si les touches ont changé dans Wazo depuis
+      // l'ouverture (portail, autre onglet, autre admin), on n'écrase rien.
+      const meanwhile = await keysChangedSince(c.user, c.orig);
+      if (meanwhile) { toast(`Les touches de ${fullName(c.user)} ont été modifiées dans Wazo depuis l'ouverture (${meanwhile}). Rien n'est écrit : l'utilisateur est rechargé, refaites vos changements.`, 10000); await selectUser(c.user, c.devIdx || 0); return; }
       // Touches ligne d'abord (l'étape qui peut être refusée : poste partagé,
       // droits provd) : en cas d'échec, les touches ne sont pas décalées.
       if (lkChanged) {
@@ -1775,7 +1874,7 @@ function renderLabels() {
 }
 // Étiquettes saisies qui changent quelque chose : [[utilisateur, nouvelle étiquette]].
 function pendingLabels() {
-  return [...L.edits].map(([uuid, v]) => { const u = S.byUuid.get(uuid); return [u, v.trim() || fullName(u)]; })
+  return [...L.edits].map(([uuid, v]) => { const u = S.byUuid.get(uuid); return [u, cleanKeyLabel(v.trim()).trim() || cleanKeyLabel(fullName(u))]; })
     .filter(([u, v]) => u && (KI.byTarget.get(u.id) || []).some((e) => e.label !== v));
 }
 function updateLabelsBtn() {
@@ -1889,8 +1988,12 @@ async function openTemplate(id) {
   const model = $('tpl-model').value || 'T54W';
   const prof = VENDORS.yealink;
   S.sel = null;
+  // Utilisateurs rattachés à ce modèle (champ func_key_template_id de confd,
+  // s'il figure dans la liste /users ; sinon nombre inconnu).
+  const linkKnown = S.users.some((u) => 'func_key_template_id' in u);
+  const users = tpl.id && linkKnown ? S.users.filter((u) => u.func_key_template_id === tpl.id).length : null;
   S.cur = {
-    tpl: { id: tpl.id, name: tplName(tpl), origName: tplName(tpl) }, clash,
+    tpl: { id: tpl.id, name: tplName(tpl), origName: tplName(tpl), users }, clash,
     user: { uuid: '__modele__', id: -1, firstname: tplName(tpl) || 'Nouveau modèle', lines: [] },
     dev: { vendor: 'Yealink', model, mac: '', plugin: 'wazo-yealink' }, prof, model, lk: prof.linekeys[model], exp: prof.exp(model),
     orig, inherited: {}, lineKeys, origLineKeys: lineKeys, slots, extraModules: 0, extraPages: 0, pagesLeft: 0,
@@ -1914,9 +2017,24 @@ async function saveTemplate() {
   const c = S.cur;
   const name = c.tpl.name.trim();
   if (!name) { toast('Donnez un nom au modèle.'); $('tpl-name').focus(); return; }
+  if (c.blocked) { toast('Enregistrement bloqué : corrigez d\'abord les touches signalées en rouge (Wazo les refuserait).', 7000); return; }
+  // Nom : 128 caractères au plus dans confd (schéma FuncKeyTemplateSchema), jeton compris.
+  if (`${name} blf-linekeys=${c.lineKeys}`.length > 128) { toast('Nom du modèle trop long (Wazo : 128 caractères au plus).', 6000); return; }
   const body = { name: c.lineKeys > 1 ? `${name} blf-linekeys=${c.lineKeys}` : name, keys: targetKeys() };
   try {
     let id = c.tpl.id;
+    if (id) {
+      // Relu juste avant : modèle modifié dans Wazo depuis l'ouverture → rien d'écrit.
+      const now = await api('GET', `/funckeys/templates/${id}`);
+      const nowKeys = {};
+      for (const [p, k] of Object.entries(now?.keys || {})) nowKeys[Number(p)] = cleanKey(k);
+      const changedName = tplName(now) !== c.tpl.origName || tplLines(now) !== c.origLineKeys;
+      if (changedName || JSON.stringify(normMap(nowKeys)) !== JSON.stringify(normMap(c.orig))) {
+        toast('Ce modèle a été modifié dans Wazo depuis son ouverture : rien n\'est écrit. Il est rechargé, refaites vos changements.', 10000);
+        await openTemplate(id);
+        return;
+      }
+    }
     if (id) await api('PUT', `/funckeys/templates/${id}`, body);
     else id = (await api('POST', '/funckeys/templates', body))?.id;
     toast(`Modèle « ${name} » enregistré dans Wazo`);
@@ -2055,15 +2173,18 @@ async function previewDeploy() {
     try {
       const data = await api('GET', `/users/${u.uuid}/funckeys`);
       await loadLineKeys(u); // touches ligne actuelles du poste (provd)
-      const cur = {};
+      const cur = {}, inhPos = new Set();
       let inh = 0;
-      for (const [p, k] of Object.entries(data?.keys || {})) if (k.inherited) inh++; else cur[Number(p)] = cleanKey(k);
+      for (const [p, k] of Object.entries(data?.keys || {})) if (k.inherited) { inh++; inhPos.add(Number(p)); } else cur[Number(p)] = cleanKey(k);
       const { keys, selfRemoved, lines, linesSkipped } = deployKeysFor(u, cur, mode);
       const keysChanged = JSON.stringify(normMap(keys)) !== JSON.stringify(normMap(cur));
       const linesChanged = lines !== lineKeysOf(u);
-      const changed = keysChanged || linesChanged;
+      // Ce que confd refuserait (destination en double, libellé) : utilisateur exclu.
+      const probs = keysProblems(keys);
+      const changed = (keysChanged || linesChanged) && !probs.length;
       const cap = capOf(u);
       const over = cap ? Object.keys(keys).map(Number).filter((p) => p > cap) : [];
+      const masked = Object.keys(keys).map(Number).filter((p) => inhPos.has(p) && keySig(keys[p]) !== keySig(cur[p]));
       D.plan.push({ u, keys, lines, keysChanged, linesChanged, changed, before: { userfield: u.userfield || '', keys: cur, linekeys: lineKeysOf(u), ...deviceBackup(userDevice(u)) } });
       // Poste partagé : compte secondaire (touches non affichées) ou positions
       // réservées aux autres comptes.
@@ -2083,8 +2204,10 @@ async function previewDeploy() {
       const foreign = foreignAgentHits(u, keys) || [];
       const otherT = otherTenantHits(keys, u.tenant_uuid || S.tenant);
       const notes = [
+        probs.length && `<span class="error"><strong>non déployé</strong> : ${probs.map((x) => `touche ${x.p}, ${esc(x.msg)}`).join(' ; ')}</span>`,
         sharedNote,
-        otherT.length && `<span class="error">touche ${otherT.map((h) => h.p).join(', ')} : destination d'un autre client (tenant), refusée sur le poste</span>`,
+        otherT.length && `<span class="error">touche ${otherT.map((h) => h.p).join(', ')} : destination d'un autre client (tenant), refusée par confd</span>`,
+        masked.length && `masque la touche héritée en ${masked.join(', ')}`,
         foreign.length && `<span class="error">touche ${foreign.map((h) => h.p).join(', ')} : agent ${[...new Set(foreign.map((h) => esc(agentNum(h.id))))].join(', ')}, ${userAgentId(u) == null ? 'pas d\'agent pour cet utilisateur' : `pas le sien (${esc(agentNum(userAgentId(u)))})`}</span>`,
         fixed.length && `<span class="error">membre fixe de ${[...new Set(fixed.map((h) => `« ${esc(groupName(h.gid))} »`))].join(', ')} : la touche ${fixed.map((h) => h.p).join(', ')} ne pourra pas l'en faire sortir</span>`,
         linesChanged && `touches ligne ${lineKeysOf(u)} → ${lines}`,
@@ -2092,7 +2215,7 @@ async function previewDeploy() {
         selfRemoved && 'sa propre touche retirée', inh && `${inh} héritée(s) inchangée(s)`,
         over.length && `<span class="error">hors capacité : ${over.join(', ')}</span>`,
       ].filter(Boolean);
-      rows.push(`<tr><td>${esc(fullName(u))}</td><td>${Object.keys(cur).length}</td><td>${Object.keys(keys).length}</td><td>${changed ? 'oui' : '<span class="muted">identique</span>'}</td><td>${notes.join(' · ')}</td></tr>`);
+      rows.push(`<tr><td>${esc(fullName(u))}</td><td>${Object.keys(cur).length}</td><td>${Object.keys(keys).length}</td><td>${probs.length ? '<span class="error">non</span>' : changed ? 'oui' : '<span class="muted">identique</span>'}</td><td>${notes.join(' · ')}</td></tr>`);
     } catch (e) { rows.push(`<tr><td>${esc(fullName(u))}</td><td colspan="4" class="error">${esc(e.message)}</td></tr>`); }
   }
   btn.textContent = 'Prévisualiser le déploiement';
@@ -2109,10 +2232,15 @@ async function applyDeploy() {
   if (!todo.length) return;
   makeBackup(`Avant déploiement en masse (${todo.length} utilisateur(s))`, todo.map((x) => ({ uuid: x.u.uuid, name: fullName(x.u), ...x.before })));
   let ok = 0, ko = 0;
+  const skipped = [], errors = [];
   for (const [i, x] of todo.entries()) {
     toast(`Déploiement ${i + 1}/${todo.length}…`, 60000);
     try {
       const dev = userDevice(x.u);
+      // Relu avant toute écriture (touches ligne comprises) : touches modifiées
+      // dans Wazo depuis l'aperçu → utilisateur sauté, rien d'écrit pour lui.
+      const meanwhile = await keysChangedSince(x.u, x.before.keys);
+      if (meanwhile) { skipped.push(`${fullName(x.u)} (${meanwhile})`); continue; }
       if (x.linesChanged) {
         await applyLineKeys(x.u, dev, x.lines); // d'abord : voir save()
         // Autres postes de l'utilisateur : même nombre de touches ligne.
@@ -2125,9 +2253,15 @@ async function applyDeploy() {
       if (dev && (x.linesChanged || $('dp-resync').checked)) {
         for (const d of userDevices(x.u)) { try { await api('GET', `/devices/${d.id}/synchronize`); } catch { /* resynchro facultative */ } }
       }
-    } catch (e) { ko++; console.error(fullName(x.u), e); }
+    } catch (e) { ko++; errors.push(`${fullName(x.u)} : ${e.message}`); console.error(fullName(x.u), e); }
   }
-  toast(`Déploiement terminé : ${ok} utilisateur${ok > 1 ? 's' : ''} mis à jour${ko ? `, ${ko} en erreur (détail dans la console)` : ''}.`, 8000);
+  toast(`Déploiement terminé : ${ok} utilisateur${ok > 1 ? 's' : ''} mis à jour${ko ? `, ${ko} en erreur` : ''}${skipped.length ? `, ${skipped.length} sauté(s)` : ''}.`, 10000);
+  if (skipped.length || errors.length) {
+    console.warn('[astrea] déploiement', { skipped, errors });
+    confirmModal(`<h3>Utilisateurs non modifiés</h3>
+      ${errors.length ? `<p>Refusés par Wazo (rien d'écrit pour leurs touches de fonction ; les touches ligne ont pu être écrites avant) :</p><ul>${errors.map((s) => `<li>${esc(s)}</li>`).join('')}</ul>` : ''}
+      ${skipped.length ? `<p>Touches modifiées dans Wazo entre l'aperçu et le déploiement : rien n'a été écrit pour eux. Relancez l'aperçu pour les reprendre.</p><ul>${skipped.map((s) => `<li>${esc(s)}</li>`).join('')}</ul>` : ''}`, () => {}, 'Compris');
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -2136,7 +2270,7 @@ async function applyDeploy() {
 // Format : { app, version, created, base, tenant, reason, entries: [{ uuid,
 // name, userfield, keys }] } — keys = touches propres (hors héritées).
 const BK_STORE = 'astrea-blf-last-backup';
-const APP_VERSION = '0.40.24';
+const APP_VERSION = '0.40.25';
 function makeBackup(reason, entries) {
   const bk = { app: 'astrea-blf', version: APP_VERSION, created: new Date().toISOString(), base: S.base, tenant: S.tenant, reason, entries };
   const json = JSON.stringify(bk, null, 1);
@@ -2185,6 +2319,7 @@ function restoreBackup(bk) {
     <p>${known.length} utilisateur(s) retrouvé(s) sur ${bk.entries.length}. Leurs touches propres et leur userfield vont être remis à l'état sauvegardé (les modifications faites depuis seront perdues).</p>`,
   async () => {
     let ok = 0, ko = 0;
+    const errs = [];
     for (const [i, e] of known.entries()) {
       toast(`Restauration ${i + 1}/${known.length}…`, 60000);
       try {
@@ -2206,13 +2341,19 @@ function restoreBackup(bk) {
           const sameLines = JSON.stringify(lineMapValue(curMap)) === JSON.stringify(lineMapValue(parseLineMap(wanted)));
           const sameLabels = !lbPatch || JSON.stringify(curLb) === JSON.stringify(cleanLabels(e.linelabels));
           if (sameLines && sameLabels) { ok++; continue; }
-          await setDeviceLineKeys(dev.id, wanted, lbPatch);
+          // État exact de la sauvegarde : un compte absent de la sauvegarde
+          // revient à 1 (setDeviceLineKeys fusionne avec l'existant).
+          const exact = { ...Object.fromEntries(Object.keys(curMap).map((k) => [k, 1])), ...parseLineMap(wanted) };
+          await setDeviceLineKeys(dev.id, exact, lbPatch);
           try { await api('GET', `/devices/${dev.id}/synchronize`); } catch { /* resynchro facultative */ }
         }
         ok++;
-      } catch (err) { ko++; console.error(e.name, err); }
+      } catch (err) { ko++; errs.push(`${e.name} : ${err.message}`); console.error(e.name, err); }
     }
-    toast(`Restauration terminée : ${ok} utilisateur(s)${ko ? `, ${ko} en erreur (console)` : ''}.`, 8000);
+    toast(`Restauration terminée : ${ok} utilisateur(s)${ko ? `, ${ko} en erreur` : ''}.`, 8000);
+    // Cas typique : une touche de la sauvegarde vise un objet supprimé depuis
+    // (confd refuse tout le jeu de touches de l'utilisateur).
+    if (errs.length) confirmModal(`<h3>Restauration incomplète</h3><p>Refusés par Wazo :</p><ul>${errs.map((s) => `<li>${esc(s)}</li>`).join('')}</ul><p class="muted small">Souvent : une touche de la sauvegarde vise un utilisateur, groupe ou agent supprimé depuis. Wazo refuse alors tout le jeu de touches de la personne.</p>`, () => {}, 'Compris');
     if (S.cur && !S.cur.tpl) selectUser(S.cur.user);
   }, 'Restaurer');
 }

@@ -13,7 +13,7 @@
 // Les objets Wazo correspondants (destinations confd user_id, group_id…) ne
 // sont résolus qu'à l'écriture : convertir une file en groupe ne demande donc
 // aucune reprise des destinations qui la visent.
-import { nameOf, schedulesOf, STRATEGY } from './3cx.js?v=0.40.24';
+import { nameOf, schedulesOf, STRATEGY } from './3cx.js?v=0.40.25';
 
 export const DRAFT_FORMAT = 'astrea-3cx-draft';
 const KEY = 'astrea-migration-3cx-draft-v1';

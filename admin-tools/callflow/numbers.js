@@ -8,8 +8,8 @@
 // Même champ partout (création et éditeurs complets) : liste des numéros
 // libres, plages du contexte choisi et premier numéro libre, mis à jour au
 // changement de contexte.
-import { esc } from '../common/core.js?v=0.40.24';
-import { M, showNum } from './model.js?v=0.40.24';
+import { esc } from '../common/core.js?v=0.40.25';
+import { M, showNum } from './model.js?v=0.40.25';
 
 export const RANGE_KEY = { group: 'group_ranges', queue: 'queue_ranges', conference: 'conference_room_ranges' };
 const RANGE_NAME = { group: 'groupes', queue: 'files d\'attente', conference: 'conférences' };
@@ -91,18 +91,29 @@ export function bindNumberField(box, kind, { attrs = { ext: 'data-ext', ctx: 'da
 // ---------------------------------------------------------------------------
 const PAT_RE = /^_[*#0-9_XxZzNn[\].!-]{1,39}$/;
 const incallRanges = (ctx) => M.by.context?.get(ctx)?.incall_ranges || [];
-export const inIncallRange = (ctx, ex) => incallRanges(ctx).some((r) => /^\d+$/.test(ex) && ex.length === String(r.start).length && BigInt(ex) >= BigInt(r.start) && BigInt(ex) <= BigInt(r.end || r.start));
-export function checkIncallNumber(ctx, ex, own = '') {
+// Plage d'un contexte entrant comme Wazo (audit du 21/10/2026, vérifié : xivo-dao
+// contextnumbers.in_range compare int(exten) à int(start[-did_length:]) et
+// int(end[-did_length:]) ; did_length 0 = numéro complet). Avec did_length (ex. 4),
+// la SDA porte les derniers chiffres seulement (ex. 7652).
+const cut = (s, dl) => (dl ? String(s).slice(-dl) : String(s));
+const bounds = (r) => { const dl = Number(r.did_length) || 0; return { dl, a: cut(r.start, dl), b: cut(r.end || r.start, dl) }; };
+export const inIncallRange = (ctx, ex) => /^\d+$/.test(ex) && incallRanges(ctx).some((r) => { const { a, b } = bounds(r); return BigInt(ex) >= BigInt(a) && BigInt(ex) <= BigInt(b); });
+// strict : modification d'un numéro existant (confd contrôle alors les plages,
+// ExtensionRangeValidator « edit ») ; à la création, confd ne les contrôle pas
+// (incall_extension/validator.py) : hors plage = avertissement, pas un refus.
+export function checkIncallNumber(ctx, ex, own = '', strict = false) {
   const c = M.by.context?.get(ctx);
   if (!ex) return 'Numéro obligatoire.';
   if (ex.startsWith('_')) { if (!PAT_RE.test(ex)) return 'Motif : commence par « _ », puis chiffres, X (0-9), Z (1-9), N (2-9), [1-5], « . » ou « ! » (40 caractères au plus).'; }
   else {
     if (!/^[0-9*#]{1,40}$/.test(ex)) return 'Numéro : chiffres seulement, tel que reçu de l\'opérateur.';
-    if (!inIncallRange(ctx, ex)) return `Numéro ${ex} hors des plages SDA du contexte ${c?.label || ctx} (${incallRanges(ctx).map(rangeTxt).join(', ') || 'aucune'}).`;
+    if (strict && !inIncallRange(ctx, ex)) return `Numéro ${ex} hors des plages SDA du contexte ${c?.label || ctx} (${incallRanges(ctx).map(rangeTxt).join(', ') || 'aucune'}) : Wazo refuse de modifier un numéro hors plage.`;
   }
   if (ex !== own && M.ext.has(`${ex}@${ctx}`)) return `Le numéro ${ex} a déjà une SDA dans ce contexte.`;
   return '';
 }
+// Avertissement (création) : numéro hors des plages déclarées.
+export const incallOutOfRange = (ctx, ex) => (!ex.startsWith('_') && /^\d+$/.test(ex) && !inIncallRange(ctx, ex) ? `Numéro ${ex} hors des plages SDA déclarées : Wazo l'accepte à la création, mais refusera de le modifier plus tard. Déclarez-le dans le portail (Contextes) si besoin.` : '');
 export function incallNumberHtml({ exten = '', pattern = false, field }) {
   return `<div class="cf-ge-f"><span class="cf-ge-l">Format du numéro *</span><span class="cf-ge-row">
       <label class="inline"><input type="radio" name="inc-fmt" value="num"${pattern ? '' : ' checked'}> Numéro</label>
@@ -123,7 +134,8 @@ export function bindIncallNumber(box, ctxOrFn, own = '') {
     const ctx = ctxOf(); const pat = box.querySelector('input[name="inc-fmt"]:checked')?.value === 'pat';
     box.querySelector('#inc-num').hidden = pat; box.querySelector('#inc-pat').hidden = !pat;
     const l = incallRanges(ctx); const free = [];
-    for (const r of l) { const len = String(r.start).length; for (let n = BigInt(r.start), e = BigInt(r.end || r.start); n <= e && free.length < MAX_FREE; n += 1n) { const x = n.toString().padStart(len, '0'); if (x !== own && !M.ext.has(`${x}@${ctx}`)) free.push(x); } }
+    // Numéros libres sous la forme que Wazo compare (derniers chiffres si did_length).
+    for (const r of l) { const { a, b } = bounds(r); const len = a.length; for (let n = BigInt(a), e = BigInt(b); n <= e && free.length < MAX_FREE; n += 1n) { const x = n.toString().padStart(len, '0'); if (x !== own && !M.ext.has(`${x}@${ctx}`)) free.push(x); } }
     box.querySelector('#inc-num-l').innerHTML = free.map((x) => `<option value="${esc(x)}">`).join('');
     const fs = box.querySelector('#inc-free');
     if (fs) fs.innerHTML = `<option value="">Choisir un numéro libre…</option>${free.map((x) => `<option value="${esc(x)}">${esc(showNum(x))}${showNum(x).replace(/\s/g, '') !== x ? ` · ${esc(x)}` : ''}</option>`).join('')}`;

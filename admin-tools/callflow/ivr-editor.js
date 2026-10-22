@@ -11,9 +11,9 @@
 //    envoyé = liste complète.
 // Le format des champs *_sound n'est pas documenté : on garde la valeur lue et
 // on propose les sons du tenant (même valeur que destination.filename, supposé).
-import { $, esc, confirmModal, helpButton, helpBox } from '../common/core.js?v=0.40.24';
-import { pickerHtml, bindPicker, readPicker, fillSoundSelect } from './sched-editor.js?v=0.40.24';
-import { sec, field, setSums, openSec } from './ed-ui.js?v=0.40.24';
+import { $, esc, confirmModal, helpButton, helpBox } from '../common/core.js?v=0.40.25';
+import { pickerHtml, bindPicker, readPicker, fillSoundSelect } from './sched-editor.js?v=0.40.25';
+import { sec, field, setSums, openSec } from './ed-ui.js?v=0.40.25';
 
 export const IVR_FIELDS = ['name', 'description', 'greeting_sound', 'menu_sound', 'invalid_sound', 'abort_sound', 'timeout', 'max_tries'];
 const DESTS = ['timeout_destination', 'invalid_destination', 'abort_destination'];
@@ -57,7 +57,7 @@ export function openIvrEditor(o, onSave) {
         ${field('Attente d\'une touche (s)', `<input type="number" min="0" step="1" data-f="timeout" value="${esc(f.timeout ?? '')}">`, 'Après le menu.')}
         ${field('Nombre d\'essais', `<input type="number" min="1" step="1" data-f="max_tries" value="${esc(f.max_tries ?? '')}">`, 'Au-delà : « Trop d\'essais ».')}
       </div>
-      <div class="cf-ge-f"><span class="cf-ge-l">Sans saisie</span>${pickerHtml('ie-timeout', v.timeout_destination)}<span class="small muted">Vide : le menu est rejoué jusqu'au nombre d'essais (supposé).</span></div>
+      <div class="cf-ge-f"><span class="cf-ge-l">Sans saisie</span>${pickerHtml('ie-timeout', v.timeout_destination)}<span class="small muted">Vide : le menu est rejoué jusqu'au nombre d'essais, puis abandon (vérifié, modèle ivr.jinja). Avec une destination, elle est prise dès le premier délai écoulé : le nombre d'essais ne compte plus.</span></div>
       <div class="cf-ge-f"><span class="cf-ge-l">Touche invalide</span>${pickerHtml('ie-invalid', v.invalid_destination)}</div>
       <div class="cf-ge-f"><span class="cf-ge-l">Trop d'essais</span>${pickerHtml('ie-abort', v.abort_destination)}</div>`)}
     <p id="ie-err" class="error small"></p></div>`, () => {

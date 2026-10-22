@@ -17,8 +17,8 @@
 //    custom (application_uuid).
 // Les champs portent data-x="…" : lus dans leur conteneur (pas d'id), donc
 // utilisables plusieurs fois dans un même dialogue.
-import { esc } from '../common/core.js?v=0.40.24';
-import { M } from './model.js?v=0.40.24';
+import { esc } from '../common/core.js?v=0.40.25';
+import { M } from './model.js?v=0.40.25';
 
 export const EXTRA_TYPES = [['outcall', 'Règle sortante'], ['application', 'Application'], ['custom', 'Commande']];
 export const APPS = [['disa', 'DISA : composer un numéro après un code'], ['callback_disa', 'Rappel DISA'], ['directory', 'Annuaire'], ['fax_to_mail', 'Fax vers e-mail'], ['voicemail', 'Consultation des messageries'], ['custom', 'Application Wazo (Stasis)']];
@@ -53,7 +53,7 @@ export function destFieldsHtml(t, cur) {
 // Options d'un type (sonnerie, musique, accueil, son, raccrocher).
 export function destOptsHtml(t, cur) {
   const s = cur?.type === t ? cur : null; const p = [];
-  if (RINGS.has(t)) p.push(fld('Durée de sonnerie (s)', `<input type="number" min="0" step="1" data-x="ring" value="${esc(s?.ring_time ?? '')}" placeholder="durée de l'objet">`, 'Propre à cette sortie. Vide : la durée réglée sur l\'objet (supposé : celle-ci prime quand elle est donnée).'));
+  if (RINGS.has(t)) p.push(fld('Durée de sonnerie (s)', `<input type="number" min="0" step="1" data-x="ring" value="${esc(s?.ring_time ?? '')}" placeholder="durée de l'objet">`, t === 'group' ? 'Propre à cette sortie : remplace la durée totale du groupe (vérifié, dialplan extensions_lib_group.conf). Vide : la durée du groupe.' : 'Propre à cette sortie. Vide : la durée réglée sur l\'objet (supposé : celle-ci prime quand elle est donnée).'));
   if (t === 'user') {
     const mohs = (M.lists.moh || []).filter((m) => m.uuid);
     p.push(fld('Musique de distribution d\'appel', `<select data-x="moh"><option value="">Aucune : sonnerie</option>${mohs.map((m) => `<option value="${esc(m.uuid)}"${s?.moh_uuid === m.uuid ? ' selected' : ''}>${esc(m.label || m.name)}</option>`).join('')}${s?.moh_uuid && !mohs.some((m) => m.uuid === s.moh_uuid) ? `<option value="${esc(s.moh_uuid)}" selected>${esc(s.moh_uuid)} (actuelle)</option>` : ''}</select>`, 'Ce qu\'entend l\'appelant pendant que l\'utilisateur sonne.'));

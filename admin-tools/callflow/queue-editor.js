@@ -18,12 +18,12 @@
 //    présent sort sans notifier Asterisk : pour changer priorité ou pénalité,
 //    write.js retire puis rajoute le membre ;
 //  - une seule extension, contexte internal, dans les queue_ranges.
-import { $, esc, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.40.24';
-import { M, listOf, QSTRAT } from './model.js?v=0.40.24';
-import { pickerHtml, bindPicker, readPicker, fillSoundSelect } from './sched-editor.js?v=0.40.24';
-import { sec, field, setSums, openSec } from './ed-ui.js?v=0.40.24';
-import { bindNewSchedule, schedValue } from './create.js?v=0.40.24';
-import { numberFieldHtml, bindNumberField, checkNumber } from './numbers.js?v=0.40.24';
+import { $, esc, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.40.25';
+import { M, listOf, QSTRAT } from './model.js?v=0.40.25';
+import { pickerHtml, bindPicker, readPicker, fillSoundSelect } from './sched-editor.js?v=0.40.25';
+import { sec, field, setSums, openSec } from './ed-ui.js?v=0.40.25';
+import { bindNewSchedule, schedValue } from './create.js?v=0.40.25';
+import { numberFieldHtml, bindNumberField, checkNumber } from './numbers.js?v=0.40.25';
 
 const QSTRAT_HELP = {
   ringall: 'Tous les agents disponibles sonnent ensemble ; le premier qui décroche prend l\'appel.',
@@ -54,6 +54,9 @@ const BOOL = {
   dtmf_record_caller_enabled: ['L\'appelant peut enregistrer par touche', ''],
   dtmf_record_toggle: ['Enregistrement sur demande', 'Démarrer / arrêter l\'enregistrement par une touche.'],
 };
+// Valeurs par défaut de Wazo d'une option retirée (vérifié, xivo-dao alchemy/queue.py server_default ;
+// options.setter → reset_native_options). timeoutpriority : conf à la création d'une file (queuefeatures.py).
+const QDEF = { ringinuse: 'non', strategy: 'tous en même temps', timeoutpriority: 'app', autofill: 'oui', 'announce-position': 'oui' };
 // Options Asterisk présentées par un champ ; les autres restent dans « Autres options Asterisk ».
 const OPT_KNOWN = ['strategy', 'timeout', 'retry', 'wrapuptime', 'maxlen', 'weight', 'ringinuse', 'autopause', 'joinempty', 'leavewhenempty', 'announce-frequency',
   'announce-holdtime', 'announce-position', 'periodic-announce', 'periodic-announce-frequency', 'servicelevel', 'timeoutrestart', 'memberdelay'];
@@ -94,7 +97,9 @@ export function openQueueEditor(q, onSave) {
   const isDnd = (uuid) => !!M.userByUuid.get(uuid)?.services?.dnd?.enabled;
   const num = (k, label, help, ph) => field(label, `<input type="number" min="0" step="1" data-f="${k}" value="${esc(f[k] ?? '')}" placeholder="${esc(ph || '')}">`, help);
   const onum = (k, label, help, ph) => field(label, `<input type="number" min="0" step="1" data-o="${k}" value="${esc(o[k] ?? '')}" placeholder="${esc(ph || '')}">`, help);
-  const osel = (k, label, list, help) => field(label, `<select data-o="${k}"><option value="">Défaut Asterisk</option>${list.map(([x, l]) => `<option value="${esc(x)}"${o[k] === x ? ' selected' : ''}>${esc(l)}</option>`).join('')}${o[k] && !list.some(([x]) => x === o[k]) ? `<option value="${esc(o[k])}" selected>${esc(o[k])} (actuel)</option>` : ''}</select>`, help);
+  // Option vide = valeur par défaut de Wazo (colonne de la table queue, xivo-dao
+  // alchemy/queue.py), pas celle d'Asterisk (audit du 21/10/2026, vérifié) : ex. ringinuse → no.
+  const osel = (k, label, list, help) => field(label, `<select data-o="${k}"><option value="">Défaut Wazo${QDEF[k] ? ` (${QDEF[k]})` : ''}</option>${list.map(([x, l]) => `<option value="${esc(x)}"${o[k] === x ? ' selected' : ''}>${esc(l)}</option>`).join('')}${o[k] && !list.some(([x]) => x === o[k]) ? `<option value="${esc(o[k])}" selected>${esc(o[k])} (actuel)</option>` : ''}</select>`, help);
   const otext = (k, label, help, ph) => field(label, `<input data-o="${k}" value="${esc(o[k] ?? '')}" placeholder="${esc(ph || '')}">`, help);
   const bool = (k) => `<label class="cf-ge-b"><input type="checkbox" data-b="${k}"${f[k] ? ' checked' : ''}><span><strong>${esc(BOOL[k][0])}</strong>${BOOL[k][1] ? `<span class="small muted">${esc(BOOL[k][1])}</span>` : ''}</span></label>`;
   const moves = (p, i, n) => `<button class="icon" data-up="${p}${i}" title="Monter"${i ? '' : ' disabled'}>↑</button><button class="icon" data-down="${p}${i}" title="Descendre"${i < n - 1 ? '' : ' disabled'}>↓</button><button class="icon" data-del="${p}${i}" title="Retirer de la file">×</button>`;
@@ -105,7 +110,7 @@ export function openQueueEditor(q, onSave) {
   const live = (M.live?.get(q.name) || []).filter((x) => x.dynamic);
   const sched = (q.schedules || [])[0]?.id;
   const fb = q.fallbacks || {};
-  const mohOpts = `<option value="">Aucune</option><option value="default"${f.music_on_hold === 'default' ? ' selected' : ''}>Par défaut</option>${(M.lists.moh || []).filter((m) => m.name !== 'default').map((m) => `<option value="${esc(m.name)}"${f.music_on_hold === m.name ? ' selected' : ''}>${esc(m.label || m.name)}</option>`).join('')}${f.music_on_hold && f.music_on_hold !== 'default' && !(M.lists.moh || []).some((m) => m.name === f.music_on_hold) ? `<option value="${esc(f.music_on_hold)}" selected>${esc(f.music_on_hold)} (actuelle)</option>` : ''}`;
+  const mohOpts = `<option value="">Aucune choisie (Asterisk joue sa musique « default », supposé)</option><option value="default"${f.music_on_hold === 'default' ? ' selected' : ''}>Par défaut</option>${(M.lists.moh || []).filter((m) => m.name !== 'default').map((m) => `<option value="${esc(m.name)}"${f.music_on_hold === m.name ? ' selected' : ''}>${esc(m.label || m.name)}</option>`).join('')}${f.music_on_hold && f.music_on_hold !== 'default' && !(M.lists.moh || []).some((m) => m.name === f.music_on_hold) ? `<option value="${esc(f.music_on_hold)}" selected>${esc(f.music_on_hold)} (actuelle)</option>` : ''}`;
   const cidOpts = [['', 'Inchangé : nom de l\'appelant seul'], ['prepend', 'Texte, puis nom de l\'appelant'], ['overwrite', 'Texte seul, à la place du nom'], ['append', 'Nom de l\'appelant, puis texte']].map(([k, l]) => `<option value="${k}"${(f.caller_id_mode || '') === k ? ' selected' : ''}>${esc(l)}</option>`).join('');
   const others = () => Object.keys(o).filter((k) => !OPT_KNOWN.includes(k));
   const otherRows = () => others().map((k) => `<li><code>${esc(k)}</code><input data-o="${esc(k)}" value="${esc(o[k])}"><span class="spacer"></span><button class="icon" data-odel="${esc(k)}" title="Retirer cette option (valeur par défaut d'Asterisk)">×</button></li>`).join('') || '<li class="muted">Aucune autre option</li>';
@@ -124,13 +129,13 @@ export function openQueueEditor(q, onSave) {
       <p class="small muted cf-ge-note" id="qe-strat-h">${esc(QSTRAT_HELP[o.strategy || 'ringall'] || '')}</p>
       <div class="cf-ge-3">
         ${num('timeout', 'Durée totale (s)', 'Avant le débordement « pas de réponse ». Vide ou 0 : sans limite.', 'illimitée')}
-        ${onum('timeout', 'Sonnerie par agent (s)', 'Option Asterisk timeout. Vide = 15 s (défaut, vérifié dans xivo-dao). 0 = sans coupure, jusqu\'à la durée totale.', 'vide = 15')}
-        ${onum('retry', 'Pause de réessai (s)', 'Attente entre deux tentatives. Vide = 5 s (défaut, vérifié dans xivo-dao). 0 = aucune pause.', 'vide = 5')}
+        ${onum('timeout', 'Sonnerie par agent (s)', 'Vide = 15 s (écrit tel quel : vidé, Wazo mettrait 0). 0 = l\'agent sonne sans limite, la durée totale n\'étant vérifiée qu\'entre deux tentatives (vérifié : xivo-dao, app_queue).', '15')}
+        ${onum('retry', 'Pause de réessai (s)', 'Attente entre deux tentatives. Vide = 5 s. Asterisk ramène 0 à 5 s (vérifié, app_queue).', '5')}
       </div>
       <div id="qe-tour" class="cf-ge-tour" hidden></div>
       <div class="cf-ge-3">
         ${onum('wrapuptime', 'Repos après un appel (s)', 'L\'agent n\'est pas rappelé pendant ce temps.', '0')}
-        ${onum('maxlen', 'Appelants en attente max.', '0 = illimité ; au-delà : « occupé ».', '0')}
+        ${onum('maxlen', 'Appelants en attente max.', '0 = illimité ; au-delà : « Si la file est pleine » (vérifié, dialplan : FULL → congestion).', '0')}
         ${onum('weight', 'Poids', 'Priorité de cette file sur les autres pour un même agent.', '0')}
       </div>
       ${osel('ringinuse', 'Agent déjà en communication', [['no', 'Ne pas le faire sonner'], ['yes', 'Le faire sonner quand même']])}
@@ -146,8 +151,8 @@ export function openQueueEditor(q, onSave) {
       ${live.length ? `<p class="small muted">Connectés en ce moment (agents logués, lus dans Asterisk) : ${esc(live.map((x) => x.name).join(', '))}</p>` : ''}`, { open: true, help: 'Agent : sonne seulement quand il est connecté à la file (*31 ou application), peut se mettre en pause, a une pénalité (les plus basses sont appelées d\'abord) et des statistiques. Pour un centre d\'appels. Utilisateur : ses postes sonnent toujours, sans connexion ni pénalité ; en NPD, il est mis en pause. Pour faire simplement sonner des postes. Chaque ajout, retrait ou changement est une écriture séparée ; pour changer l\'ordre ou la pénalité d\'un membre existant, l\'appli le retire puis le rajoute (confd ne notifie pas Asterisk sinon, vérifié).' })}
     ${sec('fb', 'Débordements', `
       <div class="cf-ge-f"><span class="cf-ge-l">Si personne ne répond (durée totale)</span>${pickerHtml('qe-noans', fb.noanswer_destination)}</div>
-      <div class="cf-ge-f"><span class="cf-ge-l">Si la file est pleine (occupé)</span>${pickerHtml('qe-busy', fb.busy_destination)}</div>
-      <div class="cf-ge-f"><span class="cf-ge-l">Si encombré</span>${pickerHtml('qe-cong', fb.congestion_destination)}</div>
+      <div class="cf-ge-f"><span class="cf-ge-l">Si la file est pleine (appelants max. atteint)</span>${pickerHtml('qe-cong', fb.congestion_destination)}</div>
+      <div class="cf-ge-f"><span class="cf-ge-l">Si occupé (jamais utilisé par Wazo pour une file, vérifié dans le dialplan)</span>${pickerHtml('qe-busy', fb.busy_destination)}</div>
       <div class="cf-ge-f"><span class="cf-ge-l">Si échec (aucun agent, file désactivée…)</span>${pickerHtml('qe-fail', fb.fail_destination)}</div>
       <div class="cf-ge-2">
         ${num('wait_time_threshold', 'Attente estimée max. (s)', 'Au-delà, l\'appelant part vers la destination ci-dessous dès l\'entrée.', 'aucun seuil')}
@@ -192,7 +197,8 @@ export function openQueueEditor(q, onSave) {
       </div>
       <div class="cf-ge-l">Autres options Asterisk</div>
       <ul class="cf-ge-list cf-qe-raw" id="qe-raw">${otherRows()}</ul>
-      <div class="cf-ge-row"><input id="qe-rk" placeholder="option (ex. reportholdtime)"><input id="qe-rv" placeholder="valeur"><button data-add="o">Ajouter</button></div>`, { help: 'Options de la file Asterisk telles que confd les expose. confd remplace toute la liste à chaque écriture : l\'appli renvoie toujours toutes les options, modifiées ou non. Une option retirée revient à la valeur par défaut d\'Asterisk.' })}
+      <div class="cf-ge-row"><input id="qe-rk" placeholder="option (ex. reportholdtime)"><input id="qe-rv" placeholder="valeur"><button data-add="o">Ajouter</button></div>
+      <p class="small muted">Une option qui n'est pas une colonne de Wazo n'est pas enregistrée (vérifié, xivo-dao : _options non persistées) : après « Appliquer », la relecture de la file la fait disparaître.</p>`, { help: 'Options de la file Asterisk telles que confd les expose. confd remplace toute la liste à chaque écriture : l\'appli renvoie toujours toutes les options, modifiées ou non. Une option retirée revient à la valeur par défaut de Wazo (colonne de la table queue), pas à celle d\'Asterisk (vérifié).' })}
     <p id="qe-err" class="error small"></p></div>`, () => {
     const box = $('modal-body');
     const err = (m, s) => { openSec(box, s); $('qe-err').textContent = m; return false; };
@@ -210,6 +216,11 @@ export function openQueueEditor(q, onSave) {
     const no = {};
     for (const el of box.querySelectorAll('[data-o]')) { const k = el.dataset.o; const s = el.value.trim(); if (s !== '') no[k] = s; }
     for (const k of ['timeout', 'retry', 'wrapuptime', 'maxlen', 'weight', 'announce-frequency', 'periodic-announce-frequency', 'servicelevel', 'memberdelay']) if (no[k] != null && !/^\d+$/.test(no[k])) return err(`Option ${k} : nombre entier positif.`, 'ring');
+    // Jamais de valeur cachée (audit du 21/10/2026, vérifié) : une option absente revient à la
+    // colonne Wazo (timeout → 0 = sonnerie sans limite), pas aux 15 / 5 de la création.
+    if (no.timeout == null) no.timeout = '15';
+    if (no.retry == null || no.retry === '0') no.retry = '5';
+    if (o.timeoutpriority && no.timeoutpriority == null) no.timeoutpriority = o.timeoutpriority;
     const ex = box.querySelector('[data-ext]').value.trim();
     let extension = null;
     if (ex) {
@@ -253,7 +264,7 @@ export function openQueueEditor(q, onSave) {
       mem: [`${agents.length} agent${agents.length > 1 ? 's' : ''}`, `${users.length} utilisateur${users.length > 1 ? 's' : ''}`],
       fb: [`sans réponse : ${pick('qe-noans')}`, val('[data-f="wait_time_threshold"]') ? `attente > ${val('[data-f="wait_time_threshold"]')} s` : ''],
       ann: ann(),
-      opt: [val('[data-f="music_on_hold"]') ? `musique ${txt('[data-f="music_on_hold"]')}` : 'sans musique', val('[data-f="caller_id_mode"]') ? `nom « ${val('[data-f="caller_id_name"]')} »` : ''],
+      opt: [val('[data-f="music_on_hold"]') ? `musique ${txt('[data-f="music_on_hold"]')}` : 'musique par défaut', val('[data-f="caller_id_mode"]') ? `nom « ${val('[data-f="caller_id_name"]')} »` : ''],
       dtmf: [`${box.querySelectorAll('[data-sec="dtmf"] input:checked').length} activée(s)`],
       sch: [schedValue($('qe-sched')) ? $('qe-sched').selectedOptions[0].text : 'aucun'],
       adv: [others().length ? `${others().length} autre${others().length > 1 ? 's' : ''} option${others().length > 1 ? 's' : ''}` : ''],
@@ -289,7 +300,11 @@ export function openQueueEditor(q, onSave) {
     const t = e.target.closest('[data-usetour]');
     if (t) { box.querySelector('[data-f="timeout"]').value = t.dataset.usetour; recap(); return; }
     const od = e.target.closest('[data-odel]');
-    if (od) { delete o[od.dataset.odel]; redraw(); return; }
+    if (od) {
+      // timeoutpriority : retiré, Wazo le remettrait à « app » (une file est créée en « conf ») : gardé (audit 21/10/2026).
+      if (od.dataset.odel === 'timeoutpriority') { $('qe-err').textContent = 'timeoutpriority ne se retire pas (Wazo le remettrait à « app » ; une file est créée en « conf ») : changez sa valeur si besoin.'; return; }
+      delete o[od.dataset.odel]; redraw(); return;
+    }
     const b = e.target.closest('[data-up],[data-down],[data-del],[data-add]'); if (!b) return;
     const ref = b.dataset.up || b.dataset.down || b.dataset.del;
     if (ref) {

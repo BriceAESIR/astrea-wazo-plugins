@@ -12,13 +12,13 @@
 // Toujours : relire juste avant d'écrire, ne rien écrire si c'est identique,
 // une seule écriture par objet.
 // Appels liés au tenant des données chargées (tapi, model.js : arrêt si le portail change de tenant).
-import { M, tapi as api } from './model.js?v=0.40.24';
-import { groupCfgOf, applyGroupCfg, GROUP_FIELDS } from './group-editor.js?v=0.40.24';
-import { queueCfgOf, applyQueueCfg, QUEUE_FIELDS, optionsList } from './queue-editor.js?v=0.40.24';
-import { ivrCfgOf, applyIvrCfg, IVR_FIELDS } from './ivr-editor.js?v=0.40.24';
-import { sbCfgOf, applySbCfg, SB_FIELDS } from './sb-editor.js?v=0.40.24';
-import { incallCfgOf, applyIncallCfg, INCALL_FIELDS, userCfgOf, applyUserCfg, USER_FIELDS, vmCfgOf, applyVmCfg, VM_FIELDS, confCfgOf, applyConfCfg, CONF_FIELDS, schedCfgOf, applySchedCfg, SCHED_FIELDS } from './obj-editors.js?v=0.40.24';
-import { outcallCfgOf, applyOutcallCfg, OUTCALL_FIELDS } from './outcall-editor.js?v=0.40.24';
+import { M, tapi as api } from './model.js?v=0.40.25';
+import { groupCfgOf, applyGroupCfg, GROUP_FIELDS } from './group-editor.js?v=0.40.25';
+import { queueCfgOf, applyQueueCfg, QUEUE_FIELDS, optionsList } from './queue-editor.js?v=0.40.25';
+import { ivrCfgOf, applyIvrCfg, IVR_FIELDS } from './ivr-editor.js?v=0.40.25';
+import { sbCfgOf, applySbCfg, SB_FIELDS } from './sb-editor.js?v=0.40.25';
+import { incallCfgOf, applyIncallCfg, INCALL_FIELDS, userCfgOf, applyUserCfg, USER_FIELDS, vmCfgOf, applyVmCfg, VM_FIELDS, confCfgOf, applyConfCfg, CONF_FIELDS, schedCfgOf, applySchedCfg, SCHED_FIELDS } from './obj-editors.js?v=0.40.25';
+import { outcallCfgOf, applyOutcallCfg, OUTCALL_FIELDS } from './outcall-editor.js?v=0.40.25';
 
 // Réglages « simples » (obj-editors.js) : un PUT partiel des champs modifiés.
 const SIMPLE = {
@@ -43,7 +43,12 @@ export function cleanDest(d) {
   for (const k of DEST_KEYS[d.type] || Object.keys(d)) if (d[k] !== undefined && d[k] !== null && d[k] !== '') out[k] = d[k];
   return out;
 }
-const canon = (d) => JSON.stringify(cleanDest(d), Object.keys(cleanDest(d) || {}).sort());
+// Comparaison avec clés triées à tous les niveaux (audit du 21/10/2026 : le tableau de
+// clés passé à JSON.stringify filtrait aussi les objets imbriqués, skill_rule_variables
+// devenait {} et un changement de cette seule valeur était ignoré).
+const sortKeys = (v) => (Array.isArray(v) ? v.map(sortKeys) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, sortKeys(v[k])])) : v);
+const canonJ = (v) => JSON.stringify(sortKeys(v ?? null));
+const canon = (d) => canonJ(cleanDest(d));
 export const sameDest = (a, b) => canon(a) === canon(b);
 
 // ---------------------------------------------------------------------------
@@ -158,12 +163,56 @@ function opsOf(entries) {
 // numéros de l'objet ne sont pas supprimés, seulement libérés (type user,
 // typeval 0) et restent pris dans leur contexte → supprimés ici aussi pour
 // pouvoir les réutiliser. Échec signalé sans annuler la suppression.
+// Types dont Wazo libère les numéros à la suppression (vérifié : persistors group, queue,
+// conference, outcall, incall). Échec de cette libération : objet bien supprimé, avertissement
+// (pas un échec : les suppressions suivantes ne sont pas sautées, audit du 21/10/2026).
+const FREES_EXT = new Set(['group', 'queue', 'conference', 'outcall', 'incall']);
 async function deleteObject(t, path, before) {
   await api('DELETE', path);
-  const exts = (before?.extensions || []).filter((e) => e?.id);
+  const exts = FREES_EXT.has(t) ? (before?.extensions || []).filter((e) => e?.id) : [];
   const bad = [];
   for (const e of exts) { try { await api('DELETE', `/extensions/${e.id}`); } catch { bad.push(e.exten); } }
-  if (bad.length) throw new Error(`objet supprimé, mais numéro(s) ${bad.join(', ')} non libéré(s) : à supprimer dans le portail (Extensions)`);
+  if (bad.length) return `objet supprimé, mais numéro(s) ${bad.join(', ')} non libéré(s) : à supprimer dans le portail (Extensions)`;
+  return '';
+}
+// Numéro d'un groupe ou d'une file (audit du 21/10/2026, vérifié : une extension dissociée
+// reste prise en type user / typeval 0, xivo-dao extension persistor, « exten already exists ») :
+//  - numéro changé : PUT /extensions/{id} sur l'extension existante (association gardée ;
+//    confd contrôle plage et type de contexte à l'édition) ;
+//  - numéro retiré : dissociation puis suppression de l'extension ;
+//  - numéro ajouté : création puis association ; échec → extension supprimée.
+async function swapExtension(base, old, next) {
+  if (old && next) { if (old.exten !== next.exten || old.context !== next.context) await api('PUT', `/extensions/${old.id}`, { exten: next.exten, context: next.context }); return; }
+  if (old) { await api('DELETE', `${base}/extensions/${old.id}`); try { await api('DELETE', `/extensions/${old.id}`); } catch (e) { throw new Error(`numéro retiré, mais l'extension ${old.exten} reste dans Wazo : ${e.message}`); } return; }
+  if (next) { const c = await api('POST', '/extensions', { exten: next.exten, context: next.context }); try { await api('PUT', `${base}/extensions/${c.id}`); } catch (e) { try { await api('DELETE', `/extensions/${c.id}`); } catch { /* */ } throw e; } }
+}
+// Modifié ailleurs depuis l'ouverture du réglage ? (audit du 21/10/2026 : un réglage
+// complet renvoie toutes ses parties ; une modification faite entre-temps dans le portail
+// ou un autre module serait écrasée sans le dire.) Compare l'état actuel du serveur à
+// celui du brouillon au moment de l'édition (entrée « before ») ; renvoie les écarts
+// pour l'aperçu. Utilisateur : réglages seulement (renvois et services lus ailleurs).
+const CFG_SRC = {
+  group_cfg: [(id) => `/groups/${id}`, groupCfgOf], queue_cfg: [(id) => `/queues/${id}`, queueCfgOf],
+  ivr_cfg: [(id) => `/ivr/${id}`, (o) => normIvr(ivrCfgOf(o))], sb_cfg: [(id) => `/switchboards/${id}`, sbCfgOf],
+  outcall_cfg: [(id) => `/outcalls/${id}`, outcallCfgOf], user_cfg: [(id) => `/users/${id}`, (o) => ({ fields: userCfgOf(o).fields })],
+  sched_periods: [(id) => `/schedules/${id}`, periodsOf],
+};
+export async function conflictsOf(entries) {
+  const out = [];
+  for (const e of entries) {
+    const src = CFG_SRC[e.w.k] || (SIMPLE[e.w.k] && [SIMPLE[e.w.k].path, SIMPLE[e.w.k].of]);
+    if (!src || e.before == null) continue;
+    let srv; try { srv = await api('GET', src[0](e.w.id)); } catch { continue; }
+    const a = src[1](srv || {});
+    const b = e.w.k === 'ivr_cfg' ? normIvr(e.before) : e.w.k === 'user_cfg' ? { fields: e.before.fields } : e.before;
+    const parts = [];
+    for (const k of new Set([...Object.keys(a || {}), ...Object.keys(b || {})])) {
+      if (k === 'fields') { for (const f of new Set([...Object.keys(a.fields || {}), ...Object.keys(b.fields || {})])) if (canonJ(a.fields?.[f]) !== canonJ(b.fields?.[f])) parts.push(f); }
+      else if (canonJ(a[k]) !== canonJ(b[k])) parts.push(k);
+    }
+    if (parts.length) out.push({ e, parts });
+  }
+  return out;
 }
 // Suppression (dernière écriture) : route de chaque type, vérifiée dans wazo-confd.
 const DEL_PATH = { group: (o) => `/groups/${o.uuid}`, queue: (o) => `/queues/${o.id}`, ivr: (o) => `/ivr/${o.id}`, switchboard: (o) => `/switchboards/${o.uuid}`, conference: (o) => `/conferences/${o.id}`, voicemail: (o) => `/voicemails/${o.id}`, schedule: (o) => `/schedules/${o.id}`, outcall: (o) => `/outcalls/${o.id}`, incall: (o) => `/incalls/${o.id}` };
@@ -245,9 +294,20 @@ export async function prepare(entries) {
         open = e.after.open_periods.map((p) => per(p, false));
         exc = e.after.exceptional_periods.map((p) => ({ ...per(p, false), destination: cleanDest(p.destination) || closed }));
       }
+      // Fermeture exceptionnelle repérée par son CONTENU, pas par son rang (audit du
+      // 21/10/2026, vérifié : Schedule.periods sans order_by, ordre de confd non garanti ;
+      // une fermeture ajoutée ailleurs décalerait aussi les rangs). Introuvable ou en
+      // double sur le serveur → refus, plutôt que de poser la destination sur un autre jour.
+      const key = (p) => canonJ({ ...per(p, false) });
+      const local = M.by.schedule?.get(String(op.id))?.exceptional_periods || [];
       for (const e of op.entries) {
         if (e.w.k === 'sched') closed = cleanDest(e.after) || { type: 'none' };
-        else if (e.w.k === 'sched_exc' && exc[e.w.f]) exc[e.w.f].destination = cleanDest(e.after) || { type: 'none' };
+        else if (e.w.k === 'sched_exc') {
+          const want = local[e.w.f]; if (!want) throw new Error(`Horaire ${op.id} : fermeture exceptionnelle introuvable dans la copie locale, rechargez.`);
+          const hits = exc.map((p, i) => [p, i]).filter(([p]) => key(p) === key(want));
+          if (hits.length !== 1) throw new Error(`Horaire ${op.id} : la fermeture exceptionnelle (${want.hours_start}–${want.hours_end}) ${hits.length ? 'existe en double' : 'a été modifiée ou supprimée ailleurs'} ; rechargez puis recommencez.`);
+          hits[0][0].destination = cleanDest(e.after) || { type: 'none' };
+        }
       }
       const body = { closed_destination: closed, open_periods: open, exceptional_periods: exc };
       const norm = (b) => JSON.stringify({ o: (b?.open_periods || []).map((p) => per(p, false)), e: (b?.exceptional_periods || []).map((p) => per(p, true)), c: cleanDest(b?.closed_destination) || { type: 'none' } });
@@ -268,19 +328,7 @@ export async function prepare(entries) {
       if (JSON.stringify(b.extension) !== JSON.stringify(a.extension)) {
         const old = before?.extensions?.[0];
         mine.push({ path: `${base}/extensions`, before: { extensions: before?.extensions }, body: { extension: a.extension }, changed: true,
-          // Une seule extension par groupe (vérifié) : créer la nouvelle, dissocier
-          // l'ancienne, associer la nouvelle ; en cas d'échec, réassocier l'ancienne
-          // et supprimer la nouvelle. L'ancienne extension reste libre dans Wazo.
-          run: async () => {
-            const created = a.extension ? await api('POST', '/extensions', { exten: a.extension.exten, context: a.extension.context }) : null;
-            if (old) await api('DELETE', `${base}/extensions/${old.id}`);
-            if (!created) return;
-            try { await api('PUT', `${base}/extensions/${created.id}`); } catch (e) {
-              if (old) { try { await api('PUT', `${base}/extensions/${old.id}`); } catch { /* */ } }
-              try { await api('DELETE', `/extensions/${created.id}`); } catch { /* */ }
-              throw e;
-            }
-          } });
+          run: async () => swapExtension(base, old, a.extension) });
       }
       for (const id of a.perms.filter((x) => !b.perms.includes(x))) mine.push({ method: 'PUT', path: `${base}/callpermissions/${id}`, before: { call_permissions: before?.call_permissions }, changed: true });
       for (const id of b.perms.filter((x) => !a.perms.includes(x))) mine.push({ method: 'DELETE', path: `${base}/callpermissions/${id}`, before: { call_permissions: before?.call_permissions }, changed: true });
@@ -312,8 +360,12 @@ export async function prepare(entries) {
         } });
         for (const uuid of a.users.filter((x) => !bu.includes(x))) out.push({ path: `/users/${uuid}/voicemails/${op.id}`, before: { users: before?.users || [] }, changed: true, run: async () => {
           const cur = await api('GET', `/users/${uuid}/voicemails`);
-          if ((cur?.items || []).some((v) => String(v.id) !== String(op.id))) await api('DELETE', `/users/${uuid}/voicemails`);
-          if (!(cur?.items || []).some((v) => String(v.id) === String(op.id))) await api('PUT', `/users/${uuid}/voicemails/${op.id}`);
+          const oldId = (cur?.items || []).find((v) => String(v.id) !== String(op.id))?.id ?? null;
+          if (oldId != null) await api('DELETE', `/users/${uuid}/voicemails`);
+          // Échec → l'ancienne messagerie lui est rendue (audit du 21/10/2026).
+          if (!(cur?.items || []).some((v) => String(v.id) === String(op.id))) {
+            try { await api('PUT', `/users/${uuid}/voicemails/${op.id}`); } catch (e) { if (oldId != null) { try { await api('PUT', `/users/${uuid}/voicemails/${oldId}`); } catch { /* */ } } throw e; }
+          }
         } });
       }
     } else if (op.k === 'outcall_cfg') {
@@ -390,8 +442,13 @@ export async function prepare(entries) {
           const old = bi.get(id);
           const same = old && JSON.stringify(bodyOf(old.m, old.i)) === JSON.stringify(bodyOf(m, i));
           if (same) continue;
-          if (old) mine.push({ method: 'DELETE', path: `${base}/members/${kind}/${id}`, before: before?.members, changed: true });
-          mine.push({ path: `${base}/members/${kind}/${id}`, before: before?.members, body: bodyOf(m, i), changed: true });
+          // Membre existant : retiré puis rajouté (un PUT seul ne notifie pas Asterisk, vérifié).
+          // Échec du rajout → l'ancien réglage est remis (audit du 21/10/2026 : membre perdu sinon).
+          if (old) {
+            const prev = bodyOf(old.m, old.i), path = `${base}/members/${kind}/${id}`;
+            mine.push({ method: 'PUT', path, before: before?.members, body: bodyOf(m, i), changed: true, restorable: true,
+              run: async () => { await api('DELETE', path); try { await api('PUT', path, bodyOf(m, i)); } catch (e) { try { await api('PUT', path, prev); } catch { /* */ } throw e; } } });
+          } else mine.push({ path: `${base}/members/${kind}/${id}`, before: before?.members, body: bodyOf(m, i), changed: true });
         }
       };
       memberOps('agents', b.agents, a.agents, (m) => m.id, (m, i) => ({ penalty: m.penalty ?? 0, priority: i }));
@@ -400,16 +457,7 @@ export async function prepare(entries) {
         const old = before?.extensions?.[0];
         mine.push({ path: `${base}/extensions`, before: { extensions: before?.extensions }, body: { extension: a.extension }, changed: true,
           // Une seule extension par file (vérifié, queue_extension/validator.py) : comme pour un groupe.
-          run: async () => {
-            const created = a.extension ? await api('POST', '/extensions', { exten: a.extension.exten, context: a.extension.context }) : null;
-            if (old) await api('DELETE', `${base}/extensions/${old.id}`);
-            if (!created) return;
-            try { await api('PUT', `${base}/extensions/${created.id}`); } catch (e) {
-              if (old) { try { await api('PUT', `${base}/extensions/${old.id}`); } catch { /* */ } }
-              try { await api('DELETE', `/extensions/${created.id}`); } catch { /* */ }
-              throw e;
-            }
-          } });
+          run: async () => swapExtension(base, old, a.extension) });
       }
       out.push(...(mine.length ? mine : [{ path: base, before, changed: false }]));
     } else if (op.k === 'sched_assoc') {
@@ -420,7 +468,10 @@ export async function prepare(entries) {
       const cur = before?.schedules?.[0]?.id ?? null;
       const next = op.entries[op.entries.length - 1].after?.schedule_id ?? null;
       if (cur != null && cur !== next) out.push({ method: 'DELETE', path: `${base}/schedules/${cur}`, before: { schedules: before.schedules }, changed: true });
-      if (next != null && cur !== next) out.push({ method: 'PUT', path: `${base}/schedules/${next}`, before: { schedules: before?.schedules || [] }, changed: true });
+      // Échec de la nouvelle association → l'ancien horaire est remis (audit du 21/10/2026 :
+      // sinon l'objet resterait sans horaire, donc ouvert en permanence).
+      if (next != null && cur !== next) out.push({ method: 'PUT', path: `${base}/schedules/${next}`, before: { schedules: before?.schedules || [] }, changed: true, restorable: true,
+        run: async () => { try { await api('PUT', `${base}/schedules/${next}`); } catch (e) { if (cur != null) { try { await api('PUT', `${base}/schedules/${cur}`); } catch { /* */ } } throw e; } } });
       if (cur === next) out.push({ path: `${base}/schedules`, before: { schedules: before?.schedules || [] }, changed: false });
     }
   }
@@ -433,11 +484,11 @@ export async function execute(ops) {
     if (!op.changed) { res.push({ path: op.path, ok: true, skipped: true }); continue; }
     const m = op.method || 'PUT';
     // Suppression : seulement si tous les remplacements ont été écrits.
-    if (op.final && res.some((r) => !r.ok)) { res.push({ path: `${m} ${op.path}`, ok: false, error: 'non supprimé : une écriture précédente a échoué (l\'objet est encore utilisé)' }); continue; }
+    if (op.final && res.some((r) => !r.ok && !r.final)) { res.push({ path: `${m} ${op.path}`, ok: false, final: true, error: 'non supprimé : une écriture précédente a échoué (l\'objet est encore utilisé)' }); continue; }
     try {
-      if (op.run) await op.run(); else await api(m, op.path, m === 'DELETE' || !op.body ? undefined : op.body);
-      res.push({ path: `${m} ${op.path}`, ok: true });
-    } catch (e) { res.push({ path: `${m} ${op.path}`, ok: false, error: e.message }); }
+      const warn = op.run ? await op.run() : await api(m, op.path, m === 'DELETE' || !op.body ? undefined : op.body);
+      res.push({ path: `${m} ${op.path}`, ok: true, ...(op.final && typeof warn === 'string' && warn ? { warn } : {}) });
+    } catch (e) { res.push({ path: `${m} ${op.path}`, ok: false, final: !!op.final, error: e.message }); }
   }
   return res;
 }

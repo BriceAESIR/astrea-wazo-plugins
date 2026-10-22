@@ -14,12 +14,12 @@
 //  - horaire : closed_destination obligatoire ; listes de jours / mois non vides.
 // Extension : POST /extensions {exten, context} puis PUT /<objet>/{id}/extensions/{ext}
 // (une seule par objet, contexte internal).
-import { $, esc, toast, confirmModal } from '../common/core.js?v=0.40.24';
+import { $, esc, toast, confirmModal } from '../common/core.js?v=0.40.25';
 // Créations liées au tenant des données chargées (tapi, model.js).
-import { M, tapi as api } from './model.js?v=0.40.24';
-import { pickerHtml, bindPicker, readPicker, fillSoundSelect, setObjSelectHook } from './sched-editor.js?v=0.40.24';
-import { field, secretField, bindSecrets, tzSelect, langSelect } from './ed-ui.js?v=0.40.24';
-import { RANGE_KEY as RANGE, numberFieldHtml, bindNumberField, checkNumber, incallNumberHtml, bindIncallNumber, readIncallNumber, checkIncallNumber } from './numbers.js?v=0.40.24';
+import { M, tapi as api, vmTzSelect, vmTzDefault, groupTimes, groupTimesHelp } from './model.js?v=0.40.25';
+import { pickerHtml, bindPicker, readPicker, fillSoundSelect, setObjSelectHook } from './sched-editor.js?v=0.40.25';
+import { field, secretField, bindSecrets, tzSelect, langSelect } from './ed-ui.js?v=0.40.25';
+import { RANGE_KEY as RANGE, numberFieldHtml, bindNumberField, checkNumber, incallNumberHtml, bindIncallNumber, readIncallNumber, checkIncallNumber, incallOutOfRange } from './numbers.js?v=0.40.25';
 
 export const CREATABLE = new Set(['group', 'queue', 'ivr', 'switchboard', 'voicemail', 'conference', 'schedule', 'outcall']);
 export const LABEL = { group: 'un groupe d\'appel', queue: 'une file d\'attente', ivr: 'un SVI', switchboard: 'un standard', voicemail: 'une messagerie', conference: 'une conférence', schedule: 'un horaire', outcall: 'une règle sortante' };
@@ -163,7 +163,8 @@ export function openCreateIncall(onCreated, reload, ctxName = '', showNum = (x) 
     const sid = schedValue($('cr-sched'));
     if (sid) { try { await api('PUT', `/incalls/${inc.id}/schedules/${sid}`); } catch (e) { toast(`SDA créée, mais horaire refusé : ${e.message}`, 9000); } }
     console.info('[astrea] Call Flow : SDA créée', inc.id, ex, ctx);
-    toast(`SDA ${ex.startsWith('_') ? ex : showNum(ex)} créée dans Wazo.${dest ? '' : ' Choisissez maintenant sa destination.'}`, 6000);
+    const oor = incallOutOfRange(ctx, ex);
+    toast(`SDA ${ex.startsWith('_') ? ex : showNum(ex)} créée dans Wazo.${dest ? '' : ' Choisissez maintenant sa destination.'}${oor ? ` ${oor}` : ''}`, oor ? 12000 : 6000);
     await reload?.();
     setTimeout(() => onCreated?.(`incall:${inc.id}`), 0);
     return true;
@@ -185,12 +186,15 @@ function formHtml(type, pfx) {
   const forms = {
     // Durées proposées explicitement (retour de Brice, 20/10/2026 : laissées vides, Wazo
     // appliquait 15 s de sonnerie par membre et 5 s de pause sans le dire).
-    group: () => `${field('Nom *', '<input data-c="label" maxlength="128" placeholder="ex. Accueil">', 'Lettres sans accent, chiffres, espace, - _ .')}${field('Stratégie', `<select data-c="strategy">${opts(GSTRATS)}</select>`)}<div class="cf-ge-3">${field('Durée totale (s)', '<input type="number" min="0" step="1" data-c="to" placeholder="illimitée">', 'Avant « pas de réponse ». Vide ou 0 : sonne indéfiniment.')}${field('Sonnerie par membre (s)', '<input type="number" min="0" step="1" data-c="ut" value="15">', '15 = défaut de Wazo. 0 = sans coupure, jusqu\'à la durée totale.')}${field('Pause de réessai (s)', '<input type="number" min="0" step="1" data-c="rd" value="5">', '5 = défaut de Wazo. 0 = aucune pause.')}</div>${num}`,
-    queue: () => `<div class="cf-ge-2">${field('Nom affiché', '<input data-c="label" maxlength="128" placeholder="ex. Support">')}${field('Nom technique *', '<input data-c="name" maxlength="128" placeholder="ex. support">', 'Sans espace ni accent : lettres, chiffres, - _ .')}</div>${field('Stratégie', `<select data-c="strategy">${opts(QSTRATS)}</select>`)}${num}`,
+    group: () => `${field('Nom *', '<input data-c="label" maxlength="128" placeholder="ex. Accueil">', 'Lettres sans accent, chiffres, espace, - _ .')}${field('Stratégie', `<select data-c="strategy">${opts(GSTRATS)}</select>`)}<div class="cf-ge-3">${field('Durée totale (s)', '<input type="number" min="0" step="1" data-c="to" placeholder="illimitée">', 'Avant « pas de réponse ». Vide ou 0 : sonne indéfiniment.')}${field('Sonnerie par membre (s)', '<input type="number" min="0" step="1" data-c="ut" value="15">')}${field('Pause de réessai (s)', '<input type="number" min="0" step="1" data-c="rd" value="5">')}</div><p class="small muted" data-c-times>${esc(groupTimesHelp('all'))}</p>${num}`,
+    // File (audit du 21/10/2026) : sonnerie par agent, pause, attente max et musique
+    // proposées dès la création (sinon 15 / 5 cachés et attente sans fin, vérifié :
+    // xivo-dao queuefeatures DEFAULT_QUEUE_OPTIONS, QueueFeatures.timeout NULL).
+    queue: () => `<div class="cf-ge-2">${field('Nom affiché', '<input data-c="label" maxlength="128" placeholder="ex. Support">')}${field('Nom technique *', '<input data-c="name" maxlength="128" placeholder="ex. support">', 'Sans espace ni accent : lettres, chiffres, - _ . Unique sur tout le serveur (tous clients), « general » interdit.')}</div>${field('Stratégie', `<select data-c="strategy">${opts(QSTRATS)}</select>`)}<div class="cf-ge-3">${field('Attente maximale (s)', '<input type="number" min="0" step="1" data-c="qto" placeholder="illimitée">', 'Avant « pas de réponse ». Vide : l\'appelant attend sans limite.')}${field('Sonnerie par agent (s)', '<input type="number" min="0" step="1" data-c="qut" value="15">', '15 = défaut de Wazo.')}${field('Pause de réessai (s)', '<input type="number" min="1" step="1" data-c="qrd" value="5">', '5 = défaut de Wazo (Asterisk ramène 0 à 5).')}</div>${field('Musique d\'attente', `<select data-c="qmoh"><option value="">Par défaut du serveur</option>${(M.lists.moh || []).map((m) => `<option value="${esc(m.name)}">${esc(m.label || m.name)}</option>`).join('')}</select>`)}${num}`,
     ivr: () => `${field('Nom *', '<input data-c="name" maxlength="128" placeholder="ex. Menu principal">')}${field('Message du menu *', `<select data-c="menu" id="${pfx}-menu"><option value="">Chargement des sons…</option></select>`, '« Tapez 1 pour… ». Les touches se règlent ensuite (« Régler le SVI… »).')}`,
-    switchboard: () => field('Nom *', '<input data-c="name" maxlength="128" placeholder="ex. Standard">', 'Opérateurs, délai et débordement : « Régler le standard… » ensuite.'),
-    voicemail: () => `${field('Nom *', '<input data-c="name" maxlength="80" placeholder="ex. Messagerie accueil">')}<div class="cf-ge-2">${field('Numéro *', '<input data-c="number" inputmode="numeric" placeholder="ex. 8000">', 'Numéro de la boîte, souvent celui du poste. Pas de plage à respecter, mais unique dans le contexte.')}${field('Contexte *', ctxSel('data-c="ctx"'))}</div>${field('Utilisateur associé (facultatif)', `<select data-c="vmuser"><option value="">Aucun</option>${(M.lists.user || []).slice().sort((a, b) => userName(a).localeCompare(userName(b), 'fr')).map((u) => { const cur = (M.lists.voicemail || []).find((x) => (x.users || []).some((y) => y.uuid === u.uuid)); return `<option value="${esc(u.uuid)}">${esc(userName(u))}${cur ? ` (a « ${esc(cur.name)} » : elle lui sera retirée)` : ''}</option>`; }).join('')}</select>`, 'Pour consulter la boîte depuis son poste. Autres utilisateurs et messages d\'accueil : dans le réglage de la messagerie (carte, mode édition).')}<div class="cf-ge-2">${field('Langue des messages', langSelect('data-c="lang"', 'fr_FR'), 'Vide : langue du serveur (souvent l\'anglais).')}${field('Fuseau horaire', tzSelect('data-c="vtz"', 'Europe/Paris'), 'Heure annoncée des messages.')}</div>${field('E-mail (facultatif)', '<input type="email" data-c="email" placeholder="aucun">')}${secretField('data-c="password"', 'Code (facultatif)', '', 'Chiffres. Masqué partout, jamais dans une sauvegarde.')}`,
-    conference: () => `${field('Nom', '<input data-c="name" maxlength="128" placeholder="ex. Réunion">')}${num}`,
+    switchboard: () => field('Nom *', '<input data-c="name" maxlength="128" placeholder="ex. Standard">', 'Opérateurs, délai et débordement : « Régler le standard… » ensuite. Sans délai ni débordement, l\'appel attend sans limite qu\'un opérateur le prenne.'),
+    voicemail: () => `${field('Nom *', '<input data-c="name" maxlength="80" placeholder="ex. Messagerie accueil">')}<div class="cf-ge-2">${field('Numéro *', '<input data-c="number" inputmode="numeric" placeholder="ex. 8000">', 'Numéro de la boîte, souvent celui du poste. Pas de plage à respecter, mais unique dans le contexte.')}${field('Contexte *', ctxSel('data-c="ctx"'))}</div>${field('Utilisateur associé (facultatif)', `<select data-c="vmuser"><option value="">Aucun</option>${(M.lists.user || []).slice().sort((a, b) => userName(a).localeCompare(userName(b), 'fr')).map((u) => { const cur = (M.lists.voicemail || []).find((x) => (x.users || []).some((y) => y.uuid === u.uuid)); return `<option value="${esc(u.uuid)}">${esc(userName(u))}${cur ? ` (a « ${esc(cur.name)} » : elle lui sera retirée)` : ''}</option>`; }).join('')}</select>`, 'Pour consulter la boîte depuis son poste. Autres utilisateurs et messages d\'accueil : dans le réglage de la messagerie (carte, mode édition).')}<div class="cf-ge-2">${field('Langue des messages', langSelect('data-c="lang"', 'fr_FR'), 'Vide : langue du serveur (souvent l\'anglais).')}${field('Fuseau horaire', vmTzSelect('data-c="vtz"', vmTzDefault()), 'Heure annoncée des messages.')}</div>${field('E-mail (facultatif)', '<input type="email" data-c="email" placeholder="aucun">')}${secretField('data-c="password"', 'Code (facultatif)', '', 'Chiffres. Masqué partout, jamais dans une sauvegarde.')}`,
+    conference: () => `${field('Nom *', '<input data-c="name" maxlength="128" placeholder="ex. Réunion">', 'Wazo l\'accepte vide, mais la conférence ne s\'afficherait que par son numéro interne (#id). Défauts de Wazo : 50 participants, sans code.')}${num}`,
     // Règle sortante (vérifié, confd outcall/schema.py : seul name est obligatoire) ; motifs et trunks ensuite (« Régler la règle sortante… », assistant France).
     outcall: () => field('Nom *', '<input data-c="name" maxlength="128" placeholder="ex. Sortie Unyc">', 'Motifs (assistant France), trunks, horaire et autorisations : dans le réglage complet, ouvert juste après.'),
     schedule: () => `<div class="cf-ge-2">${field('Nom *', '<input data-c="name" maxlength="128" placeholder="ex. Horaires bureau">')}${field('Heures d\'ouverture', `<select data-c="preset">${Object.entries(PRESETS).map(([k, [l]]) => `<option value="${k}">${esc(l)}</option>`).join('')}</select>`, 'Point de départ : à affiner ensuite sur la carte horaire (« Modifier les heures… »).')}</div>${field('Fuseau horaire', tzSelect('data-c="tz"', 'Europe/Paris'), 'Les heures d\'ouverture sont dans ce fuseau. Sans fuseau, Wazo prend celui du serveur (décalage possible).')}<div class="cf-ge-f"><span class="cf-ge-l">Si fermé *</span>${pickerHtml(`${pfx}-closed`, { type: 'hangup', cause: 'normal' })}</div>`,
@@ -201,6 +205,7 @@ function bindForm(type, root, pfx) {
   if (type === 'ivr') fillSoundSelect(document.getElementById(`${pfx}-menu`), '');
   if (type === 'schedule') bindPicker(`${pfx}-closed`);
   if (type === 'voicemail') bindSecrets(root);
+  if (type === 'group') { const s = root.querySelector('[data-c="strategy"]'); s?.addEventListener('change', () => { root.querySelector('[data-c-times]').textContent = groupTimesHelp(s.value); }); }
   if (RANGE[type]) bindNumberField(root, type, { attrs: NA, pfx });
   root.querySelector('input')?.focus();
 }
@@ -216,12 +221,20 @@ async function submitForm(type, root, pfx) {
     if (!/^[-_.a-zA-Z0-9 ]{1,128}$/.test(v('label'))) return err('Nom : obligatoire, sans accents (lettres, chiffres, espace, - _ .).');
     for (const k of ['to', 'ut', 'rd']) if (v(k) !== '' && !/^\d+$/.test(v(k))) return err('Durées : nombres entiers positifs.');
     const n = (k) => (v(k) === '' ? null : Number(v(k)));
-    body = { label: v('label'), ring_strategy: v('strategy'), timeout: n('to'), user_timeout: n('ut'), retry_delay: n('rd') }; path = '/groups';
+    // Jamais de null : vérifié (xivo-dao GroupFeatures.__init__ : kwargs.pop('user_timeout', 15)),
+    // un null envoyé écrase le défaut ; on écrit la valeur réellement appliquée (groupTimes).
+    if (v('strategy') === 'linear' && v('ut') === '') return err('Sonnerie par membre : obligatoire en « un par un » (vide, seul le premier membre sonnerait).');
+    const t = groupTimes({ user_timeout: n('ut'), retry_delay: n('rd') }, v('strategy'));
+    body = { label: v('label'), ring_strategy: v('strategy'), timeout: n('to'), user_timeout: n('ut') ?? t.ut, retry_delay: n('rd') ?? t.rd }; path = '/groups';
   }
   if (type === 'queue') {
     if (!/^[-_.a-zA-Z0-9]{1,128}$/.test(v('name'))) return err('Nom technique : obligatoire, sans espace ni accent.');
-    if ([...(M.lists.queue || []), ...(M.lists.group || [])].some((x) => x.name === v('name'))) return err('Ce nom technique existe déjà (file ou groupe).');
-    body = { name: v('name'), label: v('label') || v('name'), options: [['strategy', v('strategy')]] }; path = '/queues';
+    // Vérifié (confd queue/validator.py) : nom unique sur tout le serveur (UniqueField sans tenant), « general » interdit.
+    if (v('name').toLowerCase() === 'general') return err('Nom technique « general » interdit par Wazo.');
+    if ((M.lists.queue || []).some((x) => x.name === v('name'))) return err('Ce nom technique existe déjà.');
+    for (const k of ['qto', 'qut', 'qrd']) if (v(k) !== '' && !/^\d+$/.test(v(k))) return err('Durées : nombres entiers positifs.');
+    const opt = [['strategy', v('strategy')], ['timeout', v('qut') || '15'], ['retry', v('qrd') && v('qrd') !== '0' ? v('qrd') : '5']];
+    body = { name: v('name'), label: v('label') || v('name'), options: opt, timeout: v('qto') === '' ? null : Number(v('qto')), music_on_hold: v('qmoh') || null }; path = '/queues';
   }
   if (type === 'ivr') { if (!v('name')) return err('Nom obligatoire.'); if (!v('menu')) return err('Choisissez le message du menu.'); body = { name: v('name'), menu_sound: v('menu'), timeout: 5, max_tries: 3 }; path = '/ivr'; }
   if (type === 'switchboard') { if (!v('name')) return err('Nom obligatoire.'); body = { name: v('name') }; path = '/switchboards'; }
@@ -232,7 +245,7 @@ async function submitForm(type, root, pfx) {
     // Langue fr_FR et fuseau Europe/Paris proposés (même piège que le fuseau des horaires, 20/10/2026).
     body = { name: v('name'), number: v('number'), context: ctx, language: v('lang') || null, timezone: v('vtz') || null, ...(v('email') ? { email: v('email') } : {}), ...(v('password') ? { password: v('password') } : {}) }; path = '/voicemails';
   }
-  if (type === 'conference') { body = { name: v('name') || null }; path = '/conferences'; }
+  if (type === 'conference') { if (!v('name')) return err('Nom obligatoire.'); body = { name: v('name') }; path = '/conferences'; }
   if (type === 'outcall') { if (!v('name')) return err('Nom obligatoire.'); body = { name: v('name') }; path = '/outcalls'; }
   if (type === 'schedule') {
     if (!v('name')) return err('Nom obligatoire.');
@@ -241,27 +254,39 @@ async function submitForm(type, root, pfx) {
     // Fuseau Europe/Paris par défaut (retour de Brice, 20/10/2026 : horaire créé sans fuseau → heures du serveur, en plein déploiement).
     body = { name: v('name'), timezone: v('tz') || null, closed_destination: closed || { type: 'none' }, open_periods: PRESETS[v('preset')][1], exceptional_periods: [] }; path = '/schedules';
   }
+  // Numéro d'abord, comme l'import Wazo (audit du 21/10/2026, vérifié : user_import
+  // crée l'extension puis associe ; confd refuse aussi les numéros d'un parking ou
+  // d'une extension orpheline, que l'index du module ne voit pas) : refusé → rien de créé.
+  let ext = null;
+  if (ex) { try { ext = await api('POST', '/extensions', { exten: ex, context: ctx }); } catch (e) { return err(`Numéro ${ex} refusé par Wazo : ${e.message}. Rien n'a été créé.`); } }
   let created;
-  try { created = await api('POST', path, body); } catch (e) { return err(`Création refusée par Wazo : ${e.message}`); }
-  // Messagerie : utilisateur associé (vérifié, confd user_voicemail : une seule par utilisateur → l'ancienne lui est retirée). Échec signalé, la boîte reste.
+  try { created = await api('POST', path, body); } catch (e) {
+    if (ext) { try { await api('DELETE', `/extensions/${ext.id}`); } catch { /* */ } }
+    return err(`Création refusée par Wazo : ${e.message}`);
+  }
+  if (ext) {
+    const base = type === 'group' ? `/groups/${created.uuid}` : type === 'queue' ? `/queues/${created.id}` : `/conferences/${created.id}`;
+    try { await api('PUT', `${base}/extensions/${ext.id}`); created.extensions = [{ id: ext.id, exten: ex, context: ctx }]; } catch (e) {
+      try { await api('DELETE', `/extensions/${ext.id}`); } catch { /* */ }
+      toast(`Objet créé, mais numéro ${ex} non associé (${e.message}) : numéro retiré, à refaire dans son réglage.`, 9000);
+    }
+  }
+  // Messagerie : utilisateur associé (vérifié, confd user_voicemail : une seule par utilisateur → l'ancienne lui est retirée).
+  // Échec de l'association : l'ancienne lui est rendue (audit du 21/10/2026), la nouvelle boîte reste.
   if (type === 'voicemail' && v('vmuser')) {
-    const uuid = v('vmuser');
+    const uuid = v('vmuser'); let oldId = null;
     try {
       const cur = await api('GET', `/users/${uuid}/voicemails`);
-      if ((cur?.items || []).length) await api('DELETE', `/users/${uuid}/voicemails`);
+      oldId = cur?.items?.[0]?.id ?? null;
+      if (oldId != null) await api('DELETE', `/users/${uuid}/voicemails`);
       await api('PUT', `/users/${uuid}/voicemails/${created.id}`);
       for (const x of M.lists.voicemail || []) x.users = (x.users || []).filter((y) => y.uuid !== uuid);
       const u = M.userByUuid?.get(uuid); created.users = [{ uuid, firstname: u?.firstname || '', lastname: u?.lastname || '' }];
-    } catch (e) { toast(`Messagerie créée, mais utilisateur non associé : ${e.message}`, 9000); }
-  }
-  if (ex) {
-    // Numéro : extension puis association ; en cas d'échec, l'objet reste créé (signalé).
-    const base = type === 'group' ? `/groups/${created.uuid}` : type === 'queue' ? `/queues/${created.id}` : `/conferences/${created.id}`;
-    try {
-      const e = await api('POST', '/extensions', { exten: ex, context: ctx });
-      try { await api('PUT', `${base}/extensions/${e.id}`); } catch (e2) { try { await api('DELETE', `/extensions/${e.id}`); } catch { /* */ } throw e2; }
-      created.extensions = [{ id: e.id, exten: ex, context: ctx }];
-    } catch (e) { toast(`Objet créé, mais numéro ${ex} refusé : ${e.message}`, 9000); }
+      if (oldId != null) toast('L\'ancienne messagerie de cet utilisateur reste dans Wazo, sans utilisateur.', 7000);
+    } catch (e) {
+      if (oldId != null) { try { await api('PUT', `/users/${uuid}/voicemails/${oldId}`); } catch { /* signalé ci-dessous */ } }
+      toast(`Messagerie créée, mais utilisateur non associé : ${e.message}${oldId != null ? ' (son ancienne messagerie lui a été rendue)' : ''}`, 9000);
+    }
   }
   console.info('[astrea] Call Flow : création', path, idOf(type, created));
   toast(`${LABEL[type][0].toUpperCase()}${LABEL[type].slice(1)} : ${['queue', 'voicemail', 'conference', 'outcall'].includes(type) ? 'créée' : 'créé'} dans Wazo.`, 5000);
