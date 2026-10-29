@@ -2,11 +2,11 @@
 // dans le Portal (visualization), choix du site, connexion à la stack, menu
 // et accueil. Les appels confd passent par common/core.js (api, listAll,
 // filtre tenant), avec le token de la stack du site.
-import { sdk, S, $, esc, toast, applyTheme, listAll, showCompat } from '../admin-tools/common/core.js?v=0.2.0';
-import { renderCallLogs } from './calllogs.js?v=0.2.0';
-import { P, ST, PortalError, portalLogin, checkScopes, loadVisualization, loadLocations, openSite, stackLogin, logout, closeSite } from './portal.js?v=0.2.0';
+import { sdk, S, $, esc, toast, applyTheme, listAll, showCompat } from '../admin-tools/common/core.js?v=0.2.1';
+import { renderCallLogs } from './calllogs.js?v=0.2.1';
+import { P, ST, PortalError, portalLogin, checkScopes, loadVisualization, loadLocations, openSite, stackLogin, logout, closeSite } from './portal.js?v=0.2.1';
 
-const APP_VERSION = '0.2.0';
+const APP_VERSION = '0.2.1';
 const TESTED_STACK = ['26.07', '26.10'];
 // Droit Portal sans lequel aucune stack n'est accessible (vérifié : contrôlé
 // par le Portal avant d'ouvrir un site).

@@ -34,7 +34,7 @@ button.dk-text:hover:not(:disabled), .dk-link:hover { background: none; text-dec
 
 /* Journal d'appels : palette catégorielle validée (skill dataviz, slots 1-4),
    pas pour le clair et le sombre. */
-:root { --dk-s1: #2a78d6; --dk-s2: #eb6834; --dk-s3: #1baf7a; --dk-s4: #eda100; }
+:root { --dk-s1: #2a78d6; --dk-s2: #eb6834; --dk-s3: #1baf7a; --dk-s4: #eda100; --dk-s0: #898781; }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --dk-s1: #3987e5; --dk-s2: #d95926; --dk-s3: #199e70; --dk-s4: #c98500; } }
 :root[data-theme="dark"] { --dk-s1: #3987e5; --dk-s2: #d95926; --dk-s3: #199e70; --dk-s4: #c98500; }
 
@@ -60,6 +60,7 @@ button.dk-text:hover:not(:disabled), .dk-link:hover { background: none; text-dec
 .dk-hb-t { height: 14px; }
 .dk-hb-t i { display: block; height: 100%; border-radius: 0 4px 4px 0; }
 .dk-hb-v { color: var(--muted); white-space: nowrap; font-size: .75rem; }
+.dk-wide .dk-hb { grid-template-columns: minmax(200px, 40%) 1fr auto; }
 .dk-tip { position: fixed; z-index: 30; pointer-events: none; padding: 4px 8px; border-radius: var(--radius); background: #323232; color: #fff; font-size: .75rem; box-shadow: var(--shadow-6); }
 .dk-scroll { overflow-x: auto; }
 .dk-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -70,6 +71,9 @@ button.dk-text:hover:not(:disabled), .dk-link:hover { background: none; text-dec
 .dk-st-unknown::before { background: var(--dk-s2); }
 .dk-st-voicemail::before { background: var(--dk-s3); }
 .dk-st-blocked::before { background: var(--dk-s4); }
+.dk-st-service::before { background: var(--dk-s0); }
+.dk-svc { flex-basis: 100%; margin: 4px 0 0; }
+.dk-panel > p.small { margin: -4px 0 8px; }
 .dk-pager { justify-content: center; align-items: center; }
 
 /* Diagnostic */

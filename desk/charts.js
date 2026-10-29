@@ -68,9 +68,9 @@ export function stackedColumns(buckets, series, { height = 220, ink = 'var(--mut
 // Barres horizontales d'une seule série, valeur au bout. En HTML (et non en
 // SVG) pour garder un texte lisible quelle que soit la largeur du panneau.
 // Styles : .dk-hbars dans desk.css et dans le rapport HTML.
-export function hbars(rows, { color = 'var(--dk-s1)' } = {}) {
+export function hbars(rows, { color = 'var(--dk-s1)', wide = false } = {}) {
   const max = Math.max(1, ...rows.map((r) => r.value));
-  return `<div class="dk-hbars">${rows.map((r) => {
+  return `<div class="dk-hbars${wide ? ' dk-wide' : ''}">${rows.map((r) => {
     const tip = `${r.label} : ${r.value}${r.extra ? ` (${r.extra})` : ''}`;
     const w = r.value ? Math.max(1, (r.value / max) * 100) : 0;
     return `<div class="dk-hb" data-tip="${esc(tip)}" title="${esc(tip)}"><span class="dk-hb-l">${esc(r.label)}</span><span class="dk-hb-t"><i style="width:${w}%;background:${color}"></i></span><span class="dk-hb-v">${r.value}${r.extra ? ` · ${esc(r.extra)}` : ''}</span></div>`;

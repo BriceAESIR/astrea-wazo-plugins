@@ -8,8 +8,8 @@
 //  - réponse : { items, total, filtered } ;
 //  - call_status : blocked > voicemail > answered, sinon unknown (= non
 //    répondu) ; duration = fin - décroché (null si non décroché).
-import { S, $, esc, toast, listAll } from '../admin-tools/common/core.js?v=0.2.0';
-import { stackedColumns, hbars, legend } from './charts.js?v=0.2.0';
+import { S, $, esc, toast, listAll } from '../admin-tools/common/core.js?v=0.2.1';
+import { stackedColumns, hbars, legend } from './charts.js?v=0.2.1';
 
 const PAGE = 1000;       // taille d'une requête call-logd
 const MAX = 20000;       // au-delà, on s'arrête et on le dit
@@ -25,10 +25,12 @@ const SERIES = [
   { key: 'unknown', label: 'Non répondu', color: 'var(--dk-s2)', hex: '#eb6834' },
   { key: 'voicemail', label: 'Messagerie', color: 'var(--dk-s3)', hex: '#1baf7a' },
   { key: 'blocked', label: 'Bloqué', color: 'var(--dk-s4)', hex: '#eda100' },
+  { key: 'service', label: 'Code de service', color: 'var(--dk-s0)', hex: '#898781' },
 ];
 
-const F = { period: 'today', from: '', until: '', direction: '', status: '', search: '', user: '' };
-const C = { items: [], truncated: false, page: 0, loadedFor: null, users: null, site: null };
+const F0 = { period: 'today', from: '', until: '', direction: '', status: '', search: '', user: '', services: false };
+const F = { ...F0 };
+const C = { all: [], items: [], hiddenServices: 0, truncated: false, page: 0, loadedFor: null, users: null, site: null };
 
 // ---------------------------------------------------------------------------
 // Dates et formats
@@ -58,10 +60,59 @@ export function periodRange(p = F) {
   }
 }
 
-// Personne d'un côté de l'appel : nom puis numéro.
-const party = (name, ext) => [name, ext].filter(Boolean).join(' · ') || '—';
+// Personne d'un côté de l'appel : nom puis numéro (une seule fois si le nom
+// affiché est le numéro lui-même, cas des appels sortants).
+const party = (name, ext) => (name && ext && name !== ext ? `${name} · ${ext}` : name || ext || '—');
 export const caller = (c) => party(c.source_name || c.source_internal_name, c.source_extension || c.source_internal_extension);
 export const callee = (c) => party(c.destination_name || c.requested_name, c.destination_extension || c.requested_extension);
+
+// Codes de service (*735… entrée / sortie de groupe, *10…) : Wazo les
+// enregistre comme des appels internes jamais répondus (vu en réel le
+// 29/10/2026). Mis à part : ils fausseraient le taux de réponse.
+export const isService = (c) => /^\*/.test(c.requested_extension || c.destination_extension || '');
+export const statusKey = (c) => (isService(c) ? 'service' : c.call_status in STATUS ? c.call_status : 'unknown');
+export const statusLabel = (c) => (isService(c) ? 'Code de service' : STATUS[c.call_status] || 'Non répondu');
+
+// Attente : avant le décroché si répondu, sinon avant le raccroché (sonnerie).
+const secs = (a, b) => { const x = Date.parse(a), y = Date.parse(b); return Number.isFinite(x) && Number.isFinite(y) ? Math.max(0, (y - x) / 1000) : null; };
+export const waitSecs = (c) => (c.answer ? secs(c.start, c.answer) : secs(c.start, c.end));
+
+// Numéros du site : utilisateurs (ring_seconds), groupes et files (timeout ;
+// vide = pas de limite). Champs lus dans le code confd le 29/10/2026.
+const T = { byExten: new Map() };
+// Numéro demandé (groupe, file…) avant celui du membre qui a pris l'appel :
+// c'est son délai de sonnerie qui compte.
+const dialed = (c) => c.requested_internal_extension || c.destination_internal_extension || c.requested_extension || c.destination_extension || '';
+async function loadTargets() {
+  T.byExten = new Map();
+  const [users, groups, queues] = await Promise.all(['/users', '/groups', '/queues'].map((p) => listAll(p).catch(() => [])));
+  for (const u of users) {
+    const label = [u.firstname, u.lastname].filter(Boolean).join(' ') || u.username || '';
+    for (const l of u.lines || []) for (const e of l.extensions || []) if (e.exten) T.byExten.set(e.exten, { kind: 'Utilisateur', label, timeout: u.ring_seconds ?? 30 });
+  }
+  for (const g of groups) for (const e of g.extensions || []) if (e.exten) T.byExten.set(e.exten, { kind: 'Groupe', label: g.label || g.name, timeout: g.timeout ?? null });
+  for (const q of queues) for (const e of q.extensions || []) if (e.exten) T.byExten.set(e.exten, { kind: 'File', label: q.label || q.name, timeout: q.timeout ?? null });
+  return users;
+}
+
+// Cause probable d'un appel non répondu : DÉDUITE (call-logd n'enregistre ni
+// la cause ni le côté qui raccroche, vérifié dans son modèle de base). On
+// compare la sonnerie au délai prévu pour le numéro appelé.
+export function probableCause(c) {
+  const k = statusKey(c);
+  if (k === 'service') return 'Code de service';
+  if (k === 'answered') return '';
+  if (k === 'voicemail') return 'Arrivé sur la messagerie';
+  if (k === 'blocked') return 'Bloqué';
+  if (c.call_direction === 'outbound') return 'Pas de réponse du correspondant (ou occupé)';
+  const ring = waitSecs(c);
+  if (ring == null) return 'Inconnue';
+  if (ring <= 2) return 'Raccroché aussitôt';
+  const t = T.byExten.get(dialed(c))?.timeout;
+  if (t > 0 && ring >= t - 2) return 'Délai de sonnerie atteint';
+  return "L'appelant a raccroché pendant la sonnerie";
+}
+export const CAUSE_HELP = "Cause déduite, pas enregistrée par Wazo : la durée de sonnerie est comparée au délai prévu pour le numéro appelé (utilisateur, groupe ou file).";
 
 // ---------------------------------------------------------------------------
 // Lecture call-logd
@@ -94,9 +145,15 @@ async function load(onProgress) {
     onProgress?.(items.length, filtered);
     if (page.length < PAGE) break;
   }
-  C.items = items;
+  C.all = items;
   C.truncated = filtered != null ? filtered > items.length : items.length >= MAX;
   C.filtered = filtered;
+  applyLocal();
+}
+// Filtre local : codes de service masqués sauf demande.
+function applyLocal() {
+  C.items = F.services ? C.all : C.all.filter((c) => !isService(c));
+  C.hiddenServices = C.all.length - C.items.length;
   C.page = 0;
 }
 
@@ -104,23 +161,29 @@ async function load(onProgress) {
 // Résumé
 // ---------------------------------------------------------------------------
 export function summarize(items, range) {
-  const st = { answered: 0, unknown: 0, voicemail: 0, blocked: 0 };
+  const zero = () => ({ answered: 0, unknown: 0, voicemail: 0, blocked: 0, service: 0 });
+  const st = zero();
   const dir = { inbound: 0, outbound: 0, internal: 0 };
-  let talk = 0;
+  let talk = 0, waitAns = 0;
   const hours = Array.from({ length: 24 }, () => 0);
   const who = new Map();
+  const causes = new Map();
   for (const c of items) {
-    st[c.call_status in st ? c.call_status : 'unknown']++;
+    const k = statusKey(c);
+    st[k]++;
+    if (k === 'service') continue; // ni dans les sens, ni dans les classements
     if (c.call_direction in dir) dir[c.call_direction]++;
-    if (c.call_status === 'answered' && c.duration) talk += c.duration;
+    if (k === 'answered') { if (c.duration) talk += c.duration; waitAns += waitSecs(c) || 0; }
+    if (k === 'unknown') { const r = probableCause(c); causes.set(r, (causes.get(r) || 0) + 1); }
     const d = new Date(c.start);
     if (!isNaN(d)) hours[d.getHours()]++;
-    // Interlocuteurs internes les plus sollicités (appels reçus).
-    const k = c.destination_internal_extension || c.requested_internal_extension;
-    if (k && c.call_direction !== 'outbound') {
-      const o = who.get(k) || { label: party(c.destination_name || c.requested_name, k), value: 0, answered: 0 };
-      o.value++; if (c.call_status === 'answered') o.answered++;
-      who.set(k, o);
+    // Numéros les plus appelés (hors sortants) : postes, groupes, files, SVI…
+    const x = dialed(c);
+    if (x && c.call_direction !== 'outbound') {
+      const t = T.byExten.get(x);
+      const o = who.get(x) || { label: t ? `${t.label} · ${x}${t.kind !== 'Utilisateur' ? ` (${t.kind.toLowerCase()})` : ''}` : party(c.destination_name || c.requested_name, x), value: 0, answered: 0 };
+      o.value++; if (k === 'answered') o.answered++;
+      who.set(x, o);
     }
   }
   // Découpage : par heure sur une journée, sinon par jour.
@@ -128,48 +191,54 @@ export function summarize(items, range) {
   const oneDay = until - from <= 86400e3 + 3600e3;
   const buckets = [];
   if (oneDay) {
-    for (let h = 0; h < 24; h++) buckets.push({ label: `${h}h`, tip: `${h}h-${h + 1}h`, values: { answered: 0, unknown: 0, voicemail: 0, blocked: 0 } });
+    for (let h = 0; h < 24; h++) buckets.push({ label: `${h}h`, tip: `${h}h-${h + 1}h`, values: zero() });
   } else {
-    for (let d = new Date(from); d < until; d = addDays(d, 1)) buckets.push({ key: toLocalInput(d), label: `${pad(d.getDate())}/${pad(d.getMonth() + 1)}`, tip: `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`, values: { answered: 0, unknown: 0, voicemail: 0, blocked: 0 } });
+    for (let d = new Date(from); d < until; d = addDays(d, 1)) buckets.push({ key: toLocalInput(d), label: `${pad(d.getDate())}/${pad(d.getMonth() + 1)}`, tip: `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`, values: zero() });
   }
   const idx = new Map(buckets.map((b, i) => [b.key, i]));
   for (const c of items) {
     const d = new Date(c.start);
     if (isNaN(d)) continue;
     const b = oneDay ? buckets[d.getHours()] : buckets[idx.get(toLocalInput(d))];
-    if (b) b.values[c.call_status in b.values ? c.call_status : 'unknown']++;
+    if (b) b.values[statusKey(c)]++;
   }
-  const total = items.length;
+  // Taux de réponse calculé sans les codes de service.
+  const calls = items.length - st.service;
   return {
-    total, st, dir, talk, hours, buckets, oneDay,
-    rate: total ? Math.round((st.answered / total) * 100) : 0,
+    total: calls, services: st.service, st, dir, talk, hours, buckets, oneDay,
+    rate: calls ? Math.round((st.answered / calls) * 100) : 0,
     avg: st.answered ? talk / st.answered : 0,
+    avgWait: st.answered ? waitAns / st.answered : 0,
     top: [...who.values()].sort((a, b) => b.value - a.value).slice(0, 10),
+    causes: [...causes.entries()].map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value),
   };
 }
 
 export function summaryHtml(sum, colors = 'css') {
   const col = (s) => (colors === 'css' ? s.color : s.hex);
-  const series = SERIES.filter((s) => sum.st[s.key] > 0 || s.key !== 'blocked');
+  const series = SERIES.filter((s) => sum.st[s.key] > 0 || !['blocked', 'service'].includes(s.key));
   const chartOpts = colors === 'css' ? {} : { ink: '#52514e', grid: '#e1e0d9' };
   const bar = colors === 'css' ? {} : { color: '#2a78d6' };
+  const bar2 = { wide: true, color: colors === 'css' ? 'var(--dk-s2)' : '#eb6834' };
   const tiles = [
     ['Appels', sum.total], ['Répondus', `${sum.st.answered} (${sum.rate} %)`], ['Non répondus', sum.st.unknown],
     ['Messagerie', sum.st.voicemail], ...(sum.st.blocked ? [['Bloqués', sum.st.blocked]] : []),
-    ['Durée moyenne', fmtDur(sum.avg)], ['Durée totale', fmtDur(sum.talk)],
+    ['Attente moyenne avant décroché', fmtDur(sum.avgWait)], ['Durée moyenne', fmtDur(sum.avg)], ['Durée totale', fmtDur(sum.talk)],
+    ...(sum.services ? [['Codes de service', sum.services]] : []),
   ];
   return `<div class="dk-kpis">${tiles.map(([l, v]) => `<div class="dk-kpi"><span>${esc(l)}</span><strong>${esc(v)}</strong></div>`).join('')}</div>`
     + `<section class="dk-panel"><h3>${sum.oneDay ? 'Appels par heure' : 'Appels par jour'}</h3>${legend(series.map((s) => ({ ...s, color: col(s) })))}${stackedColumns(sum.buckets, series.map((s) => ({ ...s, color: col(s) })), chartOpts)}</section>`
     + `<div class="dk-two"><section class="dk-panel"><h3>Par sens</h3>${hbars(Object.entries(DIRECTION).map(([k, l]) => ({ label: l, value: sum.dir[k] })), bar)}</section>`
-    + `<section class="dk-panel"><h3>Postes les plus appelés</h3>${sum.top.length ? hbars(sum.top.map((t) => ({ label: t.label, value: t.value, extra: `${t.answered} répondus` })), bar) : '<p class="muted small">Aucun appel reçu sur un poste interne.</p>'}</section></div>`;
+    + `<section class="dk-panel"><h3>Numéros les plus appelés</h3>${sum.top.length ? hbars(sum.top.map((t) => ({ label: t.label, value: t.value, extra: `${t.answered} répondus` })), bar) : '<p class="muted small">Aucun appel reçu.</p>'}</section></div>`
+    + (sum.causes.length ? `<section class="dk-panel dk-causes"><h3>Non répondus : cause probable</h3><p class="muted small">${esc(CAUSE_HELP)}</p>${hbars(sum.causes, bar2)}</section>` : '');
 }
 
 // ---------------------------------------------------------------------------
 // Écran
 // ---------------------------------------------------------------------------
 export async function renderCallLogs(view, site) {
-  if (C.site !== site.uuid) { Object.assign(F, { period: 'today', from: '', until: '', direction: '', status: '', search: '', user: '' }); C.items = []; C.loadedFor = null; C.users = null; C.site = site.uuid; }
-  if (!C.users) C.users = (await listAll('/users').catch(() => [])).map((u) => ({ uuid: u.uuid, name: [u.firstname, u.lastname].filter(Boolean).join(' ') || u.username || u.uuid })).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
+  if (C.site !== site.uuid) { Object.assign(F, F0); C.all = []; C.items = []; C.loadedFor = null; C.users = null; C.site = site.uuid; }
+  if (!C.users) C.users = (await loadTargets()).map((u) => ({ uuid: u.uuid, name: [u.firstname, u.lastname].filter(Boolean).join(' ') || u.username || u.uuid })).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
   const opt = (v, l, cur) => `<option value="${esc(v)}"${v === cur ? ' selected' : ''}>${esc(l)}</option>`;
   view.innerHTML = `
     <div class="phonehead"><div><h2>Journal d'appels</h2><div class="muted small">${esc(site.name)} · lecture seule</div></div>
@@ -183,12 +252,15 @@ export async function renderCallLogs(view, site) {
       <label>Utilisateur <select id="cl-user">${opt('', 'Tous', F.user)}${C.users.map((u) => opt(u.uuid, u.name, F.user)).join('')}</select></label>
       <label class="dk-grow">Recherche <input id="cl-search" value="${esc(F.search)}" placeholder="Nom ou numéro"></label>
       <div class="dk-go"><button class="primary" type="submit">Afficher</button></div>
+      <label class="inline dk-svc" title="Numéros commençant par * (entrée / sortie de groupe, renvois…). Wazo les enregistre comme des appels non répondus."><input type="checkbox" id="cl-svc"${F.services ? ' checked' : ''}> Afficher les codes de service</label>
     </form>
     <div id="cl-out"></div><div id="dk-tip" class="dk-tip" hidden></div>`;
   const syncCustom = () => view.querySelectorAll('.cl-custom').forEach((l) => (l.hidden = $('cl-period').value !== 'custom'));
   syncCustom();
   $('cl-period').onchange = syncCustom;
   $('cl-filters').onsubmit = (e) => { e.preventDefault(); readFilters(); refresh(); };
+  // Bascule locale, sans relire call-logd.
+  $('cl-svc').onchange = () => { F.services = $('cl-svc').checked; if (C.loadedFor) { applyLocal(); C.loadedFor = JSON.stringify(F); draw(); } };
   $('cl-csv').onclick = () => exportCsv(site);
   $('cl-html').onclick = () => exportHtml(site);
   $('cl-pdf').onclick = () => exportPdf(site);
@@ -219,7 +291,8 @@ function draw() {
   const out = $('cl-out');
   const range = periodRange();
   const sum = summarize(C.items, range);
-  const warn = C.truncated ? `<div class="warn">Plus de ${MAX} appels sur la période : seuls les ${C.items.length} plus récents sont affichés et exportés. Réduisez la période.</div>` : '';
+  const warn = (C.truncated ? `<div class="warn">Plus de ${MAX} appels sur la période : seuls les ${C.all.length} plus récents sont affichés et exportés. Réduisez la période.</div>` : '')
+    + (C.hiddenServices ? `<p class="muted small">${C.hiddenServices} code${C.hiddenServices > 1 ? 's' : ''} de service masqué${C.hiddenServices > 1 ? 's' : ''} (numéros commençant par *).</p>` : '');
   if (!C.items.length) { out.innerHTML = warn + `<p class="dk-empty">Aucun appel ${esc(range[2])} avec ces filtres.</p>`; return; }
   out.innerHTML = warn + summaryHtml(sum) + `<section class="dk-panel"><h3>Détail des appels <span class="muted small">(${C.items.length})</span></h3><div id="cl-table"></div></section>`;
   drawTable();
@@ -229,7 +302,7 @@ function drawTable() {
   const pages = Math.ceil(C.items.length / ROWS);
   C.page = Math.min(C.page, pages - 1);
   const rows = C.items.slice(C.page * ROWS, (C.page + 1) * ROWS);
-  $('cl-table').innerHTML = `<div class="dk-scroll"><table class="dk-table"><thead><tr><th>Date</th><th>Sens</th><th>Appelant</th><th>Appelé</th><th>Statut</th><th class="num">Durée</th></tr></thead><tbody>${rows.map((c) => `<tr><td class="nowrap">${esc(fmtDate(c.start))}</td><td>${esc(DIRECTION[c.call_direction] || c.call_direction || '')}</td><td>${esc(caller(c))}</td><td>${esc(callee(c))}</td><td><span class="dk-st dk-st-${esc(c.call_status)}">${esc(STATUS[c.call_status] || 'Non répondu')}</span></td><td class="num">${esc(fmtDur(c.duration))}</td></tr>`).join('')}</tbody></table></div>`
+  $('cl-table').innerHTML = `<div class="dk-scroll"><table class="dk-table"><thead><tr><th>Date</th><th>Sens</th><th>Appelant</th><th>Appelé</th><th>Statut</th><th class="num" title="Avant le décroché si l'appel est répondu, sinon avant le raccroché.">Attente</th><th class="num">Durée</th><th title="${esc(CAUSE_HELP)}">Cause probable</th></tr></thead><tbody>${rows.map((c) => `<tr><td class="nowrap">${esc(fmtDate(c.start))}</td><td>${esc(DIRECTION[c.call_direction] || c.call_direction || '')}</td><td>${esc(caller(c))}</td><td>${esc(callee(c))}</td><td><span class="dk-st dk-st-${esc(statusKey(c))}">${esc(statusLabel(c))}</span></td><td class="num">${esc(fmtDur(waitSecs(c)))}</td><td class="num">${esc(fmtDur(c.duration))}</td><td class="muted small">${esc(probableCause(c))}</td></tr>`).join('')}</tbody></table></div>`
     + (pages > 1 ? `<div class="btnrow dk-pager"><button id="cl-prev"${C.page ? '' : ' disabled'}>Précédent</button><span class="muted small">Page ${C.page + 1} / ${pages}</span><button id="cl-next"${C.page < pages - 1 ? '' : ' disabled'}>Suivant</button></div>` : '');
   if (pages > 1) {
     $('cl-prev').onclick = () => { C.page--; drawTable(); };
@@ -268,34 +341,37 @@ const fileBase = (site) => `journal-appels_${(site.name || 'site').normalize('NF
 function needData() { if (!C.items.length) { toast('Rien à exporter : lancez d\'abord une recherche avec des résultats.'); return false; } return true; }
 function filtersText() {
   const u = C.users?.find((x) => x.uuid === F.user);
-  return [`Période : ${periodRange()[2]}`, F.direction && `Sens : ${DIRECTION[F.direction]}`, F.status && `Statut : ${STATUS[F.status]}`, u && `Utilisateur : ${u.name}`, F.search && `Recherche : ${F.search}`].filter(Boolean).join(' · ');
+  return [`Période : ${periodRange()[2]}`, F.direction && `Sens : ${DIRECTION[F.direction]}`, F.status && `Statut : ${STATUS[F.status]}`, u && `Utilisateur : ${u.name}`, F.search && `Recherche : ${F.search}`, !F.services && C.hiddenServices && `${C.hiddenServices} codes de service exclus`].filter(Boolean).join(' · ');
 }
 
 // CSV pour Excel en français : séparateur « ; », BOM UTF-8.
 function exportCsv(site) {
   if (!needData()) return;
   const q = (v) => { const s = String(v ?? ''); return /[;"\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
-  const head = ['Date', 'Sens', 'Appelant (nom)', 'Appelant (numéro)', 'Appelé (nom)', 'Appelé (numéro)', 'Numéro composé', 'Statut', 'Décroché', 'Durée (s)', 'Durée', 'Mots clés'];
-  const lines = C.items.map((c) => [fmtDate(c.start), DIRECTION[c.call_direction] || c.call_direction, c.source_name || c.source_internal_name, c.source_extension || c.source_internal_extension, c.destination_name, c.destination_extension, c.requested_extension, STATUS[c.call_status] || 'Non répondu', c.answer ? fmtDate(c.answer) : '', c.duration == null ? '' : Math.round(c.duration), hms(c.duration), (c.tags || []).join(', ')].map(q).join(';'));
+  const head = ['Date', 'Sens', 'Appelant (nom)', 'Appelant (numéro)', 'Appelé (nom)', 'Appelé (numéro)', 'Numéro composé', 'Statut', 'Décroché', 'Attente (s)', 'Durée (s)', 'Durée', 'Cause probable (déduite)', 'Mots clés'];
+  const lines = C.items.map((c) => {
+    const w = waitSecs(c);
+    return [fmtDate(c.start), DIRECTION[c.call_direction] || c.call_direction, c.source_name || c.source_internal_name, c.source_extension || c.source_internal_extension, c.destination_name, c.destination_extension, c.requested_extension, statusLabel(c), c.answer ? fmtDate(c.answer) : '', w == null ? '' : Math.round(w), c.duration == null ? '' : Math.round(c.duration), hms(c.duration), probableCause(c), (c.tags || []).join(', ')].map(q).join(';');
+  });
   download(`${fileBase(site)}.csv`, '﻿' + [head.join(';'), ...lines].join('\r\n'), 'text/csv;charset=utf-8');
 }
 
 // Rapport HTML autonome (styles intégrés, couleurs en dur, mode clair).
 function reportHtml(site) {
   const sum = summarize(C.items, periodRange());
-  const rows = C.items.map((c) => `<tr><td>${esc(fmtDate(c.start))}</td><td>${esc(DIRECTION[c.call_direction] || '')}</td><td>${esc(caller(c))}</td><td>${esc(callee(c))}</td><td>${esc(STATUS[c.call_status] || 'Non répondu')}</td><td class="num">${esc(fmtDur(c.duration))}</td></tr>`).join('');
+  const rows = C.items.map((c) => `<tr><td>${esc(fmtDate(c.start))}</td><td>${esc(DIRECTION[c.call_direction] || '')}</td><td>${esc(caller(c))}</td><td>${esc(callee(c))}</td><td>${esc(statusLabel(c))}</td><td class="num">${esc(fmtDur(waitSecs(c)))}</td><td class="num">${esc(fmtDur(c.duration))}</td><td>${esc(probableCause(c))}</td></tr>`).join('');
   return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Journal d'appels · ${esc(site.name)}</title><style>
 body{font:14px/1.45 "Mulish",Helvetica,Arial,sans-serif;color:#0b0b0b;margin:24px;background:#fff}h1{font-size:20px;margin:0}h3{font-size:15px;margin:0 0 8px}
-.sub{color:#52514e;font-size:12px;margin:2px 0 16px}.dk-kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin-bottom:16px}
+.sub{color:#52514e;font-size:12px;margin:2px 0 16px}.dk-kpis{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px;margin-bottom:16px}.dk-panel>p{color:#52514e;font-size:11px;margin:-4px 0 8px}
 .dk-kpi{border:1px solid #e1e0d9;border-radius:4px;padding:8px 12px}.dk-kpi span{display:block;color:#52514e;font-size:11px}.dk-kpi strong{font-size:18px}
 .dk-panel{border:1px solid #e1e0d9;border-radius:4px;padding:12px 16px;margin-bottom:16px;break-inside:avoid}.dk-two{display:grid;grid-template-columns:1fr 1fr;gap:16px}
 .dk-legend{display:flex;gap:16px;font-size:12px;color:#52514e;margin-bottom:6px}.dk-legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}
-.dk-hb{display:grid;grid-template-columns:minmax(80px,38%) 1fr auto;gap:10px;align-items:center;font-size:12px;padding:3px 0}.dk-hb-l{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dk-hb-t{height:14px}.dk-hb-t i{display:block;height:100%;border-radius:0 4px 4px 0;-webkit-print-color-adjust:exact;print-color-adjust:exact}.dk-hb-v{color:#52514e;white-space:nowrap}
+.dk-hb{display:grid;grid-template-columns:minmax(80px,38%) 1fr auto;gap:10px;align-items:center;font-size:12px;padding:3px 0}.dk-hb-l{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dk-hb-t{height:14px}.dk-hb-t i{display:block;height:100%;border-radius:0 4px 4px 0;-webkit-print-color-adjust:exact;print-color-adjust:exact}.dk-hb-v{color:#52514e;white-space:nowrap}.dk-wide .dk-hb{grid-template-columns:minmax(200px,40%) 1fr auto}.dk-two+.dk-panel{margin-top:16px}
 .dk-legend i,svg{-webkit-print-color-adjust:exact;print-color-adjust:exact}
 table{width:100%;border-collapse:collapse;font-size:12px}th{text-align:left;color:#52514e;font-weight:600;border-bottom:1px solid #c3c2b7;padding:6px 8px}td{border-bottom:1px solid #e1e0d9;padding:5px 8px}.num{text-align:right}
-@media print{body{margin:0}.dk-kpis{grid-template-columns:repeat(3,1fr)}thead{display:table-header-group}tr{break-inside:avoid}}
+@media print{body{margin:0}.dk-kpis{grid-template-columns:repeat(4,1fr)}thead{display:table-header-group}tr{break-inside:avoid}}
 </style></head><body><h1>Journal d'appels · ${esc(site.name)}</h1><p class="sub">${esc(site.customer || '')} · ${esc(filtersText())} · ${C.items.length} appels · édité le ${esc(fmtDate(new Date().toISOString()))} par Astrea Desk${C.truncated ? ` · <strong>limité aux ${C.items.length} plus récents</strong>` : ''}</p>
-${summaryHtml(sum, 'hex')}<section class="dk-panel"><h3>Détail des appels</h3><table><thead><tr><th>Date</th><th>Sens</th><th>Appelant</th><th>Appelé</th><th>Statut</th><th class="num">Durée</th></tr></thead><tbody>${rows}</tbody></table></section></body></html>`;
+${summaryHtml(sum, 'hex')}<section class="dk-panel"><h3>Détail des appels</h3><table><thead><tr><th>Date</th><th>Sens</th><th>Appelant</th><th>Appelé</th><th>Statut</th><th class="num">Attente</th><th class="num">Durée</th><th>Cause probable</th></tr></thead><tbody>${rows}</tbody></table></section></body></html>`;
 }
 function exportHtml(site) { if (needData()) download(`${fileBase(site)}.html`, reportHtml(site), 'text/html;charset=utf-8'); }
 
