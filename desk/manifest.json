@@ -1,0 +1,31 @@
+{
+  "manifestVersion": "0.1",
+  "version": "0.1.0",
+  "id": "astrea-desk",
+  "packageName": "io.github.briceaesir.astrea.desk",
+  "productType": "app",
+  "name": {
+    "short": "Astrea Desk",
+    "full": "Astrea Desk for Wazo"
+  },
+  "description": {
+    "short": "Administration du site depuis l'appli Wazo, avec les droits du Portal",
+    "full": "Espace d'administration pour les administrateurs de site, dans l'appli Wazo Web et Desktop. Connexion avec le compte du Portal Wazo : les modules affiches sont ceux que l'administrateur a le droit de voir dans le Portal (menus de stack). Modules prevus : groupes d'appels, files d'attente, POPC, agents, journal d'appels avec graphiques et exports, statistiques. Lien direct vers le Portal."
+  },
+  "icons": {
+    "color": "./icon.svg",
+    "outline": "./sidebar.svg"
+  },
+  "developer": {
+    "name": "Astrea"
+  },
+  "staticTabs": [
+    {
+      "entityId": "astrea-desk",
+      "context": ["sidebarTab"],
+      "name": "Astrea Desk",
+      "icon": "./sidebar.svg",
+      "contentUrl": "./index.html?v=0.1.0"
+    }
+  ]
+}

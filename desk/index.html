@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Astrea Desk</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Mulish:wght@300..800&display=swap">
+<link rel="stylesheet" href="../admin-tools/common/style.css?v=0.1.0">
+<link rel="stylesheet" href="./desk.css?v=0.1.0">
+<script>if (window.parent !== window) document.documentElement.classList.add('framed');</script>
+</head>
+<body>
+<div id="app">
+  <header class="topbar">
+    <div class="brand">Astrea Desk</div>
+    <div id="conn" class="conn muted">Chargement…</div>
+  </header>
+
+  <!-- Connexion avec le compte Portal -->
+  <section id="login" class="card narrow" hidden>
+    <h2>Connexion</h2>
+    <p class="muted">Utilisez votre compte du <strong>Portal Wazo</strong> (administrateur de site). Ce n'est pas le compte de l'appli.</p>
+    <form id="login-form" autocomplete="on">
+      <label>Adresse e-mail <input id="lg-email" type="email" autocomplete="username" required></label>
+      <label>Mot de passe <input id="lg-pass" type="password" autocomplete="current-password" required></label>
+      <div class="btnrow"><button id="lg-go" class="primary" type="submit">Se connecter</button></div>
+    </form>
+    <p id="lg-err" class="error" role="alert"></p>
+    <p class="muted small">Le mot de passe n'est pas enregistré : il sert uniquement à ouvrir la session, qui reste en mémoire jusqu'à la fermeture du plugin.</p>
+  </section>
+
+  <!-- Choix du site -->
+  <section id="sites" class="card" hidden>
+    <h2>Choisir un site</h2>
+    <p class="muted small" id="sites-sub"></p>
+    <label>Rechercher <input id="sites-q" placeholder="Nom du site ou du client"></label>
+    <ul id="sites-list" class="list dk-sites"></ul>
+    <div class="btnrow"><button id="sites-logout">Se déconnecter</button></div>
+  </section>
+
+  <main id="main" class="no-detail" hidden>
+    <aside id="sidebar">
+      <nav class="sidenav" id="nav"></nav>
+      <div class="dk-foot">
+        <div class="dk-site"><span class="muted small">Site</span><strong id="ft-site"></strong><span id="ft-stack" class="muted small"></span></div>
+        <a class="dk-link" href="https://portal.wazo.io/" target="_blank" rel="noopener">Ouvrir le Portal ↗</a>
+        <button id="ft-change" class="dk-text" hidden>Changer de site</button>
+        <button id="ft-diag" class="dk-text">Diagnostic</button>
+        <button id="ft-logout" class="dk-text">Se déconnecter</button>
+      </div>
+    </aside>
+
+    <section id="workbench">
+      <div id="compat" class="compat" role="alert" hidden></div>
+      <div id="view"></div>
+    </section>
+  </main>
+
+  <div id="modal" class="modal" hidden><div class="modal-box"><div id="modal-body"></div>
+    <div class="btnrow right"><button id="modal-cancel">Annuler</button><button id="modal-ok" class="primary">Confirmer</button></div></div></div>
+  <div id="toast" class="toast" hidden></div>
+</div>
+<script type="module" src="./app.js?v=0.1.0"></script>
+</body>
+</html>
