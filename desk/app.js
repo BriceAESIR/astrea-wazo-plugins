@@ -2,10 +2,11 @@
 // dans le Portal (visualization), choix du site, connexion à la stack, menu
 // et accueil. Les appels confd passent par common/core.js (api, listAll,
 // filtre tenant), avec le token de la stack du site.
-import { sdk, S, $, esc, toast, applyTheme, listAll, showCompat } from '../admin-tools/common/core.js?v=0.1.0';
-import { P, ST, PortalError, portalLogin, checkScopes, loadVisualization, loadLocations, openSite, stackLogin, logout, closeSite } from './portal.js?v=0.1.0';
+import { sdk, S, $, esc, toast, applyTheme, listAll, showCompat } from '../admin-tools/common/core.js?v=0.2.0';
+import { renderCallLogs } from './calllogs.js?v=0.2.0';
+import { P, ST, PortalError, portalLogin, checkScopes, loadVisualization, loadLocations, openSite, stackLogin, logout, closeSite } from './portal.js?v=0.2.0';
 
-const APP_VERSION = '0.1.0';
+const APP_VERSION = '0.2.0';
 const TESTED_STACK = ['26.07', '26.10'];
 // Droit Portal sans lequel aucune stack n'est accessible (vérifié : contrôlé
 // par le Portal avant d'ouvrir un site).
@@ -22,7 +23,7 @@ const MODULES = [
     cols: [['Nom', (o) => o.name], ['Opérateurs', (o) => (o.members?.users?.length ?? '')]] },
   { id: 'agents', label: 'Agents', page: 'pbx.agents', path: '/agents', none: 'Aucun agent sur ce site.',
     cols: [['Numéro', (o) => o.number], ['Nom', (o) => [o.firstname, o.lastname].filter(Boolean).join(' ')], ['Files', (o) => (o.queues?.length ?? '')]] },
-  { id: 'calllogs', label: "Journal d'appels", page: 'pbx.cdr', lot: 2 },
+  { id: 'calllogs', label: "Journal d'appels", page: 'pbx.cdr', render: renderCallLogs, sub: 'Filtres, graphiques, exports' },
   { id: 'stats', label: 'Statistiques', page: 'pbx.stats', lot: 3 },
 ];
 const exts = (o) => (o.extensions || []).map((e) => e.exten).filter(Boolean).join(', ');
@@ -202,7 +203,7 @@ function renderHome() {
   const mods = MODULES.filter(allowed);
   const tile = (m) => {
     const n = D.counts[m.id];
-    const sub = m.lot ? `<span class="dk-badge">Bientôt</span>` : n === undefined ? '<span class="dk-s">Lecture…</span>' : n === 0 ? `<span class="dk-s">${esc(m.none)}</span>` : '';
+    const sub = m.lot ? `<span class="dk-badge">Bientôt</span>` : m.sub ? `<span class="dk-s">${esc(m.sub)}</span>` : n === undefined ? '<span class="dk-s">Lecture…</span>' : n === 0 ? `<span class="dk-s">${esc(m.none)}</span>` : '';
     return `<button class="dk-tile" data-go="${m.id}">${!m.lot && n ? `<span class="dk-n">${n}</span>` : ''}<span class="dk-t">${esc(m.label)}</span>${sub}</button>`;
   };
   $('view').innerHTML = `<div class="phonehead"><div><h2>${esc(ST.site.name)}</h2><div class="muted small">${esc(ST.site.customer || '')}</div></div></div>`
@@ -215,6 +216,10 @@ function renderHome() {
 async function renderModule(m) {
   const head = `<div class="phonehead"><div><h2>${esc(m.label)}</h2><div class="muted small">${esc(ST.site.name)} · lecture seule</div></div></div>`;
   if (m.lot) { $('view').innerHTML = head + `<p class="dk-empty">Ce module arrive avec le lot ${m.lot}.</p>`; return; }
+  if (m.render) {
+    try { await m.render($('view'), ST.site); } catch (err) { $('view').innerHTML = head + `<p class="error">${esc(err.message)}</p>`; }
+    return;
+  }
   $('view').innerHTML = head + '<p class="dk-empty">Lecture…</p>';
   try {
     const items = await loadList(m);

@@ -32,6 +32,46 @@ button.dk-text:hover:not(:disabled), .dk-link:hover { background: none; text-dec
 .dk-table tr:hover td { background: var(--hover); }
 .dk-empty { padding: 48px 0; text-align: center; color: var(--muted); }
 
+/* Journal d'appels : palette catégorielle validée (skill dataviz, slots 1-4),
+   pas pour le clair et le sombre. */
+:root { --dk-s1: #2a78d6; --dk-s2: #eb6834; --dk-s3: #1baf7a; --dk-s4: #eda100; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --dk-s1: #3987e5; --dk-s2: #d95926; --dk-s3: #199e70; --dk-s4: #c98500; } }
+:root[data-theme="dark"] { --dk-s1: #3987e5; --dk-s2: #d95926; --dk-s3: #199e70; --dk-s4: #c98500; }
+
+.dk-filters { display: flex; flex-wrap: wrap; gap: 0 16px; align-items: flex-end; margin: 0 0 16px; }
+.dk-filters label { margin: 4px 0; min-width: 130px; }
+.dk-filters .dk-grow { flex: 1; min-width: 160px; }
+.dk-go { padding-bottom: 4px; }
+.dk-kpis { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.dk-kpi { border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 14px; }
+.dk-kpi span { display: block; color: var(--muted); font-size: .75rem; }
+.dk-kpi strong { font-size: 1.25rem; font-weight: 700; }
+.dk-panel { border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 16px 16px; margin-bottom: 16px; }
+.dk-panel h3 { font-weight: 700; }
+.dk-two { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+.dk-two .dk-panel { margin-bottom: 0; }
+.dk-two + .dk-panel { margin-top: 16px; }
+.dk-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; color: var(--muted); font-size: .75rem; margin-bottom: 6px; }
+.dk-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+.dk-chart text { font-family: var(--font); }
+.dk-hb { display: grid; grid-template-columns: minmax(80px, 38%) 1fr auto; gap: 10px; align-items: center; min-height: 28px; font-size: .8125rem; }
+.dk-hb:hover { background: var(--hover); }
+.dk-hb-l { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dk-hb-t { height: 14px; }
+.dk-hb-t i { display: block; height: 100%; border-radius: 0 4px 4px 0; }
+.dk-hb-v { color: var(--muted); white-space: nowrap; font-size: .75rem; }
+.dk-tip { position: fixed; z-index: 30; pointer-events: none; padding: 4px 8px; border-radius: var(--radius); background: #323232; color: #fff; font-size: .75rem; box-shadow: var(--shadow-6); }
+.dk-scroll { overflow-x: auto; }
+.dk-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.dk-table .nowrap { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.dk-st { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.dk-st::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.dk-st-answered::before { background: var(--dk-s1); }
+.dk-st-unknown::before { background: var(--dk-s2); }
+.dk-st-voicemail::before { background: var(--dk-s3); }
+.dk-st-blocked::before { background: var(--dk-s4); }
+.dk-pager { justify-content: center; align-items: center; }
+
 /* Diagnostic */
 .dk-diag { white-space: pre-wrap; font: .75rem/1.5 ui-monospace, Consolas, monospace; background: var(--tile); padding: 12px 16px; border-radius: var(--radius); max-height: 60vh; overflow: auto; }
 
