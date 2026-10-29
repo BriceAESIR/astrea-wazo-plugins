@@ -8,8 +8,9 @@
 //  - réponse : { items, total, filtered } ;
 //  - call_status : blocked > voicemail > answered, sinon unknown (= non
 //    répondu) ; duration = fin - décroché (null si non décroché).
-import { S, $, esc, toast, listAll } from '../admin-tools/common/core.js?v=0.2.1';
-import { stackedColumns, hbars, legend } from './charts.js?v=0.2.1';
+import { S, $, esc, toast, listAll } from '../admin-tools/common/core.js?v=0.3.0';
+import { stackedColumns, hbars, legend } from './charts.js?v=0.3.0';
+import { download, fileSafe, csv, printHtml, REPORT_CSS, hoverTips } from './report.js?v=0.3.0';
 
 const PAGE = 1000;       // taille d'une requête call-logd
 const MAX = 20000;       // au-delà, on s'arrête et on le dit
@@ -310,34 +311,10 @@ function drawTable() {
   }
 }
 
-// Infobulle au survol des marques ([data-tip]).
-function hoverTips(root) {
-  root.addEventListener('mousemove', (e) => {
-    const t = $('dk-tip'); if (!t) return;
-    const m = e.target.closest?.('[data-tip]');
-    if (!m) { t.hidden = true; return; }
-    t.textContent = m.getAttribute('data-tip');
-    t.hidden = false;
-    t.style.left = `${Math.min(e.clientX + 12, innerWidth - t.offsetWidth - 8)}px`;
-    t.style.top = `${e.clientY + 14}px`;
-  });
-  root.addEventListener('mouseleave', () => { const t = $('dk-tip'); if (t) t.hidden = true; });
-}
-
 // ---------------------------------------------------------------------------
 // Exports
 // ---------------------------------------------------------------------------
-function download(name, text, type) {
-  try {
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([text], { type }));
-    a.download = name;
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
-    toast(`Fichier ${name} téléchargé`);
-  } catch (e) { console.warn('[astrea] téléchargement', e); toast('Téléchargement impossible dans cette appli.', 6000); }
-}
-const fileBase = (site) => `journal-appels_${(site.name || 'site').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\w-]+/g, '-')}_${toLocalInput(periodRange()[0])}`;
+const fileBase = (site) => `journal-appels_${fileSafe(site.name)}_${toLocalInput(periodRange()[0])}`;
 function needData() { if (!C.items.length) { toast('Rien à exporter : lancez d\'abord une recherche avec des résultats.'); return false; } return true; }
 function filtersText() {
   const u = C.users?.find((x) => x.uuid === F.user);
@@ -347,46 +324,21 @@ function filtersText() {
 // CSV pour Excel en français : séparateur « ; », BOM UTF-8.
 function exportCsv(site) {
   if (!needData()) return;
-  const q = (v) => { const s = String(v ?? ''); return /[;"\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
   const head = ['Date', 'Sens', 'Appelant (nom)', 'Appelant (numéro)', 'Appelé (nom)', 'Appelé (numéro)', 'Numéro composé', 'Statut', 'Décroché', 'Attente (s)', 'Durée (s)', 'Durée', 'Cause probable (déduite)', 'Mots clés'];
   const lines = C.items.map((c) => {
     const w = waitSecs(c);
-    return [fmtDate(c.start), DIRECTION[c.call_direction] || c.call_direction, c.source_name || c.source_internal_name, c.source_extension || c.source_internal_extension, c.destination_name, c.destination_extension, c.requested_extension, statusLabel(c), c.answer ? fmtDate(c.answer) : '', w == null ? '' : Math.round(w), c.duration == null ? '' : Math.round(c.duration), hms(c.duration), probableCause(c), (c.tags || []).join(', ')].map(q).join(';');
+    return [fmtDate(c.start), DIRECTION[c.call_direction] || c.call_direction, c.source_name || c.source_internal_name, c.source_extension || c.source_internal_extension, c.destination_name, c.destination_extension, c.requested_extension, statusLabel(c), c.answer ? fmtDate(c.answer) : '', w == null ? '' : Math.round(w), c.duration == null ? '' : Math.round(c.duration), hms(c.duration), probableCause(c), (c.tags || []).join(', ')];
   });
-  download(`${fileBase(site)}.csv`, '﻿' + [head.join(';'), ...lines].join('\r\n'), 'text/csv;charset=utf-8');
+  download(`${fileBase(site)}.csv`, csv(head, lines), 'text/csv;charset=utf-8');
 }
 
 // Rapport HTML autonome (styles intégrés, couleurs en dur, mode clair).
 function reportHtml(site) {
   const sum = summarize(C.items, periodRange());
   const rows = C.items.map((c) => `<tr><td>${esc(fmtDate(c.start))}</td><td>${esc(DIRECTION[c.call_direction] || '')}</td><td>${esc(caller(c))}</td><td>${esc(callee(c))}</td><td>${esc(statusLabel(c))}</td><td class="num">${esc(fmtDur(waitSecs(c)))}</td><td class="num">${esc(fmtDur(c.duration))}</td><td>${esc(probableCause(c))}</td></tr>`).join('');
-  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Journal d'appels · ${esc(site.name)}</title><style>
-body{font:14px/1.45 "Mulish",Helvetica,Arial,sans-serif;color:#0b0b0b;margin:24px;background:#fff}h1{font-size:20px;margin:0}h3{font-size:15px;margin:0 0 8px}
-.sub{color:#52514e;font-size:12px;margin:2px 0 16px}.dk-kpis{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px;margin-bottom:16px}.dk-panel>p{color:#52514e;font-size:11px;margin:-4px 0 8px}
-.dk-kpi{border:1px solid #e1e0d9;border-radius:4px;padding:8px 12px}.dk-kpi span{display:block;color:#52514e;font-size:11px}.dk-kpi strong{font-size:18px}
-.dk-panel{border:1px solid #e1e0d9;border-radius:4px;padding:12px 16px;margin-bottom:16px;break-inside:avoid}.dk-two{display:grid;grid-template-columns:1fr 1fr;gap:16px}
-.dk-legend{display:flex;gap:16px;font-size:12px;color:#52514e;margin-bottom:6px}.dk-legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}
-.dk-hb{display:grid;grid-template-columns:minmax(80px,38%) 1fr auto;gap:10px;align-items:center;font-size:12px;padding:3px 0}.dk-hb-l{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.dk-hb-t{height:14px}.dk-hb-t i{display:block;height:100%;border-radius:0 4px 4px 0;-webkit-print-color-adjust:exact;print-color-adjust:exact}.dk-hb-v{color:#52514e;white-space:nowrap}.dk-wide .dk-hb{grid-template-columns:minmax(200px,40%) 1fr auto}.dk-two+.dk-panel{margin-top:16px}
-.dk-legend i,svg{-webkit-print-color-adjust:exact;print-color-adjust:exact}
-table{width:100%;border-collapse:collapse;font-size:12px}th{text-align:left;color:#52514e;font-weight:600;border-bottom:1px solid #c3c2b7;padding:6px 8px}td{border-bottom:1px solid #e1e0d9;padding:5px 8px}.num{text-align:right}
-@media print{body{margin:0}.dk-kpis{grid-template-columns:repeat(4,1fr)}thead{display:table-header-group}tr{break-inside:avoid}}
-</style></head><body><h1>Journal d'appels · ${esc(site.name)}</h1><p class="sub">${esc(site.customer || '')} · ${esc(filtersText())} · ${C.items.length} appels · édité le ${esc(fmtDate(new Date().toISOString()))} par Astrea Desk${C.truncated ? ` · <strong>limité aux ${C.items.length} plus récents</strong>` : ''}</p>
+  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Journal d'appels · ${esc(site.name)}</title><style>${REPORT_CSS}</style></head><body><h1>Journal d'appels · ${esc(site.name)}</h1><p class="sub">${esc(site.customer || '')} · ${esc(filtersText())} · ${C.items.length} appels · édité le ${esc(fmtDate(new Date().toISOString()))} par Astrea Desk${C.truncated ? ` · <strong>limité aux ${C.items.length} plus récents</strong>` : ''}</p>
 ${summaryHtml(sum, 'hex')}<section class="dk-panel"><h3>Détail des appels</h3><table><thead><tr><th>Date</th><th>Sens</th><th>Appelant</th><th>Appelé</th><th>Statut</th><th class="num">Attente</th><th class="num">Durée</th><th>Cause probable</th></tr></thead><tbody>${rows}</tbody></table></section></body></html>`;
 }
 function exportHtml(site) { if (needData()) download(`${fileBase(site)}.html`, reportHtml(site), 'text/html;charset=utf-8'); }
 
-// PDF : impression du rapport HTML (« Enregistrer au format PDF »). Dans
-// l'appli desktop, l'impression depuis l'iframe n'est pas vérifiée : en cas
-// d'échec, on propose l'export HTML à imprimer depuis le navigateur.
-function exportPdf(site) {
-  if (!needData()) return;
-  const f = document.createElement('iframe');
-  f.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0';
-  document.body.appendChild(f);
-  f.onload = () => {
-    try { f.contentWindow.focus(); f.contentWindow.print(); }
-    catch (e) { console.warn('[astrea] impression', e); toast("Impression impossible ici : utilisez l'export HTML puis imprimez-le en PDF.", 8000); }
-    setTimeout(() => f.remove(), 60000);
-  };
-  f.srcdoc = reportHtml(site);
-}
+function exportPdf(site) { if (needData()) printHtml(reportHtml(site)); }

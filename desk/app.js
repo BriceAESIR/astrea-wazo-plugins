@@ -2,11 +2,12 @@
 // dans le Portal (visualization), choix du site, connexion à la stack, menu
 // et accueil. Les appels confd passent par common/core.js (api, listAll,
 // filtre tenant), avec le token de la stack du site.
-import { sdk, S, $, esc, toast, applyTheme, listAll, showCompat } from '../admin-tools/common/core.js?v=0.2.1';
-import { renderCallLogs } from './calllogs.js?v=0.2.1';
-import { P, ST, PortalError, portalLogin, checkScopes, loadVisualization, loadLocations, openSite, stackLogin, logout, closeSite } from './portal.js?v=0.2.1';
+import { sdk, S, $, esc, toast, applyTheme, listAll, showCompat } from '../admin-tools/common/core.js?v=0.3.0';
+import { renderCallLogs } from './calllogs.js?v=0.3.0';
+import { renderStats } from './stats.js?v=0.3.0';
+import { P, ST, PortalError, portalLogin, checkScopes, loadVisualization, loadLocations, openSite, stackLogin, logout, closeSite } from './portal.js?v=0.3.0';
 
-const APP_VERSION = '0.2.1';
+const APP_VERSION = '0.3.0';
 const TESTED_STACK = ['26.07', '26.10'];
 // Droit Portal sans lequel aucune stack n'est accessible (vérifié : contrôlé
 // par le Portal avant d'ouvrir un site).
@@ -24,7 +25,7 @@ const MODULES = [
   { id: 'agents', label: 'Agents', page: 'pbx.agents', path: '/agents', none: 'Aucun agent sur ce site.',
     cols: [['Numéro', (o) => o.number], ['Nom', (o) => [o.firstname, o.lastname].filter(Boolean).join(' ')], ['Files', (o) => (o.queues?.length ?? '')]] },
   { id: 'calllogs', label: "Journal d'appels", page: 'pbx.cdr', render: renderCallLogs, sub: 'Filtres, graphiques, exports' },
-  { id: 'stats', label: 'Statistiques', page: 'pbx.stats', lot: 3 },
+  { id: 'stats', label: 'Statistiques', page: 'pbx.stats', render: renderStats, sub: "Files d'attente et agents" },
 ];
 const exts = (o) => (o.extensions || []).map((e) => e.exten).filter(Boolean).join(', ');
 
