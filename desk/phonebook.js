@@ -8,8 +8,8 @@
 //    son uuid ;
 //  - import : POST /phonebooks/{uuid}/contacts/import, corps CSV (en-tête =
 //    noms des champs), charset dans le Content-Type → {created, failed}.
-import { S, $, esc, toast, confirmModal, canWrite } from '../admin-tools/common/core.js?v=0.8.1';
-import { download, csv } from './report.js?v=0.8.1';
+import { S, $, esc, toast, confirmModal, canWrite } from '../admin-tools/common/core.js?v=0.8.2';
+import { download, csv } from './report.js?v=0.8.2';
 
 const FIELDS = [['firstname', 'Prénom'], ['lastname', 'Nom'], ['company', 'Société'], ['number', 'Numéro'], ['mobile', 'Mobile'], ['email', 'E-mail']];
 const LABEL = Object.fromEntries(FIELDS);

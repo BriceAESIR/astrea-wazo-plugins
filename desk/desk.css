@@ -117,6 +117,8 @@ button.icon { padding: 2px 8px; min-width: 0; }
 .dk-ph { display: inline-flex; align-items: center; gap: 4px; font-size: .75rem; white-space: nowrap; color: var(--muted); }
 .dk-ph::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); opacity: .5; }
 .dk-ph-free::before { background: var(--ok); opacity: 1; }
+.dk-ph-mobile { cursor: help; }
+.dk-ph-mobile::before { background: transparent; border: 1.5px solid var(--ok); opacity: 1; box-sizing: border-box; }
 .dk-ph-busy { color: var(--ink); font-weight: 600; }
 .dk-ph-busy::before { background: var(--danger); opacity: 1; }
 .dk-ph-ring::before { background: var(--warn); opacity: 1; }
