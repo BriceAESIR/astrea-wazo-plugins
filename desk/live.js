@@ -16,8 +16,8 @@
 // Groupes : l'entrée / sortie dynamique (*735…) passe par AddQueueMember dans
 // le dialplan (wazo-agid group_member.py) ; seul amid la lit, et amid exige le
 // tenant principal : invisible et non modifiable pour un admin de site.
-import { S, $, esc, toast, api, listAll, confirmModal, canWrite, fullName } from '../admin-tools/common/core.js?v=0.7.2';
-import { edit } from './cfbridge.js?v=0.7.2';
+import { S, $, esc, toast, api, listAll, confirmModal, canWrite, fullName } from '../admin-tools/common/core.js?v=0.7.3';
+import { edit } from './cfbridge.js?v=0.7.3';
 
 const REFRESH = 20e3;
 export const PHONE = {
@@ -191,11 +191,14 @@ export async function renderQueues(view, site) {
         const rows = members.map(({ m, a }) => {
           const st = L.st.get(m.id), inq = st?.queues?.find((x) => x.id === q.id);
           const [c, lbl] = agentState(st);
-          const here = st?.logged ? (inq?.logged === false ? ['off', 'A quitté la file'] : inq?.paused ? ['pause', 'En pause dans la file'] : ['on', 'Dans la file']) : [c, lbl];
+          // Ce que dit agentd (donc l'appli Wazo de l'agent) : une file absente de son
+          // état n'est PAS une file où il reçoit des appels (constaté en réel le
+          // 02/11/2026 : membre dans confd, connecté, mais « 0/0 file active » dans l'appli).
+          const here = st?.logged ? (!inq ? ['off', 'Hors de la file pour Wazo'] : inq.logged === false ? ['off', 'A quitté la file'] : inq.paused ? ['pause', 'En pause dans la file'] : ['on', 'Dans la file']) : [c, lbl];
           // Pilotage (retour de Brice, 02/11/2026) : connexion ici ; pause et
           // déconnexion complète dans le menu « ⋯ » ; les membres se règlent ailleurs.
           const more = st?.logged ? `<details class="dk-more"><summary title="Autres actions">⋯</summary><div>${st.paused ? `<button class="dk-text" data-unp="${esc(a.number)}">Reprendre (fin de pause)</button>` : `<button class="dk-text" data-pause="${esc(a.number)}">Mettre en pause</button>`}<button class="dk-text" data-off="${m.id}">Déconnecter l'agent (toutes ses files)</button></div></details>` : '';
-          const btn = ro ? '' : !st?.logged ? `<button class="dk-text" data-on="${m.id}">Connecter…</button>` : (inq?.logged === false ? `<button class="dk-text" data-qin="${q.id}:${m.id}">Reconnecter à la file</button>` : `<button class="dk-text" data-qout="${q.id}:${m.id}">Déconnecter de la file</button>`) + more;
+          const btn = ro ? '' : !st?.logged ? `<button class="dk-text" data-on="${m.id}">Connecter…</button>` : (!inq || inq.logged === false ? `<button class="dk-text" data-qin="${q.id}:${m.id}">${inq ? 'Reconnecter à la file' : 'Connecter à la file'}</button>` : `<button class="dk-text" data-qout="${q.id}:${m.id}">Déconnecter de la file</button>`) + more;
           return `<tr><td class="nowrap">${esc(agentName(a))} <span class="muted small">${esc(a.number || '')}</span></td><td><span class="dk-ag dk-ag-${here[0]}">${esc(here[1])}</span>${st?.logged && st.extension ? ` <span class="muted small">sur ${esc(st.extension)}</span>` : ''}</td><td>${phoneBadge(L.pr.get(agentUser(a)))}</td><td class="dk-acts">${btn}</td></tr>`;
         }).join('');
         return `<section class="dk-panel"><div class="dk-panhead"><h3>${esc(q.label || q.name)} <span class="muted small">${esc((q.extensions || []).map((e) => e.exten).join(', '))} · ${logged} / ${members.length} agent${members.length > 1 ? 's' : ''} dans la file</span></h3>${ro ? '' : `<button class="dk-text" data-qcfg="${q.id}" title="Stratégie, délais, débordements, membres, numéro, horaire">Régler la file…</button>`}</div>`
@@ -242,7 +245,12 @@ export async function renderAgents(view, site) {
       + '<p class="muted small">Connecter, mettre en pause ou déconnecter un agent : menu « Files d\'attente ». La fiche de l\'agent (nom, utilisateur lié, files) arrive avec l\'éditeur d\'agent de Call Flow Manager.</p>'
       + (list.length ? `<div class="dk-scroll"><table class="dk-table"><thead><tr><th>Agent</th><th>État</th><th>Téléphone</th><th>Files</th><th></th></tr></thead><tbody>${list.map((a) => {
         const st = L.st.get(a.id), [c, l] = agentState(st);
-        const qs = (st?.queues?.length ? st.queues : (a.queues || []).map((x) => ({ id: x.queue?.id ?? x.id, logged: null }))).map((x) => `<span class="${x.logged === false ? 'muted' : ''}" title="${x.logged === false ? 'a quitté cette file' : ''}">${esc(qname.get(x.id) || x.display_name || x.name || `#${x.id}`)}${x.logged === false ? ' (sorti)' : ''}</span>`).join(', ');
+        // Files dont il est membre (confd), avec ce qu'en dit agentd s'il est connecté.
+        const qs = (a.queues || []).map((x) => {
+          const id = x.queue?.id ?? x.id, s = st?.queues?.find((y) => y.id === id);
+          const note = !st?.logged ? '' : !s ? ' (hors file pour Wazo)' : s.logged === false ? ' (sorti)' : '';
+          return `<span class="${note ? 'muted' : ''}">${esc(qname.get(id) || x.label || x.name || `#${id}`)}${note}</span>`;
+        }).join(', ');
         // Pilotage (connexion, pause) : dans Files d'attente (retour de Brice, 02/11/2026).
         // La fiche de l'agent viendra de Call Flow Manager (éditeur partagé).
         const btns = '';
