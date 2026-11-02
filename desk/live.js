@@ -19,8 +19,8 @@
 // Groupes : l'entrée / sortie dynamique (*735…) passe par AddQueueMember dans
 // le dialplan (wazo-agid group_member.py) ; seul amid la lit, et amid exige le
 // tenant principal : invisible et non modifiable pour un admin de site.
-import { S, $, esc, toast, api, listAll, confirmModal, canWrite, fullName } from '../admin-tools/common/core.js?v=0.7.16';
-import { edit } from './cfbridge.js?v=0.7.16';
+import { S, $, esc, toast, api, listAll, confirmModal, canWrite, fullName } from '../admin-tools/common/core.js?v=0.7.17';
+import { edit } from './cfbridge.js?v=0.7.17';
 
 const REFRESH = 20e3;
 export const PHONE = {
@@ -237,7 +237,7 @@ export async function renderQueues(view, site) {
       // Constaté en réel le 02/11/2026 : connecté depuis Desk, l'état dans Wazo est
       // identique à une connexion depuis l'appli (Détails A et B identiques, touche
       // du poste allumée), mais l'onglet agent de l'appli Wazo ne le montre pas.
-      + `<p class="dk-note small">L'onglet « Statut d'agent » de l'appli Wazo n'affiche que les connexions faites depuis l'appli : un agent connecté depuis Desk y apparaît « Hors ligne » ou sans file, alors qu'il est bien connecté et reçoit les appels. Au lancement de l'appli, l'agent est déconnecté : il se reconnecte depuis l'appli ou depuis ici.</p>`
+      + `<p class="dk-note small">L'onglet « Statut d'agent » de l'appli Wazo ne se met pas à jour après une connexion faite depuis Desk : l'agent y apparaît « Hors ligne » ou sans file, alors qu'il est bien connecté. Actualiser l'appli (<strong>Ctrl+R</strong>) remet l'affichage à jour. Au lancement de l'appli, l'agent est déconnecté : il se reconnecte depuis l'appli ou depuis ici.</p>`
       + (L.queues.length ? L.queues.map((q) => {
         const members = [...(q.members?.agents || [])].map((m) => ({ m, a: byId.get(m.id) || m })).sort((x, y) => agentName(x.a).localeCompare(agentName(y.a), 'fr'));
         const users = q.members?.users || [];
