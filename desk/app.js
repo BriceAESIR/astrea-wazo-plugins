@@ -2,17 +2,17 @@
 // dans le Portal (visualization), choix du site, connexion à la stack, menu
 // et accueil. Les appels confd passent par common/core.js (api, listAll,
 // filtre tenant), avec le token de la stack du site.
-import { sdk, S, $, esc, toast, applyTheme, listAll, showCompat } from '../admin-tools/common/core.js?v=0.7.10';
-import { renderCallLogs } from './calllogs.js?v=0.7.10';
-import { renderStats } from './stats.js?v=0.7.10';
-import { renderDashboard, stopDashboard } from './dashboard.js?v=0.7.10';
-import { renderModuleList } from './modules.js?v=0.7.10';
-import { renderQueues } from './live.js?v=0.7.10';
-import { renderSounds, renderMoh, renderRecordings } from './media.js?v=0.7.10';
-import { renderPhonebooks } from './phonebook.js?v=0.7.10';
-import { P, ST, PortalError, portalLogin, portalResume, remembered, checkScopes, loadVisualization, loadLocations, openSite, stackLogin, logout, closeSite } from './portal.js?v=0.7.10';
+import { sdk, S, $, esc, toast, applyTheme, listAll, showCompat } from '../admin-tools/common/core.js?v=0.7.11';
+import { renderCallLogs } from './calllogs.js?v=0.7.11';
+import { renderStats } from './stats.js?v=0.7.11';
+import { renderDashboard, stopDashboard } from './dashboard.js?v=0.7.11';
+import { renderModuleList } from './modules.js?v=0.7.11';
+import { renderQueues } from './live.js?v=0.7.11';
+import { renderSounds, renderMoh, renderRecordings } from './media.js?v=0.7.11';
+import { renderPhonebooks } from './phonebook.js?v=0.7.11';
+import { P, ST, PortalError, portalLogin, portalResume, remembered, checkScopes, loadVisualization, loadLocations, openSite, stackLogin, logout, closeSite } from './portal.js?v=0.7.11';
 
-const APP_VERSION = '0.7.10';
+const APP_VERSION = '0.7.11';
 const TESTED_STACK = ['26.07', '26.10'];
 // Droit Portal sans lequel aucune stack n'est accessible (vérifié : contrôlé
 // par le Portal avant d'ouvrir un site).
@@ -89,15 +89,10 @@ async function checkVersion() {
   } catch (e) { console.warn('[astrea] contrôle de version', e.message); return false; }
 }
 
-// Liens externes (Portal, g711.org) : dans l'appli Wazo, ouverts par le SDK
-// (openLink, lu dans euc-plugins-sdk/app.js) plutôt que target=_blank, dont le
-// comportement dans l'iframe de l'appli n'est pas garanti.
-document.addEventListener('click', (e) => {
-  const a = e.target.closest?.('a[target="_blank"]');
-  if (!a || !document.body.classList.contains('in-app') || typeof sdk.openLink !== 'function') return;
-  e.preventDefault();
-  try { sdk.openLink(a.href); } catch (err) { console.warn('[astrea] openLink', err); window.open(a.href, '_blank', 'noopener'); }
-});
+// Liens externes (Portal, g711.org) : lien classique target=_blank. Constaté en
+// réel (Brice, 02/11/2026) : sdk.openLink ouvre la page DANS l'appli Wazo, où
+// elle fonctionne mal ; il n'est donc pas utilisé. Un bouton « Copier
+// l'adresse » est proposé à côté des liens importants, en secours.
 
 async function init() {
   if (await checkVersion()) return;

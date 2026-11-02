@@ -16,15 +16,15 @@
 //    SUPPOSÉ comme pour les autres champs « son » de confd).
 // Tout fichier audio envoyé est converti en WAV 8 kHz 16 bits mono (toWav8k
 // de Call Flow), le format attendu par Wazo ; sauf une musique en mode mp3.
-import { S, $, esc, toast, api, listAll, confirmModal, canWrite } from '../admin-tools/common/core.js?v=0.7.10';
-import { toWav8k, moTxt } from './cf/sound-play.js?v=0.7.10';
+import { S, $, esc, toast, api, listAll, confirmModal, canWrite } from '../admin-tools/common/core.js?v=0.7.11';
+import { toWav8k, moTxt } from './cf/sound-play.js?v=0.7.11';
 
 // Format audio et préparation des fichiers (demande de Brice, 02/11/2026) :
 // format exact, lien vers g711.org et pas-à-pas. Desk convertit de toute façon
 // (toWav8k) ; g711.org sert à régler le volume et la qualité téléphonique.
 const G711 = 'https://g711.org/';
 const audioHelp = (open = false) => `<div class="dk-audio">
-  <p><strong>Format attendu par Wazo : WAV 8 kHz, 16 bits, mono (PCM).</strong> Desk convertit automatiquement tout fichier audio (mp3, m4a, wav…) dans ce format avant l'envoi. Pour un son plus fort ou plus clair au téléphone, préparez-le d'abord avec <a href="${G711}" target="_blank" rel="noopener">g711.org ↗</a> (gratuit, en ligne).</p>
+  <p><strong>Format attendu par Wazo : WAV 8 kHz, 16 bits, mono (PCM).</strong> Desk convertit automatiquement tout fichier audio (mp3, m4a, wav…) dans ce format avant l'envoi. Pour un son plus fort ou plus clair au téléphone, préparez-le d'abord avec <a href="${G711}" target="_blank" rel="noopener">g711.org ↗</a> (gratuit, en ligne). <button type="button" class="dk-link-sm" data-copy="${G711}">Copier l'adresse</button> pour la coller dans votre navigateur si le lien s'ouvre dans l'appli.</p>
   <details${open ? ' open' : ''}><summary>Comment préparer un fichier avec g711.org</summary><ol>
     <li>Ouvrez <a href="${G711}" target="_blank" rel="noopener">g711.org ↗</a>.</li>
     <li><strong>Source File</strong> : cliquez sur <em>Browse</em> et choisissez votre fichier (mp3, wav, m4a… jusqu'à 50 Mo).</li>
@@ -33,6 +33,12 @@ const audioHelp = (open = false) => `<div class="dk-audio">
     <li>Facultatif : cochez <em>Optimize Audio for Phone (Bandpass Filter)</em> pour une voix plus nette au téléphone.</li>
     <li>Cliquez sur <em>Submit</em>, téléchargez le fichier obtenu, puis ajoutez-le ici.</li>
   </ol></details></div>`;
+// « Copier l'adresse » : presse-papiers, sinon l'adresse est affichée pour une copie à la main.
+document.addEventListener('click', async (e) => {
+  const b = e.target.closest?.('[data-copy]'); if (!b) return;
+  try { await navigator.clipboard.writeText(b.dataset.copy); toast(`Adresse copiée : ${b.dataset.copy}`); }
+  catch { toast(`Copiez cette adresse dans votre navigateur : ${b.dataset.copy}`, 10000); }
+});
 const head = (title, site, sub, extra = '') => `<div class="phonehead"><div><h2>${esc(title)}</h2><div class="muted small">${esc(site.name)}${sub ? ` · ${esc(sub)}` : ''}</div></div>${extra}</div>`;
 const LANGS = [['fr_FR', 'Français'], ['en_US', 'Anglais'], ['', 'Sans langue']];
 const FMT = { slin: 'wav', wav: 'wav', ulaw: 'ulaw', alaw: 'alaw', gsm: 'gsm', mp3: 'mp3', g722: 'g722' };
