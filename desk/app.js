@@ -2,17 +2,17 @@
 // dans le Portal (visualization), choix du site, connexion à la stack, menu
 // et accueil. Les appels confd passent par common/core.js (api, listAll,
 // filtre tenant), avec le token de la stack du site.
-import { sdk, S, $, esc, toast, applyTheme, listAll, showCompat } from '../admin-tools/common/core.js?v=0.7.0';
-import { renderCallLogs } from './calllogs.js?v=0.7.0';
-import { renderStats } from './stats.js?v=0.7.0';
-import { renderDashboard, stopDashboard } from './dashboard.js?v=0.7.0';
-import { renderModuleList } from './modules.js?v=0.7.0';
-import { renderQueues, renderAgents } from './live.js?v=0.7.0';
-import { renderSounds, renderMoh, renderRecordings } from './media.js?v=0.7.0';
-import { renderPhonebooks } from './phonebook.js?v=0.7.0';
-import { P, ST, PortalError, portalLogin, portalResume, remembered, checkScopes, loadVisualization, loadLocations, openSite, stackLogin, logout, closeSite } from './portal.js?v=0.7.0';
+import { sdk, S, $, esc, toast, applyTheme, listAll, showCompat } from '../admin-tools/common/core.js?v=0.7.1';
+import { renderCallLogs } from './calllogs.js?v=0.7.1';
+import { renderStats } from './stats.js?v=0.7.1';
+import { renderDashboard, stopDashboard } from './dashboard.js?v=0.7.1';
+import { renderModuleList } from './modules.js?v=0.7.1';
+import { renderQueues, renderAgents } from './live.js?v=0.7.1';
+import { renderSounds, renderMoh, renderRecordings } from './media.js?v=0.7.1';
+import { renderPhonebooks } from './phonebook.js?v=0.7.1';
+import { P, ST, PortalError, portalLogin, portalResume, remembered, checkScopes, loadVisualization, loadLocations, openSite, stackLogin, logout, closeSite } from './portal.js?v=0.7.1';
 
-const APP_VERSION = '0.7.0';
+const APP_VERSION = '0.7.1';
 const TESTED_STACK = ['26.07', '26.10'];
 // Droit Portal sans lequel aucune stack n'est accessible (vérifié : contrôlé
 // par le Portal avant d'ouvrir un site).
@@ -68,7 +68,28 @@ const allowed = (m) => !P.visualization || [].concat(m.page).some((p) => P.visua
 // ---------------------------------------------------------------------------
 // Démarrage
 // ---------------------------------------------------------------------------
+// Version en ligne plus récente que celle chargée (cache de l'appli et de
+// GitHub Pages, max-age 600 ; vécu le 02/11/2026 : 0.6.x affichée alors que la
+// 0.7.0 était en ligne et poussée) : rechargement sur la nouvelle version.
+// L'URL ?v= est nouvelle, donc lue sans cache, et ses imports aussi. Une seule
+// tentative par version (pas de boucle si le CDN sert encore l'ancienne).
+const newer = (a, b) => { const x = a.split('.').map(Number), y = b.split('.').map(Number); for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); return false; };
+async function checkVersion() {
+  try {
+    const v = (await (await fetch(`./manifest.json?t=${Date.now()}`, { cache: 'no-store' })).json())?.version;
+    if (!v || !newer(v, APP_VERSION)) return false;
+    const key = `astrea-desk-reload-${v}`;
+    if (sessionStorage.getItem(key)) { console.warn('[astrea] version en ligne', v, 'mais', APP_VERSION, 'chargée après rechargement'); return false; }
+    sessionStorage.setItem(key, '1');
+    console.info('[astrea] nouvelle version', v, 'au lieu de', APP_VERSION, ': rechargement');
+    $('conn').textContent = `Mise à jour vers la version ${v}…`;
+    location.replace(`./index.html?v=${v}&t=${Date.now()}`);
+    return true;
+  } catch (e) { console.warn('[astrea] contrôle de version', e.message); return false; }
+}
+
 async function init() {
+  if (await checkVersion()) return;
   if (window.parent !== window) {
     try {
       await Promise.race([sdk.initialize(), new Promise((_, ko) => setTimeout(() => ko(new Error('pas de réponse de l\'appli')), 15000))]);
