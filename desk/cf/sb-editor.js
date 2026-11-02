@@ -10,10 +10,10 @@
 //  - opérateurs : PUT /switchboards/{uuid}/members/users {users:[{uuid}]},
 //    liste remplacée en entier ;
 //  - un seul débordement : noanswer (PUT /switchboards/{uuid}/fallbacks).
-import { $, esc, confirmModal, helpButton, helpBox, fullName } from '../../admin-tools/common/core.js?v=0.7.6';
-import { M } from './model.js?v=0.7.6';
-import { pickerHtml, bindPicker, readPicker } from './sched-editor.js?v=0.7.6';
-import { sec, field, setSums, openSec } from './ed-ui.js?v=0.7.6';
+import { $, esc, confirmModal, helpButton, helpBox, fullName } from '../../admin-tools/common/core.js?v=0.7.7';
+import { M } from './model.js?v=0.7.7';
+import { pickerHtml, bindPicker, readPicker } from './sched-editor.js?v=0.7.7';
+import { sec, field, setSums, openSec } from './ed-ui.js?v=0.7.7';
 
 // Ordre sans importance pour un standard : trié pour comparer.
 const byUuid = (a, b) => a.uuid.localeCompare(b.uuid);

@@ -19,8 +19,8 @@
 // Groupes : l'entrée / sortie dynamique (*735…) passe par AddQueueMember dans
 // le dialplan (wazo-agid group_member.py) ; seul amid la lit, et amid exige le
 // tenant principal : invisible et non modifiable pour un admin de site.
-import { S, $, esc, toast, api, listAll, confirmModal, canWrite, fullName } from '../admin-tools/common/core.js?v=0.7.6';
-import { edit } from './cfbridge.js?v=0.7.6';
+import { S, $, esc, toast, listAll, confirmModal, canWrite, fullName } from '../admin-tools/common/core.js?v=0.7.7';
+import { edit } from './cfbridge.js?v=0.7.7';
 
 const REFRESH = 20e3;
 export const PHONE = {
@@ -71,35 +71,6 @@ const agentName = (a) => [a.firstname, a.lastname].filter(Boolean).join(' ') || 
 const agentUser = (a) => (a.users || [])[0]?.uuid;
 const userExts = () => L.users.flatMap((u) => (u.lines || []).flatMap((l) => (l.extensions || []).filter((e) => e.exten).map((e) => ({ exten: e.exten, context: e.context, user: u, line: l.id }))));
 
-// Lignes d'un numéro : téléphone ou appli (WebRTC). Vérifié dans wazo-confd
-// (tenant/service.py) : chaque tenant a un modèle SIP « webrtc » (option
-// webrtc = yes) ; les options combinées de l'endpoint (GET /endpoints/sip/{uuid})
-// le portent donc pour une ligne d'appli. Interface surveillée par agentd :
-// « PJSIP/<nom de l'endpoint> » (SUPPOSÉ ; agentd la refuse si elle n'est pas
-// une ligne de ce numéro, l'erreur est alors affichée).
-// Constaté en réel (02/11/2026) : les options seules ne suffisaient pas à
-// reconnaître l'appli (les deux lignes de Bart affichées « Téléphone ») ; on
-// regarde aussi les modèles SIP de l'endpoint (libellé « webrtc »). Le
-// téléphone est nommé d'après le périphérique associé à la ligne (GET
-// /devices/{id} : vendor, model) ; l'état de chaque ligne (enregistrée ou non)
-// vient de chatd (presences : lines[{id, state}]).
-async function lineDevices(ids, user) {
-  const pres = new Map((L.pr.get(user)?.lines || []).map((x) => [x.id, x.state]));
-  return Promise.all(ids.map(async (id) => {
-    try {
-      const l = await api('GET', `/lines/${id}`);
-      const sip = l?.endpoint_sip;
-      if (!sip?.uuid) return { id, endpoint: null };
-      const [ep, dev] = await Promise.all([api('GET', `/endpoints/sip/${sip.uuid}`), l.device_id ? api('GET', `/devices/${l.device_id}`).catch(() => null) : null]);
-      const opts = Object.fromEntries((ep?.endpoint_section_options || []).map(([k, v]) => [k, v]));
-      const tpl = (ep?.templates || []).map((t) => t.label || t.name || '').join(' ');
-      const webrtc = String(opts.webrtc || '').toLowerCase() === 'yes' || /webrtc/i.test(tpl);
-      const model = dev ? [dev.vendor, dev.model].filter(Boolean).join(' ') : '';
-      return { id, webrtc, model, state: pres.get(id) || null, endpoint: `PJSIP/${ep?.name || sip.name}` };
-    } catch (e) { return { id, error: e.message, endpoint: null }; }
-  }));
-}
-const devTitle = (d) => (d.webrtc ? 'Appli Wazo (web / desktop)' : d.model ? `Téléphone ${d.model}` : 'Softphone ou appareil SIP (sans téléphone associé)');
 const hhmmss = (d) => d.toLocaleTimeString('fr-FR');
 
 // Motif de pause : l'appli Wazo envoie « <code>:<texte libre> » (vu en réel le
@@ -159,10 +130,13 @@ async function act(label, fn, after) {
   await loadLive(); after();
 }
 
-// Connexion d'un agent sur un poste du site (son propre poste proposé en premier).
-// Un agent se connecte sur un NUMÉRO (extension + contexte), pas sur une ligne :
-// un utilisateur qui a plusieurs lignes sur le même numéro (poste + appli)
-// n'apparaît qu'une fois (retour de Brice, 02/11/2026 : doublons illisibles).
+// Connexion d'un agent, comme le bouton « Connexion Agent » de l'appli Wazo
+// (décision de Brice, 02/11/2026 : même schéma, pas de choix téléphone / appli) :
+// sur le NUMÉRO de son utilisateur lié (extension + contexte), toutes ses lignes
+// sonnent ; agentd choisit lui-même la ligne surveillée. Un seul numéro libre :
+// connexion directe ; sinon (pas d'utilisateur lié, plusieurs numéros, numéro
+// déjà pris) fenêtre de choix du poste. Un utilisateur qui a plusieurs lignes
+// sur le même numéro n'apparaît qu'une fois.
 function loginAgent(a, after) {
   if (!a || !canWrite()) return;
   const mine = agentUser(a);
@@ -184,6 +158,12 @@ function loginAgent(a, after) {
       <span>${other ? `<span class="muted small">déjà utilisé par ${esc(agentName(other))}</span>` : phoneBadge(L.pr.get(x.user.uuid))}</span></label>`;
   };
   const own = exts.filter((x) => x.user.uuid === mine), others = exts.filter((x) => x.user.uuid !== mine);
+  const login = (x) => svc('POST', `agentd/1.0/agents/by-id/${a.id}/login`, { extension: x.exten, context: x.context });
+  // Cas courant : un seul poste, le sien, libre → connexion directe, comme dans l'appli.
+  if (own.length === 1 && !taken.has(`${own[0].exten}@${own[0].context}`)) {
+    act(`${agentName(a)} connecté sur son poste ${own[0].exten}.`, () => login(own[0]), after);
+    return;
+  }
   confirmModal(`<div class="dk-ed"><h3>Connecter l'agent ${esc(agentName(a))} <span class="muted small">n° ${esc(a.number)}</span></h3>
     <p class="muted small">Choisissez le poste sur lequel l'agent recevra les appels de ses files.</p>
     ${own.length ? `<h4>Son poste</h4><div class="dk-picks">${own.map((x) => row(x, exts.indexOf(x))).join('')}</div>` : '<p class="muted small">Aucun utilisateur n\'est lié à cet agent dans Wazo : choisissez un poste ci-dessous.</p>'}
@@ -191,37 +171,14 @@ function loginAgent(a, after) {
       // Son poste existe : les autres postes, rarement utiles, restent repliés (retour de Brice : « trompeur »).
       ? `<details class="dk-other"><summary>Le connecter sur le poste de quelqu'un d'autre (${others.length})</summary>${others.length > 8 ? '<input id="la-q" type="search" placeholder="Rechercher un nom ou un numéro">' : ''}<div class="dk-picks dk-picks-scroll" id="la-others">${others.map((x) => row(x, exts.indexOf(x))).join('')}</div></details>`
       : `<h4>Postes du site</h4>${others.length > 8 ? '<input id="la-q" type="search" placeholder="Rechercher un nom ou un numéro">' : ''}<div class="dk-picks dk-picks-scroll" id="la-others">${others.map((x) => row(x, exts.indexOf(x))).join('')}</div>`) : ''}
-    <div id="la-dev"></div>
     <p id="la-err" class="error small"></p></div>`, async () => {
     const v = $('modal-body').querySelector('input[name="la-ext"]:checked')?.value;
     const x = exts[Number(v)]; if (!x) { $('la-err').textContent = 'Choisissez un poste.'; return false; }
-    // Plusieurs lignes : la ligne choisie sert à savoir si l'agent est déjà en appel.
-    const endpoint = $('modal-body').querySelector('input[name="la-dev"]:checked')?.value || null;
-    try {
-      await svc('POST', `agentd/1.0/agents/by-id/${a.id}/login`, { extension: x.exten, context: x.context, ...(endpoint ? { endpoint } : {}) });
-      toast(`${agentName(a)} connecté sur le poste ${x.exten}${endpoint ? ` (${devName.get(endpoint) || endpoint})` : ''}.`);
-    } catch (err) { $('la-err').textContent = `Échec : ${err.message}`; return false; }
+    try { await login(x); toast(`${agentName(a)} connecté sur le poste ${x.exten}.`); }
+    catch (err) { $('la-err').textContent = `Échec : ${err.message}`; return false; }
     await loadLive(); after(); return true;
   }, 'Connecter');
   if ($('la-q')) $('la-q').oninput = (e) => { const q = e.target.value.toLowerCase(); for (const l of $('la-others').children) l.hidden = q && !l.textContent.toLowerCase().includes(q); };
-  // Choix de l'appareil quand le poste a plusieurs lignes (téléphone + appli).
-  const devName = new Map();
-  const showDevices = async () => {
-    const x = exts[Number($('modal-body').querySelector('input[name="la-ext"]:checked')?.value)];
-    const box = $('la-dev'); if (!box) return;
-    if (!x || x.lines < 2) { box.innerHTML = ''; return; }
-    box.innerHTML = '<p class="muted small">Lecture des lignes…</p>';
-    const devs = (await lineDevices(x.lineIds, x.user.uuid)).filter((d) => d.endpoint);
-    if (!devs.length) { box.innerHTML = ''; return; }
-    devs.forEach((d) => devName.set(d.endpoint, devTitle(d)));
-    // Coché d'office : l'appareil en ligne (l'appli d'abord), sinon l'appli, sinon le premier.
-    const on = (d) => d.state && d.state !== 'unavailable';
-    const pick = devs.find((d) => on(d) && d.webrtc) || devs.find(on) || devs.find((d) => d.webrtc) || devs[0];
-    const stateTxt = (d) => (!d.state ? '' : phoneBadge({ line_state: d.state }));
-    box.innerHTML = `<h4>Il répond sur</h4><p class="muted small">Les appels de file font sonner toutes ses lignes ; Wazo surveille l'appareil choisi pour ne pas lui envoyer un appel s'il est déjà en communication.</p><div class="dk-picks">${devs.map((d) => `<label class="dk-pick"><input type="radio" name="la-dev" value="${esc(d.endpoint)}"${d === pick ? ' checked' : ''}><span class="dk-pick-main"><strong>${esc(devTitle(d))}</strong></span><span>${stateTxt(d)}</span></label>`).join('')}</div>`;
-  };
-  $('modal-body').addEventListener('change', (e) => { if (e.target.name === 'la-ext') showDevices(); });
-  showDevices();
 }
 
 // ---------------------------------------------------------------------------
