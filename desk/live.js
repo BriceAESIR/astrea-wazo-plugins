@@ -19,8 +19,8 @@
 // Groupes : l'entrée / sortie dynamique (*735…) passe par AddQueueMember dans
 // le dialplan (wazo-agid group_member.py) ; seul amid la lit, et amid exige le
 // tenant principal : invisible et non modifiable pour un admin de site.
-import { S, $, esc, toast, api, listAll, confirmModal, canWrite, fullName } from '../admin-tools/common/core.js?v=0.7.14';
-import { edit } from './cfbridge.js?v=0.7.14';
+import { S, $, esc, toast, api, listAll, confirmModal, canWrite, fullName } from '../admin-tools/common/core.js?v=0.7.15';
+import { edit } from './cfbridge.js?v=0.7.15';
 
 const REFRESH = 20e3;
 export const PHONE = {
@@ -194,6 +194,33 @@ function loginAgent(a, after) {
   if ($('la-q')) $('la-q').oninput = (e) => { const q = e.target.value.toLowerCase(); for (const l of $('la-others').children) l.hidden = q && !l.textContent.toLowerCase().includes(q); };
 }
 
+// Détails d'un agent pour le diagnostic (02/11/2026 : connecté depuis Desk, l'appli
+// le voit sans file ou hors ligne ; connecté depuis l'appli, tout va bien). Montre
+// l'état brut d'agentd (GET /agents/by-id/{id}) et les lignes de son utilisateur
+// avec leur état (chatd), à comparer entre les deux façons de se connecter.
+async function agentDetails(a) {
+  if (!a) return;
+  let st, err = '';
+  try { st = await svc('GET', `agentd/1.0/agents/by-id/${a.id}`); } catch (e) { err = e.message; }
+  const u = L.users.find((x) => x.uuid === agentUser(a));
+  const pres = new Map((L.pr.get(u?.uuid)?.lines || []).map((l) => [l.id, l.state]));
+  const lines = await Promise.all((u?.lines || []).map(async (l) => {
+    const d = await api('GET', `/lines/${l.id}`).catch(() => null);
+    return { id: l.id, nom: d?.name || l.name || null, numeros: (l.extensions || []).map((e) => `${e.exten}@${e.context}`), etat_chatd: pres.get(l.id) || null };
+  }));
+  const info = {
+    agent: { id: a.id, numero: a.number, nom: agentName(a), utilisateur: u ? (fullName(u) || u.uuid) : null },
+    agentd: st ? { logged: st.logged, extension: st.extension, context: st.context, state_interface: st.state_interface, paused: st.paused, paused_reason: st.paused_reason, queues: (st.queues || []).map((q) => ({ id: q.id, nom: q.display_name || q.name, logged: q.logged, paused: q.paused })) } : `illisible : ${err}`,
+    lignes_utilisateur: lines,
+    lu_a: new Date().toLocaleTimeString('fr-FR'),
+  };
+  const txt = JSON.stringify(info, null, 2);
+  confirmModal(`<div class="dk-ed"><h3>Détails de ${esc(agentName(a))}</h3><p class="muted small">État tel que Wazo le connaît. Aucun mot de passe ni token. À copier pour comparer une connexion faite depuis l'appli et une faite depuis Desk.</p><pre class="dk-diag">${esc(txt)}</pre></div>`, async () => {
+    try { await navigator.clipboard.writeText(txt); toast('Détails copiés.'); } catch { toast('Copie impossible : sélectionnez le texte.', 5000); return false; }
+    return true;
+  }, 'Copier');
+}
+
 // ---------------------------------------------------------------------------
 // Files d'attente : membres, états, connexion de l'agent
 // ---------------------------------------------------------------------------
@@ -224,7 +251,7 @@ export async function renderQueues(view, site) {
             : [st.paused ? `<button class="dk-text" data-unp="${esc(a.number)}">Reprendre</button>` : `<button class="dk-text" data-pause="${esc(a.number)}">Pause</button>`,
               !inq || inq.logged === false ? `<button class="dk-text" data-qin="${q.id}:${m.id}">${inq ? 'Reconnecter à la file' : 'Connecter à la file'}</button>` : `<button class="dk-text" data-qout="${q.id}:${m.id}">Déconnecter de la file</button>`,
               `<button class="dk-text" data-off="${m.id}" title="Déconnecte l'agent de toutes ses files">Déconnecter l'agent</button>`].join(' ');
-          return `<tr><td class="nowrap">${esc(agentName(a))} <span class="muted small">${esc(a.number || '')}</span></td><td><span class="dk-ag dk-ag-${here[0]}">${esc(here[1])}</span>${st?.logged && st.extension ? ` <span class="muted small">sur ${esc(st.extension)}</span>` : ''}</td><td>${phoneBadge(L.pr.get(agentUser(a)))}</td><td class="dk-acts">${btn}</td></tr>`;
+          return `<tr><td class="nowrap">${esc(agentName(a))} <span class="muted small">${esc(a.number || '')}</span><br><button class="dk-link-sm" data-info="${m.id}" title="État de l'agent tel que Wazo (agentd) le connaît">Détails</button></td><td><span class="dk-ag dk-ag-${here[0]}">${esc(here[1])}</span>${st?.logged && st.extension ? ` <span class="muted small">sur ${esc(st.extension)}</span>` : ''}</td><td>${phoneBadge(L.pr.get(agentUser(a)))}</td><td class="dk-acts">${btn}</td></tr>`;
         }).join('');
         return `<section class="dk-panel"><div class="dk-panhead"><h3>${esc(q.label || q.name)} <span class="muted small">${esc((q.extensions || []).map((e) => e.exten).join(', '))} · ${logged} / ${members.length} agent${members.length > 1 ? 's' : ''} dans la file</span></h3>${ro ? '' : `<button class="dk-text" data-qcfg="${q.id}" title="Stratégie, délais, débordements, membres, numéro, horaire">Régler la file…</button>`}</div>`
           + (rows ? `<div class="dk-scroll"><table class="dk-table"><thead><tr><th>Agent</th><th>Dans la file</th><th>Téléphone</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : '<p class="muted small">Aucun agent membre.</p>')
@@ -239,6 +266,7 @@ export async function renderQueues(view, site) {
     // Réglage complet de la file : éditeur de Call Flow Manager.
     if (b.dataset.qcfg) { edit('queue', b.dataset.qcfg, () => { if (view.querySelector('#lq-head')) reload(); }); return; }
     if (b.dataset.on) { loginAgent(byId.get(Number(b.dataset.on)), draw); return; }
+    if (b.dataset.info) { agentDetails(byId.get(Number(b.dataset.info))); return; }
     if (b.dataset.pause) { act('Agent en pause.', () => svc('POST', `agentd/1.0/agents/by-number/${encodeURIComponent(b.dataset.pause)}/pause`, {}), draw); return; }
     if (b.dataset.unp) { act('Fin de pause.', () => svc('POST', `agentd/1.0/agents/by-number/${encodeURIComponent(b.dataset.unp)}/unpause`, {}), draw); return; }
     if (b.dataset.off) {
