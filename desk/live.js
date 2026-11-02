@@ -16,7 +16,8 @@
 // Groupes : l'entrée / sortie dynamique (*735…) passe par AddQueueMember dans
 // le dialplan (wazo-agid group_member.py) ; seul amid la lit, et amid exige le
 // tenant principal : invisible et non modifiable pour un admin de site.
-import { S, $, esc, toast, listAll, confirmModal, canWrite, fullName } from '../admin-tools/common/core.js?v=0.5.0';
+import { S, $, esc, toast, listAll, confirmModal, canWrite, fullName } from '../admin-tools/common/core.js?v=0.6.0';
+import { edit } from './cfbridge.js?v=0.6.0';
 
 const REFRESH = 20e3;
 export const PHONE = {
@@ -117,7 +118,7 @@ export async function renderQueues(view, site) {
           return `<tr><td class="nowrap">${esc(agentName(a))} <span class="muted small">${esc(a.number || '')}</span></td><td><span class="dk-ag dk-ag-${here[0]}">${esc(here[1])}</span></td><td>${phoneBadge(L.pr.get(agentUser(a)))}</td><td class="dk-acts">${btn}${ro ? '' : ` <button class="dk-text" data-qrm="${q.id}:${m.id}">Retirer</button>`}</td></tr>`;
         }).join('');
         const addable = L.agents.filter((a) => !members.some(({ m }) => m.id === a.id));
-        return `<section class="dk-panel"><h3>${esc(q.label || q.name)} <span class="muted small">${esc((q.extensions || []).map((e) => e.exten).join(', '))} · ${logged} / ${members.length} agent${members.length > 1 ? 's' : ''} dans la file</span></h3>`
+        return `<section class="dk-panel"><div class="dk-panhead"><h3>${esc(q.label || q.name)} <span class="muted small">${esc((q.extensions || []).map((e) => e.exten).join(', '))} · ${logged} / ${members.length} agent${members.length > 1 ? 's' : ''} dans la file</span></h3>${ro ? '' : `<button class="dk-text" data-qcfg="${q.id}" title="Stratégie, délais, débordements, membres, numéro, horaire">Régler la file…</button>`}</div>`
           + (rows ? `<div class="dk-scroll"><table class="dk-table"><thead><tr><th>Agent</th><th>Dans la file</th><th>Téléphone</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : '<p class="muted small">Aucun agent membre.</p>')
           + (users.length ? `<p class="small">Utilisateurs membres : ${users.map((u) => `${esc(fullName(u) || u.uuid)} ${phoneBadge(L.pr.get(u.uuid))}`).join(' · ')}</p>` : '')
           + (!ro && addable.length ? `<div class="dk-ed-row"><select data-qsel="${q.id}"><option value="">Ajouter un agent à la file…</option>${addable.map((a) => `<option value="${a.id}">${esc(agentName(a))} (${esc(a.number)})</option>`).join('')}</select><button class="dk-text" data-qadd="${q.id}">Ajouter</button></div>` : '')
@@ -128,6 +129,8 @@ export async function renderQueues(view, site) {
   const reload = async () => { await loadLists(); byId.clear(); for (const a of L.agents) byId.set(a.id, a); draw(); };
   view.onclick = (e) => {
     const b = e.target.closest('button'); if (!b) return;
+    // Réglage complet de la file : éditeur de Call Flow Manager.
+    if (b.dataset.qcfg) { edit('queue', b.dataset.qcfg, () => { if (view.querySelector('#lq-head')) reload(); }); return; }
     const [qid, aid] = (b.dataset.qin || b.dataset.qout || b.dataset.qrm || '').split(':').map(Number);
     const q = L.queues.find((x) => x.id === (qid || Number(b.dataset.qadd)));
     if (b.dataset.qin) act(`Agent connecté à « ${q.label} ».`, () => svc('PUT', `agentd/1.0/agents/${aid}/queues/${qid}/login`), draw);

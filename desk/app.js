@@ -2,42 +2,49 @@
 // dans le Portal (visualization), choix du site, connexion à la stack, menu
 // et accueil. Les appels confd passent par common/core.js (api, listAll,
 // filtre tenant), avec le token de la stack du site.
-import { sdk, S, $, esc, toast, applyTheme, listAll, showCompat } from '../admin-tools/common/core.js?v=0.5.0';
-import { renderCallLogs } from './calllogs.js?v=0.5.0';
-import { renderStats } from './stats.js?v=0.5.0';
-import { renderDashboard, stopDashboard } from './dashboard.js?v=0.5.0';
-import { renderGroups, renderSchedules, renderVoicemails } from './manage.js?v=0.5.0';
-import { renderQueues, renderAgents } from './live.js?v=0.5.0';
-import { P, ST, PortalError, portalLogin, portalResume, remembered, checkScopes, loadVisualization, loadLocations, openSite, stackLogin, logout, closeSite } from './portal.js?v=0.5.0';
+import { sdk, S, $, esc, toast, applyTheme, listAll, showCompat } from '../admin-tools/common/core.js?v=0.6.0';
+import { renderCallLogs } from './calllogs.js?v=0.6.0';
+import { renderStats } from './stats.js?v=0.6.0';
+import { renderDashboard, stopDashboard } from './dashboard.js?v=0.6.0';
+import { renderModuleList } from './modules.js?v=0.6.0';
+import { renderQueues, renderAgents } from './live.js?v=0.6.0';
+import { P, ST, PortalError, portalLogin, portalResume, remembered, checkScopes, loadVisualization, loadLocations, openSite, stackLogin, logout, closeSite } from './portal.js?v=0.6.0';
 
-const APP_VERSION = '0.5.0';
+const APP_VERSION = '0.6.0';
 const TESTED_STACK = ['26.07', '26.10'];
 // Droit Portal sans lequel aucune stack n'est accessible (vérifié : contrôlé
 // par le Portal avant d'ouvrir un site).
 const CRED_SCOPE = 'deployd.instances.*.credentials.*.read';
 
-// Modules : `page` = identifiant de la case « Menu de Stack » du Portal
-// (vérifié le 29/10/2026). `path` : liste confd lue pour l'accueil et la vue.
-// `render` : écran propre au module (sinon tableau en lecture seule).
+// Menu calqué sur celui du Portal : sections et libellés relevés dans son code
+// (chunk 302 : parent common.layout.pbxMenu.<section> de chaque page, et
+// traductions françaises, 02/11/2026), dans l'ordre des sections du Portal.
+// `page` = case « Menu de Stack » (champ visualization). `path` : liste confd
+// comptée sur le Dashboard. `render` : écran du module.
+const SECTIONS = [['userManagement', 'Gestion utilisateurs'], ['reporting', 'Rapports'], ['callManagement', 'Gestion des appels'], ['services', 'Services'], ['callCenter', "Centre d'appel"]];
+const list = (id) => (view, site) => renderModuleList(id, view, site);
 const MODULES = [
-  { id: 'groups', label: "Groupes d'appels", page: 'pbx.ring-groups', path: '/groups', none: "Aucun groupe d'appels sur ce site.", render: renderGroups },
-  { id: 'queues', label: "Files d'attente", page: 'pbx.queues', path: '/queues', none: "Aucune file d'attente sur ce site.", render: renderQueues },
-  { id: 'agents', label: 'Agents', page: 'pbx.agents', path: '/agents', none: 'Aucun agent sur ce site.', render: renderAgents },
-  { id: 'switchboards', label: 'POPC', page: 'pbx.switchboards', path: '/switchboards', none: 'Aucun POPC sur ce site.',
-    cols: [['Nom', (o) => o.name], ['Opérateurs', (o) => (o.members?.users?.length ?? '')]] },
-  { id: 'schedules', label: 'Plages horaires', page: 'pbx.schedules', path: '/schedules', none: 'Aucune plage horaire sur ce site.', render: renderSchedules },
-  { id: 'voicemails', label: 'Messageries vocales', page: 'pbx.voicemails', path: '/voicemails', none: 'Aucune messagerie vocale sur ce site.', render: renderVoicemails },
-  { id: 'calllogs', label: "Journal d'appels", page: 'pbx.cdr', render: renderCallLogs, sub: 'Filtres, graphiques, exports' },
-  { id: 'stats', label: 'Statistiques', page: 'pbx.stats', render: renderStats, sub: "Files d'attente et agents" },
+  { id: 'users', section: 'userManagement', label: 'Utilisateurs', page: 'pbx.users', path: '/users', none: 'Aucun utilisateur.', render: list('users') },
+  { id: 'groups', section: 'userManagement', label: "Groupes d'appels", page: 'pbx.ring-groups', path: '/groups', none: "Aucun groupe d'appels.", render: list('groups') },
+  { id: 'voicemails', section: 'userManagement', label: 'Messageries vocales', page: 'pbx.voicemails', path: '/voicemails', none: 'Aucune messagerie vocale.', render: list('voicemails') },
+  { id: 'calllogs', section: 'reporting', label: "Journaux d'appels", page: ['pbx.cdr', 'pbx.cdr-insights'], render: renderCallLogs, sub: 'Filtres, graphiques, exports' },
+  { id: 'incalls', section: 'callManagement', label: 'Appels entrants', page: 'pbx.incalls', path: '/incalls', none: 'Aucun appel entrant.', render: list('incalls') },
+  { id: 'outcalls', section: 'callManagement', label: 'Appels sortants', page: 'pbx.outcalls', path: '/outcalls', none: 'Aucune règle sortante.', render: list('outcalls') },
+  { id: 'schedules', section: 'callManagement', label: 'Plages horaires', page: 'pbx.schedules', path: '/schedules', none: 'Aucune plage horaire.', render: list('schedules') },
+  { id: 'ivr', section: 'services', label: 'SVI', page: 'pbx.ivr', path: '/ivr', none: 'Aucun SVI.', render: list('ivr') },
+  { id: 'conferences', section: 'services', label: 'Conférences', page: 'pbx.conference', path: '/conferences', none: 'Aucune conférence.', render: list('conferences') },
+  { id: 'switchboards', section: 'services', label: 'POPC', page: 'pbx.switchboards', path: '/switchboards', none: 'Aucun POPC.', render: list('switchboards') },
+  { id: 'agents', section: 'callCenter', label: 'Agents', page: 'pbx.agents', path: '/agents', none: 'Aucun agent.', render: renderAgents },
+  { id: 'queues', section: 'callCenter', label: "Files d'attente", page: 'pbx.queues', path: '/queues', none: "Aucune file d'attente.", render: renderQueues },
+  { id: 'stats', section: 'callCenter', label: 'Statistiques', page: ['pbx.stats', 'pbx.stats-agents', 'pbx.stats-queues'], render: renderStats, sub: "Files d'attente et agents" },
 ];
-const exts = (o) => (o.extensions || []).map((e) => e.exten).filter(Boolean).join(', ');
 
 const D = { counts: {}, lists: {}, view: 'home', warns: [] };
 let renewTimer = null;
 
 // Visible si la case est cochée dans le Portal. Pas de liste (compte sans
 // restriction, supposé) : tout est visible.
-const allowed = (m) => !P.visualization || P.visualization.includes(m.page);
+const allowed = (m) => !P.visualization || [].concat(m.page).some((p) => P.visualization.includes(p));
 
 // ---------------------------------------------------------------------------
 // Démarrage
@@ -181,8 +188,12 @@ function selfCheck() {
 // Menu et vues
 // ---------------------------------------------------------------------------
 function renderNav() {
-  const items = [{ id: 'home', label: 'Dashboard' }, ...MODULES.filter(allowed)];
-  $('nav').innerHTML = items.map((m) => `<button data-view="${m.id}" class="${D.view === m.id ? 'active' : ''}">${esc(m.label)}</button>`).join('');
+  const btn = (m) => `<button data-view="${m.id}" class="${D.view === m.id ? 'active' : ''}">${esc(m.label)}</button>`;
+  const mods = MODULES.filter(allowed);
+  $('nav').innerHTML = btn({ id: 'home', label: 'Dashboard' }) + SECTIONS.map(([k, l]) => {
+    const ms = mods.filter((m) => m.section === k);
+    return ms.length ? `<div class="dk-navsec">${esc(l)}</div>${ms.map(btn).join('')}` : '';
+  }).join('');
 }
 $('nav').addEventListener('click', (e) => { const b = e.target.closest('[data-view]'); if (b) go(b.dataset.view); });
 $('view').addEventListener('click', (e) => { const b = e.target.closest('[data-go]'); if (b) go(b.dataset.go); });

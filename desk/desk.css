@@ -122,6 +122,12 @@ button.icon { padding: 2px 8px; min-width: 0; }
 .dk-ph-ring::before { background: var(--warn); opacity: 1; }
 .dk-mem { display: inline-flex; align-items: center; gap: 4px; margin: 1px 10px 1px 0; white-space: nowrap; }
 
+/* Menu par sections (comme le Portal) et listes de gestion */
+.dk-navsec { margin: 14px 0 2px; padding: 0 12px; color: var(--muted); font-size: .6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: .08333em; }
+.dk-search { min-width: 220px; }
+.dk-off { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 8px; background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--ink); font-size: .6875rem; }
+.dk-panhead { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px; }
+
 /* Diagnostic */
 .dk-diag { white-space: pre-wrap; font: .75rem/1.5 ui-monospace, Consolas, monospace; background: var(--tile); padding: 12px 16px; border-radius: var(--radius); max-height: 60vh; overflow: auto; }
 
