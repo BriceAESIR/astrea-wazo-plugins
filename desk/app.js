@@ -2,17 +2,17 @@
 // dans le Portal (visualization), choix du site, connexion à la stack, menu
 // et accueil. Les appels confd passent par common/core.js (api, listAll,
 // filtre tenant), avec le token de la stack du site.
-import { sdk, S, $, esc, toast, applyTheme, listAll, showCompat } from '../admin-tools/common/core.js?v=0.8.4';
-import { renderCallLogs } from './calllogs.js?v=0.8.4';
-import { renderStats } from './stats.js?v=0.8.4';
-import { renderDashboard, stopDashboard } from './dashboard.js?v=0.8.4';
-import { renderModuleList } from './modules.js?v=0.8.4';
-import { renderQueues } from './live.js?v=0.8.4';
-import { renderSounds, renderMoh, renderRecordings, stopAudio } from './media.js?v=0.8.4';
-import { renderPhonebooks } from './phonebook.js?v=0.8.4';
-import { P, ST, PortalError, portalLogin, portalResume, remembered, checkScopes, loadVisualization, loadLocations, openSite, stackLogin, logout, closeSite } from './portal.js?v=0.8.4';
+import { sdk, S, $, esc, toast, applyTheme, listAll, showCompat } from '../admin-tools/common/core.js?v=0.8.5';
+import { renderCallLogs } from './calllogs.js?v=0.8.5';
+import { renderStats } from './stats.js?v=0.8.5';
+import { renderDashboard, stopDashboard } from './dashboard.js?v=0.8.5';
+import { renderModuleList } from './modules.js?v=0.8.5';
+import { renderQueues } from './live.js?v=0.8.5';
+import { renderSounds, renderMoh, renderRecordings, stopAudio } from './media.js?v=0.8.5';
+import { renderPhonebooks } from './phonebook.js?v=0.8.5';
+import { P, ST, PortalError, portalLogin, portalResume, remembered, checkScopes, loadVisualization, loadLocations, openSite, stackLogin, logout, closeSite } from './portal.js?v=0.8.5';
 
-const APP_VERSION = '0.8.4';
+const APP_VERSION = '0.8.5';
 const TESTED_STACK = ['26.07', '26.10'];
 // Droit Portal sans lequel aucune stack n'est accessible (vérifié : contrôlé
 // par le Portal avant d'ouvrir un site).

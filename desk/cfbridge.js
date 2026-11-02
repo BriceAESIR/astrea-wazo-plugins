@@ -6,16 +6,16 @@
 // (execute). Desk reprend exactement ce cycle, mais écrit dès que l'éditeur
 // est validé ; une modification faite ailleurs entre-temps fait tout refuser
 // (rien n'est écrasé). Règles d'écriture : voir les commentaires de cf/write.js.
-import { S, esc, toast, confirmModal, canWrite } from '../admin-tools/common/core.js?v=0.8.4';
-import { M, loadAll, ensureDetail, ensureAllDetails, loadTrunkOperators, assocW, tapi, destLabel, showNum } from './cf/model.js?v=0.8.4';
-import { getDest, setDest, sameValue, prepare, conflictsOf, execute } from './cf/write.js?v=0.8.4';
-import { openGroupEditor } from './cf/group-editor.js?v=0.8.4';
-import { openQueueEditor } from './cf/queue-editor.js?v=0.8.4';
-import { openIvrEditor } from './cf/ivr-editor.js?v=0.8.4';
-import { openSbEditor } from './cf/sb-editor.js?v=0.8.4';
-import { openOutcallEditor } from './cf/outcall-editor.js?v=0.8.4';
-import { openScheduleEditor } from './cf/sched-editor.js?v=0.8.4';
-import { openIncallEditor, openUserEditor, openVmEditor, openConfEditor, openSchedGenEditor } from './cf/obj-editors.js?v=0.8.4';
+import { S, esc, toast, confirmModal, canWrite } from '../admin-tools/common/core.js?v=0.8.5';
+import { M, loadAll, ensureDetail, ensureAllDetails, loadTrunkOperators, assocW, tapi, destLabel, showNum } from './cf/model.js?v=0.8.5';
+import { getDest, setDest, sameValue, prepare, conflictsOf, execute } from './cf/write.js?v=0.8.5';
+import { openGroupEditor } from './cf/group-editor.js?v=0.8.5';
+import { openQueueEditor } from './cf/queue-editor.js?v=0.8.5';
+import { openIvrEditor } from './cf/ivr-editor.js?v=0.8.5';
+import { openSbEditor } from './cf/sb-editor.js?v=0.8.5';
+import { openOutcallEditor } from './cf/outcall-editor.js?v=0.8.5';
+import { openScheduleEditor } from './cf/sched-editor.js?v=0.8.5';
+import { openIncallEditor, openUserEditor, openVmEditor, openConfEditor, openSchedGenEditor } from './cf/obj-editors.js?v=0.8.5';
 
 export { M, destLabel, showNum };
 

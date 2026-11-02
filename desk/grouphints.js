@@ -17,8 +17,8 @@
 // seulement si l'état d'avant est connu. Supposé, non vérifié : un code
 // composé apparaît toujours dans le journal (appel interne non répondu, vu en
 // réel), et un échec (groupe d'un autre tenant…) y apparaît aussi.
-import { S, api, fullName } from '../admin-tools/common/core.js?v=0.8.4';
-import { M } from './cfbridge.js?v=0.8.4';
+import { S, api, fullName } from '../admin-tools/common/core.js?v=0.8.5';
+import { M } from './cfbridge.js?v=0.8.5';
 
 export const DAYS = 30;
 const PAGE = 1000, MAX = 10000;

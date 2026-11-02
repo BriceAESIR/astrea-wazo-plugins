@@ -2,11 +2,11 @@
 // type d'objet, recherche, et « Modifier » qui ouvre le réglage complet de
 // Call Flow Manager (desk/cfbridge.js). Données : modèle Call Flow du site
 // (toutes les listes confd du tenant, refiltrées sur le tenant par model.js).
-import { S, $, esc, fullName } from '../admin-tools/common/core.js?v=0.8.4';
-import { cfModel, edit, M, destLabel, showNum } from './cfbridge.js?v=0.8.4';
-import { STRATEGY, periodText } from './cf/model.js?v=0.8.4';
-import { loadPresences, phoneBadge } from './live.js?v=0.8.4';
-import { loadGroupHints, hintText, DAYS } from './grouphints.js?v=0.8.4';
+import { S, $, esc, fullName } from '../admin-tools/common/core.js?v=0.8.5';
+import { cfModel, edit, M, destLabel, showNum } from './cfbridge.js?v=0.8.5';
+import { STRATEGY, periodText } from './cf/model.js?v=0.8.5';
+import { loadPresences, phoneBadge } from './live.js?v=0.8.5';
+import { loadGroupHints, hintText, DAYS } from './grouphints.js?v=0.8.5';
 
 const exts = (o) => (o.extensions || []).map((e) => showNum(e.exten)).filter(Boolean).join(', ');
 const userExts = (u) => (u.lines || []).flatMap((l) => (l.extensions || []).map((e) => e.exten)).filter(Boolean).join(', ');

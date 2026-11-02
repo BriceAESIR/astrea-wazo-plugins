@@ -8,11 +8,18 @@
 //    son uuid ;
 //  - import : POST /phonebooks/{uuid}/contacts/import, corps CSV (en-tête =
 //    noms des champs), charset dans le Content-Type → {created, failed}.
-import { S, $, esc, toast, confirmModal, canWrite } from '../admin-tools/common/core.js?v=0.8.4';
-import { download, csv } from './report.js?v=0.8.4';
+import { S, $, esc, toast, confirmModal, canWrite } from '../admin-tools/common/core.js?v=0.8.5';
+import { download, csv } from './report.js?v=0.8.5';
 
 const FIELDS = [['firstname', 'Prénom'], ['lastname', 'Nom'], ['company', 'Société'], ['number', 'Numéro'], ['mobile', 'Mobile'], ['email', 'E-mail']];
 const LABEL = Object.fromEntries(FIELDS);
+// Obligatoires comme dans le Portal (formulaire « Prénom * », « Numéro primaire * »,
+// vu par Brice le 03/11/2026 ; clés firstname / number : contact créé dans le
+// Portal et relu par Desk).
+const REQUIRED = new Set(['firstname', 'number']);
+// Clés techniques jamais affichées ni modifiables : id (uuid du contact, dird),
+// phonebook_uuid (ajoutée par le Portal à ses contacts, vu le 03/11/2026).
+const HIDDEN = new Set(['id', 'phonebook_uuid', 'tenant_uuid']);
 const P = { books: [], cur: null, contacts: [], q: '' };
 
 async function dird(method, path, body, type = 'application/json') {
@@ -33,7 +40,7 @@ export async function renderPhonebooks(view, site) {
   try { await loadBooks(); await loadContacts(); } catch (e) { view.innerHTML = `<p class="error">Annuaire illisible : ${esc(e.message)}</p>`; return; }
   const ro = !!S.readonly;
   // Colonnes : champs habituels présents, puis les autres champs trouvés.
-  const cols = () => { const keys = new Set(P.contacts.flatMap((c) => Object.keys(c))); keys.delete('id'); return [...FIELDS.map(([k]) => k).filter((k) => keys.has(k)), ...[...keys].filter((k) => !LABEL[k]).sort()]; };
+  const cols = () => { const keys = new Set(P.contacts.flatMap((c) => Object.keys(c))); for (const k of HIDDEN) keys.delete(k); return [...FIELDS.map(([k]) => k).filter((k) => keys.has(k)), ...[...keys].filter((k) => !LABEL[k]).sort()]; };
   const draw = () => {
     const book = P.books.find((b) => b.uuid === P.cur);
     const q = P.q.trim().toLowerCase();
@@ -52,11 +59,14 @@ export async function renderPhonebooks(view, site) {
   // Fiche contact : champs habituels + champs déjà présents sur le contact.
   const contactForm = (c) => {
     if (!canWrite()) return;
-    const keys = [...FIELDS.map(([k]) => k), ...Object.keys(c || {}).filter((k) => k !== 'id' && !LABEL[k])];
-    confirmModal(`<div class="dk-ed"><h3>${c ? esc(name(c)) : 'Nouveau contact'}</h3><div class="dk-ed-3">${keys.map((k) => `<label>${esc(LABEL[k] || k)}<input data-k="${esc(k)}" value="${esc(c?.[k] ?? '')}"${k === 'email' ? ' type="email"' : ''}></label>`).join('')}</div><p id="pb-err" class="error small"></p></div>`, async () => {
-      const body = {}; for (const i of $('modal-body').querySelectorAll('[data-k]')) { const v = i.value.trim(); if (v) body[i.dataset.k] = v; }
-      if (!body.firstname && !body.lastname && !body.company) { $('pb-err').textContent = 'Indiquez au moins un nom, un prénom ou une société.'; return false; }
-      if (!body.number && !body.mobile && !body.email) { $('pb-err').textContent = 'Indiquez au moins un numéro ou un e-mail.'; return false; }
+    const keys = [...FIELDS.map(([k]) => k), ...Object.keys(c || {}).filter((k) => !HIDDEN.has(k) && !LABEL[k])];
+    confirmModal(`<div class="dk-ed"><h3>${c ? esc(name(c)) : 'Nouveau contact'}</h3><div class="dk-ed-3">${keys.map((k) => `<label>${esc(LABEL[k] || k)}${REQUIRED.has(k) ? ' *' : ''}<input data-k="${esc(k)}" value="${esc(c?.[k] ?? '')}"${k === 'email' ? ' type="email"' : ''}${REQUIRED.has(k) ? ' required' : ''}></label>`).join('')}</div><p class="muted small">* obligatoire</p><p id="pb-err" class="error small"></p></div>`, async () => {
+      // Clés techniques (phonebook_uuid…) gardées telles quelles : dird remplace tout le contact au PUT.
+      // Nouveau contact : phonebook_uuid posé comme le fait le Portal (son usage côté Portal n'est pas connu).
+      const body = c ? {} : { phonebook_uuid: P.cur }; for (const [k, v] of Object.entries(c || {})) if (HIDDEN.has(k) && k !== 'id' && v != null) body[k] = v;
+      for (const i of $('modal-body').querySelectorAll('[data-k]')) { const v = i.value.trim(); if (v) body[i.dataset.k] = v; }
+      const miss = [...REQUIRED].filter((k) => !body[k]).map((k) => LABEL[k]);
+      if (miss.length) { $('pb-err').textContent = `Obligatoire : ${miss.join(', ')}.`; return false; }
       try { if (c) await dird('PUT', `/phonebooks/${P.cur}/contacts/${c.id}`, body); else await dird('POST', `/phonebooks/${P.cur}/contacts`, body); }
       catch (e) { $('pb-err').textContent = `Échec : ${e.message}`; return false; }
       toast(c ? 'Contact modifié.' : 'Contact ajouté.'); refresh(); return true;
