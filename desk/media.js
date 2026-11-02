@@ -16,8 +16,8 @@
 //    SUPPOSÉ comme pour les autres champs « son » de confd).
 // Tout fichier audio envoyé est converti en WAV 8 kHz 16 bits mono (toWav8k
 // de Call Flow), le format attendu par Wazo ; sauf une musique en mode mp3.
-import { S, $, esc, toast, api, listAll, confirmModal, canWrite } from '../admin-tools/common/core.js?v=0.7.13';
-import { toWav8k, moTxt } from './cf/sound-play.js?v=0.7.13';
+import { S, $, esc, toast, api, listAll, confirmModal, canWrite } from '../admin-tools/common/core.js?v=0.7.14';
+import { toWav8k, moTxt } from './cf/sound-play.js?v=0.7.14';
 
 // Format audio et préparation des fichiers (demande de Brice, 02/11/2026) :
 // format exact, lien vers g711.org et pas-à-pas. Desk convertit de toute façon
@@ -113,7 +113,7 @@ export async function renderSounds(view, site) {
       + (cats.length ? cats.sort((a, b) => a.name.localeCompare(b.name, 'fr')).map((c) => `<section class="dk-panel"><div class="dk-panhead"><h3>${esc(c.name)} <span class="muted small">${(c.files || []).length} fichier${(c.files || []).length > 1 ? 's' : ''}</span></h3>${ro ? '' : `<button class="dk-text" data-add="${esc(c.name)}">Ajouter un son…</button>`}</div>`
         + ((c.files || []).length ? `<div class="dk-scroll"><table class="dk-table"><thead><tr><th>Nom</th><th>Versions</th><th></th></tr></thead><tbody>${[...c.files].sort((a, b) => a.name.localeCompare(b.name, 'fr')).map((f) => {
           const fm = f.formats || [];
-          return `<tr><td class="nowrap">${esc(f.name)}</td><td>${fm.map((x) => `<span class="dk-chip">${esc(FMT[x.format] || x.format || '?')}${x.language ? ` · ${esc(x.language)}` : ''}${playable(x.format) ? playBtn(`data-play="${esc(c.name)}|${esc(f.name)}|${esc(x.format || '')}|${esc(x.language || '')}"`) : ''}</span>`).join(' ')}</td><td class="dk-acts">${ro ? '' : `<button class="dk-text" data-rep="${esc(c.name)}|${esc(f.name)}">Remplacer…</button> <button class="dk-text" data-del="${esc(c.name)}|${esc(f.name)}">Supprimer</button>`}</td></tr>`;
+          return `<tr><td class="nowrap">${esc(f.name)}</td><td>${fm.map((x) => `<span class="dk-ver">${playable(x.format) ? playBtn(`data-play="${esc(c.name)}|${esc(f.name)}|${esc(x.format || '')}|${esc(x.language || '')}"`) : '<span class="dk-play-none" title="Format non lisible dans le navigateur"></span>'}<span class="muted small">${esc(FMT[x.format] || x.format || '?')}${x.language ? ` · ${esc(x.language)}` : ''}</span></span>`).join('')}</td><td class="dk-acts">${ro ? '' : `<button class="dk-text" data-rep="${esc(c.name)}|${esc(f.name)}">Remplacer…</button> <button class="dk-text" data-del="${esc(c.name)}|${esc(f.name)}">Supprimer</button>`}</td></tr>`;
         }).join('')}</tbody></table></div>` : '<p class="muted small">Aucun fichier.</p>') + '</section>').join('')
         : '<p class="dk-empty">Aucune catégorie de sons sur ce site.</p>');
   };
