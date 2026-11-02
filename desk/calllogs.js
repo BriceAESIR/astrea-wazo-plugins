@@ -8,9 +8,9 @@
 //  - réponse : { items, total, filtered } ;
 //  - call_status : blocked > voicemail > answered, sinon unknown (= non
 //    répondu) ; duration = fin - décroché (null si non décroché).
-import { S, $, esc, toast, listAll } from '../admin-tools/common/core.js?v=0.8.5';
-import { stackedColumns, hbars, legend } from './charts.js?v=0.8.5';
-import { download, fileSafe, csv, printHtml, REPORT_CSS, hoverTips } from './report.js?v=0.8.5';
+import { S, $, esc, toast, listAll } from '../admin-tools/common/core.js?v=0.9.0';
+import { stackedColumns, hbars, legend } from './charts.js?v=0.9.0';
+import { download, fileSafe, csv, printHtml, REPORT_CSS, hoverTips } from './report.js?v=0.9.0';
 
 const PAGE = 1000;       // taille d'une requête call-logd
 const MAX = 20000;       // au-delà, on s'arrête et on le dit
@@ -26,7 +26,7 @@ const SERIES = [
   { key: 'unknown', label: 'Non répondu', color: 'var(--dk-s2)', hex: '#eb6834' },
   { key: 'voicemail', label: 'Messagerie', color: 'var(--dk-s3)', hex: '#1baf7a' },
   { key: 'blocked', label: 'Bloqué', color: 'var(--dk-s4)', hex: '#eda100' },
-  { key: 'service', label: 'Code de service', color: 'var(--dk-s0)', hex: '#898781' },
+  { key: 'service', label: 'Code étoile', color: 'var(--dk-s0)', hex: '#898781' },
 ];
 
 const F0 = { period: 'today', from: '', until: '', direction: '', status: '', search: '', user: '', services: false };
@@ -72,7 +72,7 @@ export const callee = (c) => party(c.destination_name || c.requested_name, c.des
 // 29/10/2026). Mis à part : ils fausseraient le taux de réponse.
 export const isService = (c) => /^\*/.test(c.requested_extension || c.destination_extension || '');
 export const statusKey = (c) => (isService(c) ? 'service' : c.call_status in STATUS ? c.call_status : 'unknown');
-export const statusLabel = (c) => (isService(c) ? 'Code de service' : STATUS[c.call_status] || 'Non répondu');
+export const statusLabel = (c) => (isService(c) ? 'Code étoile' : STATUS[c.call_status] || 'Non répondu');
 
 // Attente : avant le décroché si répondu, sinon avant le raccroché (sonnerie).
 const secs = (a, b) => { const x = Date.parse(a), y = Date.parse(b); return Number.isFinite(x) && Number.isFinite(y) ? Math.max(0, (y - x) / 1000) : null; };
@@ -101,7 +101,7 @@ async function loadTargets() {
 // compare la sonnerie au délai prévu pour le numéro appelé.
 export function probableCause(c) {
   const k = statusKey(c);
-  if (k === 'service') return 'Code de service';
+  if (k === 'service') return 'Code étoile';
   if (k === 'answered') return '';
   if (k === 'voicemail') return 'Arrivé sur la messagerie';
   if (k === 'blocked') return 'Bloqué';
@@ -113,7 +113,8 @@ export function probableCause(c) {
   if (t > 0 && ring >= t - 2) return 'Délai de sonnerie atteint';
   return "L'appelant a raccroché pendant la sonnerie";
 }
-export const CAUSE_HELP = "Cause déduite, pas enregistrée par Wazo : la durée de sonnerie est comparée au délai prévu pour le numéro appelé (utilisateur, groupe ou file).";
+// Cause déduite (call-logd ne l'enregistre pas) : durée de sonnerie comparée au délai prévu du numéro appelé.
+export const CAUSE_HELP = "Cause estimée d'après la durée de sonnerie.";
 
 // ---------------------------------------------------------------------------
 // Lecture call-logd
@@ -122,13 +123,13 @@ async function cdrGet(params) {
   const headers = { 'X-Auth-Token': S.token, Accept: 'application/json' };
   if (S.tenant) headers['Wazo-Tenant'] = S.tenant;
   const r = await fetch(`${S.base}/api/call-logd/1.0/cdr?${new URLSearchParams(params)}`, { headers });
-  if (r.status === 401 || r.status === 403) throw new Error(`Accès au journal d'appels refusé (${r.status}).`);
-  if (!r.ok) throw new Error(`Journal d'appels : erreur ${r.status}.`);
+  if (r.status === 401 || r.status === 403) { console.warn('[astrea] journal', r.status); throw new Error("Votre compte n'a pas accès au journal d'appels de ce site."); }
+  if (!r.ok) { console.warn('[astrea] journal', r.status); throw new Error("Journal d'appels indisponible pour le moment. Réessayez dans un instant."); }
   return r.json();
 }
 
 async function load(onProgress) {
-  if (!S.tenant) throw new Error('Tenant du site inconnu : lecture refusée.');
+  if (!S.tenant) throw new Error('Site non reconnu : reconnectez-vous.');
   const [from, until] = periodRange();
   const params = { from: from.toISOString(), until: until.toISOString(), order: 'start', direction: 'desc', limit: PAGE };
   if (F.direction) params.call_direction = F.direction;
@@ -225,7 +226,7 @@ export function summaryHtml(sum, colors = 'css') {
     ['Appels', sum.total], ['Répondus', `${sum.st.answered} (${sum.rate} %)`], ['Non répondus', sum.st.unknown],
     ['Messagerie', sum.st.voicemail], ...(sum.st.blocked ? [['Bloqués', sum.st.blocked]] : []),
     ['Attente moyenne avant décroché', fmtDur(sum.avgWait)], ['Durée moyenne', fmtDur(sum.avg)], ['Durée totale', fmtDur(sum.talk)],
-    ...(sum.services ? [['Codes de service', sum.services]] : []),
+    ...(sum.services ? [['Codes étoile', sum.services]] : []),
   ];
   return `<div class="dk-kpis">${tiles.map(([l, v]) => `<div class="dk-kpi"><span>${esc(l)}</span><strong>${esc(v)}</strong></div>`).join('')}</div>`
     + `<section class="dk-panel"><h3>${sum.oneDay ? 'Appels par heure' : 'Appels par jour'}</h3>${legend(series.map((s) => ({ ...s, color: col(s) })))}${stackedColumns(sum.buckets, series.map((s) => ({ ...s, color: col(s) })), chartOpts)}</section>`
@@ -242,8 +243,8 @@ export async function renderCallLogs(view, site) {
   if (!C.users) C.users = (await loadTargets()).map((u) => ({ uuid: u.uuid, name: [u.firstname, u.lastname].filter(Boolean).join(' ') || u.username || u.uuid })).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
   const opt = (v, l, cur) => `<option value="${esc(v)}"${v === cur ? ' selected' : ''}>${esc(l)}</option>`;
   view.innerHTML = `
-    <div class="phonehead"><div><h2>Journal d'appels</h2><div class="muted small">${esc(site.name)} · lecture seule</div></div>
-      <div class="btnrow"><button id="cl-csv">CSV</button><button id="cl-html">HTML</button><button id="cl-pdf">PDF</button></div></div>
+    <div class="phonehead"><div><h2>Journal d'appels</h2><div class="muted small">${esc(site.name)}</div></div>
+      <div class="btnrow"><span class="muted small">Exporter :</span><button id="cl-csv" title="Fichier pour Excel">Excel (CSV)</button><button id="cl-html" title="Rapport à ouvrir dans le navigateur">Page web</button><button id="cl-pdf">PDF</button></div></div>
     <form id="cl-filters" class="dk-filters">
       <label>Période <select id="cl-period">${[['today', "Aujourd'hui"], ['yesterday', 'Hier'], ['7d', '7 derniers jours'], ['30d', '30 derniers jours'], ['month', 'Ce mois-ci'], ['lastmonth', 'Mois dernier'], ['custom', 'Personnalisée']].map(([v, l]) => opt(v, l, F.period)).join('')}</select></label>
       <label class="cl-custom">Du <input id="cl-from" type="date" value="${esc(F.from)}"></label>
@@ -253,7 +254,7 @@ export async function renderCallLogs(view, site) {
       <label>Utilisateur <select id="cl-user">${opt('', 'Tous', F.user)}${C.users.map((u) => opt(u.uuid, u.name, F.user)).join('')}</select></label>
       <label class="dk-grow">Recherche <input id="cl-search" value="${esc(F.search)}" placeholder="Nom ou numéro"></label>
       <div class="dk-go"><button class="primary" type="submit">Afficher</button></div>
-      <label class="inline dk-svc" title="Numéros commençant par * (entrée / sortie de groupe, renvois…). Wazo les enregistre comme des appels non répondus."><input type="checkbox" id="cl-svc"${F.services ? ' checked' : ''}> Afficher les codes de service</label>
+      <label class="inline dk-svc" title="Codes composés depuis un poste (entrée / sortie de groupe, renvois…)."><input type="checkbox" id="cl-svc"${F.services ? ' checked' : ''}> Afficher les codes étoile (*…)</label>
     </form>
     <div id="cl-out"></div><div id="dk-tip" class="dk-tip" hidden></div>`;
   const syncCustom = () => view.querySelectorAll('.cl-custom').forEach((l) => (l.hidden = $('cl-period').value !== 'custom'));
@@ -318,7 +319,7 @@ const fileBase = (site) => `journal-appels_${fileSafe(site.name)}_${toLocalInput
 function needData() { if (!C.items.length) { toast('Rien à exporter : lancez d\'abord une recherche avec des résultats.'); return false; } return true; }
 function filtersText() {
   const u = C.users?.find((x) => x.uuid === F.user);
-  return [`Période : ${periodRange()[2]}`, F.direction && `Sens : ${DIRECTION[F.direction]}`, F.status && `Statut : ${STATUS[F.status]}`, u && `Utilisateur : ${u.name}`, F.search && `Recherche : ${F.search}`, !F.services && C.hiddenServices && `${C.hiddenServices} codes de service exclus`].filter(Boolean).join(' · ');
+  return [`Période : ${periodRange()[2]}`, F.direction && `Sens : ${DIRECTION[F.direction]}`, F.status && `Statut : ${STATUS[F.status]}`, u && `Utilisateur : ${u.name}`, F.search && `Recherche : ${F.search}`, !F.services && C.hiddenServices && `${C.hiddenServices} codes étoile masqués`].filter(Boolean).join(' · ');
 }
 
 // CSV pour Excel en français : séparateur « ; », BOM UTF-8.

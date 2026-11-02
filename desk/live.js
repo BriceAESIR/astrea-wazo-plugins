@@ -19,8 +19,8 @@
 // Groupes : l'entrée / sortie dynamique (*735…) passe par AddQueueMember dans
 // le dialplan (wazo-agid group_member.py) ; seul amid la lit, et amid exige le
 // tenant principal : invisible et non modifiable pour un admin de site.
-import { S, $, esc, toast, api, listAll, confirmModal, canWrite, fullName } from '../admin-tools/common/core.js?v=0.8.5';
-import { edit } from './cfbridge.js?v=0.8.5';
+import { S, $, esc, toast, api, listAll, confirmModal, canWrite, fullName } from '../admin-tools/common/core.js?v=0.9.0';
+import { edit } from './cfbridge.js?v=0.9.0';
 
 const REFRESH = 20e3;
 export const PHONE = {
@@ -33,7 +33,7 @@ export const phoneBadge = (p) => {
   // vrai tant qu'un jeton mobile existe, même appli déconnectée (vu par Brice le
   // 03/11/2026). Desk n'affiche pas une information peu fiable au client final.
   const [c, l] = PHONE[p.line_state] || PHONE.unavailable;
-  return `<span class="dk-ph dk-ph-${c}">${esc(l)}${p.do_not_disturb ? ' · NPD' : ''}</span>`;
+  return `<span class="dk-ph dk-ph-${c}">${esc(l)}${p.do_not_disturb ? ' · Ne pas déranger' : ''}</span>`;
 };
 
 async function svc(method, path, body) {
@@ -43,11 +43,13 @@ async function svc(method, path, body) {
   const r = await fetch(`${S.base}/api/${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
   if (!r.ok) {
     let m = ''; try { const j = await r.json(); m = Array.isArray(j?.reason) ? j.reason.join(' ') : j?.message || ''; } catch { /* */ }
-    throw new Error(`${AGENTD_ERR[r.status] || `erreur ${r.status}`}${m ? ` (${m})` : ''}`);
+    // Message de l'API (souvent en anglais) en console seulement : le client lit une phrase française.
+    console.warn('[astrea] action', method, path, r.status, m);
+    throw new Error(AGENTD_ERR[r.status] || 'action impossible pour le moment');
   }
   return r.status === 204 ? null : r.json().catch(() => null);
 }
-const AGENTD_ERR = { 400: 'requête refusée', 401: 'session expirée', 403: 'accès refusé', 404: 'introuvable', 409: 'impossible dans cet état' };
+const AGENTD_ERR = { 400: 'action refusée', 401: 'session expirée, reconnectez-vous', 403: "votre compte n'a pas le droit de faire cette action", 404: 'agent introuvable, actualisez la page', 409: "déjà fait, ou impossible dans l'état actuel de l'agent" };
 
 // Téléphones des utilisateurs (map uuid → présence). Échec : map vide (affiché « — »).
 export async function loadPresences() {
@@ -139,7 +141,7 @@ export function ghostOf(st, users, pres) {
   return null;
 }
 export const GHOST_TXT = 'Connecté, mais ne reçoit pas les appels';
-export const GHOST_HELP = "Son appareil n'est pas en ligne (ordinateur éteint, appli sur téléphone mobile, poste débranché…) : les appels de la file ne lui arrivent pas. Déconnectez-le s'il est absent. Pour recevoir les appels, il doit se connecter depuis l'appli Wazo sur ordinateur ou depuis un téléphone de bureau.";
+export const GHOST_HELP = "Son appareil est hors ligne (ordinateur éteint, téléphone mobile…) : les appels de la file ne lui arrivent pas. Déconnectez-le s'il est absent.";
 export const ghostState = (g) => (g ? ['ghost', GHOST_TXT, GHOST_HELP] : null);
 export const isGhost = (g) => !!g;
 
@@ -192,7 +194,7 @@ function loginAgent(a, after) {
   const row = (x, i) => {
     const k = `${x.exten}@${x.context}`, other = taken.get(k);
     return `<label class="dk-pick${other ? ' dk-pick-off' : ''}"><input type="radio" name="la-ext" value="${i}"${other ? ' disabled' : ''}${i === 0 && !other ? ' checked' : ''}>
-      <span class="dk-pick-main"><strong>${esc(fullName(x.user) || x.user.username || '?')}</strong><span class="muted small">poste ${esc(x.exten)}${ctxs.size > 1 ? ` · ${esc(x.context)}` : ''}${x.lines > 1 ? ` · ${x.lines} lignes (poste et appli)` : ''}</span></span>
+      <span class="dk-pick-main"><strong>${esc(fullName(x.user) || x.user.username || '?')}</strong><span class="muted small">poste ${esc(x.exten)}${ctxs.size > 1 ? ` · ${esc(x.context)}` : ''}${x.lines > 1 ? ` · ${x.lines} appareils` : ''}</span></span>
       <span>${other ? `<span class="muted small">déjà utilisé par ${esc(agentName(other))}</span>` : phoneBadge(L.pr.get(x.user.uuid))}</span></label>`;
   };
   const own = exts.filter((x) => x.user.uuid === mine), others = exts.filter((x) => x.user.uuid !== mine);
@@ -270,7 +272,7 @@ export async function renderQueues(view, site) {
     const ro = !!S.readonly;
     view.innerHTML = `<div class="phonehead" id="lq-head"><div><h2>Files d'attente</h2><div class="muted small">${esc(site.name)} · agents et membres en direct</div></div><div class="btnrow"><span class="muted small">Actualisé à ${esc(hhmmss(L.at))}</span><button id="lq-refresh">Actualiser</button></div></div>`
       + (L.err ? `<p class="warn small">${esc(L.err)}</p>` : '')
-      + `<p class="muted small"><strong>Connecter</strong> : connecte l'agent sur son poste (il reçoit alors les appels de ses files). <strong>Déconnecter de la file</strong> : pour cette file seulement. <strong>Déconnecter l'agent</strong> : de toutes ses files. Ajouter ou retirer un agent de la file : « Régler la file… ».</p>`
+      + `<p class="muted small">Pour ajouter ou retirer un agent d'une file : « Modifier la file ».</p>`
       // Constaté en réel le 02/11/2026 : connecté depuis Desk, l'état dans Wazo est
       // identique à une connexion depuis l'appli (Détails A et B identiques, touche
       // du poste allumée), mais l'onglet agent de l'appli Wazo ne le montre pas.
@@ -287,18 +289,18 @@ export async function renderQueues(view, site) {
           // 02/11/2026 : membre dans confd, connecté, mais « 0/0 file active » dans l'appli).
           const ghost = ghostOf(st, L.users, L.pr);
           const gs = ghostState(ghost);
-          const here = gs || (st?.logged ?(!inq ? ['off', 'Hors de la file pour Wazo'] : inq.logged === false ? ['off', 'A quitté la file'] : inq.paused ? ['pause', 'En pause dans la file'] : ['on', 'Dans la file']) : [c, lbl]);
+          const here = gs || (st?.logged ?(!inq ? ['off', 'Pas dans la file'] : inq.logged === false ? ['off', 'A quitté la file'] : inq.paused ? ['pause', 'En pause dans la file'] : ['on', 'Dans la file']) : [c, lbl]);
           // Pilotage (retours de Brice, 02/11/2026) : actions affichées directement
           // sur la ligne (le menu « ⋯ » a été retiré) ; les membres se règlent ailleurs.
           const btn = ro ? '' : !st?.logged ? `<button class="dk-text" data-on="${m.id}">Connecter</button>`
             : [st.paused ? `<button class="dk-text" data-unp="${esc(a.number)}">Reprendre</button>` : `<button class="dk-text" data-pause="${esc(a.number)}">Pause</button>`,
               !inq || inq.logged === false ? `<button class="dk-text" data-qin="${q.id}:${m.id}">${inq ? 'Reconnecter à la file' : 'Connecter à la file'}</button>` : `<button class="dk-text" data-qout="${q.id}:${m.id}">Déconnecter de la file</button>`,
               `<button class="dk-text" data-off="${m.id}" title="Déconnecte l'agent de toutes ses files">Déconnecter l'agent</button>`].join(' ');
-          return `<tr><td class="nowrap">${esc(agentName(a))} <span class="muted small">${esc(a.number || '')}</span><br><button class="dk-link-sm" data-info="${m.id}" title="État de l'agent tel que Wazo (agentd) le connaît">Détails</button></td><td><span class="dk-ag dk-ag-${here[0]}"${gs ? ` title="${esc(gs[2])}"` : ''}>${esc(here[1])}</span>${st?.logged && st.extension ? ` <span class="muted small">sur ${esc(st.extension)}</span>` : ''}</td><td>${phoneBadge(L.pr.get(agentUser(a)))}</td><td class="dk-acts">${btn}</td></tr>`;
+          return `<tr><td class="nowrap">${esc(agentName(a))} <span class="muted small">${esc(a.number || '')}</span><br><button class="dk-link-sm dk-techonly" data-info="${m.id}" title="Détails techniques (support)">Détails</button></td><td><span class="dk-ag dk-ag-${here[0]}"${gs ? ` title="${esc(gs[2])}"` : ''}>${esc(here[1])}</span>${st?.logged && st.extension ? ` <span class="muted small">sur ${esc(st.extension)}</span>` : ''}</td><td>${phoneBadge(L.pr.get(agentUser(a)))}</td><td class="dk-acts">${btn}</td></tr>`;
         }).join('');
-        return `<section class="dk-panel"><div class="dk-panhead"><h3>${esc(q.label || q.name)} <span class="muted small">${esc((q.extensions || []).map((e) => e.exten).join(', '))} · ${logged} / ${members.length} agent${members.length > 1 ? 's' : ''} dans la file</span></h3>${ro ? '' : `<button class="dk-text" data-qcfg="${q.id}" title="Stratégie, délais, débordements, membres, numéro, horaire">Régler la file…</button>`}</div>`
+        return `<section class="dk-panel"><div class="dk-panhead"><h3>${esc(q.label || q.name)} <span class="muted small">${esc((q.extensions || []).map((e) => e.exten).join(', '))} · ${logged} / ${members.length} agent${members.length > 1 ? 's' : ''} dans la file</span></h3>${ro ? '' : `<button class="dk-text" data-qcfg="${q.id}" title="Agents, ordre de sonnerie, délais, horaire…">Modifier la file</button>`}</div>`
           + (rows ? `<div class="dk-scroll"><table class="dk-table"><thead><tr><th>Agent</th><th>Dans la file</th><th>Téléphone</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : '<p class="muted small">Aucun agent membre.</p>')
-          + (users.length ? `<details class="dk-members" open><summary>${users.length} utilisateur${users.length > 1 ? 's' : ''} membre${users.length > 1 ? 's' : ''} (sans agent)</summary><ul>${users.map((u) => `<li><span>${esc(fullName(u) || u.uuid)}</span>${phoneBadge(L.pr.get(u.uuid))}</li>`).join('')}</ul></details>` : '')
+          + (users.length ? `<details class="dk-members" open><summary>${users.length} utilisateur${users.length > 1 ? 's' : ''} membre${users.length > 1 ? 's' : ''} direct${users.length > 1 ? 's' : ''}</summary><ul>${users.map((u) => `<li><span>${esc(fullName(u) || u.uuid)}</span>${phoneBadge(L.pr.get(u.uuid))}</li>`).join('')}</ul></details>` : '')
           + '</section>';
       }).join('') : '<p class="dk-empty">Aucune file d\'attente sur ce site.</p>');
     $('lq-refresh').onclick = async () => { await loadLive(); draw(); };
@@ -310,17 +312,19 @@ export async function renderQueues(view, site) {
     if (b.dataset.qcfg) { edit('queue', b.dataset.qcfg, () => { if (view.querySelector('#lq-head')) reload(); }); return; }
     if (b.dataset.on) { loginAgent(byId.get(Number(b.dataset.on)), draw); return; }
     if (b.dataset.info) { agentDetails(byId.get(Number(b.dataset.info))); return; }
-    if (b.dataset.pause) { act('Agent en pause.', () => svc('POST', `agentd/1.0/agents/by-number/${encodeURIComponent(b.dataset.pause)}/pause`, {}), draw); return; }
-    if (b.dataset.unp) { act('Fin de pause.', () => svc('POST', `agentd/1.0/agents/by-number/${encodeURIComponent(b.dataset.unp)}/unpause`, {}), draw); return; }
+    // Retours d'action avec le nom de l'agent (revue ergonomique du 03/11/2026).
+    const byNum = (n) => agentName(L.agents.find((x) => String(x.number) === String(n)) || { number: n });
+    if (b.dataset.pause) { act(`${byNum(b.dataset.pause)} est en pause.`, () => svc('POST', `agentd/1.0/agents/by-number/${encodeURIComponent(b.dataset.pause)}/pause`, {}), draw); return; }
+    if (b.dataset.unp) { act(`${byNum(b.dataset.unp)} reprend les appels.`, () => svc('POST', `agentd/1.0/agents/by-number/${encodeURIComponent(b.dataset.unp)}/unpause`, {}), draw); return; }
     if (b.dataset.off) {
       const a = byId.get(Number(b.dataset.off));
-      if (canWrite()) confirmModal(`<p>Déconnecter <strong>${esc(agentName(a || {}))}</strong> de toutes ses files ?</p><p class="muted small">Il ne recevra plus aucun appel de file jusqu'à sa reconnexion.</p>`, async () => { await act('Agent déconnecté.', () => svc('POST', `agentd/1.0/agents/by-id/${b.dataset.off}/logoff`), draw); return true; }, 'Déconnecter');
+      if (canWrite()) confirmModal(`<p>Déconnecter <strong>${esc(agentName(a || {}))}</strong> de toutes ses files ?</p><p class="muted small">Il ne recevra plus aucun appel de file jusqu'à sa reconnexion.</p>`, async () => { await act(`${agentName(a || {})} est déconnecté.`, () => svc('POST', `agentd/1.0/agents/by-id/${b.dataset.off}/logoff`), draw); return true; }, 'Déconnecter');
       return;
     }
     const [qid, aid] = (b.dataset.qin || b.dataset.qout || '').split(':').map(Number);
-    const q = L.queues.find((x) => x.id === qid);
-    if (b.dataset.qin) act(`Agent reconnecté à « ${q.label} ».`, () => svc('PUT', `agentd/1.0/agents/${aid}/queues/${qid}/login`), draw);
-    else if (b.dataset.qout) act(`Agent déconnecté de « ${q.label} ».`, () => svc('PUT', `agentd/1.0/agents/${aid}/queues/${qid}/logoff`), draw);
+    const q = L.queues.find((x) => x.id === qid), who = agentName(byId.get(aid) || {});
+    if (b.dataset.qin) act(`${who} est connecté à « ${q.label || q.name} ».`, () => svc('PUT', `agentd/1.0/agents/${aid}/queues/${qid}/login`), draw);
+    else if (b.dataset.qout) act(`${who} est déconnecté de « ${q.label || q.name} ».`, () => svc('PUT', `agentd/1.0/agents/${aid}/queues/${qid}/logoff`), draw);
   };
   draw();
   liveLoop(view, '#lq-head', draw);

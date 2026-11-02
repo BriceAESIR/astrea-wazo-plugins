@@ -147,6 +147,11 @@ body.ready #sidebar .sidenav { border-bottom: 0; margin-bottom: 8px; }
 /* « Un par un » : même colonne d'état que « tous ensemble », le rang en tête du nom
    (compteur CSS : une puce de liste casserait l'alignement flex). */
 .dk-members ol { counter-reset: dk-rank; }
+/* Client final : bandeau commun d'Admin Tools (textes techniques) masqué, Desk a le sien (#dk-ro).
+   Détails techniques visibles seulement avec l'option du Diagnostic (body.dk-tech). */
+#compat { display: none !important; }
+.dk-techonly { display: none !important; }
+body.dk-tech .dk-techonly { display: inline-block !important; }
 /* Inscrits par touche : indice du journal (grouphints.js). */
 .dk-hints { margin: 0; padding: 0; list-style: none; min-width: 200px; }
 .dk-hints li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 2px 0; white-space: nowrap; cursor: help; }

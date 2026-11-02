@@ -13,7 +13,7 @@
 export const PORTAL = 'https://portal.wazo.io';
 
 export class PortalError extends Error {
-  constructor(step, status, msg) { super(msg); this.step = step; this.status = status; }
+  constructor(step, status, msg, tech = '') { super(msg); this.step = step; this.status = status; this.tech = tech; if (tech) console.warn('[astrea] Portal :', step, status, tech); }
 }
 
 // Session en mémoire uniquement.
@@ -34,9 +34,9 @@ async function portal(method, path, { tenant, body, step } = {}, retried = false
   if (r.status === 401) {
     // Session Portal expirée (1 h) : reprise avec le jeton de reconnexion s'il existe.
     if (!retried && remembered()) { await portalResume(); return portal(method, path, { tenant, body, step }, true); }
-    throw new PortalError(step, 401, 'Session Portal expirée : reconnectez-vous.');
+    throw new PortalError(step, 401, 'Votre session a expiré : reconnectez-vous.');
   }
-  if (!r.ok) throw new PortalError(step, r.status, `Portal ${method} ${path.replace(/[0-9a-f-]{36}/g, '<uuid>')} → ${r.status}`);
+  if (!r.ok) throw new PortalError(step, r.status, "Impossible d'ouvrir le site pour le moment. Réessayez dans un instant ou contactez votre support.", `Portal ${method} ${path.replace(/[0-9a-f-]{36}/g, '<uuid>')} → ${r.status}`);
   return r.status === 204 ? null : json(r);
 }
 
@@ -67,7 +67,7 @@ function clientId() {
 }
 
 function applySession(d, email) {
-  if (!d.token) throw new PortalError('login', 0, 'Réponse du Portal inattendue (pas de token).');
+  if (!d.token) throw new PortalError('login', 0, 'Connexion impossible pour le moment. Réessayez dans un instant.', 'réponse sans token');
   P.token = d.token;
   P.expiresAt = d.utc_expires_at || d.expires_at || null;
   P.userUuid = d.metadata?.uuid || d.auth_id || null;
@@ -87,7 +87,7 @@ export async function portalLogin(email, password, { keep = false } = {}) {
     body: JSON.stringify(body),
   });
   if (r.status === 401 || r.status === 403) throw new PortalError('login', r.status, 'Identifiant ou mot de passe incorrect.');
-  if (!r.ok) throw new PortalError('login', r.status, `Connexion au Portal refusée (${r.status}).`);
+  if (!r.ok) throw new PortalError('login', r.status, 'Connexion impossible pour le moment. Réessayez dans un instant.', `HTTP ${r.status}`);
   const d = unwrap(await json(r)) || {};
   applySession(d, email);
   store.clear();
@@ -108,9 +108,9 @@ export async function portalResume() {
   });
   if (r.status === 400 || r.status === 401 || r.status === 403 || r.status === 404) {
     store.clear();
-    throw new PortalError('resume', r.status, 'Connexion mémorisée expirée ou révoquée : saisissez à nouveau votre mot de passe.');
+    throw new PortalError('resume', r.status, 'Votre connexion a expiré : saisissez à nouveau votre mot de passe.');
   }
-  if (!r.ok) throw new PortalError('resume', r.status, `Reconnexion au Portal impossible (${r.status}).`);
+  if (!r.ok) throw new PortalError('resume', r.status, 'Reconnexion impossible : saisissez à nouveau votre mot de passe.', `HTTP ${r.status}`);
   applySession(unwrap(await json(r)) || {}, m.email);
   return P;
 }
@@ -155,7 +155,7 @@ export function instanceAddress(inst) {
 export async function openSite(loc) {
   const cred = unwrap(await portal('GET', `/deployd/0.1/instances/${loc.wt.instance_uuid}/credentials/${loc.wt.credential_uuid}`, { tenant: loc.uuid, step: 'credentials' }));
   const { host, port } = instanceAddress(cred?.instance);
-  if (!cred?.username || !cred?.password || !host) throw new PortalError('credentials', 0, 'Accès à la stack incomplet dans la réponse du Portal.');
+  if (!cred?.username || !cred?.password || !host) throw new PortalError('credentials', 0, "Impossible d'ouvrir le site pour le moment. Réessayez dans un instant ou contactez votre support.", 'accès stack incomplet');
   ST._cred = { username: cred.username, password: cred.password };
   ST.site = loc;
   ST.host = host;
@@ -179,9 +179,9 @@ export async function stackLogin() {
     headers: { 'Content-Type': 'application/json', Accept: 'application/json', Authorization: 'Basic ' + btoa(unescape(encodeURIComponent(`${ST._cred.username}:${ST._cred.password}`))) },
     body: JSON.stringify({ backend: 'wazo_user', expiration: 3600 }),
   });
-  if (!r.ok) throw new PortalError('stack', r.status, `Connexion à la stack refusée (${r.status}).`);
+  if (!r.ok) throw new PortalError('stack', r.status, "Impossible d'ouvrir le site pour le moment. Réessayez dans un instant ou contactez votre support.", `stack HTTP ${r.status}`);
   const d = unwrap(await json(r)) || {};
-  if (!d.token) throw new PortalError('stack', r.status, 'Réponse de la stack inattendue (pas de token).');
+  if (!d.token) throw new PortalError('stack', r.status, "Impossible d'ouvrir le site pour le moment. Réessayez dans un instant ou contactez votre support.", 'stack : réponse sans token');
   ST.token = d.token;
   ST.expiresAt = d.utc_expires_at || d.expires_at || null;
   ST.acl = Array.isArray(d.acl) ? d.acl.length : null;

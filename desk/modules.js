@@ -2,14 +2,16 @@
 // type d'objet, recherche, et « Modifier » qui ouvre le réglage complet de
 // Call Flow Manager (desk/cfbridge.js). Données : modèle Call Flow du site
 // (toutes les listes confd du tenant, refiltrées sur le tenant par model.js).
-import { S, $, esc, fullName } from '../admin-tools/common/core.js?v=0.8.5';
-import { cfModel, edit, M, destLabel, showNum } from './cfbridge.js?v=0.8.5';
-import { STRATEGY, periodText } from './cf/model.js?v=0.8.5';
-import { loadPresences, phoneBadge } from './live.js?v=0.8.5';
-import { loadGroupHints, hintText, DAYS } from './grouphints.js?v=0.8.5';
+import { S, $, esc, fullName } from '../admin-tools/common/core.js?v=0.9.0';
+import { cfModel, edit, M, destLabel, showNum } from './cfbridge.js?v=0.9.0';
+import { STRATEGY, periodText } from './cf/model.js?v=0.9.0';
+import { loadPresences, phoneBadge } from './live.js?v=0.9.0';
+import { loadGroupHints, hintText, DAYS } from './grouphints.js?v=0.9.0';
+import { famLabel } from './cf/dialsim.js?v=0.9.0';
 
 const exts = (o) => (o.extensions || []).map((e) => showNum(e.exten)).filter(Boolean).join(', ');
-const userExts = (u) => (u.lines || []).flatMap((l) => (l.extensions || []).map((e) => e.exten)).filter(Boolean).join(', ');
+// Numéros sans doublon (un numéro partagé par le poste et l'appli n'apparaît qu'une fois).
+const userExts = (u) => [...new Set((u.lines || []).flatMap((l) => (l.extensions || []).map((e) => e.exten)).filter(Boolean))].join(', ');
 const schedName = (o) => (o.schedules || []).map((s) => M.by.schedule?.get(String(s.id))?.name || s.name).filter(Boolean).join(', ');
 const yes = (b, off = 'Désactivé') => (b === false ? `<span class="dk-off">${off}</span>` : '');
 const h = (html) => ({ html });
@@ -41,50 +43,50 @@ function hintCell(o) {
 // Une colonne renvoie du texte (échappé) ou { html }.
 const SPECS = {
   users: { type: 'user', title: 'Utilisateurs', none: 'Aucun utilisateur.', key: (o) => o.uuid, presence: true,
-    help: 'Réglage : durée de sonnerie, appels simultanés, ne pas déranger, filtrage, renvois. Le reste de la fiche se règle dans le Portal.',
+    help: '« Modifier » : sonnerie, ne pas déranger, renvois, filtrage patron / secrétaire.',
     search: (o) => `${fullName(o)} ${userExts(o)} ${o.email || ''}`,
-    cols: [['Nom', (o) => h(`${esc(fullName(o) || o.username || o.uuid)} ${yes(o.enabled)}`)], ['Numéro', userExts], ['Téléphone', (o) => h(phoneBadge(PRES.get(o.uuid)))], ['Sonnerie', (o) => (o.ring_seconds != null ? `${o.ring_seconds} s` : '')], ['E-mail', (o) => o.email || '']] },
+    cols: [['Nom', (o) => h(`${esc(fullName(o) || o.username || o.uuid)} ${yes(o.enabled)}`)], ['Numéro', userExts], ['Téléphone', (o) => h(phoneBadge(PRES.get(o.uuid)))], ['Durée de sonnerie', (o) => (o.ring_seconds != null ? `${o.ring_seconds} s` : '')], ['E-mail', (o) => o.email || '']] },
   groups: { type: 'group', title: "Groupes d'appels", none: "Aucun groupe d'appels.", key: (o) => o.uuid, presence: true,
-    help: `« Membres » : les membres permanents du groupe et l'état de leur téléphone. « Par touche » : les personnes qui ont utilisé leur touche d'entrée / sortie du groupe ces ${DAYS} derniers jours, avec leur état probable.`,
+    help: `« Par touche » : les personnes qui entrent et sortent du groupe avec une touche de leur poste (${DAYS} derniers jours).`,
     search: (o) => `${o.label} ${exts(o)}`,
     hints: true,
-    cols: [['Nom', (o) => h(`${esc(o.label || o.name)} ${yes(o.enabled)}`)], ['Numéro', exts], ['Sonnerie', (o) => STRATEGY[o.ring_strategy] || o.ring_strategy || ''],
+    cols: [['Nom', (o) => h(`${esc(o.label || o.name)} ${yes(o.enabled)}`)], ['Numéro', exts], ['Mode de sonnerie', (o) => STRATEGY[o.ring_strategy] || o.ring_strategy || ''],
       ['Membres', (o) => memberList(byPriority(o.members?.users), { ordered: o.ring_strategy === 'linear' })],
       ['Par touche', hintCell],
       ['Si pas de réponse', (o) => destLabel(o.fallbacks?.noanswer_destination)], ['Horaire', schedName]] },
   voicemails: { type: 'voicemail', title: 'Messageries vocales', none: 'Aucune messagerie vocale.', key: (o) => o.id,
-    help: 'Réglage complet : nom, numéro, utilisateurs, messages d\'accueil (écoute, envoi d\'un fichier), e-mail, code, langue, fuseau.',
+    help: '« Modifier » : messages d\'accueil, e-mail, code d\'accès.',
     search: (o) => `${o.name} ${o.number} ${o.email || ''} ${(o.users || []).map(fullName).join(' ')}`,
     cols: [['Nom', (o) => h(`${esc(o.name)} ${yes(o.enabled, 'Désactivée')}`)], ['Numéro', (o) => o.number], ['Utilisateurs', (o) => ((o.users || []).length ? memberList(o.users, { phone: false }) : (o.accesstype === 'global' ? 'partagée' : '—'))], ['E-mail', (o) => o.email || '—']] },
-  incalls: { type: 'incall', title: 'Appels entrants', none: 'Aucun appel entrant (SDA).', key: (o) => o.id,
-    help: 'Numéros publics (SDA) : destination, horaire, nom affiché, message d\'accueil.',
+  incalls: { type: 'incall', title: 'Appels entrants', none: 'Aucun numéro d\'appel entrant.', key: (o) => o.id,
+    help: 'Vos numéros publics : où arrivent les appels, et à quels horaires.',
     search: (o) => `${exts(o)} ${(o.extensions || []).map((e) => e.exten).join(' ')} ${o.description || ''} ${destLabel(o.destination)}`,
     cols: [['Numéro', exts], ['Description', (o) => o.description || ''], ['Destination', (o) => destLabel(o.destination)], ['Horaire', schedName]] },
   outcalls: { type: 'outcall', title: 'Appels sortants', none: 'Aucune règle d\'appels sortants.', key: (o) => o.id,
-    help: 'Règles de sortie : motifs composés, interconnexions utilisées, horaire.',
+    help: 'Règles des appels vers l\'extérieur : numéros concernés et opérateur utilisé.',
     search: (o) => `${o.name} ${o.label || ''}`,
-    cols: [['Nom', (o) => h(`${esc(o.label || o.name)} ${yes(o.enabled, 'Désactivée')}`)], ['Motifs', (o) => (o.extensions || []).map((e) => e.exten).join(', ')], ['Interconnexions', (o) => (o.trunks || []).map((t) => M.by.trunk?.get(String(t.id))?.label || t.name || `#${t.id}`).join(', ')], ['Horaire', schedName]] },
+    cols: [['Nom', (o) => h(`${esc(o.label || o.name)} ${yes(o.enabled, 'Désactivée')}`)], ['Numéros concernés', (o) => h(`<span title="${esc((o.extensions || []).map((e) => e.exten).join(', '))}">${esc([...new Set((o.extensions || []).map((e) => famLabel(e.exten)))].join(', '))}</span>`)], ['Opérateur', (o) => (o.trunks || []).map((t) => M.by.trunk?.get(String(t.id))?.label || t.name || 'opérateur').join(', ')], ['Horaire', schedName]] },
   schedules: { type: 'schedule', title: 'Plages horaires', none: 'Aucune plage horaire.', key: (o) => o.id, hours: true,
-    help: '« Modifier » : heures d\'ouverture (grille de la semaine, tirer pour sélectionner), destination si fermé, fermetures exceptionnelles et jours fériés. Nom, fuseau horaire et activation : lien sous le nom.',
+    help: '« Modifier » : heures d\'ouverture, fermetures et jours fériés. Le lien sous le nom : renommer ou désactiver.',
     search: (o) => o.name,
-    cols: [['Nom', (o) => h(`${esc(o.name)} ${yes(o.enabled, 'Désactivée')}${S.readonly ? '' : `<br><button class="dk-link-sm" data-ed="${esc(o.id)}" data-gen="1">Nom, fuseau, activation</button>`}`)], ['Ouvert', (o) => (o.open_periods || []).map(periodText).join(' ; ') || 'jamais (toujours fermé)'], ['Si fermé', (o) => destLabel(o.closed_destination)],
+    cols: [['Nom', (o) => h(`${esc(o.name)} ${yes(o.enabled, 'Désactivée')}${S.readonly ? '' : `<br><button class="dk-link-sm" data-ed="${esc(o.id)}" data-gen="1">Renommer / activer</button>`}`)], ['Ouvert', (o) => (o.open_periods || []).map(periodText).join(' ; ') || 'jamais (toujours fermé)'], ['Si fermé', (o) => destLabel(o.closed_destination)],
       ['Fermetures', (o) => { const n = (o.exceptional_periods || []).reduce((a, p) => a + Math.max(1, (p.month_days?.length || 1) * (p.months?.length || 1)), 0); return n ? `${n} jour${n > 1 ? 's' : ''}` : '—'; }],
-      ['Utilisée par', (o) => { const u = schedUsers(o); return u.length ? h(`<span class="dk-usage" title="${esc(u.join('\n'))}">${u.length} objet${u.length > 1 ? 's' : ''}</span>`) : '—'; }]] },
-  ivr: { type: 'ivr', title: 'SVI', none: 'Aucun serveur vocal interactif.', key: (o) => o.id,
-    help: 'Message, touches et leurs destinations, cas sans saisie ou invalide.',
+      ['Utilisée par', (o) => { const u = schedUsers(o); return u.length ? h(`<span class="dk-usage" title="${esc(u.join('\n'))}">${u.length} élément${u.length > 1 ? 's' : ''}</span>`) : '—'; }]] },
+  ivr: { type: 'ivr', title: 'SVI', none: 'Aucun SVI (menu « tapez 1, tapez 2 »).', key: (o) => o.id,
+    help: 'Menus vocaux : message d\'accueil et choix au clavier.',
     search: (o) => `${o.name} ${o.description || ''}`,
     cols: [['Nom', (o) => o.name], ['Touches', (o) => (o.choices || []).map((c) => `${c.exten} → ${destLabel(c.destination)}`).join(' · ') || '—'], ['Sans saisie', (o) => destLabel(o.timeout_destination)]] },
   conferences: { type: 'conference', title: 'Conférences', none: 'Aucune salle de conférence.', key: (o) => o.id,
-    help: 'Nom, participants maximum, codes, annonces, enregistrement.',
+    help: 'Salles de conférence : numéro, code d\'accès, nombre de participants.',
     search: (o) => `${o.name} ${exts(o)}`,
     cols: [['Nom', (o) => o.name], ['Numéro', exts], ['Participants max.', (o) => o.max_users || 'sans limite'], ['Code', (o) => (o.pin ? 'oui' : 'non')]] },
-  switchboards: { type: 'switchboard', title: 'POPC', none: 'Aucun POPC.', key: (o) => o.uuid, presence: true,
-    help: 'Opérateurs, délai avant débordement, musique d\'attente, destination si pas de réponse.',
+  switchboards: { type: 'switchboard', title: 'POPC', none: 'Aucun POPC (poste opérateur).', key: (o) => o.uuid, presence: true,
+    help: 'Postes opérateurs : qui répond, et où va l\'appel si personne ne répond.',
     search: (o) => `${o.name} ${exts(o)}`,
     cols: [['Nom', (o) => o.name], ['Numéro', exts], ['Opérateurs', (o) => memberList(o.members?.users || [])], ['Si pas de réponse', (o) => destLabel(o.fallbacks?.noanswer_destination)]] },
 };
 // Objets qui utilisent une plage horaire (affichés au survol de « n objets »).
-const SCHED_OWNERS = [['incall', 'SDA', (o) => exts(o) || o.description], ['user', 'Utilisateur', (o) => fullName(o)], ['group', 'Groupe', (o) => o.label || o.name], ['queue', 'File', (o) => o.label || o.name], ['outcall', 'Sortant', (o) => o.label || o.name]];
+const SCHED_OWNERS = [['incall', 'Numéro', (o) => exts(o) || o.description], ['user', 'Utilisateur', (o) => fullName(o)], ['group', 'Groupe', (o) => o.label || o.name], ['queue', 'File', (o) => o.label || o.name], ['outcall', 'Sortant', (o) => o.label || o.name]];
 const schedUsers = (s) => SCHED_OWNERS.flatMap(([t, l, n]) => (M.lists[t] || []).filter((o) => (o.schedules || []).some((x) => String(x.id) === String(s.id))).map((o) => `${l} ${n(o)}`));
 const LIST = { users: 'user', groups: 'group', voicemails: 'voicemail', incalls: 'incall', outcalls: 'outcall', schedules: 'schedule', ivr: 'ivr', conferences: 'conference', switchboards: 'switchboard' };
 let PRES = new Map();

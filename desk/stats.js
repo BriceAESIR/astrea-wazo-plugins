@@ -17,10 +17,10 @@
 // Ces chiffres sont exacts (comptés par Wazo), contrairement aux causes
 // déduites du journal d'appels. Ils viennent des tables stat_* que Wazo remplit
 // périodiquement : les appels des dernières heures peuvent manquer.
-import { S, $, esc, toast, listAll } from '../admin-tools/common/core.js?v=0.8.5';
-import { stackedColumns, hbars, legend } from './charts.js?v=0.8.5';
-import { periodRange, fmtDur, fmtDate } from './calllogs.js?v=0.8.5';
-import { download, fileSafe, csv, printHtml, REPORT_CSS, hoverTips } from './report.js?v=0.8.5';
+import { S, $, esc, toast, listAll } from '../admin-tools/common/core.js?v=0.9.0';
+import { stackedColumns, hbars, legend } from './charts.js?v=0.9.0';
+import { periodRange, fmtDur, fmtDate } from './calllogs.js?v=0.9.0';
+import { download, fileSafe, csv, printHtml, REPORT_CSS, hoverTips } from './report.js?v=0.9.0';
 
 // Issue des appels en file : 4 séries au plus (palette validée, slots 1-4).
 // Fermé, saturé et sans agent sont regroupés dans le graphique, détaillés
@@ -29,17 +29,18 @@ const SERIES = [
   { key: 'answered', label: 'Répondus', color: 'var(--dk-s1)', hex: '#2a78d6' },
   { key: 'abandoned', label: 'Abandonnés', color: 'var(--dk-s2)', hex: '#eb6834' },
   { key: 'not_answered', label: "Délai d'attente dépassé", color: 'var(--dk-s3)', hex: '#1baf7a' },
-  { key: 'refused', label: 'Fermé, saturé ou sans agent', color: 'var(--dk-s4)', hex: '#eda100' },
+  { key: 'refused', label: 'Hors horaires, file pleine ou aucun agent', color: 'var(--dk-s4)', hex: '#eda100' },
 ];
-// Raisons exactes des appels non répondus en file (libellés de l'API Wazo).
+// Raisons exactes des appels non répondus en file (enregistrées par call-logd,
+// pas déduites). Mêmes libellés partout : graphique, tableau, exports (03/11/2026).
 const LOST = [
-  { key: 'abandoned', label: "Abandonné pendant l'attente" },
+  { key: 'abandoned', label: 'Abandonnés' },
   { key: 'not_answered', label: "Délai d'attente dépassé" },
   { key: 'blocked', label: 'Aucun agent disponible' },
-  { key: 'saturated', label: 'File pleine ou débordement' },
-  { key: 'closed', label: 'File fermée (hors horaires)' },
+  { key: 'saturated', label: 'File pleine' },
+  { key: 'closed', label: 'Hors horaires' },
 ];
-const LOST_HELP = "Raisons comptées par Wazo pour chaque appel (exactes, pas déduites). Abandonné : l'appelant a raccroché avant d'être servi. Délai dépassé : le temps d'attente maximal de la file est atteint. Aucun agent : personne de connecté ou de libre. Débordement : file pleine, ou seuil d'attente ou de ratio appels / agents atteint.";
+const LOST_HELP = "Abandonnés : l'appelant a raccroché pendant l'attente. File pleine : trop d'appels en attente, l'appel est passé à la suite prévue.";
 const QCOLS = ['received', 'answered', 'abandoned', 'not_answered', 'blocked', 'saturated', 'closed'];
 
 const F0 = { period: 'today', from: '', until: '', days: 'all', h1: '', h2: '', qos: 20 };
@@ -58,8 +59,8 @@ const TZ = (() => { try { return Intl.DateTimeFormat().resolvedOptions().timeZon
 async function statGet(path, params) {
   const headers = { 'X-Auth-Token': S.token, Accept: 'application/json', 'Wazo-Tenant': S.tenant };
   const r = await fetch(`${S.base}/api/call-logd/1.0${path}?${new URLSearchParams(params)}`, { headers });
-  if (r.status === 401 || r.status === 403) throw new Error(`Accès aux statistiques refusé (${r.status}).`);
-  if (!r.ok) throw new Error(`Statistiques : erreur ${r.status}.`);
+  if (r.status === 401 || r.status === 403) { console.warn('[astrea] statistiques', r.status); throw new Error("Votre compte n'a pas accès aux statistiques de ce site."); }
+  if (!r.ok) { console.warn('[astrea] statistiques', r.status); throw new Error('Statistiques indisponibles pour le moment. Réessayez dans un instant.'); }
   const j = await r.json();
   // Règle de base : ces routes incluent les sous-tenants, on ne garde que le site.
   return (Array.isArray(j?.items) ? j.items : []).filter((x) => !x.tenant_uuid || x.tenant_uuid === S.tenant);
@@ -83,7 +84,7 @@ async function loadNames() {
 }
 
 async function load() {
-  if (!S.tenant) throw new Error('Tenant du site inconnu : lecture refusée.');
+  if (!S.tenant) throw new Error('Site non reconnu : reconnectez-vous.');
   const p = baseParams();
   const [queues, agents] = await Promise.all([statGet('/queues/statistics', p), statGet('/agents/statistics', p)]);
   X.queues = queues.map((q) => ({ ...q, label: X.names.queue.get(q.queue_id) || q.queue_name || `File ${q.queue_id}` }))
@@ -165,13 +166,13 @@ function summaryHtml(colors = 'css') {
 }
 
 function queueTable() {
-  const th = ['File', 'Reçus', 'Répondus', 'Taux', 'Abandonnés', 'Délai dépassé', 'Sans agent', 'Saturé', 'Fermé', 'Attente moy.', `≤ ${F.qos} s`];
+  const th = ['File', 'Reçus', 'Répondus', 'Taux', 'Abandonnés', 'Délai dépassé', 'Aucun agent', 'File pleine', 'Hors horaires', 'Attente moy.', `≤ ${F.qos} s`];
   return `<section class="dk-panel"><h3>Par file</h3><div class="dk-scroll"><table class="dk-table"><thead><tr>${th.map((h, i) => `<th${i ? ' class="num"' : ''}>${esc(h)}</th>`).join('')}</tr></thead><tbody>${X.queues.map((q) => `<tr><td class="nowrap">${esc(q.label)}</td>${['received', 'answered'].map((k) => `<td class="num">${q[k] || 0}</td>`).join('')}<td class="num">${pct(q.answered_rate)}</td>${['abandoned', 'not_answered', 'blocked', 'saturated', 'closed'].map((k) => `<td class="num">${q[k] || 0}</td>`).join('')}<td class="num">${q.average_waiting_time == null ? '—' : esc(fmtDur(q.average_waiting_time))}</td><td class="num">${pct(q.quality_of_service)}</td></tr>`).join('')}</tbody></table></div></section>`;
 }
 
 const occupation = (a) => (a.login_time ? ((a.conversation_time || 0) / a.login_time) * 100 : null);
 function agentTable() {
-  const th = ['Agent', 'Répondus', 'Conversation', 'Durée moy.', 'Connecté', 'Pause', 'Post-appel', 'Occupation'];
+  const th = ['Agent', 'Répondus', 'Conversation', 'Durée moy.', 'Connecté', 'Pause', 'Après appel', 'Occupation'];
   return `<div class="dk-scroll"><table class="dk-table"><thead><tr>${th.map((h, i) => `<th${i ? ' class="num"' : ''}${h === 'Occupation' ? ' title="Temps en conversation / temps connecté"' : ''}>${esc(h)}</th>`).join('')}</tr></thead><tbody>${X.agents.map((a) => `<tr><td class="nowrap">${esc(a.label)} <span class="muted small">${esc(a.agent_number || '')}</span></td><td class="num">${a.answered || 0}</td><td class="num">${esc(fmtDur(a.conversation_time || 0))}</td><td class="num">${a.answered ? esc(fmtDur(a.conversation_time / a.answered)) : '—'}</td><td class="num">${esc(fmtDur(a.login_time || 0))}</td><td class="num">${esc(fmtDur(a.pause_time || 0))}</td><td class="num">${esc(fmtDur(a.wrapup_time || 0))}</td><td class="num">${pct(occupation(a))}</td></tr>`).join('')}</tbody></table></div>`;
 }
 
@@ -184,19 +185,19 @@ export async function renderStats(view, site) {
   const opt = (v, l, cur) => `<option value="${esc(v)}"${String(v) === String(cur) ? ' selected' : ''}>${esc(l)}</option>`;
   const hours = (cur, none) => opt('', none, cur) + Array.from({ length: 24 }, (_, h) => opt(h, `${h} h`, cur)).join('');
   view.innerHTML = `
-    <div class="phonehead"><div><h2>Statistiques</h2><div class="muted small">${esc(site.name)} · files d'attente et agents · lecture seule</div></div>
-      <div class="btnrow"><button id="st-csv">CSV</button><button id="st-html">HTML</button><button id="st-pdf">PDF</button></div></div>
+    <div class="phonehead"><div><h2>Statistiques</h2><div class="muted small">${esc(site.name)} · files d'attente et agents</div></div>
+      <div class="btnrow"><span class="muted small">Exporter :</span><button id="st-csv" title="Fichier pour Excel">Excel (CSV)</button><button id="st-html" title="Rapport à ouvrir dans le navigateur">Page web</button><button id="st-pdf">PDF</button></div></div>
     <form id="st-filters" class="dk-filters">
       <label>Période <select id="st-period">${[['today', "Aujourd'hui"], ['yesterday', 'Hier'], ['7d', '7 derniers jours'], ['30d', '30 derniers jours'], ['month', 'Ce mois-ci'], ['lastmonth', 'Mois dernier'], ['custom', 'Personnalisée']].map(([v, l]) => opt(v, l, F.period)).join('')}</select></label>
       <label class="st-custom">Du <input id="st-from" type="date" value="${esc(F.from)}"></label>
       <label class="st-custom">Au <input id="st-until" type="date" value="${esc(F.until)}"></label>
       <label>Jours <select id="st-days">${opt('all', 'Tous les jours', F.days)}${opt('week', 'Du lundi au vendredi', F.days)}</select></label>
-      <label title="Heures incluses : de 8 h à 17 h compte les appels de 8 h 00 à 17 h 59.">De <select id="st-h1">${hours(F.h1, 'Toute la journée')}</select></label>
-      <label>À (incluse) <select id="st-h2">${hours(F.h2, '—')}</select></label>
-      <label title="Un appel répondu en moins de ce délai compte comme bien servi.">Seuil de qualité (s) <input id="st-qos" type="number" min="0" max="600" value="${esc(F.qos)}"></label>
+      <label title="De 8 h à 17 h compte les appels de 8 h 00 à 17 h 59.">Heures : de <select id="st-h1">${hours(F.h1, 'Toute la journée')}</select></label>
+      <label>à <select id="st-h2">${hours(F.h2, '—')}</select></label>
+      <label title="Un appel décroché en moins de ce délai compte comme bien servi.">Objectif de décroché (secondes) <input id="st-qos" type="number" min="0" max="600" value="${esc(F.qos)}"></label>
       <div class="dk-go"><button class="primary" type="submit">Afficher</button></div>
     </form>
-    <p class="muted small">Chiffres calculés périodiquement par Wazo : les appels des dernières heures peuvent ne pas encore apparaître.</p>
+    <p class="muted small">Les derniers appels en file peuvent mettre un peu de temps à apparaître.</p>
     <div id="st-out"></div><div id="dk-tip" class="dk-tip" hidden></div>`;
   const syncCustom = () => view.querySelectorAll('.st-custom').forEach((l) => (l.hidden = $('st-period').value !== 'custom'));
   syncCustom();
@@ -251,10 +252,10 @@ function exportCsv(site) {
   const r = (n) => (n == null ? '' : Math.round(n));
   const rows = [
     ...X.queues.map((q) => [q.label, q.received || 0, q.answered || 0, r(q.answered_rate), q.abandoned || 0, q.not_answered || 0, q.blocked || 0, q.saturated || 0, q.closed || 0, r(q.average_waiting_time), r(q.quality_of_service)]),
-    [], ['Agent', 'Numéro', 'Répondus', 'Conversation (s)', 'Connecté (s)', 'Pause (s)', 'Post-appel (s)', 'Occupation (%)'],
+    [], ['Agent', 'Numéro', 'Répondus', 'Conversation (s)', 'Connecté (s)', 'Pause (s)', 'Après appel (s)', 'Occupation (%)'],
     ...X.agents.map((a) => [a.label, a.agent_number, a.answered || 0, a.conversation_time || 0, a.login_time || 0, a.pause_time || 0, a.wrapup_time || 0, r(occupation(a))]),
   ];
-  const head = ['File', 'Reçus', 'Répondus', 'Taux de réponse (%)', 'Abandonnés', "Délai d'attente dépassé", 'Sans agent', 'Saturé ou débordement', 'Fermé', 'Attente moyenne (s)', `Répondus en moins de ${F.qos} s (%)`];
+  const head = ['File', 'Reçus', 'Répondus', 'Taux de réponse (%)', 'Abandonnés', "Délai d'attente dépassé", 'Aucun agent disponible', 'File pleine', 'Hors horaires', 'Attente moyenne (s)', `Répondus en moins de ${F.qos} s (%)`];
   download(`${fileBase(site)}.csv`, csv(head, rows), 'text/csv;charset=utf-8');
 }
 

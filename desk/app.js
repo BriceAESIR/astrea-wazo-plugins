@@ -2,17 +2,17 @@
 // dans le Portal (visualization), choix du site, connexion à la stack, menu
 // et accueil. Les appels confd passent par common/core.js (api, listAll,
 // filtre tenant), avec le token de la stack du site.
-import { sdk, S, $, esc, toast, applyTheme, listAll, showCompat } from '../admin-tools/common/core.js?v=0.8.5';
-import { renderCallLogs } from './calllogs.js?v=0.8.5';
-import { renderStats } from './stats.js?v=0.8.5';
-import { renderDashboard, stopDashboard } from './dashboard.js?v=0.8.5';
-import { renderModuleList } from './modules.js?v=0.8.5';
-import { renderQueues } from './live.js?v=0.8.5';
-import { renderSounds, renderMoh, renderRecordings, stopAudio } from './media.js?v=0.8.5';
-import { renderPhonebooks } from './phonebook.js?v=0.8.5';
-import { P, ST, PortalError, portalLogin, portalResume, remembered, checkScopes, loadVisualization, loadLocations, openSite, stackLogin, logout, closeSite } from './portal.js?v=0.8.5';
+import { sdk, S, $, esc, toast, applyTheme, listAll, showCompat } from '../admin-tools/common/core.js?v=0.9.0';
+import { renderCallLogs } from './calllogs.js?v=0.9.0';
+import { renderStats } from './stats.js?v=0.9.0';
+import { renderDashboard, stopDashboard } from './dashboard.js?v=0.9.0';
+import { renderModuleList } from './modules.js?v=0.9.0';
+import { renderQueues } from './live.js?v=0.9.0';
+import { renderSounds, renderMoh, renderRecordings, stopAudio } from './media.js?v=0.9.0';
+import { renderPhonebooks } from './phonebook.js?v=0.9.0';
+import { P, ST, PortalError, portalLogin, portalResume, remembered, checkScopes, loadVisualization, loadLocations, openSite, stackLogin, logout, closeSite } from './portal.js?v=0.9.0';
 
-const APP_VERSION = '0.8.5';
+const APP_VERSION = '0.9.0';
 const TESTED_STACK = ['26.07', '26.10'];
 // Droit Portal sans lequel aucune stack n'est accessible (vérifié : contrôlé
 // par le Portal avant d'ouvrir un site).
@@ -42,7 +42,7 @@ const MODULES = [
   { id: 'users', section: 'userManagement', label: 'Utilisateurs', page: 'pbx.users', path: '/users', none: 'Aucun utilisateur.', render: list('users') },
   { id: 'groups', section: 'userManagement', label: "Groupes d'appels", page: 'pbx.ring-groups', path: '/groups', none: "Aucun groupe d'appels.", render: list('groups') },
   { id: 'voicemails', section: 'userManagement', label: 'Messageries vocales', page: 'pbx.voicemails', path: '/voicemails', none: 'Aucune messagerie vocale.', render: list('voicemails') },
-  { id: 'calllogs', section: 'reporting', label: "Journaux d'appels", page: ['pbx.cdr', 'pbx.cdr-insights'], render: renderCallLogs, sub: 'Filtres, graphiques, exports' },
+  { id: 'calllogs', section: 'reporting', label: "Journal d'appels", page: ['pbx.cdr', 'pbx.cdr-insights'], render: renderCallLogs, sub: 'Filtres, graphiques, exports' },
   { id: 'incalls', section: 'callManagement', label: 'Appels entrants', page: 'pbx.incalls', path: '/incalls', none: 'Aucun appel entrant.', render: list('incalls') },
   { id: 'outcalls', section: 'callManagement', label: 'Appels sortants', page: 'pbx.outcalls', path: '/outcalls', none: 'Aucune règle sortante.', render: list('outcalls') },
   { id: 'schedules', section: 'callManagement', label: 'Plages horaires', page: 'pbx.schedules', path: '/schedules', none: 'Aucune plage horaire.', render: list('schedules') },
@@ -51,7 +51,7 @@ const MODULES = [
   { id: 'switchboards', section: 'services', label: 'POPC', page: 'pbx.switchboards', path: '/switchboards', none: 'Aucun POPC.', render: list('switchboards') },
   { id: 'phonebooks', section: 'services', label: 'Annuaire', page: ['pbx.phonebooks', 'pbx.phonebooks-contacts'], render: renderPhonebooks, sub: 'Contacts partagés, import / export CSV' },
   { id: 'sounds', section: 'soundsAndGreetings', label: 'Sons', page: 'pbx.sounds', render: renderSounds, sub: 'Écoute, envoi, remplacement' },
-  { id: 'moh', section: 'soundsAndGreetings', label: 'Musiques', page: 'pbx.moh', path: '/moh', none: "Aucune musique d'attente.", render: renderMoh },
+  { id: 'moh', section: 'soundsAndGreetings', label: "Musiques d'attente", page: 'pbx.moh', path: '/moh', none: "Aucune musique d'attente.", render: renderMoh },
   { id: 'recordings', section: 'soundsAndGreetings', label: 'Enregistrements', page: 'pbx.recordings', render: renderRecordings, sub: 'Tons de début et de fin' },
   // Pas de menu Agents (décision de Brice, 02/11/2026) : les agents ne se gèrent
   // pas dans Desk ; on connecte / déconnecte ceux déjà inscrits, depuis les files.
@@ -139,7 +139,7 @@ $('login-form').addEventListener('submit', async (e) => {
     const { kept } = await portalLogin(email, pass, { keep });
     $('lg-pass').value = '';
     try { localStorage.setItem('astrea-desk-email', email); } catch { /* */ }
-    if (keep && !kept) toast("Le Portal n'a pas fourni de jeton de reconnexion : le mot de passe sera redemandé au prochain démarrage.", 8000);
+    if (keep && !kept) toast("« Rester connecté » n'est pas disponible pour ce compte : le mot de passe sera redemandé au prochain démarrage.", 8000);
     await afterLogin();
   } catch (err) {
     console.warn('[astrea] connexion', err.step, err.status);
@@ -156,10 +156,10 @@ async function afterLogin() {
   const [sc, , locs] = await Promise.all([checkScopes([CRED_SCOPE]).catch((err) => err), loadVisualization(), loadLocations()]);
   if (sc instanceof Error) {
     // Contrôle indisponible : on continue, l'accès au site dira le reste.
-    D.warns.push('Contrôle des droits du Portal indisponible (' + sc.message + ').');
-  } else if (!sc[CRED_SCOPE]) throw new PortalError('scopes', 403, "Votre compte Portal n'a pas accès aux stacks des sites. Demandez à votre revendeur de vous donner l'accès au site.");
-  if (!P.visualization) D.warns.push('Aucune liste de menus dans le Portal pour ce compte : tous les modules sont affichés (compte sans restriction, supposé).');
-  if (!locs.length) throw new PortalError('locations', 0, 'Aucun site accessible avec ce compte Portal.');
+    D.warns.push('Contrôle des droits du Portal indisponible (' + (sc.tech || sc.message) + ').');
+  } else if (!sc[CRED_SCOPE]) throw new PortalError('scopes', 403, "Votre compte n'a pas accès à la téléphonie des sites. Demandez l'accès à votre revendeur.");
+  if (!P.visualization) D.warns.push('Pas de liste « Menu de Stack » pour ce compte : tous les modules sont affichés.');
+  if (!locs.length) throw new PortalError('locations', 0, 'Aucun site accessible avec ce compte. Contactez votre revendeur.');
   if (locs.length === 1) return enterSite(locs[0]);
   let last = null;
   try { last = localStorage.getItem('astrea-desk-site'); } catch { /* */ }
@@ -201,7 +201,7 @@ async function enterSite(loc) {
   selfCheck();
   D.counts = {}; D.lists = {};
   $('ft-site').textContent = loc.name;
-  $('ft-stack').textContent = `${ST.host}${ST.version ? ' · ' + ST.version : ''}`;
+  $('ft-stack').textContent = ''; // adresse et version du serveur : dans le Diagnostic seulement (client final)
   $('ft-change').hidden = P.locations.length < 2;
   showOnly('main');
   go('home');
@@ -223,11 +223,12 @@ function scheduleRenew() {
 // n'écrit rien, mais les modules suivants s'appuient sur S.readonly.
 function selfCheck() {
   const res = { stack: ST.version, tenant: !!ST.tenant, visualization: P.visualization ? P.visualization.length : null };
-  S.compatWarns = [...D.warns];
-  if (!ST.tenant) S.readonly = "le Portal n'a pas donné le tenant du site";
-  if (ST.version && !TESTED_STACK.some((v) => ST.version.startsWith(v))) S.compatWarns.push(`Version de stack ${ST.version} non testée avec Astrea Desk (testées : ${TESTED_STACK.join(', ')}).`);
+  // Avertissements techniques : Diagnostic seulement, jamais en bandeau (client final, 03/11/2026).
+  D.diagWarns = [...D.warns]; S.compatWarns = [];
+  if (!ST.tenant) S.readonly = "modifications désactivées sur ce site par sécurité"; D.diagWarns.push("tenant du site absent de la réponse du Portal");
+  if (ST.version && !TESTED_STACK.some((v) => ST.version.startsWith(v))) D.diagWarns.push(`Version de stack ${ST.version} non testée avec Astrea Desk (testées : ${TESTED_STACK.join(', ')}).`);
   console.info('[astrea] auto-contrôle', res, S.readonly || 'ok');
-  showCompat();
+  showCompat(); deskBanner();
 }
 
 // ---------------------------------------------------------------------------
@@ -257,8 +258,22 @@ $('nav').addEventListener('click', (e) => {
 });
 $('view').addEventListener('click', (e) => { const b = e.target.closest('[data-go]'); if (b) go(b.dataset.go); });
 
+// Bandeau de Desk (le bandeau commun #compat d'Admin Tools est masqué : textes
+// techniques). Relu à chaque page : la lecture seule peut arriver en cours de route.
+function deskBanner() {
+  const b = $('dk-ro'); if (!b) return;
+  b.hidden = !S.readonly;
+  b.textContent = S.readonly ? 'Les modifications sont désactivées sur ce site par sécurité. Contactez votre support (bouton « Diagnostic » en bas du menu).' : '';
+}
+// Détails techniques (bouton « Détails » des agents…) : masqués pour le client
+// final, affichés si l'option du Diagnostic est cochée (support, tests).
+const TECH_KEY = 'astrea-desk-tech';
+const techOn = () => { try { return localStorage.getItem(TECH_KEY) === '1'; } catch { return false; } };
+document.body.classList.toggle('dk-tech', techOn());
+
 function go(view) {
   D.view = view;
+  deskBanner();
   stopAudio();
   if (view !== 'home') stopDashboard();
   renderNav();
@@ -271,7 +286,7 @@ function go(view) {
 async function loadList(m) {
   if (!m.path) return null;
   // Sans tenant, listAll ne filtrerait rien : jamais d'objets d'autres clients.
-  if (!S.tenant) throw new Error("Tenant du site inconnu : lecture refusée.");
+  if (!S.tenant) throw new Error("Site non reconnu : reconnectez-vous.");
   // Une seule lecture par module, même si l'accueil et la vue la demandent ensemble.
   D.lists[m.id] ||= listAll(m.path).catch((err) => { delete D.lists[m.id]; throw err; });
   const items = await D.lists[m.id];
@@ -293,7 +308,7 @@ function renderHome() {
   $('view').innerHTML = `<div class="phonehead"><div><h2>${esc(ST.site.name)}</h2><div class="muted small">${esc(ST.site.customer || '')}</div></div>`
     + (live ? `<div class="btnrow"><span id="db-at" class="muted small"></span><button id="db-refresh">Actualiser</button></div>` : '') + '</div>'
     + (live ? '<div id="db-live"></div>' : '')
-    + (mods.length ? `<h2 class="dk-h">Modules</h2><div class="dk-tiles" id="db-tiles">${mods.map(tile).join('')}</div>` : '<p class="dk-empty">Aucun module autorisé pour votre compte dans le Portal (cases « Menu de Stack »).</p>')
+    + (mods.length ? `<h2 class="dk-h">Modules</h2><div class="dk-tiles" id="db-tiles">${mods.map(tile).join('')}</div>` : '<p class="dk-empty">Aucun module n\'est activé pour votre compte. Contactez votre revendeur.</p>')
     + '<div id="dk-tip" class="dk-tip" hidden></div>';
   if (live) renderDashboard($('view'), ST.site, show);
   for (const m of mods.filter((x) => x.path && D.counts[x.id] === undefined && !D.lists[x.id])) {
@@ -332,13 +347,14 @@ function diagnostic() {
     modules: MODULES.map((m) => `${m.id}: ${allowed(m) ? 'affiché' : 'masqué'}`),
     site: ST.site ? { nom: ST.site.name, uuid: ST.site.uuid } : null,
     stack: { hote: ST.host, port: ST.port, version: ST.version, tenant: ST.tenant, expire: ST.expiresAt, acl: ST.acl },
-    controle: { lectureSeule: S.readonly, avertissements: S.compatWarns },
+    controle: { lectureSeule: S.readonly, avertissements: D.diagWarns },
   };
 }
 function renderDiag() {
   const txt = JSON.stringify(diagnostic(), null, 2);
-  $('view').innerHTML = `<div class="phonehead"><div><h2>Diagnostic</h2><div class="muted small">Aucun mot de passe ni token. À copier pour le support Astrea.</div></div><div class="btnrow"><button id="dg-copy">Copier</button></div></div><pre class="dk-diag">${esc(txt)}</pre>`;
-  $('dg-copy').onclick = async () => { try { await navigator.clipboard.writeText(txt); toast('Diagnostic copié'); } catch { toast('Copie impossible : sélectionnez le texte.'); } };
+  $('view').innerHTML = `<div class="phonehead"><div><h2>Diagnostic</h2><div class="muted small">Informations à transmettre à votre support. Aucun mot de passe n\'y figure.</div></div><div class="btnrow"><button id="dg-copy">Copier</button></div></div><label class="inline small"><input type="checkbox" id="dg-tech"${techOn() ? ' checked' : ''}> Afficher les détails techniques (support)</label><pre class="dk-diag">${esc(txt)}</pre>`;
+  $('dg-tech').onchange = (e) => { try { localStorage.setItem(TECH_KEY, e.target.checked ? '1' : '0'); } catch { /* */ } document.body.classList.toggle('dk-tech', e.target.checked); };
+  $('dg-copy').onclick = async () => { try { await navigator.clipboard.writeText(txt); toast('Diagnostic copié.'); } catch { toast('Copie impossible : sélectionnez le texte.'); } };
 }
 
 $('ft-diag').onclick = () => { D.view = 'diag'; renderNav(); renderDiag(); };

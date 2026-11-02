@@ -8,8 +8,8 @@
 //    son uuid ;
 //  - import : POST /phonebooks/{uuid}/contacts/import, corps CSV (en-tête =
 //    noms des champs), charset dans le Content-Type → {created, failed}.
-import { S, $, esc, toast, confirmModal, canWrite } from '../admin-tools/common/core.js?v=0.8.5';
-import { download, csv } from './report.js?v=0.8.5';
+import { S, $, esc, toast, confirmModal, canWrite } from '../admin-tools/common/core.js?v=0.9.0';
+import { download, csv } from './report.js?v=0.9.0';
 
 const FIELDS = [['firstname', 'Prénom'], ['lastname', 'Nom'], ['company', 'Société'], ['number', 'Numéro'], ['mobile', 'Mobile'], ['email', 'E-mail']];
 const LABEL = Object.fromEntries(FIELDS);
@@ -27,7 +27,12 @@ async function dird(method, path, body, type = 'application/json') {
   const headers = { 'X-Auth-Token': S.token, 'Wazo-Tenant': S.tenant, Accept: 'application/json' };
   if (body !== undefined) headers['Content-Type'] = type;
   const r = await fetch(`${S.base}/api/dird/0.1${path}`, { method, headers, body: body === undefined ? undefined : type === 'application/json' ? JSON.stringify(body) : body });
-  if (!r.ok) { let m = ''; try { const j = await r.json(); m = j?.message || j?.reason?.join?.(' ') || ''; } catch { /* */ } throw new Error(`${r.status}${m ? ` ${m}` : ''}`); }
+  // Client final : phrase simple à l'écran, réponse brute en console.
+  if (!r.ok) {
+    let m = ''; try { const j = await r.json(); m = j?.message || j?.reason?.join?.(' ') || ''; } catch { /* */ }
+    console.warn('[astrea] annuaire', method, path, r.status, m);
+    throw new Error(r.status === 400 ? 'données refusées par le serveur' : r.status === 403 ? "votre compte n'a pas le droit de faire cette action" : r.status === 404 ? 'introuvable, actualisez la page' : r.status === 409 ? 'ce nom existe déjà' : 'serveur indisponible pour le moment');
+  }
   return r.status === 204 ? null : r.json().catch(() => null);
 }
 const mine = (x) => !x?.tenant_uuid || x.tenant_uuid === S.tenant;
@@ -37,7 +42,7 @@ export async function renderPhonebooks(view, site) {
   view.innerHTML = '<p class="dk-empty">Lecture…</p>';
   const loadBooks = async () => { P.books = ((await dird('GET', '/phonebooks?limit=1000'))?.items || []).filter(mine); if (!P.books.some((b) => b.uuid === P.cur)) P.cur = P.books[0]?.uuid || null; };
   const loadContacts = async () => { P.contacts = P.cur ? ((await dird('GET', `/phonebooks/${P.cur}/contacts?limit=100000`))?.items || []) : []; };
-  try { await loadBooks(); await loadContacts(); } catch (e) { view.innerHTML = `<p class="error">Annuaire illisible : ${esc(e.message)}</p>`; return; }
+  try { await loadBooks(); await loadContacts(); } catch (e) { view.innerHTML = `<p class="error">Annuaire indisponible : ${esc(e.message)}.</p>`; return; }
   const ro = !!S.readonly;
   // Colonnes : champs habituels présents, puis les autres champs trouvés.
   const cols = () => { const keys = new Set(P.contacts.flatMap((c) => Object.keys(c))); for (const k of HIDDEN) keys.delete(k); return [...FIELDS.map(([k]) => k).filter((k) => keys.has(k)), ...[...keys].filter((k) => !LABEL[k]).sort()]; };
@@ -48,7 +53,7 @@ export async function renderPhonebooks(view, site) {
     const cs = cols();
     view.innerHTML = `<div class="phonehead"><div><h2>Annuaire</h2><div class="muted small">${esc(site.name)} · contacts partagés, visibles dans l'appli et sur les postes</div></div>
         <div class="btnrow"><input id="pb-q" class="dk-search" type="search" placeholder="Rechercher" value="${esc(P.q)}">${ro ? '' : '<button id="pb-new">Nouvel annuaire</button>'}</div></div>`
-      + (P.books.length ? `<div class="dk-tabs">${P.books.map((b) => `<button class="${b.uuid === P.cur ? 'active' : ''}" data-book="${b.uuid}">${esc(b.name)}</button>`).join('')}</div>` : '<p class="dk-empty">Aucun annuaire sur ce site.</p>')
+      + (P.books.length ? `<div class="dk-tabs">${P.books.map((b) => `<button class="${b.uuid === P.cur ? 'active' : ''}" data-book="${b.uuid}">${esc(b.name)}</button>`).join('')}</div>` : `<p class="dk-empty">Aucun annuaire sur ce site.${ro ? '' : ' Créez-en un avec « Nouvel annuaire ».'}</p>`)
       + (book ? `<section class="dk-panel"><div class="dk-panhead"><h3>${esc(book.name)} <span class="muted small">${P.contacts.length} contact${P.contacts.length > 1 ? 's' : ''}${book.description ? ` · ${esc(book.description)}` : ''}</span></h3>
           <span class="btnrow">${ro ? '' : '<button class="dk-text" id="pb-add">Ajouter un contact</button><button class="dk-text" id="pb-import">Importer un CSV…</button>'}<button class="dk-text" id="pb-export">Exporter en CSV</button>${ro ? '' : '<button class="dk-text" id="pb-edit">Renommer</button><button class="dk-text" id="pb-del">Supprimer l\'annuaire</button>'}</span></div>`
         + (rows.length ? `<div class="dk-scroll"><table class="dk-table"><thead><tr>${cs.map((k) => `<th>${esc(LABEL[k] || k)}</th>`).join('')}<th></th></tr></thead><tbody>${rows.map((c) => `<tr>${cs.map((k) => `<td>${esc(c[k] ?? '')}</td>`).join('')}<td class="dk-acts">${ro ? '' : `<button class="dk-text" data-ced="${esc(c.id)}">Modifier</button> <button class="dk-text" data-cdel="${esc(c.id)}">Supprimer</button>`}</td></tr>`).join('')}</tbody></table></div>`
@@ -96,12 +101,13 @@ export async function renderPhonebooks(view, site) {
     } else if (b.id === 'pb-del') {
       if (canWrite()) confirmModal(`<p>Supprimer l'annuaire <strong>${esc(book.name)}</strong> et ses ${P.contacts.length} contacts ?</p><p class="muted small">Définitif. Pensez à l'exporter en CSV avant.</p>`, async () => { try { await dird('DELETE', `/phonebooks/${book.uuid}`); toast('Annuaire supprimé.'); } catch (x) { toast(`Échec : ${x.message}`, 8000); } refresh(true); return true; }, 'Supprimer');
     } else if (b.id === 'pb-export') {
-      const cs = cols();
+      // Colonnes usuelles toujours présentes : l'export sert aussi de modèle pour l'import.
+      const cs = [...new Set([...FIELDS.map(([k]) => k), ...cols()])];
       download(`annuaire_${(book.name || 'site').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\w-]+/g, '-')}.csv`, csv(cs, P.contacts.map((c) => cs.map((k) => c[k] ?? ''))), 'text/csv;charset=utf-8');
     } else if (b.id === 'pb-import') {
       if (!canWrite()) return;
       confirmModal(`<div class="dk-ed"><h3>Importer des contacts dans « ${esc(book.name)} »</h3>
-        <p class="small">Fichier CSV, séparateur virgule ou point-virgule, première ligne = noms des champs : <code>firstname</code>, <code>lastname</code>, <code>company</code>, <code>number</code>, <code>mobile</code>, <code>email</code> (d'autres champs sont acceptés). Les contacts sont <strong>ajoutés</strong> à ceux existants.</p>
+        <p class="small">Le plus simple : <strong>exportez</strong> l'annuaire en CSV, complétez-le dans Excel en gardant la première ligne, puis importez-le ici. Les contacts sont <strong>ajoutés</strong> à ceux déjà présents.</p>
         <div class="dk-ed-row"><button type="button" id="pb-file">Choisir le fichier…</button><span id="pb-finfo" class="muted small">aucun fichier</span></div><p id="pb-ierr" class="error small"></p></div>`, async () => {
         if (!text) { $('pb-ierr').textContent = 'Choisissez un fichier.'; return false; }
         try {

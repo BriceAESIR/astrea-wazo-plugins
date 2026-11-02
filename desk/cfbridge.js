@@ -6,16 +6,16 @@
 // (execute). Desk reprend exactement ce cycle, mais écrit dès que l'éditeur
 // est validé ; une modification faite ailleurs entre-temps fait tout refuser
 // (rien n'est écrasé). Règles d'écriture : voir les commentaires de cf/write.js.
-import { S, esc, toast, confirmModal, canWrite } from '../admin-tools/common/core.js?v=0.8.5';
-import { M, loadAll, ensureDetail, ensureAllDetails, loadTrunkOperators, assocW, tapi, destLabel, showNum } from './cf/model.js?v=0.8.5';
-import { getDest, setDest, sameValue, prepare, conflictsOf, execute } from './cf/write.js?v=0.8.5';
-import { openGroupEditor } from './cf/group-editor.js?v=0.8.5';
-import { openQueueEditor } from './cf/queue-editor.js?v=0.8.5';
-import { openIvrEditor } from './cf/ivr-editor.js?v=0.8.5';
-import { openSbEditor } from './cf/sb-editor.js?v=0.8.5';
-import { openOutcallEditor } from './cf/outcall-editor.js?v=0.8.5';
-import { openScheduleEditor } from './cf/sched-editor.js?v=0.8.5';
-import { openIncallEditor, openUserEditor, openVmEditor, openConfEditor, openSchedGenEditor } from './cf/obj-editors.js?v=0.8.5';
+import { S, esc, toast, confirmModal, canWrite } from '../admin-tools/common/core.js?v=0.9.0';
+import { M, loadAll, ensureDetail, ensureAllDetails, loadTrunkOperators, assocW, tapi, destLabel, showNum } from './cf/model.js?v=0.9.0';
+import { getDest, setDest, sameValue, prepare, conflictsOf, execute } from './cf/write.js?v=0.9.0';
+import { openGroupEditor } from './cf/group-editor.js?v=0.9.0';
+import { openQueueEditor } from './cf/queue-editor.js?v=0.9.0';
+import { openIvrEditor } from './cf/ivr-editor.js?v=0.9.0';
+import { openSbEditor } from './cf/sb-editor.js?v=0.9.0';
+import { openOutcallEditor } from './cf/outcall-editor.js?v=0.9.0';
+import { openScheduleEditor } from './cf/sched-editor.js?v=0.9.0';
+import { openIncallEditor, openUserEditor, openVmEditor, openConfEditor, openSchedGenEditor } from './cf/obj-editors.js?v=0.9.0';
 
 export { M, destLabel, showNum };
 
@@ -59,7 +59,7 @@ async function commit(s, label, onDone) {
     const conflicts = await conflictsOf(entries);
     if (conflicts.length) {
       s.revert(); await cfModel(true); onDone?.();
-      confirmModal(`<h3>Rien n'a été écrit</h3><p>${esc(label)} a été modifié ailleurs (Portal, autre poste) depuis l'ouverture : ${esc([...new Set(conflicts.flatMap((c) => c.parts))].join(', '))}.</p><p class="muted small">Rouvrez le réglage : il repart de la version actuelle de Wazo.</p>`, () => true, 'Fermer');
+      confirmModal(`<h3>Rien n'a été écrit</h3><p>${esc(label)} a été modifié par quelqu'un d'autre pendant que vous le régliez.</p><p class="muted small">Rouvrez-le : vous repartirez de la version à jour.</p>`, () => true, 'Fermer');
       return;
     }
     const ops = await prepare(entries.map((e) => ({ w: e.w, after: e.after })));
@@ -68,10 +68,15 @@ async function commit(s, label, onDone) {
     const bad = res.filter((x) => !x.ok), warns = res.filter((x) => x.warn);
     await cfModel(true); onDone?.();
     if (!bad.length && !warns.length) toast(`${label} : enregistré.`, 4000);
-    else confirmModal(`<h3>${bad.length ? 'Écriture partielle' : 'Enregistré, avec des avertissements'}</h3><ul class="small">${bad.map((b) => `<li><code>${esc(b.path)}</code> : ${esc(b.error)}</li>`).join('')}${warns.map((b) => `<li><code>${esc(b.path)}</code> : ${esc(b.warn)}</li>`).join('')}</ul><p class="muted small">Les données affichées ont été relues dans Wazo.</p>`, () => true, 'Fermer');
+    // Client final : pas de chemin d'API ni de message brut à l'écran (détail en console).
+    else {
+      if (bad.length) console.warn('[astrea] écriture partielle', bad);
+      confirmModal(`<h3>${bad.length ? 'Enregistrement incomplet' : 'Enregistré'}</h3>${bad.length ? `<p>Une partie des changements de ${esc(label)} n'a pas pu être enregistrée. L'écran montre maintenant ce qui est réellement en place : vérifiez et recommencez si besoin.</p>` : ''}${warns.length ? `<ul class="small">${warns.map((b) => `<li>${esc(b.warn)}</li>`).join('')}</ul>` : ''}`, () => true, 'Fermer');
+    }
   } catch (e) {
     s.revert(); await cfModel(true).catch(() => {}); onDone?.();
-    toast(`Échec, rien n'a été écrit : ${e.message}`, 9000);
+    console.warn('[astrea] écriture', e);
+    toast("L'enregistrement n'a pas abouti, rien n'a été modifié. Réessayez dans un instant.", 9000);
   }
 }
 
@@ -80,7 +85,7 @@ export async function edit(type, id, onDone, { hours = false } = {}) {
   if (!canWrite()) return;
   await cfModel();
   const o = objOf(type, id);
-  if (!o) { toast('Objet introuvable : la liste a peut-être changé, elle est relue.'); await cfModel(true); onDone?.(); return; }
+  if (!o) { toast('Élément introuvable : la liste a été mise à jour.'); await cfModel(true); onDone?.(); return; }
   // Relire l'objet avant d'ouvrir (comme Call Flow) : l'éditeur part de l'état actuel.
   try { const fresh = await tapi('GET', PATH[type](o)); if (fresh) Object.assign(o, fresh); } catch (e) { console.warn('[astrea] relecture', e.message); }
   await ensureDetail(type, o);

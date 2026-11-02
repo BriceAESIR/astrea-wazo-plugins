@@ -17,8 +17,8 @@
 // seulement si l'état d'avant est connu. Supposé, non vérifié : un code
 // composé apparaît toujours dans le journal (appel interne non répondu, vu en
 // réel), et un échec (groupe d'un autre tenant…) y apparaît aussi.
-import { S, api, fullName } from '../admin-tools/common/core.js?v=0.8.5';
-import { M } from './cfbridge.js?v=0.8.5';
+import { S, api, fullName } from '../admin-tools/common/core.js?v=0.9.0';
+import { M } from './cfbridge.js?v=0.9.0';
 
 export const DAYS = 30;
 const PAGE = 1000, MAX = 10000;
@@ -79,7 +79,7 @@ async function cdrPage(params) {
 let CACHE = null;
 export async function loadGroupHints(force = false) {
   if (CACHE && !force && CACHE.tenant === S.tenant && Date.now() - CACHE.at < 60e3) return CACHE;
-  if (!S.tenant) throw new Error('Tenant du site inconnu : lecture refusée.');
+  if (!S.tenant) throw new Error('Site non reconnu : reconnectez-vous.');
   const tenant = S.tenant;
   const codes = await featureCodes();
   const until = new Date(), from = new Date(until.getTime() - DAYS * 86400e3);

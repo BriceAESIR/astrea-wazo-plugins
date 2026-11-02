@@ -16,15 +16,15 @@
 //    SUPPOSÉ comme pour les autres champs « son » de confd).
 // Tout fichier audio envoyé est converti en WAV 8 kHz 16 bits mono (toWav8k
 // de Call Flow), le format attendu par Wazo ; sauf une musique en mode mp3.
-import { S, $, esc, toast, api, listAll, confirmModal, canWrite } from '../admin-tools/common/core.js?v=0.8.5';
-import { toWav8k, moTxt } from './cf/sound-play.js?v=0.8.5';
+import { S, $, esc, toast, api, listAll, confirmModal, canWrite } from '../admin-tools/common/core.js?v=0.9.0';
+import { toWav8k, moTxt } from './cf/sound-play.js?v=0.9.0';
 
 // Format audio et préparation des fichiers (demande de Brice, 02/11/2026) :
 // format exact, lien vers g711.org et pas-à-pas. Desk convertit de toute façon
 // (toWav8k) ; g711.org sert à régler le volume et la qualité téléphonique.
 const G711 = 'https://g711.org/';
 const audioHelp = (open = false) => `<div class="dk-audio">
-  <p><strong>Format attendu par Wazo : WAV 8 kHz, 16 bits, mono (PCM).</strong> Desk convertit automatiquement tout fichier audio (mp3, m4a, wav…) dans ce format avant l'envoi. Pour un son plus fort ou plus clair au téléphone, préparez-le d'abord avec <a href="${G711}" target="_blank" rel="noopener">g711.org ↗</a> (gratuit, en ligne). <button type="button" class="dk-link-sm" data-copy="${G711}">Copier l'adresse</button> pour la coller dans votre navigateur si le lien s'ouvre dans l'appli.</p>
+  <p>Format : <strong>WAV 8 kHz, 16 bits, mono</strong>. Les autres fichiers audio (mp3, m4a…) sont convertis automatiquement. Pour un son plus clair au téléphone : <a href="${G711}" target="_blank" rel="noopener">g711.org ↗</a> <button type="button" class="dk-link-sm" data-copy="${G711}">Copier l'adresse</button></p>
   <details${open ? ' open' : ''}><summary>Comment préparer un fichier avec g711.org</summary><ol>
     <li>Ouvrez <a href="${G711}" target="_blank" rel="noopener">g711.org ↗</a>.</li>
     <li><strong>Source File</strong> : cliquez sur <em>Browse</em> et choisissez votre fichier (mp3, wav, m4a… jusqu'à 50 Mo).</li>
@@ -52,7 +52,12 @@ async function raw(method, path, body, type = 'application/octet-stream') {
   const headers = { 'X-Auth-Token': S.token, 'Wazo-Tenant': S.tenant };
   if (body !== undefined) headers['Content-Type'] = type;
   const r = await fetch(`${S.base}/api/confd/1.1${path}`, { method, headers, body });
-  if (!r.ok) { let m = ''; try { m = JSON.stringify(await r.json()).slice(0, 200); } catch { /* */ } throw new Error(`${r.status}${m ? ` ${m}` : ''}`); }
+  // Client final : phrase simple à l'écran, réponse brute en console.
+  if (!r.ok) {
+    let m = ''; try { m = JSON.stringify(await r.json()).slice(0, 200); } catch { /* */ }
+    console.warn('[astrea] sons', method, path, r.status, m);
+    throw new Error(r.status === 400 ? 'fichier refusé par le serveur' : r.status === 403 ? "votre compte n'a pas le droit de faire cette action" : r.status === 404 ? 'introuvable, actualisez la page' : r.status === 413 ? 'fichier trop gros' : 'serveur indisponible pour le moment');
+  }
   return r;
 }
 // G.711 → PCM 16 bits (formules ITU-T), puis WAV 8 kHz mono pour le navigateur.
@@ -115,11 +120,11 @@ export async function renderSounds(view, site) {
   const ro = !!S.readonly;
   const draw = () => {
     view.innerHTML = head('Sons', site, 'messages d\'accueil, annonces, sons des SVI', ro ? '' : '<div class="btnrow"><button id="sd-newcat">Nouvelle catégorie</button></div>')
-      + '<p class="muted small">Sons propres au site, rangés par catégorie.</p>' + audioHelp()
+      + audioHelp()
       + (cats.length ? cats.sort((a, b) => a.name.localeCompare(b.name, 'fr')).map((c) => `<section class="dk-panel"><div class="dk-panhead"><h3>${esc(c.name)} <span class="muted small">${(c.files || []).length} fichier${(c.files || []).length > 1 ? 's' : ''}</span></h3>${ro ? '' : `<button class="dk-text" data-add="${esc(c.name)}">Ajouter un son…</button>`}</div>`
         + ((c.files || []).length ? `<div class="dk-scroll"><table class="dk-table"><thead><tr><th>Nom</th><th>Versions</th><th></th></tr></thead><tbody>${[...c.files].sort((a, b) => a.name.localeCompare(b.name, 'fr')).map((f) => {
           const fm = f.formats || [];
-          return `<tr><td class="nowrap">${esc(f.name)}</td><td>${fm.map((x) => `<span class="dk-ver">${playable(x.format) ? playBtn(`data-play="${esc(c.name)}|${esc(f.name)}|${esc(x.format || '')}|${esc(x.language || '')}"`) : '<span class="dk-play-none" title="Format non lisible dans le navigateur"></span>'}<span class="muted small">${esc(FMT[x.format] || x.format || '?')}${x.language ? ` · ${esc(x.language)}` : ''}</span></span>`).join('')}</td><td class="dk-acts">${ro ? '' : `<button class="dk-text" data-rep="${esc(c.name)}|${esc(f.name)}">Remplacer…</button> <button class="dk-text" data-del="${esc(c.name)}|${esc(f.name)}">Supprimer</button>`}</td></tr>`;
+          return `<tr><td class="nowrap">${esc(f.name)}</td><td>${fm.map((x) => `<span class="dk-ver">${playable(x.format) ? playBtn(`data-play="${esc(c.name)}|${esc(f.name)}|${esc(x.format || '')}|${esc(x.language || '')}"`) : '<span class="dk-play-none" title="Format non lisible dans le navigateur"></span>'}<span class="muted small">${esc(FMT[x.format] || x.format || '?')}${x.language ? ` · ${esc(LANGS.find(([k]) => k === x.language)?.[1] || x.language)}` : ''}</span></span>`).join('')}</td><td class="dk-acts">${ro ? '' : `<button class="dk-text" data-rep="${esc(c.name)}|${esc(f.name)}">Remplacer…</button> <button class="dk-text" data-del="${esc(c.name)}|${esc(f.name)}">Supprimer</button>`}</td></tr>`;
         }).join('')}</tbody></table></div>` : '<p class="muted small">Aucun fichier.</p>') + '</section>').join('')
         : '<p class="dk-empty">Aucune catégorie de sons sur ce site.</p>');
   };
@@ -181,9 +186,9 @@ export async function renderMoh(view, site) {
   const ro = !!S.readonly;
   const draw = () => {
     view.innerHTML = head("Musiques d'attente", site, '', ro ? '' : '<div class="btnrow"><button id="mh-new">Nouvelle musique</button></div>')
-      + '<p class="muted small">Chaque musique est une liste de fichiers jouée en boucle (attente, transfert, file). En mode « Fichiers MP3 », les fichiers sont envoyés tels quels, sans conversion.</p>' + audioHelp()
-      + (list.length ? list.sort((a, b) => (a.label || a.name).localeCompare(b.label || b.name, 'fr')).map((m) => `<section class="dk-panel"><div class="dk-panhead"><h3>${esc(m.label || m.name)} <span class="muted small">${esc(m.name)} · ${esc(MODE[m.mode] || m.mode)} · ${esc(SORT.find(([k]) => k === m.sort)?.[1] || 'ordre par défaut')}</span></h3>${ro ? '' : `<span class="btnrow"><button class="dk-text" data-madd="${m.uuid}"${m.mode === 'custom' ? ' disabled' : ''}>Ajouter un fichier…</button><button class="dk-text" data-medit="${m.uuid}">Modifier</button>${m.name === 'default' ? '' : `<button class="dk-text" data-mdel="${m.uuid}">Supprimer</button>`}</span>`}</div>`
-        + (m.mode === 'custom' ? `<p class="muted small">Application : ${esc(m.application || '—')}</p>` : (m.files || []).length ? `<ul class="dk-files">${m.files.map((f) => `<li><span class="dk-track">${playBtn(`data-mplay="${m.uuid}|${esc(f.name)}"`)}${esc(f.name)}</span><span>${ro ? '' : ` <button class="dk-link-sm" data-mfdel="${m.uuid}|${esc(f.name)}">Supprimer</button>`}</span></li>`).join('')}</ul>` : '<p class="muted small">Aucun fichier : rien n\'est joué.</p>')
+      + '<p class="muted small">Chaque musique est une liste de fichiers jouée en boucle pendant l\'attente.</p>' + audioHelp()
+      + (list.length ? list.sort((a, b) => (a.label || a.name).localeCompare(b.label || b.name, 'fr')).map((m) => `<section class="dk-panel"><div class="dk-panhead"><h3>${esc(m.label || m.name)} <span class="muted small">${esc(SORT.find(([k]) => k === m.sort)?.[1] || 'ordre par défaut')}</span></h3>${ro ? '' : `<span class="btnrow">${m.mode === 'custom' ? '' : `<button class="dk-text" data-madd="${m.uuid}">Ajouter un fichier…</button>`}<button class="dk-text" data-medit="${m.uuid}">Modifier</button>${m.name === 'default' ? '' : `<button class="dk-text" data-mdel="${m.uuid}">Supprimer</button>`}</span>`}</div>`
+        + (m.mode === 'custom' ? '<p class="muted small">Musique fournie par une source externe : elle se règle dans le Portal.</p>' : (m.files || []).length ? `<ul class="dk-files">${m.files.map((f) => `<li><span class="dk-track">${playBtn(`data-mplay="${m.uuid}|${esc(f.name)}"`)}${esc(f.name)}</span><span>${ro ? '' : ` <button class="dk-link-sm" data-mfdel="${m.uuid}|${esc(f.name)}">Supprimer</button>`}</span></li>`).join('')}</ul>` : '<p class="muted small">Aucun fichier : rien n\'est joué.</p>')
         + '</section>').join('') : '<p class="dk-empty">Aucune musique d\'attente sur ce site.</p>');
   };
   const refresh = async () => { list = await listAll('/moh'); draw(); };
@@ -220,7 +225,7 @@ export async function renderMoh(view, site) {
       const n = b.dataset.mfdel.split('|')[1];
       if (canWrite()) confirmModal(`<p>Retirer <strong>${esc(n)}</strong> de « ${esc(m.label || m.name)} » ?</p>`, async () => { try { await raw('DELETE', `/moh/${m.uuid}/files/${encodeURIComponent(n)}`); toast('Fichier retiré.'); } catch (x) { toast(`Échec : ${x.message}`, 8000); } refresh(); return true; }, 'Retirer');
     } else if (b.dataset.mdel) {
-      if (canWrite()) confirmModal(`<p>Supprimer la musique <strong>${esc(m.label || m.name)}</strong> et ses fichiers ?</p><p class="muted small">Les groupes, files et utilisateurs qui l'utilisent reviendront à la musique par défaut (supposé, à vérifier dans le Portal).</p>`, async () => { try { await api('DELETE', `/moh/${m.uuid}`); toast('Musique supprimée.'); } catch (x) { toast(`Échec : ${x.message}`, 8000); } refresh(); return true; }, 'Supprimer');
+      if (canWrite()) confirmModal(`<p>Supprimer la musique <strong>${esc(m.label || m.name)}</strong> et ses fichiers ?</p><p class="muted small">Vérifiez d'abord qu'aucun groupe, file ou utilisateur ne l'utilise.</p>`, async () => { try { await api('DELETE', `/moh/${m.uuid}`); toast('Musique supprimée.'); } catch (x) { toast(`Échec : ${x.message}`, 8000); } refresh(); return true; }, 'Supprimer');
     }
   };
   await refresh();
@@ -238,12 +243,12 @@ export async function renderRecordings(view, site) {
       const all = await Promise.all(cats.map((c) => api('GET', `/sounds/${encodeURIComponent(c.name)}`).catch(() => ({ files: [] }))));
       return all.flatMap((c) => (c.files || []).map((f) => ({ label: `${c.name} / ${f.name}`, value: (f.formats || []).find((x) => x.path)?.path || f.name })));
     })()]);
-  } catch (e) { view.innerHTML = head('Enregistrements', site) + `<p class="error">Lecture impossible : ${esc(e.message)} (Wazo 25.04 ou plus récent requis).</p>`; return; }
+  } catch (e) { view.innerHTML = head('Enregistrements', site) + `<p class="dk-empty">Ce réglage n'est pas disponible sur ce site.</p>`; return; }
   const ro = !!S.readonly;
-  const sel = (id, v) => `<select id="${id}"${ro ? ' disabled' : ''}><option value="">Aucun (bip par défaut de Wazo)</option>${sounds.map((s) => `<option value="${esc(s.value)}"${s.value === v ? ' selected' : ''}>${esc(s.label)}</option>`).join('')}${v && !sounds.some((s) => s.value === v) ? `<option value="${esc(v)}" selected>${esc(v)}</option>` : ''}</select>`;
+  const sel = (id, v) => `<select id="${id}"${ro ? ' disabled' : ''}><option value="">Aucun</option>${sounds.map((s) => `<option value="${esc(s.value)}"${s.value === v ? ' selected' : ''}>${esc(s.label)}</option>`).join('')}${v && !sounds.some((s) => s.value === v) ? `<option value="${esc(v)}" selected>${esc(v)}</option>` : ''}</select>`;
   view.innerHTML = head('Enregistrements', site, 'tons joués au début et à la fin d\'un enregistrement d\'appel')
     + `<section class="dk-panel dk-ed"><label>Ton de début d'enregistrement${sel('rc-start', cur?.recording_start)}</label><label>Ton de fin d'enregistrement${sel('rc-stop', cur?.recording_stop)}</label>
-      <p class="muted small">Sons du site (module Sons). Pour un nouveau son, ajoutez-le d'abord dans Sons.</p>${ro ? '' : '<div class="btnrow"><button id="rc-save" class="primary">Enregistrer</button></div>'}</section>`;
+      <p class="muted small">Pour un nouveau son, ajoutez-le d'abord dans « Sons ».</p>${ro ? '' : '<div class="btnrow"><button id="rc-save" class="primary">Enregistrer</button></div>'}</section>`;
   if (ro) return;
   $('rc-save').onclick = async () => {
     if (!canWrite()) return;

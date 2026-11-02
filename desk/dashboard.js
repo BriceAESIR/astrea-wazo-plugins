@@ -14,10 +14,10 @@
 // Pas d'appelants en attente dans les files en direct : seul amid les donne
 // (QueueSummary), et amid est réservé au tenant principal
 // (required_master_tenant), donc inaccessible à un admin de site.
-import { S, esc, listAll } from '../admin-tools/common/core.js?v=0.8.5';
-import { stackedColumns, legend } from './charts.js?v=0.8.5';
-import { isService, statusKey, fmtDur, caller } from './calllogs.js?v=0.8.5';
-import { pauseLabel, ghostOf, ghostState, isGhost, GHOST_HELP, loadPresences } from './live.js?v=0.8.5';
+import { S, esc, listAll } from '../admin-tools/common/core.js?v=0.9.0';
+import { stackedColumns, legend } from './charts.js?v=0.9.0';
+import { isService, statusKey, fmtDur, caller } from './calllogs.js?v=0.9.0';
+import { pauseLabel, ghostOf, ghostState, isGhost, GHOST_HELP, loadPresences } from './live.js?v=0.9.0';
 
 const REFRESH = 30e3;
 const SERIES = [
@@ -119,12 +119,12 @@ function hourSpan(buckets) {
   return [Math.min(8, ...used), Math.max(19, ...used) + 1];
 }
 const kpi = (label, value, sub = '') => `<div class="dk-kpi"><span>${esc(label)}</span><strong>${esc(value)}</strong>${sub ? `<em>${esc(sub)}</em>` : ''}</div>`;
-const fail = (title, err) => `<section class="dk-panel"><h3>${esc(title)}</h3><p class="muted small">Indisponible : ${esc(err.message)}.</p></section>`;
+const fail = (title, err) => { console.warn('[astrea] tableau de bord', title, err.message); return `<section class="dk-panel"><h3>${esc(title)}</h3><p class="muted small">Indisponible pour le moment.</p></section>`; };
 
 function blockNow(show) {
   const D = B.data;
   let kpis = '';
-  if (show.calls) kpis += D.calls instanceof Error ? kpi('Appels en cours', '—', 'indisponible') : D.calls ? kpi('Appels en cours', D.calls.total, D.calls.ringing ? `dont ${D.calls.ringing} en sonnerie` : 'en conversation') : '';
+  if (show.calls) kpis += D.calls instanceof Error ? kpi('Appels en cours', '—', 'indisponible') : D.calls ? kpi('Appels en cours', D.calls.total, D.calls.ringing ? `dont ${D.calls.ringing} en sonnerie` : D.calls.total ? 'en conversation' : 'aucun appel') : '';
   if (show.agents && D.agents && !(D.agents instanceof Error)) {
     const logged = D.agents.filter((a) => a.logged), paused = logged.filter((a) => a.paused);
     const ghosts = logged.filter((a) => isGhost(ghostOf(a, B.users, D.pres)));
@@ -184,7 +184,7 @@ function paint(view, show) {
   if (!box) return;
   const now = blockNow(show), day = blockToday(show);
   box.innerHTML = (now ? `<h2 class="dk-h">En ce moment</h2>${now}` : '')
-    + (day ? `<h2 class="dk-h">Aujourd'hui</h2>${day}${show.queues && B.data.queues && !(B.data.queues instanceof Error) ? '<p class="muted small">Files : chiffres calculés périodiquement par Wazo, les dernières heures peuvent manquer.</p>' : ''}` : '')
+    + (day ? `<h2 class="dk-h">Aujourd'hui</h2>${day}${show.queues && B.data.queues && !(B.data.queues instanceof Error) ? '<p class="muted small">Les derniers appels en file peuvent mettre un peu de temps à apparaître.</p>' : ''}` : '')
     || '';
   const at = view.querySelector('#db-at');
   if (at) at.textContent = B.at ? `Actualisé à ${hhmm(B.at)}:${pad(B.at.getSeconds())}` : 'Lecture…';
