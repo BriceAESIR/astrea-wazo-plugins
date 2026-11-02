@@ -19,8 +19,8 @@
 // Groupes : l'entrée / sortie dynamique (*735…) passe par AddQueueMember dans
 // le dialplan (wazo-agid group_member.py) ; seul amid la lit, et amid exige le
 // tenant principal : invisible et non modifiable pour un admin de site.
-import { S, $, esc, toast, api, listAll, confirmModal, canWrite, fullName } from '../admin-tools/common/core.js?v=0.8.3';
-import { edit } from './cfbridge.js?v=0.8.3';
+import { S, $, esc, toast, api, listAll, confirmModal, canWrite, fullName } from '../admin-tools/common/core.js?v=0.8.4';
+import { edit } from './cfbridge.js?v=0.8.4';
 
 const REFRESH = 20e3;
 export const PHONE = {
@@ -29,8 +29,9 @@ export const PHONE = {
 };
 export const phoneBadge = (p) => {
   if (!p) return '<span class="dk-ph dk-ph-off" title="État du téléphone inconnu">—</span>';
-  // Hors ligne mais connecté à l'appli mobile (chatd presences.mobile) : joignable par notification.
-  if ((p.line_state || 'unavailable') === 'unavailable' && p.mobile === true) return `<span class="dk-ph dk-ph-mobile" title="Ligne au repos : l'appli mobile Wazo est réveillée par une notification à chaque appel.">Appli mobile${p.do_not_disturb ? ' · NPD' : ''}</span>`;
+  // Pas de badge « Appli mobile » (retiré en 0.8.4) : chatd presences.mobile reste
+  // vrai tant qu'un jeton mobile existe, même appli déconnectée (vu par Brice le
+  // 03/11/2026). Desk n'affiche pas une information peu fiable au client final.
   const [c, l] = PHONE[p.line_state] || PHONE.unavailable;
   return `<span class="dk-ph dk-ph-${c}">${esc(l)}${p.do_not_disturb ? ' · NPD' : ''}</span>`;
 };
@@ -123,27 +124,23 @@ export function pauseLabel(reason) {
 //  - même appelé, wazo-agid agentfeatures compose directement state_interface
 //    (PJSIP/<ligne>) : pas de réveil du mobile, contrairement à l'appel direct
 //    d'un utilisateur (helpers.build_sip_interface → wazo_wait_for_registration).
-// L'agent est donc injoignable pour ses files, comme un fantôme, mais pour une
-// autre raison : on le signale avec son propre texte.
+// Fantôme et mobile donnent le même résultat : la file ne le fait pas sonner.
+// Un seul texte simple pour le client final (demande de Brice, 03/11/2026) ;
+// presences.mobile n'est pas fiable (jeton gardé après déconnexion), il n'est
+// pas utilisé.
 export function ghostOf(st, users, pres) {
   if (!st?.logged || !st.state_interface) return null;
   const name = String(st.state_interface).replace(/^(PJSIP|SCCP)\//i, '');
   for (const u of users || []) for (const l of u.lines || []) {
     if (l.name !== name) continue;
-    const p = pres?.get(u.uuid);
-    const s = (p?.lines || []).find((x) => x.id === l.id)?.state;
-    if (s !== 'unavailable') return null;
-    return { user: u, line: l, mobile: p?.mobile === true };
+    const s = (pres?.get(u.uuid)?.lines || []).find((x) => x.id === l.id)?.state;
+    return s === 'unavailable' ? { user: u, line: l } : null;
   }
   return null;
 }
-export const GHOST_TXT = 'Connecté, mais son appareil est hors ligne';
-export const GHOST_HELP = "Wazo le considère connecté alors que l'appareil qu'il surveille pour lui est hors ligne (PC éteint ou redémarré sans quitter l'appli, téléphone débranché…). Les appels de file risquent de sonner dans le vide : déconnectez-le s'il est absent.";
-export const MOBILE_TXT = 'Connecté sur l\'appli mobile : ne reçoit pas les appels de file';
-export const MOBILE_HELP = "L'agent est connecté depuis l'appli mobile Wazo, dont la ligne est au repos (réveillée par notification pour les appels directs seulement). Wazo ne réveille pas le mobile pour un appel de file : il ne sonnera pas (constaté en réel, et confirmé dans le code d'Asterisk et de Wazo). Pour recevoir les appels de la file, l'agent doit se connecter depuis un appareil qui reste en ligne : appli Wazo sur ordinateur ou navigateur, ou téléphone de bureau.";
-// État affiché d'un agent connecté dont la ligne est hors ligne : fantôme ou mobile.
-export const ghostState = (g) => (g ? (g.mobile ? ['ghost', MOBILE_TXT, MOBILE_HELP] : ['ghost', GHOST_TXT, GHOST_HELP]) : null);
-// Injoignable pour ses files, quelle qu'en soit la raison.
+export const GHOST_TXT = 'Connecté, mais ne reçoit pas les appels';
+export const GHOST_HELP = "Son appareil n'est pas en ligne (ordinateur éteint, appli sur téléphone mobile, poste débranché…) : les appels de la file ne lui arrivent pas. Déconnectez-le s'il est absent. Pour recevoir les appels, il doit se connecter depuis l'appli Wazo sur ordinateur ou depuis un téléphone de bureau.";
+export const ghostState = (g) => (g ? ['ghost', GHOST_TXT, GHOST_HELP] : null);
 export const isGhost = (g) => !!g;
 
 function agentState(st) {
@@ -252,7 +249,6 @@ async function agentDetails(a) {
     agent: { id: a.id, numero: a.number, nom: agentName(a), utilisateur: u ? (fullName(u) || u.uuid) : null },
     agentd: st ? { logged: st.logged, extension: st.extension, context: st.context, state_interface: st.state_interface, paused: st.paused, paused_reason: st.paused_reason, queues: (st.queues || []).map((q) => ({ id: q.id, nom: q.display_name || q.name, logged: q.logged, paused: q.paused })) } : `illisible : ${err}`,
     lignes_utilisateur: lines,
-    appli_mobile_chatd: u ? (L.pr.get(u.uuid)?.mobile ?? null) : null,
     lu_a: new Date().toLocaleTimeString('fr-FR'),
   };
   const txt = JSON.stringify(info, null, 2);
@@ -278,7 +274,7 @@ export async function renderQueues(view, site) {
       // Constaté en réel le 02/11/2026 : connecté depuis Desk, l'état dans Wazo est
       // identique à une connexion depuis l'appli (Détails A et B identiques, touche
       // du poste allumée), mais l'onglet agent de l'appli Wazo ne le montre pas.
-      + `<p class="dk-note small">L'onglet « Statut d'agent » de l'appli Wazo ne se met pas à jour après une connexion faite depuis Desk : l'agent y apparaît « Hors ligne » ou sans file, alors qu'il est bien connecté. Actualiser l'appli (<strong>Ctrl+R</strong>) remet l'affichage à jour. Quitter l'appli Wazo déconnecte l'agent : au lancement suivant, il se reconnecte depuis l'appli ou depuis ici.</p>`
+      + `<p class="dk-note small">Après une connexion faite ici, l'appli Wazo de l'agent peut encore l'afficher déconnecté : <strong>Ctrl+R</strong> dans l'appli met l'affichage à jour. Quitter l'appli Wazo déconnecte l'agent.</p>`
       + (L.queues.length ? L.queues.map((q) => {
         const members = [...(q.members?.agents || [])].map((m) => ({ m, a: byId.get(m.id) || m })).sort((x, y) => agentName(x.a).localeCompare(agentName(y.a), 'fr'));
         const users = q.members?.users || [];

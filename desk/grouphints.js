@@ -17,8 +17,8 @@
 // seulement si l'état d'avant est connu. Supposé, non vérifié : un code
 // composé apparaît toujours dans le journal (appel interne non répondu, vu en
 // réel), et un échec (groupe d'un autre tenant…) y apparaît aussi.
-import { S, api, fullName } from '../admin-tools/common/core.js?v=0.8.3';
-import { M } from './cfbridge.js?v=0.8.3';
+import { S, api, fullName } from '../admin-tools/common/core.js?v=0.8.4';
+import { M } from './cfbridge.js?v=0.8.4';
 
 export const DAYS = 30;
 const PAGE = 1000, MAX = 10000;
@@ -117,16 +117,13 @@ export async function loadGroupHints(force = false) {
   return CACHE;
 }
 
-const ACT_TXT = { join: 'entrée', leave: 'sortie', toggle: 'bascule' };
 const pad = (n) => String(n).padStart(2, '0');
 const when = (iso) => { const d = new Date(iso); return `${pad(d.getDate())}/${pad(d.getMonth() + 1)} à ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+// Textes courts pour le client final (demande de Brice, 03/11/2026) : l'état
+// probable et la dernière utilisation de la touche, rien de technique. Avec des
+// bascules seules, l'état de départ manque : « état incertain », sans
+// hypothèse (le détail de la déduction est dans docs/ASTREA-DESK.md § 0.8.1).
 export function hintText(h) {
-  // Bascules seules (cas d'une touche de bascule) : état inconnu, mais le
-  // nombre de bascules dit l'état SI l'utilisateur était hors du groupe avant.
-  const odd = h.n % 2 === 1;
-  const state = h.state === true ? 'probablement dans le groupe' : h.state === false ? 'probablement sorti' : `inconnu · ${h.n} bascule${h.n > 1 ? 's' : ''}`;
-  const why = h.state === null
-    ? `Seulement des bascules depuis ${DAYS} jours : l'état de départ est inconnu, donc l'état actuel aussi.\nS'il était hors du groupe avant le ${when(h.first)}, il est maintenant ${odd ? 'DANS le groupe' : 'HORS du groupe'} (${h.n} bascule${h.n > 1 ? 's' : ''}, nombre ${odd ? 'impair' : 'pair'}).`
-    : `Déduit de la dernière ${h.anchorAt === h.last.at ? ACT_TXT[h.last.action] : `entrée ou sortie (${when(h.anchorAt)}), puis des bascules suivantes`}.`;
-  return { state, tip: `Dernier code : ${ACT_TXT[h.last.action]} le ${when(h.last.at)} (${h.n} code${h.n > 1 ? 's' : ''} en ${DAYS} jours).\n${why}\nIndice tiré du journal d'appels : Wazo ne montre la liste réelle qu'au compte principal du serveur.` };
+  const state = h.state === true ? 'probablement dans le groupe' : h.state === false ? 'probablement sorti' : 'état incertain';
+  return { state, tip: `Touche utilisée pour la dernière fois le ${when(h.last.at)}.` };
 }

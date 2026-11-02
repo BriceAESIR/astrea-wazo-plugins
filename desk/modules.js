@@ -2,11 +2,11 @@
 // type d'objet, recherche, et « Modifier » qui ouvre le réglage complet de
 // Call Flow Manager (desk/cfbridge.js). Données : modèle Call Flow du site
 // (toutes les listes confd du tenant, refiltrées sur le tenant par model.js).
-import { S, $, esc, fullName } from '../admin-tools/common/core.js?v=0.8.3';
-import { cfModel, edit, M, destLabel, showNum } from './cfbridge.js?v=0.8.3';
-import { STRATEGY, periodText } from './cf/model.js?v=0.8.3';
-import { loadPresences, phoneBadge } from './live.js?v=0.8.3';
-import { loadGroupHints, hintText, DAYS } from './grouphints.js?v=0.8.3';
+import { S, $, esc, fullName } from '../admin-tools/common/core.js?v=0.8.4';
+import { cfModel, edit, M, destLabel, showNum } from './cfbridge.js?v=0.8.4';
+import { STRATEGY, periodText } from './cf/model.js?v=0.8.4';
+import { loadPresences, phoneBadge } from './live.js?v=0.8.4';
+import { loadGroupHints, hintText, DAYS } from './grouphints.js?v=0.8.4';
 
 const exts = (o) => (o.extensions || []).map((e) => showNum(e.exten)).filter(Boolean).join(', ');
 const userExts = (u) => (u.lines || []).flatMap((l) => (l.extensions || []).map((e) => e.exten)).filter(Boolean).join(', ');
@@ -29,10 +29,10 @@ const byPriority = (l) => [...(l || [])].sort((a, b) => (a.priority ?? 0) - (b.p
 // Inscrits par touche (*50 / *51 / *52) : indice du journal (grouphints.js).
 let HINTS = null; // null = lecture en cours ; { error } ; résultat de loadGroupHints
 function hintCell(o) {
-  if (!HINTS) return h('<span class="muted small">lecture du journal…</span>');
-  if (HINTS.error) return h(`<span class="muted small" title="${esc(HINTS.error)}">journal illisible</span>`);
+  if (!HINTS) return h('<span class="muted small">lecture…</span>');
+  if (HINTS.error) { console.warn('[astrea] indice des groupes :', HINTS.error); return h('<span class="muted small">—</span>'); }
   const l = HINTS.hints.get(o.id) || [];
-  if (!l.length) return h(`<span class="muted small">aucun code en ${DAYS} jours</span>`);
+  if (!l.length) return h('<span class="muted small">—</span>');
   const cls = { true: 'in', false: 'out', null: 'unk' };
   return h(`<ul class="dk-hints">${l.map((x) => { const t = hintText(x); return `<li title="${esc(t.tip)}"><span>${esc(x.name)}</span><span class="dk-hint dk-hint-${cls[x.state]}">${esc(t.state)}</span></li>`; }).join('')}</ul>`);
 }
@@ -45,12 +45,12 @@ const SPECS = {
     search: (o) => `${fullName(o)} ${userExts(o)} ${o.email || ''}`,
     cols: [['Nom', (o) => h(`${esc(fullName(o) || o.username || o.uuid)} ${yes(o.enabled)}`)], ['Numéro', userExts], ['Téléphone', (o) => h(phoneBadge(PRES.get(o.uuid)))], ['Sonnerie', (o) => (o.ring_seconds != null ? `${o.ring_seconds} s` : '')], ['E-mail', (o) => o.email || '']] },
   groups: { type: 'group', title: "Groupes d'appels", none: "Aucun groupe d'appels.", key: (o) => o.uuid, presence: true,
-    help: `Membres : les membres enregistrés, avec l'état de leur téléphone. « Par touche » : un INDICE tiré du journal d'appels (codes *50 bascule, *51 entrée, *52 sortie, ${DAYS} derniers jours). Wazo ne montre la liste réelle qu'au compte principal du serveur. Survolez un nom pour voir le détail.`,
+    help: `« Membres » : les membres permanents du groupe et l'état de leur téléphone. « Par touche » : les personnes qui ont utilisé leur touche d'entrée / sortie du groupe ces ${DAYS} derniers jours, avec leur état probable.`,
     search: (o) => `${o.label} ${exts(o)}`,
     hints: true,
     cols: [['Nom', (o) => h(`${esc(o.label || o.name)} ${yes(o.enabled)}`)], ['Numéro', exts], ['Sonnerie', (o) => STRATEGY[o.ring_strategy] || o.ring_strategy || ''],
       ['Membres', (o) => memberList(byPriority(o.members?.users), { ordered: o.ring_strategy === 'linear' })],
-      ['Par touche (indice)', hintCell],
+      ['Par touche', hintCell],
       ['Si pas de réponse', (o) => destLabel(o.fallbacks?.noanswer_destination)], ['Horaire', schedName]] },
   voicemails: { type: 'voicemail', title: 'Messageries vocales', none: 'Aucune messagerie vocale.', key: (o) => o.id,
     help: 'Réglage complet : nom, numéro, utilisateurs, messages d\'accueil (écoute, envoi d\'un fichier), e-mail, code, langue, fuseau.',

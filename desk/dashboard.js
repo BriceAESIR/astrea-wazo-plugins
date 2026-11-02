@@ -14,10 +14,10 @@
 // Pas d'appelants en attente dans les files en direct : seul amid les donne
 // (QueueSummary), et amid est réservé au tenant principal
 // (required_master_tenant), donc inaccessible à un admin de site.
-import { S, esc, listAll } from '../admin-tools/common/core.js?v=0.8.3';
-import { stackedColumns, legend } from './charts.js?v=0.8.3';
-import { isService, statusKey, fmtDur, caller } from './calllogs.js?v=0.8.3';
-import { pauseLabel, ghostOf, ghostState, isGhost, GHOST_HELP, MOBILE_HELP, loadPresences } from './live.js?v=0.8.3';
+import { S, esc, listAll } from '../admin-tools/common/core.js?v=0.8.4';
+import { stackedColumns, legend } from './charts.js?v=0.8.4';
+import { isService, statusKey, fmtDur, caller } from './calllogs.js?v=0.8.4';
+import { pauseLabel, ghostOf, ghostState, isGhost, GHOST_HELP, loadPresences } from './live.js?v=0.8.4';
 
 const REFRESH = 30e3;
 const SERIES = [
@@ -129,8 +129,8 @@ function blockNow(show) {
     const logged = D.agents.filter((a) => a.logged), paused = logged.filter((a) => a.paused);
     const ghosts = logged.filter((a) => isGhost(ghostOf(a, B.users, D.pres)));
     kpis += kpi('Agents connectés', `${logged.length} / ${D.agents.length}`) + kpi('Agents en pause', paused.length);
-    // Fantômes (appareil hors ligne) et agents sur appli mobile : connectés mais injoignables pour leurs files.
-    if (ghosts.length) kpis += `<div class="dk-kpi dk-kpi-warn" title="${esc(`${GHOST_HELP}\n\n${MOBILE_HELP}`)}"><span>Agents injoignables</span><strong>${ghosts.length}</strong><em>connectés, la file ne les fait pas sonner</em></div>`;
+    // Connectés mais injoignables pour leurs files (appareil hors ligne, y compris appli mobile).
+    if (ghosts.length) kpis += `<div class="dk-kpi dk-kpi-warn" title="${esc(GHOST_HELP)}"><span>Agents injoignables</span><strong>${ghosts.length}</strong><em>connectés, sans recevoir d'appels</em></div>`;
   }
   if (show.switchboards && Array.isArray(D.switchboards)) {
     const q = D.switchboards.reduce((a, s) => a + (s.queued?.length || 0), 0), h = D.switchboards.reduce((a, s) => a + (s.held?.length || 0), 0);
