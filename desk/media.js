@@ -16,9 +16,23 @@
 //    SUPPOSÉ comme pour les autres champs « son » de confd).
 // Tout fichier audio envoyé est converti en WAV 8 kHz 16 bits mono (toWav8k
 // de Call Flow), le format attendu par Wazo ; sauf une musique en mode mp3.
-import { S, $, esc, toast, api, listAll, confirmModal, canWrite } from '../admin-tools/common/core.js?v=0.7.8';
-import { toWav8k, moTxt } from './cf/sound-play.js?v=0.7.8';
+import { S, $, esc, toast, api, listAll, confirmModal, canWrite } from '../admin-tools/common/core.js?v=0.7.9';
+import { toWav8k, moTxt } from './cf/sound-play.js?v=0.7.9';
 
+// Format audio et préparation des fichiers (demande de Brice, 02/11/2026) :
+// format exact, lien vers g711.org et pas-à-pas. Desk convertit de toute façon
+// (toWav8k) ; g711.org sert à régler le volume et la qualité téléphonique.
+const G711 = 'https://g711.org/';
+const audioHelp = (open = false) => `<div class="dk-audio">
+  <p><strong>Format attendu par Wazo : WAV 8 kHz, 16 bits, mono (PCM).</strong> Desk convertit automatiquement tout fichier audio (mp3, m4a, wav…) dans ce format avant l'envoi. Pour un son plus fort ou plus clair au téléphone, préparez-le d'abord avec <a href="${G711}" target="_blank" rel="noopener">g711.org ↗</a> (gratuit, en ligne).</p>
+  <details${open ? ' open' : ''}><summary>Comment préparer un fichier avec g711.org</summary><ol>
+    <li>Ouvrez <a href="${G711}" target="_blank" rel="noopener">g711.org ↗</a>.</li>
+    <li><strong>Source File</strong> : cliquez sur <em>Browse</em> et choisissez votre fichier (mp3, wav, m4a… jusqu'à 50 Mo).</li>
+    <li><strong>Output Format</strong> : cochez <em>Standard Definition 16-bit WAV (8Khz, Mono, 16-Bit PCM)</em>.</li>
+    <li><strong>Volume</strong> : <em>Medium</em> ; <em>High</em> si l'enregistrement est faible.</li>
+    <li>Facultatif : cochez <em>Optimize Audio for Phone (Bandpass Filter)</em> pour une voix plus nette au téléphone.</li>
+    <li>Cliquez sur <em>Submit</em>, téléchargez le fichier obtenu, puis ajoutez-le ici.</li>
+  </ol></details></div>`;
 const head = (title, site, sub, extra = '') => `<div class="phonehead"><div><h2>${esc(title)}</h2><div class="muted small">${esc(site.name)}${sub ? ` · ${esc(sub)}` : ''}</div></div>${extra}</div>`;
 const LANGS = [['fr_FR', 'Français'], ['en_US', 'Anglais'], ['', 'Sans langue']];
 const FMT = { slin: 'wav', wav: 'wav', ulaw: 'ulaw', alaw: 'alaw', gsm: 'gsm', mp3: 'mp3', g722: 'g722' };
@@ -81,7 +95,7 @@ export async function renderSounds(view, site) {
   const ro = !!S.readonly;
   const draw = () => {
     view.innerHTML = head('Sons', site, 'messages d\'accueil, annonces, sons des SVI', ro ? '' : '<div class="btnrow"><button id="sd-newcat">Nouvelle catégorie</button></div>')
-      + '<p class="muted small">Sons propres au site, rangés par catégorie. Tout fichier audio (wav, mp3, m4a…) est converti en WAV 8 kHz mono avant l\'envoi, le format attendu par Wazo.</p>'
+      + '<p class="muted small">Sons propres au site, rangés par catégorie.</p>' + audioHelp()
       + (cats.length ? cats.sort((a, b) => a.name.localeCompare(b.name, 'fr')).map((c) => `<section class="dk-panel"><div class="dk-panhead"><h3>${esc(c.name)} <span class="muted small">${(c.files || []).length} fichier${(c.files || []).length > 1 ? 's' : ''}</span></h3>${ro ? '' : `<button class="dk-text" data-add="${esc(c.name)}">Ajouter un son…</button>`}</div>`
         + ((c.files || []).length ? `<div class="dk-scroll"><table class="dk-table"><thead><tr><th>Nom</th><th>Versions</th><th></th></tr></thead><tbody>${[...c.files].sort((a, b) => a.name.localeCompare(b.name, 'fr')).map((f) => {
           const fm = f.formats || [];
@@ -97,7 +111,7 @@ export async function renderSounds(view, site) {
       <label>Nom du son<input id="sd-name" value="${esc(name0)}" ${name0 ? 'readonly' : ''} maxlength="64" placeholder="ex. accueil_matin"></label>
       <label>Langue<select id="sd-lang">${LANGS.map(([v, l]) => `<option value="${v}">${esc(l)}</option>`).join('')}</select></label>
       <div class="dk-ed-row"><button type="button" id="sd-file">Choisir le fichier…</button><span id="sd-info" class="muted small">aucun fichier</span></div>
-      <p class="muted small">Envoi immédiat. Un son du même nom et de la même langue est remplacé.</p><p id="sd-err" class="error small"></p>`, async () => {
+      <p class="muted small">Envoi immédiat. Un son du même nom et de la même langue est remplacé.</p>${audioHelp()}<p id="sd-err" class="error small"></p>`, async () => {
       const name = safeName($('sd-name').value), lang = $('sd-lang').value;
       if (!name) { $('sd-err').textContent = 'Nom : lettres, chiffres, - et _.'; return false; }
       if (!pending) { $('sd-err').textContent = 'Choisissez un fichier.'; return false; }
@@ -147,7 +161,7 @@ export async function renderMoh(view, site) {
   const ro = !!S.readonly;
   const draw = () => {
     view.innerHTML = head("Musiques d'attente", site, '', ro ? '' : '<div class="btnrow"><button id="mh-new">Nouvelle musique</button></div>')
-      + '<p class="muted small">Chaque musique est une liste de fichiers jouée en boucle (attente, transfert, file). Les fichiers sont convertis en WAV 8 kHz mono avant l\'envoi, sauf en mode MP3.</p>'
+      + '<p class="muted small">Chaque musique est une liste de fichiers jouée en boucle (attente, transfert, file). En mode « Fichiers MP3 », les fichiers sont envoyés tels quels, sans conversion.</p>' + audioHelp()
       + (list.length ? list.sort((a, b) => (a.label || a.name).localeCompare(b.label || b.name, 'fr')).map((m) => `<section class="dk-panel"><div class="dk-panhead"><h3>${esc(m.label || m.name)} <span class="muted small">${esc(m.name)} · ${esc(MODE[m.mode] || m.mode)} · ${esc(SORT.find(([k]) => k === m.sort)?.[1] || 'ordre par défaut')}</span></h3>${ro ? '' : `<span class="btnrow"><button class="dk-text" data-madd="${m.uuid}"${m.mode === 'custom' ? ' disabled' : ''}>Ajouter un fichier…</button><button class="dk-text" data-medit="${m.uuid}">Modifier</button>${m.name === 'default' ? '' : `<button class="dk-text" data-mdel="${m.uuid}">Supprimer</button>`}</span>`}</div>`
         + (m.mode === 'custom' ? `<p class="muted small">Application : ${esc(m.application || '—')}</p>` : (m.files || []).length ? `<ul class="dk-files">${m.files.map((f) => `<li><span>${esc(f.name)}</span><span><button class="dk-link-sm" data-mplay="${m.uuid}|${esc(f.name)}">Écouter</button>${ro ? '' : ` <button class="dk-link-sm" data-mfdel="${m.uuid}|${esc(f.name)}">Supprimer</button>`}</span></li>`).join('')}</ul>` : '<p class="muted small">Aucun fichier : rien n\'est joué.</p>')
         + '</section>').join('') : '<p class="dk-empty">Aucune musique d\'attente sur ce site.</p>');

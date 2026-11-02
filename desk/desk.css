@@ -159,6 +159,13 @@ body.ready #sidebar .sidenav { border-bottom: 0; margin-bottom: 8px; }
 .dk-pick:has(input:checked) { background: var(--selected); }
 .dk-pick-off { opacity: .55; cursor: not-allowed; }
 .dk-pick-main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+/* Aide au format audio (Sons, Musiques) */
+.dk-audio { margin: 0 0 16px; padding: 10px 14px; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 0; background: color-mix(in srgb, var(--accent) 5%, var(--panel)); font-size: .8125rem; }
+.dk-audio p { margin: 0 0 6px; }
+.dk-audio summary { cursor: pointer; color: var(--accent); font-weight: 500; }
+.dk-audio ol { margin: 8px 0 2px; padding-left: 20px; }
+.dk-audio li { margin: 3px 0; }
+.dk-audio a { color: var(--accent); font-weight: 600; }
 .dk-chip { display: inline-flex; align-items: center; gap: 6px; margin: 2px 6px 2px 0; padding: 1px 8px; border: 1px solid var(--line); border-radius: 10px; font-size: .75rem; white-space: nowrap; }
 .dk-files { list-style: none; margin: 0; padding: 0; }
 .dk-files li { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; border-bottom: 1px solid var(--line); font-size: .8125rem; }

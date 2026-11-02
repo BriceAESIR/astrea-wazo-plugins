@@ -1,6 +1,6 @@
 {
   "manifestVersion": "0.1",
-  "version": "0.7.8",
+  "version": "0.7.9",
   "id": "astrea-desk",
   "packageName": "io.github.briceaesir.astrea.desk",
   "productType": "app",
@@ -25,7 +25,7 @@
       "context": ["sidebarTab"],
       "name": "Astrea Desk",
       "icon": "./sidebar.svg",
-      "contentUrl": "./index.html?v=0.7.8"
+      "contentUrl": "./index.html?v=0.7.9"
     }
   ]
 }
