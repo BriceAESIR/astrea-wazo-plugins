@@ -10,13 +10,13 @@
 // Codes (messagerie, conférence) : champ masqué avec « Afficher » / « Générer » ;
 // jamais en clair dans le brouillon, l'aperçu ni la sauvegarde JSON (redact).
 // Le mot de passe de connexion d'un utilisateur reste dans User Manager.
-import { $, esc, toast, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.40.26';
-import { M, vmTzSelect } from './model.js?v=0.40.26';
-import { fillSoundSelect, pickerHtml, bindPicker, readPicker } from './sched-editor.js?v=0.40.26';
-import { GREETINGS, greetingExists, playGreeting, saveGreeting, deleteGreeting, toWav8k, moTxt } from './sound-play.js?v=0.40.26';
-import { incallNumberHtml, bindIncallNumber, readIncallNumber, checkIncallNumber } from './numbers.js?v=0.40.26';
-import { sec, field, check, setSums, openSec, secretField, bindSecrets, tzSelect, langSelect } from './ed-ui.js?v=0.40.26';
-import { bindNewSchedule, schedValue } from './create.js?v=0.40.26';
+import { $, esc, toast, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.40.27';
+import { M, vmTzSelect } from './model.js?v=0.40.27';
+import { fillSoundSelect, pickerHtml, bindPicker, readPicker } from './sched-editor.js?v=0.40.27';
+import { GREETINGS, greetingExists, playGreeting, playBtn, saveGreeting, deleteGreeting, toWav8k, moTxt } from './sound-play.js?v=0.40.27';
+import { incallNumberHtml, bindIncallNumber, readIncallNumber, checkIncallNumber } from './numbers.js?v=0.40.27';
+import { sec, field, check, setSums, openSec, secretField, bindSecrets, tzSelect, langSelect } from './ed-ui.js?v=0.40.27';
+import { bindNewSchedule, schedValue } from './create.js?v=0.40.27';
 
 const pickFields = (o, keys) => { const f = {}; for (const k of keys) f[k] = o?.[k] ?? null; return f; };
 const diffKeys = (a, b, keys, L) => keys.filter((k) => JSON.stringify(a?.fields?.[k] ?? null) !== JSON.stringify(b?.fields?.[k] ?? null)).map((k) => L[k] || k);
@@ -193,7 +193,7 @@ export function openVmEditor(o, onSave) {
     ${sec('greet', 'Messages d\'accueil', `
       <p class="small muted">Sons joués à l'appelant selon le statut de l'appelé. Envoi et suppression <strong>immédiats</strong> dans Wazo (hors brouillon).</p>
       <div class="cf-info"><span><strong>Limites de Wazo : 2 Mo envoyés, 90 secondes au plus.</strong> Tout fichier audio est accepté (wav, mp3…) : il est converti en WAV 8 kHz, 16 bits, mono. Après chaque envoi, le module relit Wazo et indique sur la ligne si le message est bien enregistré.</span></div>
-      ${GREETINGS.map(([g, l]) => `<div class="cf-vm-greet" data-g="${g}"><span class="cf-ge-l">${esc(l)}</span><span class="small muted" data-gs>…</span><span class="cf-ge-row"><button type="button" data-gplay hidden>Écouter</button><button type="button" data-gup>Envoyer un fichier…</button><button type="button" data-gdel hidden>Supprimer</button></span><input type="file" accept="audio/*,.wav,.mp3" data-gfile hidden><span class="cf-ge-row" data-gconf hidden></span><span class="small cf-vm-res" data-gres hidden></span></div>`).join('')}`)}
+      ${GREETINGS.map(([g, l]) => `<div class="cf-vm-greet" data-g="${g}"><span class="cf-ge-l">${esc(l)}</span><span class="small muted" data-gs>…</span><span class="cf-ge-row">${playBtn('data-gplay hidden')}<button type="button" data-gup>Envoyer un fichier…</button><button type="button" data-gdel hidden>Supprimer</button></span><input type="file" accept="audio/*,.wav,.mp3" data-gfile hidden><span class="cf-ge-row" data-gconf hidden></span><span class="small cf-vm-res" data-gres hidden></span></div>`).join('')}`)}
     ${sec('mail', 'Messages par e-mail', `
       ${field('E-mail', `<input type="email" data-f="email" value="${esc(f.email || '')}" maxlength="80" placeholder="aucun">`, 'Chaque nouveau message y est signalé.')}
       ${b('attach_audio', 'Joindre le message audio', 'Jamais réglé (case grisée à l\'ouverture) : réglage général du serveur.')}
