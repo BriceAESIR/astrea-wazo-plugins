@@ -2,17 +2,17 @@
 // dans le Portal (visualization), choix du site, connexion à la stack, menu
 // et accueil. Les appels confd passent par common/core.js (api, listAll,
 // filtre tenant), avec le token de la stack du site.
-import { sdk, S, $, esc, toast, applyTheme, listAll, showCompat } from '../admin-tools/common/core.js?v=0.7.3';
-import { renderCallLogs } from './calllogs.js?v=0.7.3';
-import { renderStats } from './stats.js?v=0.7.3';
-import { renderDashboard, stopDashboard } from './dashboard.js?v=0.7.3';
-import { renderModuleList } from './modules.js?v=0.7.3';
-import { renderQueues, renderAgents } from './live.js?v=0.7.3';
-import { renderSounds, renderMoh, renderRecordings } from './media.js?v=0.7.3';
-import { renderPhonebooks } from './phonebook.js?v=0.7.3';
-import { P, ST, PortalError, portalLogin, portalResume, remembered, checkScopes, loadVisualization, loadLocations, openSite, stackLogin, logout, closeSite } from './portal.js?v=0.7.3';
+import { sdk, S, $, esc, toast, applyTheme, listAll, showCompat } from '../admin-tools/common/core.js?v=0.7.4';
+import { renderCallLogs } from './calllogs.js?v=0.7.4';
+import { renderStats } from './stats.js?v=0.7.4';
+import { renderDashboard, stopDashboard } from './dashboard.js?v=0.7.4';
+import { renderModuleList } from './modules.js?v=0.7.4';
+import { renderQueues } from './live.js?v=0.7.4';
+import { renderSounds, renderMoh, renderRecordings } from './media.js?v=0.7.4';
+import { renderPhonebooks } from './phonebook.js?v=0.7.4';
+import { P, ST, PortalError, portalLogin, portalResume, remembered, checkScopes, loadVisualization, loadLocations, openSite, stackLogin, logout, closeSite } from './portal.js?v=0.7.4';
 
-const APP_VERSION = '0.7.3';
+const APP_VERSION = '0.7.4';
 const TESTED_STACK = ['26.07', '26.10'];
 // Droit Portal sans lequel aucune stack n'est accessible (vérifié : contrôlé
 // par le Portal avant d'ouvrir un site).
@@ -53,8 +53,9 @@ const MODULES = [
   { id: 'sounds', section: 'soundsAndGreetings', label: 'Sons', page: 'pbx.sounds', render: renderSounds, sub: 'Écoute, envoi, remplacement' },
   { id: 'moh', section: 'soundsAndGreetings', label: 'Musiques', page: 'pbx.moh', path: '/moh', none: "Aucune musique d'attente.", render: renderMoh },
   { id: 'recordings', section: 'soundsAndGreetings', label: 'Enregistrements', page: 'pbx.recordings', render: renderRecordings, sub: 'Tons de début et de fin' },
-  { id: 'agents', section: 'callCenter', label: 'Agents', page: 'pbx.agents', path: '/agents', none: 'Aucun agent.', render: renderAgents },
-  { id: 'queues', section: 'callCenter', label: "Files d'attente", page: 'pbx.queues', path: '/queues', none: "Aucune file d'attente.", render: renderQueues },
+  // Pas de menu Agents (décision de Brice, 02/11/2026) : les agents ne se gèrent
+  // pas dans Desk ; on connecte / déconnecte ceux déjà inscrits, depuis les files.
+  { id: 'queues', section: 'callCenter', label: "Files d'attente", page: ['pbx.queues', 'pbx.agents'], path: '/queues', none: "Aucune file d'attente.", render: renderQueues },
   { id: 'stats', section: 'callCenter', label: 'Statistiques', page: ['pbx.stats', 'pbx.stats-agents', 'pbx.stats-queues'], render: renderStats, sub: "Files d'attente et agents" },
 ];
 

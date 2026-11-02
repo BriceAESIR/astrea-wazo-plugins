@@ -14,9 +14,9 @@
 // Pas d'appelants en attente dans les files en direct : seul amid les donne
 // (QueueSummary), et amid est réservé au tenant principal
 // (required_master_tenant), donc inaccessible à un admin de site.
-import { S, esc, listAll } from '../admin-tools/common/core.js?v=0.7.3';
-import { stackedColumns, legend } from './charts.js?v=0.7.3';
-import { isService, statusKey, fmtDur, caller } from './calllogs.js?v=0.7.3';
+import { S, esc, listAll } from '../admin-tools/common/core.js?v=0.7.4';
+import { stackedColumns, legend } from './charts.js?v=0.7.4';
+import { isService, statusKey, fmtDur, caller } from './calllogs.js?v=0.7.4';
 
 const REFRESH = 30e3;
 const SERIES = [

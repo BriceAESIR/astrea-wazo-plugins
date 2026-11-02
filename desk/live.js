@@ -1,5 +1,8 @@
-// Astrea Desk — temps réel des files et des agents (0.5.0) : qui est connecté,
-// qui est en appel, rejoindre / quitter une file. Code lu le 02/11/2026
+// Astrea Desk — files d'attente en direct : agents inscrits, qui est connecté,
+// qui est en appel ; connexion / déconnexion des agents DÉJÀ inscrits.
+// Pas de gestion des agents dans Desk (décision de Brice, 02/11/2026 : un agent
+// n'est pas une destination d'appel, Call Flow ne le code pas non plus) ; les
+// inscriptions se règlent dans « Régler la file… ». Code lu le 02/11/2026
 // (branches master) :
 //  - chatd GET /api/chatd/1.0/users/presences (chatd.users.presences.read) :
 //    items {uuid, tenant_uuid, line_state, do_not_disturb} ; line_state =
@@ -10,14 +13,14 @@
 //      POST /agents/by-id/{id}/login {extension, context}   connexion de l'agent sur un poste
 //      POST /agents/by-id/{id}/logoff                        déconnexion
 //      POST /agents/by-number/{n}/pause {reason?} | /unpause
-//      PUT  /agents/{id}/queues/{qid}/login | /logoff        rejoindre / quitter une file (dynamique, l'agent reste membre)
-//      POST /agents/by-id/{id}/add | /remove {queue_id}      ajouter / retirer de la file (permanent : confd + Asterisk)
+//      PUT  /agents/{id}/queues/{qid}/login | /logoff        connecter / déconnecter d'une file (l'agent reste inscrit)
+//      (POST /agents/by-id/{id}/add | /remove existent, NON utilisés : inscription = « Régler la file… »)
 //  - confd : agents.users[] (utilisateur lié à l'agent), queues.members.
 // Groupes : l'entrée / sortie dynamique (*735…) passe par AddQueueMember dans
 // le dialplan (wazo-agid group_member.py) ; seul amid la lit, et amid exige le
 // tenant principal : invisible et non modifiable pour un admin de site.
-import { S, $, esc, toast, api, listAll, confirmModal, canWrite, fullName } from '../admin-tools/common/core.js?v=0.7.3';
-import { edit } from './cfbridge.js?v=0.7.3';
+import { S, $, esc, toast, api, listAll, confirmModal, canWrite, fullName } from '../admin-tools/common/core.js?v=0.7.4';
+import { edit } from './cfbridge.js?v=0.7.4';
 
 const REFRESH = 20e3;
 export const PHONE = {
@@ -183,7 +186,7 @@ export async function renderQueues(view, site) {
     const ro = !!S.readonly;
     view.innerHTML = `<div class="phonehead" id="lq-head"><div><h2>Files d'attente</h2><div class="muted small">${esc(site.name)} · agents et membres en direct</div></div><div class="btnrow"><span class="muted small">Actualisé à ${esc(hhmmss(L.at))}</span><button id="lq-refresh">Actualiser</button></div></div>`
       + (L.err ? `<p class="warn small">${esc(L.err)}</p>` : '')
-      + `<p class="muted small"><strong>Connecter…</strong> : connecte l'agent sur un poste (il reçoit alors les appels de ses files). <strong>Déconnecter de la file</strong> / <strong>Reconnecter à la file</strong> : pour cette file seulement. « ⋯ » : pause, déconnexion de toutes ses files. Ajouter ou retirer un membre : « Régler la file… » ou la fiche de l'agent (menu Agents).</p>`
+      + `<p class="muted small"><strong>Connecter…</strong> : connecte l'agent sur un poste (il reçoit alors les appels de ses files). <strong>Déconnecter de la file</strong> / <strong>Reconnecter à la file</strong> : pour cette file seulement. « ⋯ » : pause, déconnexion de toutes ses files. Ajouter ou retirer un agent de la file : « Régler la file… ».</p>`
       + (L.queues.length ? L.queues.map((q) => {
         const members = [...(q.members?.agents || [])].map((m) => ({ m, a: byId.get(m.id) || m })).sort((x, y) => agentName(x.a).localeCompare(agentName(y.a), 'fr'));
         const users = q.members?.users || [];
@@ -228,43 +231,4 @@ export async function renderQueues(view, site) {
   };
   draw();
   liveLoop(view, '#lq-head', draw);
-}
-
-// ---------------------------------------------------------------------------
-// Agents : connexion, pause, téléphone
-// ---------------------------------------------------------------------------
-export async function renderAgents(view, site) {
-  view.innerHTML = '<p class="dk-empty">Lecture…</p>';
-  await loadLists(); await loadLive();
-  const qname = new Map(L.queues.map((q) => [q.id, q.label || q.name]));
-  const draw = () => {
-    const ro = !!S.readonly;
-    const list = [...L.agents].sort((a, b) => agentName(a).localeCompare(agentName(b), 'fr'));
-    view.innerHTML = `<div class="phonehead" id="la-head"><div><h2>Agents</h2><div class="muted small">${esc(site.name)} · en direct</div></div><div class="btnrow"><span class="muted small">Actualisé à ${esc(hhmmss(L.at))}</span><button id="la-refresh">Actualiser</button></div></div>`
-      + (L.err ? `<p class="warn small">${esc(L.err)}</p>` : '')
-      + '<p class="muted small">Connecter, mettre en pause ou déconnecter un agent : menu « Files d\'attente ». La fiche de l\'agent (nom, utilisateur lié, files) arrive avec l\'éditeur d\'agent de Call Flow Manager.</p>'
-      + (list.length ? `<div class="dk-scroll"><table class="dk-table"><thead><tr><th>Agent</th><th>État</th><th>Téléphone</th><th>Files</th><th></th></tr></thead><tbody>${list.map((a) => {
-        const st = L.st.get(a.id), [c, l] = agentState(st);
-        // Files dont il est membre (confd), avec ce qu'en dit agentd s'il est connecté.
-        const qs = (a.queues || []).map((x) => {
-          const id = x.queue?.id ?? x.id, s = st?.queues?.find((y) => y.id === id);
-          const note = !st?.logged ? '' : !s ? ' (hors file pour Wazo)' : s.logged === false ? ' (sorti)' : '';
-          return `<span class="${note ? 'muted' : ''}">${esc(qname.get(id) || x.label || x.name || `#${id}`)}${note}</span>`;
-        }).join(', ');
-        // Pilotage (connexion, pause) : dans Files d'attente (retour de Brice, 02/11/2026).
-        // La fiche de l'agent viendra de Call Flow Manager (éditeur partagé).
-        const btns = '';
-        return `<tr><td class="nowrap">${esc(agentName(a))} <span class="muted small">${esc(a.number)}</span></td><td><span class="dk-ag dk-ag-${c}">${esc(l)}</span>${st?.logged && st.extension ? ` <span class="muted small">sur ${esc(st.extension)}</span>` : ''}</td><td>${phoneBadge(L.pr.get(agentUser(a)))}</td><td class="small">${qs || '—'}</td><td class="dk-acts">${btns}</td></tr>`;
-      }).join('')}</tbody></table></div>` : '<p class="dk-empty">Aucun agent sur ce site.</p>');
-    $('la-refresh').onclick = async () => { await loadLive(); draw(); };
-  };
-  view.onclick = (e) => {
-    const b = e.target.closest('button'); if (!b) return;
-    if (b.dataset.pause) act('Agent en pause.', () => svc('POST', `agentd/1.0/agents/by-number/${encodeURIComponent(b.dataset.pause)}/pause`, {}), draw);
-    else if (b.dataset.unp) act('Agent sorti de pause.', () => svc('POST', `agentd/1.0/agents/by-number/${encodeURIComponent(b.dataset.unp)}/unpause`, {}), draw);
-    else if (b.dataset.off) act('Agent déconnecté.', () => svc('POST', `agentd/1.0/agents/by-id/${b.dataset.off}/logoff`), draw);
-    else if (b.dataset.on) loginAgent(L.agents.find((x) => x.id === Number(b.dataset.on)), draw);
-  };
-  draw();
-  liveLoop(view, '#la-head', draw);
 }
