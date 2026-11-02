@@ -122,27 +122,23 @@ button.icon { padding: 2px 8px; min-width: 0; }
 .dk-ph-ring::before { background: var(--warn); opacity: 1; }
 .dk-mem { display: inline-flex; align-items: center; gap: 4px; margin: 1px 10px 1px 0; white-space: nowrap; }
 
-/* Colonne de gauche façon Portal : fond bleu Wazo, icônes, sections repliables */
-:root { --dk-nav-bg: #203890; --dk-nav-hi: #1a2e75; --dk-nav-sub: #1c3283; --dk-nav-ink: #fff; --dk-nav-muted: rgba(255, 255, 255, .72); }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --dk-nav-bg: #17255f; --dk-nav-hi: #101b48; --dk-nav-sub: #142154; } }
-:root[data-theme="dark"] { --dk-nav-bg: #17255f; --dk-nav-hi: #101b48; --dk-nav-sub: #142154; }
-body.ready #sidebar { background: var(--dk-nav-bg); color: var(--dk-nav-ink); border-right: 0; }
+/* Colonne de gauche claire (choix de Brice, 02/11/2026 : le bleu se confondait
+   avec la barre bleue de l'appli Wazo). Sections en gras avec icône bleue,
+   sous-menus en retrait le long d'un trait, page active surlignée. */
+body.ready #sidebar { background: var(--panel); color: var(--ink); border-right: 1px solid var(--line); }
 body.ready #sidebar .sidenav { border-bottom: 0; margin-bottom: 8px; }
-#nav button { display: flex; align-items: center; gap: 12px; width: 100%; border: 0; border-left: 3px solid transparent; border-radius: 0; background: none; color: var(--dk-nav-ink); text-transform: none; letter-spacing: .01071em; text-align: left; }
-#nav .dk-ntop, #nav .dk-nsec-h { min-height: 44px; padding: 8px 16px; font-size: .9375rem; font-weight: 600; }
-#nav .dk-nicon { width: 22px; height: 22px; flex: none; fill: currentColor; opacity: .9; }
+#nav button { display: flex; align-items: center; gap: 10px; width: 100%; border: 0; border-radius: 0; background: none; color: var(--ink); text-transform: none; letter-spacing: .01071em; text-align: left; }
+#nav .dk-ntop, #nav .dk-nsec-h { min-height: 40px; padding: 8px 14px; font-size: .875rem; font-weight: 700; }
+#nav .dk-nicon { width: 20px; height: 20px; flex: none; fill: var(--accent); }
 #nav .dk-nsec-h span { flex: 1; }
-#nav .dk-chev { width: 18px; height: 18px; fill: currentColor; opacity: .7; transform: rotate(-90deg); transition: transform .15s; }
+#nav .dk-chev { width: 18px; height: 18px; fill: var(--muted); transform: rotate(-90deg); transition: transform .15s; }
 #nav .dk-nsec.open .dk-chev { transform: none; }
-#nav .dk-nsec-items { display: none; padding: 2px 0 8px; background: var(--dk-nav-sub); }
+#nav .dk-nsec-items { display: none; margin: 0 0 6px 24px; border-left: 1px solid var(--line); }
 #nav .dk-nsec.open .dk-nsec-items { display: block; }
-#nav .dk-ni { min-height: 36px; padding: 6px 16px 6px 50px; color: var(--dk-nav-muted); font-size: .875rem; font-weight: 500; }
-#nav button:hover:not(:disabled) { background: var(--dk-nav-hi); color: var(--dk-nav-ink); }
-#nav button.active, #nav button.active:hover { background: var(--dk-nav-hi); border-left-color: #fff; color: var(--dk-nav-ink); font-weight: 700; }
-body.ready #sidebar .dk-foot { border-top-color: rgba(255, 255, 255, .18); }
-body.ready #sidebar .dk-foot .muted { color: var(--dk-nav-muted); }
-body.ready #sidebar .dk-link, body.ready #sidebar button.dk-text { color: var(--dk-nav-ink); }
-
+#nav .dk-ni { min-height: 32px; margin-left: -1px; padding: 5px 12px 5px 14px; border-left: 2px solid transparent; color: var(--muted); font-size: .8125rem; font-weight: 500; }
+#nav button:hover:not(:disabled) { background: var(--hover); color: var(--ink); }
+#nav .dk-ntop.active, #nav .dk-ntop.active:hover { background: var(--selected); color: var(--accent); }
+#nav .dk-ni.active, #nav .dk-ni.active:hover { background: var(--selected); border-left-color: var(--accent); color: var(--accent); font-weight: 700; }
 /* Listes de gestion */
 .dk-members { min-width: 180px; }
 .dk-members summary { cursor: pointer; color: var(--muted); font-size: .75rem; white-space: nowrap; }

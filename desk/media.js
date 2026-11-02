@@ -16,8 +16,8 @@
 //    SUPPOSÉ comme pour les autres champs « son » de confd).
 // Tout fichier audio envoyé est converti en WAV 8 kHz 16 bits mono (toWav8k
 // de Call Flow), le format attendu par Wazo ; sauf une musique en mode mp3.
-import { S, $, esc, toast, api, listAll, confirmModal, canWrite } from '../admin-tools/common/core.js?v=0.7.5';
-import { toWav8k, moTxt } from './cf/sound-play.js?v=0.7.5';
+import { S, $, esc, toast, api, listAll, confirmModal, canWrite } from '../admin-tools/common/core.js?v=0.7.6';
+import { toWav8k, moTxt } from './cf/sound-play.js?v=0.7.6';
 
 const head = (title, site, sub, extra = '') => `<div class="phonehead"><div><h2>${esc(title)}</h2><div class="muted small">${esc(site.name)}${sub ? ` · ${esc(sub)}` : ''}</div></div>${extra}</div>`;
 const LANGS = [['fr_FR', 'Français'], ['en_US', 'Anglais'], ['', 'Sans langue']];
