@@ -2,12 +2,13 @@
 // dans le Portal (visualization), choix du site, connexion à la stack, menu
 // et accueil. Les appels confd passent par common/core.js (api, listAll,
 // filtre tenant), avec le token de la stack du site.
-import { sdk, S, $, esc, toast, applyTheme, listAll, showCompat } from '../admin-tools/common/core.js?v=0.3.0';
-import { renderCallLogs } from './calllogs.js?v=0.3.0';
-import { renderStats } from './stats.js?v=0.3.0';
-import { P, ST, PortalError, portalLogin, checkScopes, loadVisualization, loadLocations, openSite, stackLogin, logout, closeSite } from './portal.js?v=0.3.0';
+import { sdk, S, $, esc, toast, applyTheme, listAll, showCompat } from '../admin-tools/common/core.js?v=0.4.0';
+import { renderCallLogs } from './calllogs.js?v=0.4.0';
+import { renderStats } from './stats.js?v=0.4.0';
+import { renderDashboard, stopDashboard } from './dashboard.js?v=0.4.0';
+import { P, ST, PortalError, portalLogin, checkScopes, loadVisualization, loadLocations, openSite, stackLogin, logout, closeSite } from './portal.js?v=0.4.0';
 
-const APP_VERSION = '0.3.0';
+const APP_VERSION = '0.4.0';
 const TESTED_STACK = ['26.07', '26.10'];
 // Droit Portal sans lequel aucune stack n'est accessible (vérifié : contrôlé
 // par le Portal avant d'ouvrir un site).
@@ -182,6 +183,7 @@ $('view').addEventListener('click', (e) => { const b = e.target.closest('[data-g
 
 function go(view) {
   D.view = view;
+  if (view !== 'home') stopDashboard();
   renderNav();
   if (view === 'home') return renderHome();
   if (view === 'diag') return renderDiag();
@@ -207,11 +209,20 @@ function renderHome() {
     const sub = m.lot ? `<span class="dk-badge">Bientôt</span>` : m.sub ? `<span class="dk-s">${esc(m.sub)}</span>` : n === undefined ? '<span class="dk-s">Lecture…</span>' : n === 0 ? `<span class="dk-s">${esc(m.none)}</span>` : '';
     return `<button class="dk-tile" data-go="${m.id}">${!m.lot && n ? `<span class="dk-n">${n}</span>` : ''}<span class="dk-t">${esc(m.label)}</span>${sub}</button>`;
   };
-  $('view').innerHTML = `<div class="phonehead"><div><h2>${esc(ST.site.name)}</h2><div class="muted small">${esc(ST.site.customer || '')}</div></div></div>`
-    + (mods.length ? `<div class="dk-tiles">${mods.map(tile).join('')}</div>` : '<p class="dk-empty">Aucun module autorisé pour votre compte dans le Portal (cases « Menu de Stack »).</p>');
+  // Blocs du tableau de bord : seulement ce que les cases du Portal autorisent.
+  const can = (page) => !P.visualization || P.visualization.includes(page);
+  const show = { calls: can('pbx.cdr'), cdr: can('pbx.cdr'), agents: can('pbx.agents') || can('pbx.queues'), switchboards: can('pbx.switchboards'), queues: can('pbx.stats') || can('pbx.queues') };
+  const live = Object.values(show).some(Boolean);
+  $('view').innerHTML = `<div class="phonehead"><div><h2>${esc(ST.site.name)}</h2><div class="muted small">${esc(ST.site.customer || '')}</div></div>`
+    + (live ? `<div class="btnrow"><span id="db-at" class="muted small"></span><button id="db-refresh">Actualiser</button></div>` : '') + '</div>'
+    + (live ? '<div id="db-live"></div>' : '')
+    + (mods.length ? `<h2 class="dk-h">Modules</h2><div class="dk-tiles" id="db-tiles">${mods.map(tile).join('')}</div>` : '<p class="dk-empty">Aucun module autorisé pour votre compte dans le Portal (cases « Menu de Stack »).</p>')
+    + '<div id="dk-tip" class="dk-tip" hidden></div>';
+  if (live) renderDashboard($('view'), ST.site, show);
   for (const m of mods.filter((x) => x.path && D.counts[x.id] === undefined && !D.lists[x.id])) {
-    loadList(m).then(() => { if (D.view === 'home') renderHome(); }).catch((err) => console.warn('[astrea] lecture', m.path, err.status));
+    loadList(m).then(() => { if (D.view === 'home') renderTiles(); }).catch((err) => console.warn('[astrea] lecture', m.path, err.status));
   }
+  function renderTiles() { const t = $('db-tiles'); if (t) t.innerHTML = mods.map(tile).join(''); }
 }
 
 async function renderModule(m) {
@@ -258,6 +269,7 @@ $('ft-logout').onclick = () => doLogout();
 
 function leaveSite() {
   clearTimeout(renewTimer);
+  stopDashboard();
   const t = ST.token, base = ST.base;
   if (t) fetch(`${base}/api/auth/0.1/token/${t}`, { method: 'DELETE', headers: { 'X-Auth-Token': t } }).catch(() => {});
   closeSite();
@@ -267,6 +279,7 @@ function leaveSite() {
 
 async function doLogout() {
   clearTimeout(renewTimer);
+  stopDashboard();
   await logout();
   S.base = S.token = S.tenant = null;
   D.counts = {}; D.lists = {};
