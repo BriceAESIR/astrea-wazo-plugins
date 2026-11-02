@@ -461,11 +461,16 @@ button.cf-tr-end { border: 0; background: none; padding: 0; text-transform: none
 .cf-sch-new { display: grid; gap: 10px; margin: 8px 0; padding: 12px; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 6px; }
 .cf-sch-new .error:empty { display: none; }
 
-/* Bouton « Écouter » à côté d'une liste de sons (sound-play.js) */
+/* Bouton d'écoute ▶ / ■ (sound-play.js, comme button.dk-play d'Astrea Desk) */
 .cf-play-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .cf-play-row > select { flex: 1; min-width: 0; }
-.cf-play { flex: none; white-space: nowrap; }
-.cf-play.cf-play-off { opacity: .55; }
+button.cf-play { flex: none; width: 28px; height: 28px; min-width: 0; padding: 0; border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); border-radius: 50%; background: none; color: var(--accent); }
+button.cf-play svg { width: 16px; height: 16px; fill: currentColor; }
+button.cf-play:hover:not(:disabled) { background: var(--selected); border-color: var(--accent); }
+button.cf-play.on, button.cf-play.on:hover:not(:disabled) { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+button.cf-play.cf-play-off { opacity: .55; }
+.cf-spin { animation: cf-spin .8s linear infinite; }
+@keyframes cf-spin { to { transform: rotate(360deg); } }
 
 /* Messages d'accueil d'une messagerie (obj-editors.js) */
 .cf-vm-greet { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 10px 0; border-top: 1px solid var(--line); }

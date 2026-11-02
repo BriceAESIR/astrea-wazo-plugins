@@ -16,8 +16,8 @@
 //    SUPPOSÉ comme pour les autres champs « son » de confd).
 // Tout fichier audio envoyé est converti en WAV 8 kHz 16 bits mono (toWav8k
 // de Call Flow), le format attendu par Wazo ; sauf une musique en mode mp3.
-import { S, $, esc, toast, api, listAll, confirmModal, canWrite } from '../admin-tools/common/core.js?v=0.7.11';
-import { toWav8k, moTxt } from './cf/sound-play.js?v=0.7.11';
+import { S, $, esc, toast, api, listAll, confirmModal, canWrite } from '../admin-tools/common/core.js?v=0.7.12';
+import { toWav8k, moTxt } from './cf/sound-play.js?v=0.7.12';
 
 // Format audio et préparation des fichiers (demande de Brice, 02/11/2026) :
 // format exact, lien vers g711.org et pas-à-pas. Desk convertit de toute façon

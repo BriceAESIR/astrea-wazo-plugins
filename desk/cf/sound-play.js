@@ -11,14 +11,28 @@
 // PCM. Les autres (gsm, g722…) ne sont pas lisibles : message, pas d'erreur
 // silencieuse. Supposé : un son système dans un sous-dossier (« digits/1 »)
 // passe encodé (%2F) dans l'URL — à tester en réel.
-import { S, toast } from '../../admin-tools/common/core.js?v=0.7.11';
-import { M, sameTenant } from './model.js?v=0.7.11';
+import { S, toast } from '../../admin-tools/common/core.js?v=0.7.12';
+import { M, sameTenant } from './model.js?v=0.7.12';
+
+// Bouton de lecture : icône ▶ / ■ comme Astrea Desk (demande de Brice,
+// 02/11/2026). data-tip garde une infobulle propre au bouton au repos.
+const ICON = {
+  play: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>',
+  stop: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6h12v12H6z"/></svg>',
+  wait: '<svg viewBox="0 0 24 24" aria-hidden="true" class="cf-spin"><path d="M12 4a8 8 0 1 0 8 8h-2.5A5.5 5.5 0 1 1 12 6.5z"/></svg>',
+};
+export const playBtn = (attr = '') => `<button type="button" class="cf-play" ${attr} title="Écouter" aria-label="Écouter">${ICON.play}</button>`;
+function setBtn(btn, s) {
+  btn.innerHTML = ICON[s]; btn.classList.toggle('on', s !== 'play');
+  const t = s === 'stop' ? 'Arrêter' : 'Écouter';
+  btn.title = (s === 'play' && btn.dataset.tip) || t; btn.setAttribute('aria-label', t);
+}
 
 let audio = null, playing = null, url = null;
 function stop() {
   if (audio) { audio.pause(); audio = null; }
   if (url) { URL.revokeObjectURL(url); url = null; }
-  if (playing) { playing.textContent = 'Écouter'; playing = null; }
+  if (playing) { setBtn(playing, 'play'); playing = null; }
 }
 
 // G.711 → PCM 16 bits (formules standard ITU-T).
@@ -46,7 +60,7 @@ async function playFrom(btn, load) {
   if (playing === btn) { stop(); return; }
   stop();
   const tenant = M.tenant;
-  btn.textContent = 'Chargement…'; playing = btn;
+  setBtn(btn, 'wait'); playing = btn;
   try {
     const blob = await load();
     if (!sameTenant(tenant) || playing !== btn) return;
@@ -55,7 +69,7 @@ async function playFrom(btn, load) {
     audio.onended = stop;
     audio.ontimeupdate = () => { if (!btn.isConnected) stop(); }; // fenêtre fermée
     await audio.play();
-    btn.textContent = 'Arrêter';
+    setBtn(btn, 'stop');
   } catch (e) {
     stop();
     toast(`Lecture impossible : ${e.message}`, 7000);
@@ -152,16 +166,15 @@ export async function toWav8k(file) {
   if (sent > MAX_SENT) throw new Error(`trop gros une fois converti (${moTxt(sent)}) : Wazo accepte 2 Mo au plus`);
   return { blob, seconds: Math.round(src.duration), sent };
 }
-// Bouton « Écouter » à côté d'une liste de sons (une seule fois par liste).
+// Bouton d'écoute à côté d'une liste de sons (une seule fois par liste).
 export function attachPlay(sel) {
   if (!sel || sel.dataset.play) return;
   sel.dataset.play = '1';
   const row = document.createElement('span'); row.className = 'cf-play-row';
   sel.before(row); row.append(sel);
-  const btn = document.createElement('button'); btn.type = 'button'; btn.className = 'cf-play'; btn.textContent = 'Écouter';
-  btn.title = 'Écouter le son choisi (lu depuis Wazo)';
-  row.append(btn);
-  const upd = () => { const blk = sel.value && soundBlocked(sel.value); btn.disabled = !sel.value; btn.classList.toggle('cf-play-off', !!blk); btn.title = blk ? 'Son rangé dans un sous-dossier : Wazo ne permet pas de le lire par l\'API (vérifié dans confd).' : 'Écouter le son choisi (lu depuis Wazo)'; if (playing === btn) stop(); };
+  row.insertAdjacentHTML('beforeend', playBtn());
+  const btn = row.lastElementChild;
+  const upd = () => { const blk = sel.value && soundBlocked(sel.value); btn.disabled = !sel.value; btn.classList.toggle('cf-play-off', !!blk); btn.dataset.tip = blk ? 'Son rangé dans un sous-dossier : Wazo ne permet pas de le lire par l\'API (vérifié dans confd).' : 'Écouter le son choisi (lu depuis Wazo)'; if (playing === btn) stop(); else setBtn(btn, 'play'); };
   sel.addEventListener('change', upd);
   btn.addEventListener('click', (e) => { e.preventDefault(); if (sel.value) play(sel.value, btn); });
   upd();

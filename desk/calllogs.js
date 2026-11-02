@@ -8,9 +8,9 @@
 //  - réponse : { items, total, filtered } ;
 //  - call_status : blocked > voicemail > answered, sinon unknown (= non
 //    répondu) ; duration = fin - décroché (null si non décroché).
-import { S, $, esc, toast, listAll } from '../admin-tools/common/core.js?v=0.7.11';
-import { stackedColumns, hbars, legend } from './charts.js?v=0.7.11';
-import { download, fileSafe, csv, printHtml, REPORT_CSS, hoverTips } from './report.js?v=0.7.11';
+import { S, $, esc, toast, listAll } from '../admin-tools/common/core.js?v=0.7.12';
+import { stackedColumns, hbars, legend } from './charts.js?v=0.7.12';
+import { download, fileSafe, csv, printHtml, REPORT_CSS, hoverTips } from './report.js?v=0.7.12';
 
 const PAGE = 1000;       // taille d'une requête call-logd
 const MAX = 20000;       // au-delà, on s'arrête et on le dit
