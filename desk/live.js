@@ -19,8 +19,8 @@
 // Groupes : l'entrée / sortie dynamique (*735…) passe par AddQueueMember dans
 // le dialplan (wazo-agid group_member.py) ; seul amid la lit, et amid exige le
 // tenant principal : invisible et non modifiable pour un admin de site.
-import { S, $, esc, toast, listAll, confirmModal, canWrite, fullName } from '../admin-tools/common/core.js?v=0.7.7';
-import { edit } from './cfbridge.js?v=0.7.7';
+import { S, $, esc, toast, listAll, confirmModal, canWrite, fullName } from '../admin-tools/common/core.js?v=0.7.8';
+import { edit } from './cfbridge.js?v=0.7.8';
 
 const REFRESH = 20e3;
 export const PHONE = {
@@ -102,26 +102,6 @@ function liveLoop(view, marker, draw) {
   return tick;
 }
 
-// Menus « ⋯ » flottants (retour de Brice, 02/11/2026 : ouverts dans la zone qui
-// défile du tableau, ils la faisaient défiler). Le menu est placé en position
-// fixe sous son bouton ; un seul ouvert à la fois ; fermé au clic ailleurs ou
-// au défilement.
-function floatMenus(root) {
-  for (const d of root.querySelectorAll('details.dk-more')) {
-    d.addEventListener('toggle', () => {
-      if (!d.open) return;
-      for (const o of root.querySelectorAll('details.dk-more[open]')) if (o !== d) o.open = false;
-      const r = d.querySelector('summary').getBoundingClientRect(), m = d.querySelector(':scope > div');
-      m.style.position = 'fixed';
-      m.style.top = `${Math.min(r.bottom + 4, innerHeight - m.offsetHeight - 8)}px`;
-      m.style.left = `${Math.max(8, r.right - m.offsetWidth)}px`;
-      m.style.right = 'auto';
-    });
-  }
-}
-const closeMenus = (e) => { for (const o of document.querySelectorAll('details.dk-more[open]')) if (!o.contains(e?.target)) o.open = false; };
-document.addEventListener('click', closeMenus);
-document.addEventListener('scroll', () => closeMenus(), true);
 
 async function act(label, fn, after) {
   if (!canWrite()) return;
@@ -193,7 +173,7 @@ export async function renderQueues(view, site) {
     const ro = !!S.readonly;
     view.innerHTML = `<div class="phonehead" id="lq-head"><div><h2>Files d'attente</h2><div class="muted small">${esc(site.name)} · agents et membres en direct</div></div><div class="btnrow"><span class="muted small">Actualisé à ${esc(hhmmss(L.at))}</span><button id="lq-refresh">Actualiser</button></div></div>`
       + (L.err ? `<p class="warn small">${esc(L.err)}</p>` : '')
-      + `<p class="muted small"><strong>Connecter…</strong> : connecte l'agent sur un poste (il reçoit alors les appels de ses files). <strong>Déconnecter de la file</strong> / <strong>Reconnecter à la file</strong> : pour cette file seulement. « ⋯ » : pause, déconnexion de toutes ses files. Ajouter ou retirer un agent de la file : « Régler la file… ».</p>`
+      + `<p class="muted small"><strong>Connecter</strong> : connecte l'agent sur son poste (il reçoit alors les appels de ses files). <strong>Déconnecter de la file</strong> : pour cette file seulement. <strong>Déconnecter l'agent</strong> : de toutes ses files. Ajouter ou retirer un agent de la file : « Régler la file… ».</p>`
       + (L.queues.length ? L.queues.map((q) => {
         const members = [...(q.members?.agents || [])].map((m) => ({ m, a: byId.get(m.id) || m })).sort((x, y) => agentName(x.a).localeCompare(agentName(y.a), 'fr'));
         const users = q.members?.users || [];
@@ -205,10 +185,12 @@ export async function renderQueues(view, site) {
           // état n'est PAS une file où il reçoit des appels (constaté en réel le
           // 02/11/2026 : membre dans confd, connecté, mais « 0/0 file active » dans l'appli).
           const here = st?.logged ? (!inq ? ['off', 'Hors de la file pour Wazo'] : inq.logged === false ? ['off', 'A quitté la file'] : inq.paused ? ['pause', 'En pause dans la file'] : ['on', 'Dans la file']) : [c, lbl];
-          // Pilotage (retour de Brice, 02/11/2026) : connexion ici ; pause et
-          // déconnexion complète dans le menu « ⋯ » ; les membres se règlent ailleurs.
-          const more = st?.logged ? `<details class="dk-more"><summary title="Autres actions">⋯</summary><div>${st.paused ? `<button class="dk-text" data-unp="${esc(a.number)}">Reprendre (fin de pause)</button>` : `<button class="dk-text" data-pause="${esc(a.number)}">Mettre en pause</button>`}<button class="dk-text" data-off="${m.id}">Déconnecter l'agent (toutes ses files)</button></div></details>` : '';
-          const btn = ro ? '' : !st?.logged ? `<button class="dk-text" data-on="${m.id}">Connecter…</button>` : (!inq || inq.logged === false ? `<button class="dk-text" data-qin="${q.id}:${m.id}">${inq ? 'Reconnecter à la file' : 'Connecter à la file'}</button>` : `<button class="dk-text" data-qout="${q.id}:${m.id}">Déconnecter de la file</button>`) + more;
+          // Pilotage (retours de Brice, 02/11/2026) : actions affichées directement
+          // sur la ligne (le menu « ⋯ » a été retiré) ; les membres se règlent ailleurs.
+          const btn = ro ? '' : !st?.logged ? `<button class="dk-text" data-on="${m.id}">Connecter</button>`
+            : [st.paused ? `<button class="dk-text" data-unp="${esc(a.number)}">Reprendre</button>` : `<button class="dk-text" data-pause="${esc(a.number)}">Pause</button>`,
+              !inq || inq.logged === false ? `<button class="dk-text" data-qin="${q.id}:${m.id}">${inq ? 'Reconnecter à la file' : 'Connecter à la file'}</button>` : `<button class="dk-text" data-qout="${q.id}:${m.id}">Déconnecter de la file</button>`,
+              `<button class="dk-text" data-off="${m.id}" title="Déconnecte l'agent de toutes ses files">Déconnecter l'agent</button>`].join(' ');
           return `<tr><td class="nowrap">${esc(agentName(a))} <span class="muted small">${esc(a.number || '')}</span></td><td><span class="dk-ag dk-ag-${here[0]}">${esc(here[1])}</span>${st?.logged && st.extension ? ` <span class="muted small">sur ${esc(st.extension)}</span>` : ''}</td><td>${phoneBadge(L.pr.get(agentUser(a)))}</td><td class="dk-acts">${btn}</td></tr>`;
         }).join('');
         return `<section class="dk-panel"><div class="dk-panhead"><h3>${esc(q.label || q.name)} <span class="muted small">${esc((q.extensions || []).map((e) => e.exten).join(', '))} · ${logged} / ${members.length} agent${members.length > 1 ? 's' : ''} dans la file</span></h3>${ro ? '' : `<button class="dk-text" data-qcfg="${q.id}" title="Stratégie, délais, débordements, membres, numéro, horaire">Régler la file…</button>`}</div>`
@@ -217,7 +199,6 @@ export async function renderQueues(view, site) {
           + '</section>';
       }).join('') : '<p class="dk-empty">Aucune file d\'attente sur ce site.</p>');
     $('lq-refresh').onclick = async () => { await loadLive(); draw(); };
-    floatMenus(view);
   };
   const reload = async () => { await loadLists(); byId.clear(); for (const a of L.agents) byId.set(a.id, a); draw(); };
   view.onclick = (e) => {
