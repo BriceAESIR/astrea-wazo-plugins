@@ -16,8 +16,8 @@
 // Groupes : l'entrée / sortie dynamique (*735…) passe par AddQueueMember dans
 // le dialplan (wazo-agid group_member.py) ; seul amid la lit, et amid exige le
 // tenant principal : invisible et non modifiable pour un admin de site.
-import { S, $, esc, toast, listAll, confirmModal, canWrite, fullName } from '../admin-tools/common/core.js?v=0.6.0';
-import { edit } from './cfbridge.js?v=0.6.0';
+import { S, $, esc, toast, listAll, confirmModal, canWrite, fullName } from '../admin-tools/common/core.js?v=0.6.1';
+import { edit } from './cfbridge.js?v=0.6.1';
 
 const REFRESH = 20e3;
 export const PHONE = {
@@ -93,8 +93,22 @@ async function act(label, fn, after) {
   await loadLive(); after();
 }
 
+// Connexion d'un agent sur un poste du site (son propre poste proposé en premier).
+function loginAgent(a, after) {
+  if (!a || !canWrite()) return;
+  const mine = agentUser(a);
+  const exts = userExts().sort((x, y) => (y.user.uuid === mine) - (x.user.uuid === mine) || fullName(x.user).localeCompare(fullName(y.user), 'fr'));
+  if (!exts.length) { toast('Aucun poste sur ce site pour connecter l\'agent.', 6000); return; }
+  confirmModal(`<h3>Connecter ${esc(agentName(a))}</h3><label>Sur le poste<select id="la-ext">${exts.map((x, i) => `<option value="${i}">${esc(x.exten)} · ${esc(fullName(x.user))}</option>`).join('')}</select></label><p class="muted small">L'agent recevra les appels de ses files sur ce poste.</p><p id="la-err" class="error small"></p>`, async () => {
+    const x = exts[Number($('la-ext').value)]; if (!x) return false;
+    try { await svc('POST', `agentd/1.0/agents/by-id/${a.id}/login`, { extension: x.exten, context: x.context }); toast('Agent connecté.'); }
+    catch (err) { $('la-err').textContent = `Échec : ${err.message}`; return false; }
+    await loadLive(); after(); return true;
+  }, 'Connecter');
+}
+
 // ---------------------------------------------------------------------------
-// Files d'attente : membres, états, rejoindre / quitter
+// Files d'attente : membres, états, connexion de l'agent
 // ---------------------------------------------------------------------------
 export async function renderQueues(view, site) {
   view.innerHTML = '<p class="dk-empty">Lecture…</p>';
@@ -105,7 +119,7 @@ export async function renderQueues(view, site) {
     const ro = !!S.readonly;
     view.innerHTML = `<div class="phonehead" id="lq-head"><div><h2>Files d'attente</h2><div class="muted small">${esc(site.name)} · agents et membres en direct</div></div><div class="btnrow"><span class="muted small">Actualisé à ${esc(hhmmss(L.at))}</span><button id="lq-refresh">Actualiser</button></div></div>`
       + (L.err ? `<p class="warn small">${esc(L.err)}</p>` : '')
-      + `<p class="muted small"><strong>Rejoindre / Quitter</strong> : l'agent reste membre de la file, il est seulement connecté ou non à cette file (il doit être connecté comme agent). <strong>Retirer</strong> / <strong>Ajouter</strong> : membre permanent de la file.</p>`
+      + `<p class="muted small"><strong>Connecter…</strong> : connecte l'agent sur un poste (il reçoit alors les appels de ses files). <strong>Déconnecter de la file</strong> / <strong>Reconnecter à la file</strong> : pour cette file seulement, l'agent reste connecté aux autres. Ajouter ou retirer un membre : « Régler la file… ».</p>`
       + (L.queues.length ? L.queues.map((q) => {
         const members = [...(q.members?.agents || [])].map((m) => ({ m, a: byId.get(m.id) || m })).sort((x, y) => agentName(x.a).localeCompare(agentName(y.a), 'fr'));
         const users = q.members?.users || [];
@@ -114,14 +128,12 @@ export async function renderQueues(view, site) {
           const st = L.st.get(m.id), inq = st?.queues?.find((x) => x.id === q.id);
           const [c, lbl] = agentState(st);
           const here = st?.logged ? (inq?.logged === false ? ['off', 'A quitté la file'] : inq?.paused ? ['pause', 'En pause dans la file'] : ['on', 'Dans la file']) : [c, lbl];
-          const btn = ro ? '' : !st?.logged ? '<span class="muted small nowrap">agent non connecté</span>' : inq?.logged === false ? `<button class="dk-text" data-qin="${q.id}:${m.id}">Rejoindre</button>` : `<button class="dk-text" data-qout="${q.id}:${m.id}">Quitter</button>`;
-          return `<tr><td class="nowrap">${esc(agentName(a))} <span class="muted small">${esc(a.number || '')}</span></td><td><span class="dk-ag dk-ag-${here[0]}">${esc(here[1])}</span></td><td>${phoneBadge(L.pr.get(agentUser(a)))}</td><td class="dk-acts">${btn}${ro ? '' : ` <button class="dk-text" data-qrm="${q.id}:${m.id}">Retirer</button>`}</td></tr>`;
+          const btn = ro ? '' : !st?.logged ? `<button class="dk-text" data-on="${m.id}">Connecter…</button>` : inq?.logged === false ? `<button class="dk-text" data-qin="${q.id}:${m.id}">Reconnecter à la file</button>` : `<button class="dk-text" data-qout="${q.id}:${m.id}">Déconnecter de la file</button>`;
+          return `<tr><td class="nowrap">${esc(agentName(a))} <span class="muted small">${esc(a.number || '')}</span></td><td><span class="dk-ag dk-ag-${here[0]}">${esc(here[1])}</span>${st?.logged && st.extension ? ` <span class="muted small">sur ${esc(st.extension)}</span>` : ''}</td><td>${phoneBadge(L.pr.get(agentUser(a)))}</td><td class="dk-acts">${btn}</td></tr>`;
         }).join('');
-        const addable = L.agents.filter((a) => !members.some(({ m }) => m.id === a.id));
         return `<section class="dk-panel"><div class="dk-panhead"><h3>${esc(q.label || q.name)} <span class="muted small">${esc((q.extensions || []).map((e) => e.exten).join(', '))} · ${logged} / ${members.length} agent${members.length > 1 ? 's' : ''} dans la file</span></h3>${ro ? '' : `<button class="dk-text" data-qcfg="${q.id}" title="Stratégie, délais, débordements, membres, numéro, horaire">Régler la file…</button>`}</div>`
           + (rows ? `<div class="dk-scroll"><table class="dk-table"><thead><tr><th>Agent</th><th>Dans la file</th><th>Téléphone</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : '<p class="muted small">Aucun agent membre.</p>')
-          + (users.length ? `<p class="small">Utilisateurs membres : ${users.map((u) => `${esc(fullName(u) || u.uuid)} ${phoneBadge(L.pr.get(u.uuid))}`).join(' · ')}</p>` : '')
-          + (!ro && addable.length ? `<div class="dk-ed-row"><select data-qsel="${q.id}"><option value="">Ajouter un agent à la file…</option>${addable.map((a) => `<option value="${a.id}">${esc(agentName(a))} (${esc(a.number)})</option>`).join('')}</select><button class="dk-text" data-qadd="${q.id}">Ajouter</button></div>` : '')
+          + (users.length ? `<details class="dk-members" open><summary>${users.length} utilisateur${users.length > 1 ? 's' : ''} membre${users.length > 1 ? 's' : ''} (sans agent)</summary><ul>${users.map((u) => `<li><span>${esc(fullName(u) || u.uuid)}</span>${phoneBadge(L.pr.get(u.uuid))}</li>`).join('')}</ul></details>` : '')
           + '</section>';
       }).join('') : '<p class="dk-empty">Aucune file d\'attente sur ce site.</p>');
     $('lq-refresh').onclick = async () => { await loadLive(); draw(); };
@@ -131,17 +143,11 @@ export async function renderQueues(view, site) {
     const b = e.target.closest('button'); if (!b) return;
     // Réglage complet de la file : éditeur de Call Flow Manager.
     if (b.dataset.qcfg) { edit('queue', b.dataset.qcfg, () => { if (view.querySelector('#lq-head')) reload(); }); return; }
-    const [qid, aid] = (b.dataset.qin || b.dataset.qout || b.dataset.qrm || '').split(':').map(Number);
-    const q = L.queues.find((x) => x.id === (qid || Number(b.dataset.qadd)));
-    if (b.dataset.qin) act(`Agent connecté à « ${q.label} ».`, () => svc('PUT', `agentd/1.0/agents/${aid}/queues/${qid}/login`), draw);
-    else if (b.dataset.qout) act(`Agent sorti de « ${q.label} ».`, () => svc('PUT', `agentd/1.0/agents/${aid}/queues/${qid}/logoff`), draw);
-    else if (b.dataset.qrm) {
-      const a = byId.get(aid);
-      if (canWrite()) confirmModal(`<p>Retirer définitivement <strong>${esc(agentName(a || {}))}</strong> de la file « ${esc(q.label)} » ?</p><p class="muted small">Il ne sera plus membre (modification permanente). Pour une absence temporaire, utilisez plutôt « Quitter ».</p>`, async () => { await act('Agent retiré de la file.', () => svc('POST', `agentd/1.0/agents/by-id/${aid}/remove`, { queue_id: qid }), reload); }, 'Retirer');
-    } else if (b.dataset.qadd) {
-      const id = Number(view.querySelector(`[data-qsel="${b.dataset.qadd}"]`).value);
-      if (id) act('Agent ajouté à la file.', () => svc('POST', `agentd/1.0/agents/by-id/${id}/add`, { queue_id: q.id }), reload);
-    }
+    if (b.dataset.on) { loginAgent(byId.get(Number(b.dataset.on)), draw); return; }
+    const [qid, aid] = (b.dataset.qin || b.dataset.qout || '').split(':').map(Number);
+    const q = L.queues.find((x) => x.id === qid);
+    if (b.dataset.qin) act(`Agent reconnecté à « ${q.label} ».`, () => svc('PUT', `agentd/1.0/agents/${aid}/queues/${qid}/login`), draw);
+    else if (b.dataset.qout) act(`Agent déconnecté de « ${q.label} ».`, () => svc('PUT', `agentd/1.0/agents/${aid}/queues/${qid}/logoff`), draw);
   };
   draw();
   liveLoop(view, '#lq-head', draw);
@@ -174,17 +180,7 @@ export async function renderAgents(view, site) {
     if (b.dataset.pause) act('Agent en pause.', () => svc('POST', `agentd/1.0/agents/by-number/${encodeURIComponent(b.dataset.pause)}/pause`, {}), draw);
     else if (b.dataset.unp) act('Agent sorti de pause.', () => svc('POST', `agentd/1.0/agents/by-number/${encodeURIComponent(b.dataset.unp)}/unpause`, {}), draw);
     else if (b.dataset.off) act('Agent déconnecté.', () => svc('POST', `agentd/1.0/agents/by-id/${b.dataset.off}/logoff`), draw);
-    else if (b.dataset.on && canWrite()) {
-      const a = L.agents.find((x) => x.id === Number(b.dataset.on));
-      const mine = agentUser(a);
-      const exts = userExts().sort((x, y) => (y.user.uuid === mine) - (x.user.uuid === mine) || fullName(x.user).localeCompare(fullName(y.user), 'fr'));
-      confirmModal(`<h3>Connecter ${esc(agentName(a))}</h3><label>Sur le poste<select id="la-ext">${exts.map((x, i) => `<option value="${i}">${esc(x.exten)} · ${esc(fullName(x.user))}</option>`).join('')}</select></label><p class="muted small">L'agent recevra les appels de ses files sur ce poste.</p><p id="la-err" class="error small"></p>`, async () => {
-        const x = exts[Number($('la-ext').value)]; if (!x) return false;
-        try { await svc('POST', `agentd/1.0/agents/by-id/${a.id}/login`, { extension: x.exten, context: x.context }); toast('Agent connecté.'); }
-        catch (err) { $('la-err').textContent = `Échec : ${err.message}`; return false; }
-        await loadLive(); draw(); return true;
-      }, 'Connecter');
-    }
+    else if (b.dataset.on) loginAgent(L.agents.find((x) => x.id === Number(b.dataset.on)), draw);
   };
   draw();
   liveLoop(view, '#la-head', draw);

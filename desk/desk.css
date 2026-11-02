@@ -122,8 +122,38 @@ button.icon { padding: 2px 8px; min-width: 0; }
 .dk-ph-ring::before { background: var(--warn); opacity: 1; }
 .dk-mem { display: inline-flex; align-items: center; gap: 4px; margin: 1px 10px 1px 0; white-space: nowrap; }
 
-/* Menu par sections (comme le Portal) et listes de gestion */
-.dk-navsec { margin: 14px 0 2px; padding: 0 12px; color: var(--muted); font-size: .6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: .08333em; }
+/* Colonne de gauche façon Portal : fond bleu Wazo, icônes, sections repliables */
+:root { --dk-nav-bg: #203890; --dk-nav-hi: #1a2e75; --dk-nav-sub: #1c3283; --dk-nav-ink: #fff; --dk-nav-muted: rgba(255, 255, 255, .72); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --dk-nav-bg: #17255f; --dk-nav-hi: #101b48; --dk-nav-sub: #142154; } }
+:root[data-theme="dark"] { --dk-nav-bg: #17255f; --dk-nav-hi: #101b48; --dk-nav-sub: #142154; }
+body.ready #sidebar { background: var(--dk-nav-bg); color: var(--dk-nav-ink); border-right: 0; }
+body.ready #sidebar .sidenav { border-bottom: 0; margin-bottom: 8px; }
+#nav button { display: flex; align-items: center; gap: 12px; width: 100%; border: 0; border-left: 3px solid transparent; border-radius: 0; background: none; color: var(--dk-nav-ink); text-transform: none; letter-spacing: .01071em; text-align: left; }
+#nav .dk-ntop, #nav .dk-nsec-h { min-height: 44px; padding: 8px 16px; font-size: .9375rem; font-weight: 600; }
+#nav .dk-nicon { width: 22px; height: 22px; flex: none; fill: currentColor; opacity: .9; }
+#nav .dk-nsec-h span { flex: 1; }
+#nav .dk-chev { width: 18px; height: 18px; fill: currentColor; opacity: .7; transform: rotate(-90deg); transition: transform .15s; }
+#nav .dk-nsec.open .dk-chev { transform: none; }
+#nav .dk-nsec-items { display: none; padding: 2px 0 8px; background: var(--dk-nav-sub); }
+#nav .dk-nsec.open .dk-nsec-items { display: block; }
+#nav .dk-ni { min-height: 36px; padding: 6px 16px 6px 50px; color: var(--dk-nav-muted); font-size: .875rem; font-weight: 500; }
+#nav button:hover:not(:disabled) { background: var(--dk-nav-hi); color: var(--dk-nav-ink); }
+#nav button.active, #nav button.active:hover { background: var(--dk-nav-hi); border-left-color: #fff; color: var(--dk-nav-ink); font-weight: 700; }
+body.ready #sidebar .dk-foot { border-top-color: rgba(255, 255, 255, .18); }
+body.ready #sidebar .dk-foot .muted { color: var(--dk-nav-muted); }
+body.ready #sidebar .dk-link, body.ready #sidebar button.dk-text { color: var(--dk-nav-ink); }
+
+/* Listes de gestion */
+.dk-members { min-width: 180px; }
+.dk-members summary { cursor: pointer; color: var(--muted); font-size: .75rem; white-space: nowrap; }
+.dk-members ul, .dk-members ol { margin: 4px 0 0; padding: 0 0 0 18px; }
+.dk-members ul { list-style: none; padding-left: 0; }
+.dk-members li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 2px 0; white-space: nowrap; }
+.dk-members ol li { display: list-item; }
+.dk-members ol li .dk-ph { margin-left: 10px; }
+.dk-usage { cursor: help; border-bottom: 1px dotted var(--muted); }
+button.dk-link-sm { padding: 0; border: 0; background: none; color: var(--accent); font-size: .75rem; font-weight: 500; text-transform: none; letter-spacing: 0; min-height: 0; }
+button.dk-link-sm:hover:not(:disabled) { background: none; text-decoration: underline; }
 .dk-search { min-width: 220px; }
 .dk-off { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 8px; background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--ink); font-size: .6875rem; }
 .dk-panhead { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px; }

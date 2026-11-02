@@ -2,15 +2,15 @@
 // dans le Portal (visualization), choix du site, connexion à la stack, menu
 // et accueil. Les appels confd passent par common/core.js (api, listAll,
 // filtre tenant), avec le token de la stack du site.
-import { sdk, S, $, esc, toast, applyTheme, listAll, showCompat } from '../admin-tools/common/core.js?v=0.6.0';
-import { renderCallLogs } from './calllogs.js?v=0.6.0';
-import { renderStats } from './stats.js?v=0.6.0';
-import { renderDashboard, stopDashboard } from './dashboard.js?v=0.6.0';
-import { renderModuleList } from './modules.js?v=0.6.0';
-import { renderQueues, renderAgents } from './live.js?v=0.6.0';
-import { P, ST, PortalError, portalLogin, portalResume, remembered, checkScopes, loadVisualization, loadLocations, openSite, stackLogin, logout, closeSite } from './portal.js?v=0.6.0';
+import { sdk, S, $, esc, toast, applyTheme, listAll, showCompat } from '../admin-tools/common/core.js?v=0.6.1';
+import { renderCallLogs } from './calllogs.js?v=0.6.1';
+import { renderStats } from './stats.js?v=0.6.1';
+import { renderDashboard, stopDashboard } from './dashboard.js?v=0.6.1';
+import { renderModuleList } from './modules.js?v=0.6.1';
+import { renderQueues, renderAgents } from './live.js?v=0.6.1';
+import { P, ST, PortalError, portalLogin, portalResume, remembered, checkScopes, loadVisualization, loadLocations, openSite, stackLogin, logout, closeSite } from './portal.js?v=0.6.1';
 
-const APP_VERSION = '0.6.0';
+const APP_VERSION = '0.6.1';
 const TESTED_STACK = ['26.07', '26.10'];
 // Droit Portal sans lequel aucune stack n'est accessible (vérifié : contrôlé
 // par le Portal avant d'ouvrir un site).
@@ -21,6 +21,18 @@ const CRED_SCOPE = 'deployd.instances.*.credentials.*.read';
 // traductions françaises, 02/11/2026), dans l'ordre des sections du Portal.
 // `page` = case « Menu de Stack » (champ visualization). `path` : liste confd
 // comptée sur le Dashboard. `render` : écran du module.
+// Icônes Material (comme le Portal), en SVG intégré.
+const svg = (d) => `<svg class="dk-nicon" viewBox="0 0 24 24" aria-hidden="true"><path d="${d}"/></svg>`;
+const ICON = {
+  dashboard: svg('M3 13h8V3H3v10zm0 8h8v-6H3v6zm10 0h8V11h-8v10zm0-18v6h8V3h-8z'),
+  userManagement: svg('M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5s-3 1.34-3 3 1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z'),
+  reporting: svg('M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6z'),
+  callManagement: svg('M6.62 10.79c1.44 2.83 3.76 5.14 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z'),
+  services: svg('M18 17H6v-2h12v2zm2-5H4V7c0-1.1.9-2 2-2h12c1.1 0 2 .9 2 2v5zM2 20h20v-2H2v2z'),
+  callCenter: svg('M12 1c-4.97 0-9 4.03-9 9v7c0 1.66 1.34 3 3 3h3v-8H5v-2c0-3.87 3.13-7 7-7s7 3.13 7 7v2h-4v8h4v1h-7v2h6c1.66 0 3-1.34 3-3V10c0-4.97-4.03-9-9-9z'),
+};
+let NAV_CLOSED = new Set();
+try { NAV_CLOSED = new Set(JSON.parse(localStorage.getItem('astrea-desk-nav') || '[]')); } catch { /* stockage indisponible */ }
 const SECTIONS = [['userManagement', 'Gestion utilisateurs'], ['reporting', 'Rapports'], ['callManagement', 'Gestion des appels'], ['services', 'Services'], ['callCenter', "Centre d'appel"]];
 const list = (id) => (view, site) => renderModuleList(id, view, site);
 const MODULES = [
@@ -188,14 +200,27 @@ function selfCheck() {
 // Menu et vues
 // ---------------------------------------------------------------------------
 function renderNav() {
-  const btn = (m) => `<button data-view="${m.id}" class="${D.view === m.id ? 'active' : ''}">${esc(m.label)}</button>`;
+  // Présentation du Portal (retour de Brice, 02/11/2026) : colonne bleue,
+  // une icône par section, sections repliables, sous-menus en retrait.
+  const btn = (m) => `<button data-view="${m.id}" class="dk-ni${D.view === m.id ? ' active' : ''}">${esc(m.label)}</button>`;
   const mods = MODULES.filter(allowed);
-  $('nav').innerHTML = btn({ id: 'home', label: 'Dashboard' }) + SECTIONS.map(([k, l]) => {
+  $('nav').innerHTML = `<button data-view="home" class="dk-ntop${D.view === 'home' ? ' active' : ''}">${ICON.dashboard}<span>Dashboard</span></button>` + SECTIONS.map(([k, l]) => {
     const ms = mods.filter((m) => m.section === k);
-    return ms.length ? `<div class="dk-navsec">${esc(l)}</div>${ms.map(btn).join('')}` : '';
+    if (!ms.length) return '';
+    const open = !NAV_CLOSED.has(k) || ms.some((m) => m.id === D.view);
+    return `<div class="dk-nsec${open ? ' open' : ''}"><button class="dk-nsec-h" data-sec="${k}" aria-expanded="${open}">${ICON[k]}<span>${esc(l)}</span><svg class="dk-chev" viewBox="0 0 24 24"><path d="M7.41 8.59 12 13.17l4.59-4.58L18 10l-6 6-6-6z"/></svg></button><div class="dk-nsec-items">${ms.map(btn).join('')}</div></div>`;
   }).join('');
 }
-$('nav').addEventListener('click', (e) => { const b = e.target.closest('[data-view]'); if (b) go(b.dataset.view); });
+$('nav').addEventListener('click', (e) => {
+  const h = e.target.closest('[data-sec]');
+  if (h) { // section repliée / dépliée, mémorisée sur le poste
+    const k = h.dataset.sec;
+    if (NAV_CLOSED.has(k)) NAV_CLOSED.delete(k); else NAV_CLOSED.add(k);
+    try { localStorage.setItem('astrea-desk-nav', JSON.stringify([...NAV_CLOSED])); } catch { /* */ }
+    renderNav(); return;
+  }
+  const b = e.target.closest('[data-view]'); if (b) go(b.dataset.view);
+});
 $('view').addEventListener('click', (e) => { const b = e.target.closest('[data-go]'); if (b) go(b.dataset.go); });
 
 function go(view) {
