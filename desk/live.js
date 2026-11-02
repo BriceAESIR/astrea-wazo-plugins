@@ -16,8 +16,8 @@
 // Groupes : l'entrée / sortie dynamique (*735…) passe par AddQueueMember dans
 // le dialplan (wazo-agid group_member.py) ; seul amid la lit, et amid exige le
 // tenant principal : invisible et non modifiable pour un admin de site.
-import { S, $, esc, toast, listAll, confirmModal, canWrite, fullName } from '../admin-tools/common/core.js?v=0.7.1';
-import { edit } from './cfbridge.js?v=0.7.1';
+import { S, $, esc, toast, api, listAll, confirmModal, canWrite, fullName } from '../admin-tools/common/core.js?v=0.7.2';
+import { edit } from './cfbridge.js?v=0.7.2';
 
 const REFRESH = 20e3;
 export const PHONE = {
@@ -66,7 +66,26 @@ async function loadLive() {
 }
 const agentName = (a) => [a.firstname, a.lastname].filter(Boolean).join(' ') || `Agent ${a.number}`;
 const agentUser = (a) => (a.users || [])[0]?.uuid;
-const userExts = () => L.users.flatMap((u) => (u.lines || []).flatMap((l) => (l.extensions || []).filter((e) => e.exten).map((e) => ({ exten: e.exten, context: e.context, user: u }))));
+const userExts = () => L.users.flatMap((u) => (u.lines || []).flatMap((l) => (l.extensions || []).filter((e) => e.exten).map((e) => ({ exten: e.exten, context: e.context, user: u, line: l.id }))));
+
+// Lignes d'un numéro : téléphone ou appli (WebRTC). Vérifié dans wazo-confd
+// (tenant/service.py) : chaque tenant a un modèle SIP « webrtc » (option
+// webrtc = yes) ; les options combinées de l'endpoint (GET /endpoints/sip/{uuid})
+// le portent donc pour une ligne d'appli. Interface surveillée par agentd :
+// « PJSIP/<nom de l'endpoint> » (SUPPOSÉ ; agentd la refuse si elle n'est pas
+// une ligne de ce numéro, l'erreur est alors affichée).
+async function lineDevices(ids) {
+  return Promise.all(ids.map(async (id) => {
+    try {
+      const l = await api('GET', `/lines/${id}`);
+      const sip = l?.endpoint_sip;
+      if (!sip?.uuid) return { id, kind: l?.endpoint_sccp ? 'SCCP' : 'autre', endpoint: null };
+      const ep = await api('GET', `/endpoints/sip/${sip.uuid}`);
+      const opts = Object.fromEntries((ep?.endpoint_section_options || []).map(([k, v]) => [k, v]));
+      return { id, webrtc: String(opts.webrtc || '').toLowerCase() === 'yes', endpoint: `PJSIP/${ep?.name || sip.name}`, label: sip.label || ep?.label || '' };
+    } catch (e) { return { id, error: e.message, endpoint: null }; }
+  }));
+}
 const hhmmss = (d) => d.toLocaleTimeString('fr-FR');
 
 function agentState(st) {
@@ -103,8 +122,8 @@ function loginAgent(a, after) {
   const seen = new Map();
   for (const x of userExts()) {
     const k = `${x.exten}@${x.context}`;
-    const o = seen.get(k) || { ...x, lines: 0 };
-    o.lines++; seen.set(k, o);
+    const o = seen.get(k) || { ...x, lines: 0, lineIds: [] };
+    o.lines++; o.lineIds.push(x.line); seen.set(k, o);
   }
   const ctxs = new Set([...seen.values()].map((x) => x.context));
   // Poste déjà pris par un autre agent connecté (agentd le refuserait).
@@ -122,14 +141,34 @@ function loginAgent(a, after) {
     <p class="muted small">Choisissez le poste sur lequel l'agent recevra les appels de ses files.</p>
     ${own.length ? `<h4>Son poste</h4><div class="dk-picks">${own.map((x) => row(x, exts.indexOf(x))).join('')}</div>` : '<p class="muted small">Aucun utilisateur n\'est lié à cet agent dans Wazo : choisissez un poste ci-dessous.</p>'}
     ${others.length ? `<h4>Autres postes du site</h4>${others.length > 8 ? '<input id="la-q" type="search" placeholder="Rechercher un nom ou un numéro">' : ''}<div class="dk-picks dk-picks-scroll" id="la-others">${others.map((x) => row(x, exts.indexOf(x))).join('')}</div>` : ''}
+    <div id="la-dev"></div>
     <p id="la-err" class="error small"></p></div>`, async () => {
     const v = $('modal-body').querySelector('input[name="la-ext"]:checked')?.value;
     const x = exts[Number(v)]; if (!x) { $('la-err').textContent = 'Choisissez un poste.'; return false; }
-    try { await svc('POST', `agentd/1.0/agents/by-id/${a.id}/login`, { extension: x.exten, context: x.context }); toast(`${agentName(a)} connecté sur le poste ${x.exten}.`); }
-    catch (err) { $('la-err').textContent = `Échec : ${err.message}`; return false; }
+    // Plusieurs lignes : la ligne choisie sert à savoir si l'agent est déjà en appel.
+    const endpoint = $('modal-body').querySelector('input[name="la-dev"]:checked')?.value || null;
+    try {
+      await svc('POST', `agentd/1.0/agents/by-id/${a.id}/login`, { extension: x.exten, context: x.context, ...(endpoint ? { endpoint } : {}) });
+      toast(`${agentName(a)} connecté sur le poste ${x.exten}${endpoint ? ` (${devName.get(endpoint) || endpoint})` : ''}.`);
+    } catch (err) { $('la-err').textContent = `Échec : ${err.message}`; return false; }
     await loadLive(); after(); return true;
   }, 'Connecter');
   if ($('la-q')) $('la-q').oninput = (e) => { const q = e.target.value.toLowerCase(); for (const l of $('la-others').children) l.hidden = q && !l.textContent.toLowerCase().includes(q); };
+  // Choix de l'appareil quand le poste a plusieurs lignes (téléphone + appli).
+  const devName = new Map();
+  const showDevices = async () => {
+    const x = exts[Number($('modal-body').querySelector('input[name="la-ext"]:checked')?.value)];
+    const box = $('la-dev'); if (!box) return;
+    if (!x || x.lines < 2) { box.innerHTML = ''; return; }
+    box.innerHTML = '<p class="muted small">Lecture des lignes…</p>';
+    const devs = (await lineDevices(x.lineIds)).filter((d) => d.endpoint);
+    if (!devs.length) { box.innerHTML = ''; return; }
+    const name = (d) => (d.webrtc ? 'Appli Wazo (web / desktop)' : 'Téléphone (ou softphone SIP)');
+    devs.forEach((d) => devName.set(d.endpoint, name(d)));
+    box.innerHTML = `<h4>Il répond sur</h4><p class="muted small">Wazo surveille cet appareil pour ne pas lui envoyer un appel de file s'il est déjà en ligne. Les appels font sonner toutes ses lignes.</p><div class="dk-picks">${devs.map((d, i) => `<label class="dk-pick"><input type="radio" name="la-dev" value="${esc(d.endpoint)}"${(devs.some((z) => z.webrtc) ? d.webrtc : i === 0) ? ' checked' : ''}><span class="dk-pick-main"><strong>${esc(name(d))}</strong><span class="muted small">${esc(d.label || d.endpoint)}</span></span></label>`).join('')}</div>`;
+  };
+  $('modal-body').addEventListener('change', (e) => { if (e.target.name === 'la-ext') showDevices(); });
+  showDevices();
 }
 
 // ---------------------------------------------------------------------------
@@ -144,7 +183,7 @@ export async function renderQueues(view, site) {
     const ro = !!S.readonly;
     view.innerHTML = `<div class="phonehead" id="lq-head"><div><h2>Files d'attente</h2><div class="muted small">${esc(site.name)} · agents et membres en direct</div></div><div class="btnrow"><span class="muted small">Actualisé à ${esc(hhmmss(L.at))}</span><button id="lq-refresh">Actualiser</button></div></div>`
       + (L.err ? `<p class="warn small">${esc(L.err)}</p>` : '')
-      + `<p class="muted small"><strong>Connecter…</strong> : connecte l'agent sur un poste (il reçoit alors les appels de ses files). <strong>Déconnecter de la file</strong> / <strong>Reconnecter à la file</strong> : pour cette file seulement, l'agent reste connecté aux autres. Ajouter ou retirer un membre : « Régler la file… ».</p>`
+      + `<p class="muted small"><strong>Connecter…</strong> : connecte l'agent sur un poste (il reçoit alors les appels de ses files). <strong>Déconnecter de la file</strong> / <strong>Reconnecter à la file</strong> : pour cette file seulement. « ⋯ » : pause, déconnexion de toutes ses files. Ajouter ou retirer un membre : « Régler la file… » ou la fiche de l'agent (menu Agents).</p>`
       + (L.queues.length ? L.queues.map((q) => {
         const members = [...(q.members?.agents || [])].map((m) => ({ m, a: byId.get(m.id) || m })).sort((x, y) => agentName(x.a).localeCompare(agentName(y.a), 'fr'));
         const users = q.members?.users || [];
@@ -153,7 +192,10 @@ export async function renderQueues(view, site) {
           const st = L.st.get(m.id), inq = st?.queues?.find((x) => x.id === q.id);
           const [c, lbl] = agentState(st);
           const here = st?.logged ? (inq?.logged === false ? ['off', 'A quitté la file'] : inq?.paused ? ['pause', 'En pause dans la file'] : ['on', 'Dans la file']) : [c, lbl];
-          const btn = ro ? '' : !st?.logged ? `<button class="dk-text" data-on="${m.id}">Connecter…</button>` : inq?.logged === false ? `<button class="dk-text" data-qin="${q.id}:${m.id}">Reconnecter à la file</button>` : `<button class="dk-text" data-qout="${q.id}:${m.id}">Déconnecter de la file</button>`;
+          // Pilotage (retour de Brice, 02/11/2026) : connexion ici ; pause et
+          // déconnexion complète dans le menu « ⋯ » ; les membres se règlent ailleurs.
+          const more = st?.logged ? `<details class="dk-more"><summary title="Autres actions">⋯</summary><div>${st.paused ? `<button class="dk-text" data-unp="${esc(a.number)}">Reprendre (fin de pause)</button>` : `<button class="dk-text" data-pause="${esc(a.number)}">Mettre en pause</button>`}<button class="dk-text" data-off="${m.id}">Déconnecter l'agent (toutes ses files)</button></div></details>` : '';
+          const btn = ro ? '' : !st?.logged ? `<button class="dk-text" data-on="${m.id}">Connecter…</button>` : (inq?.logged === false ? `<button class="dk-text" data-qin="${q.id}:${m.id}">Reconnecter à la file</button>` : `<button class="dk-text" data-qout="${q.id}:${m.id}">Déconnecter de la file</button>`) + more;
           return `<tr><td class="nowrap">${esc(agentName(a))} <span class="muted small">${esc(a.number || '')}</span></td><td><span class="dk-ag dk-ag-${here[0]}">${esc(here[1])}</span>${st?.logged && st.extension ? ` <span class="muted small">sur ${esc(st.extension)}</span>` : ''}</td><td>${phoneBadge(L.pr.get(agentUser(a)))}</td><td class="dk-acts">${btn}</td></tr>`;
         }).join('');
         return `<section class="dk-panel"><div class="dk-panhead"><h3>${esc(q.label || q.name)} <span class="muted small">${esc((q.extensions || []).map((e) => e.exten).join(', '))} · ${logged} / ${members.length} agent${members.length > 1 ? 's' : ''} dans la file</span></h3>${ro ? '' : `<button class="dk-text" data-qcfg="${q.id}" title="Stratégie, délais, débordements, membres, numéro, horaire">Régler la file…</button>`}</div>`
@@ -169,6 +211,13 @@ export async function renderQueues(view, site) {
     // Réglage complet de la file : éditeur de Call Flow Manager.
     if (b.dataset.qcfg) { edit('queue', b.dataset.qcfg, () => { if (view.querySelector('#lq-head')) reload(); }); return; }
     if (b.dataset.on) { loginAgent(byId.get(Number(b.dataset.on)), draw); return; }
+    if (b.dataset.pause) { act('Agent en pause.', () => svc('POST', `agentd/1.0/agents/by-number/${encodeURIComponent(b.dataset.pause)}/pause`, {}), draw); return; }
+    if (b.dataset.unp) { act('Fin de pause.', () => svc('POST', `agentd/1.0/agents/by-number/${encodeURIComponent(b.dataset.unp)}/unpause`, {}), draw); return; }
+    if (b.dataset.off) {
+      const a = byId.get(Number(b.dataset.off));
+      if (canWrite()) confirmModal(`<p>Déconnecter <strong>${esc(agentName(a || {}))}</strong> de toutes ses files ?</p><p class="muted small">Il ne recevra plus aucun appel de file jusqu'à sa reconnexion.</p>`, async () => { await act('Agent déconnecté.', () => svc('POST', `agentd/1.0/agents/by-id/${b.dataset.off}/logoff`), draw); return true; }, 'Déconnecter');
+      return;
+    }
     const [qid, aid] = (b.dataset.qin || b.dataset.qout || '').split(':').map(Number);
     const q = L.queues.find((x) => x.id === qid);
     if (b.dataset.qin) act(`Agent reconnecté à « ${q.label} ».`, () => svc('PUT', `agentd/1.0/agents/${aid}/queues/${qid}/login`), draw);
@@ -190,12 +239,13 @@ export async function renderAgents(view, site) {
     const list = [...L.agents].sort((a, b) => agentName(a).localeCompare(agentName(b), 'fr'));
     view.innerHTML = `<div class="phonehead" id="la-head"><div><h2>Agents</h2><div class="muted small">${esc(site.name)} · en direct</div></div><div class="btnrow"><span class="muted small">Actualisé à ${esc(hhmmss(L.at))}</span><button id="la-refresh">Actualiser</button></div></div>`
       + (L.err ? `<p class="warn small">${esc(L.err)}</p>` : '')
+      + '<p class="muted small">Connecter, mettre en pause ou déconnecter un agent : menu « Files d\'attente ». La fiche de l\'agent (nom, utilisateur lié, files) arrive avec l\'éditeur d\'agent de Call Flow Manager.</p>'
       + (list.length ? `<div class="dk-scroll"><table class="dk-table"><thead><tr><th>Agent</th><th>État</th><th>Téléphone</th><th>Files</th><th></th></tr></thead><tbody>${list.map((a) => {
         const st = L.st.get(a.id), [c, l] = agentState(st);
         const qs = (st?.queues?.length ? st.queues : (a.queues || []).map((x) => ({ id: x.queue?.id ?? x.id, logged: null }))).map((x) => `<span class="${x.logged === false ? 'muted' : ''}" title="${x.logged === false ? 'a quitté cette file' : ''}">${esc(qname.get(x.id) || x.display_name || x.name || `#${x.id}`)}${x.logged === false ? ' (sorti)' : ''}</span>`).join(', ');
-        const btns = ro ? '' : st?.logged
-          ? `${st.paused ? `<button class="dk-text" data-unp="${esc(a.number)}">Reprendre</button>` : `<button class="dk-text" data-pause="${esc(a.number)}">Pause</button>`} <button class="dk-text" data-off="${a.id}">Déconnecter</button>`
-          : `<button class="dk-text" data-on="${a.id}">Connecter…</button>`;
+        // Pilotage (connexion, pause) : dans Files d'attente (retour de Brice, 02/11/2026).
+        // La fiche de l'agent viendra de Call Flow Manager (éditeur partagé).
+        const btns = '';
         return `<tr><td class="nowrap">${esc(agentName(a))} <span class="muted small">${esc(a.number)}</span></td><td><span class="dk-ag dk-ag-${c}">${esc(l)}</span>${st?.logged && st.extension ? ` <span class="muted small">sur ${esc(st.extension)}</span>` : ''}</td><td>${phoneBadge(L.pr.get(agentUser(a)))}</td><td class="small">${qs || '—'}</td><td class="dk-acts">${btns}</td></tr>`;
       }).join('')}</tbody></table></div>` : '<p class="dk-empty">Aucun agent sur ce site.</p>');
     $('la-refresh').onclick = async () => { await loadLive(); draw(); };
