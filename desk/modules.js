@@ -2,10 +2,11 @@
 // type d'objet, recherche, et « Modifier » qui ouvre le réglage complet de
 // Call Flow Manager (desk/cfbridge.js). Données : modèle Call Flow du site
 // (toutes les listes confd du tenant, refiltrées sur le tenant par model.js).
-import { S, $, esc, fullName } from '../admin-tools/common/core.js?v=0.8.0';
-import { cfModel, edit, M, destLabel, showNum } from './cfbridge.js?v=0.8.0';
-import { STRATEGY, periodText } from './cf/model.js?v=0.8.0';
-import { loadPresences, phoneBadge } from './live.js?v=0.8.0';
+import { S, $, esc, fullName } from '../admin-tools/common/core.js?v=0.8.1';
+import { cfModel, edit, M, destLabel, showNum } from './cfbridge.js?v=0.8.1';
+import { STRATEGY, periodText } from './cf/model.js?v=0.8.1';
+import { loadPresences, phoneBadge } from './live.js?v=0.8.1';
+import { loadGroupHints, hintText, DAYS } from './grouphints.js?v=0.8.1';
 
 const exts = (o) => (o.extensions || []).map((e) => showNum(e.exten)).filter(Boolean).join(', ');
 const userExts = (u) => (u.lines || []).flatMap((l) => (l.extensions || []).map((e) => e.exten)).filter(Boolean).join(', ');
@@ -25,6 +26,16 @@ function memberList(members, { phone = true, ordered = false } = {}) {
   return h(`<details class="dk-members"${FEW ? ' open' : ''}><summary>${esc(sum)}</summary><${tag}>${members.map((m) => `<li><span>${esc(fullName(M.userByUuid?.get(m.uuid) || m) || m.uuid)}</span>${phone ? phoneBadge(PRES.get(m.uuid)) : ''}</li>`).join('')}</${tag}></details>`);
 }
 const byPriority = (l) => [...(l || [])].sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0));
+// Inscrits par touche (*50 / *51 / *52) : indice du journal (grouphints.js).
+let HINTS = null; // null = lecture en cours ; { error } ; résultat de loadGroupHints
+function hintCell(o) {
+  if (!HINTS) return h('<span class="muted small">lecture du journal…</span>');
+  if (HINTS.error) return h(`<span class="muted small" title="${esc(HINTS.error)}">journal illisible</span>`);
+  const l = HINTS.hints.get(o.id) || [];
+  if (!l.length) return h(`<span class="muted small">aucun code en ${DAYS} jours</span>`);
+  const cls = { true: 'in', false: 'out', null: 'unk' };
+  return h(`<ul class="dk-hints">${l.map((x) => { const t = hintText(x); return `<li title="${esc(t.tip)}"><span>${esc(x.name)}</span><span class="dk-hint dk-hint-${cls[x.state]}">${esc(t.state)}</span></li>`; }).join('')}</ul>`);
+}
 
 // Description des modules : liste M.lists[type], clé d'édition, colonnes.
 // Une colonne renvoie du texte (échappé) ou { html }.
@@ -34,10 +45,12 @@ const SPECS = {
     search: (o) => `${fullName(o)} ${userExts(o)} ${o.email || ''}`,
     cols: [['Nom', (o) => h(`${esc(fullName(o) || o.username || o.uuid)} ${yes(o.enabled)}`)], ['Numéro', userExts], ['Téléphone', (o) => h(phoneBadge(PRES.get(o.uuid)))], ['Sonnerie', (o) => (o.ring_seconds != null ? `${o.ring_seconds} s` : '')], ['E-mail', (o) => o.email || '']] },
   groups: { type: 'group', title: "Groupes d'appels", none: "Aucun groupe d'appels.", key: (o) => o.uuid, presence: true,
-    help: 'Membres enregistrés, avec l\'état de leur téléphone. Les entrées / sorties faites depuis un poste (*735…) ne sont pas visibles : Wazo ne les expose qu\'au compte principal du serveur.',
+    help: `Membres : les membres enregistrés, avec l'état de leur téléphone. « Par touche » : un INDICE tiré du journal d'appels (codes *50 bascule, *51 entrée, *52 sortie, ${DAYS} derniers jours). Wazo ne montre la liste réelle qu'au compte principal du serveur. Survolez un nom pour voir le détail.`,
     search: (o) => `${o.label} ${exts(o)}`,
+    hints: true,
     cols: [['Nom', (o) => h(`${esc(o.label || o.name)} ${yes(o.enabled)}`)], ['Numéro', exts], ['Sonnerie', (o) => STRATEGY[o.ring_strategy] || o.ring_strategy || ''],
       ['Membres', (o) => memberList(byPriority(o.members?.users), { ordered: o.ring_strategy === 'linear' })],
+      ['Par touche (indice)', hintCell],
       ['Si pas de réponse', (o) => destLabel(o.fallbacks?.noanswer_destination)], ['Horaire', schedName]] },
   voicemails: { type: 'voicemail', title: 'Messageries vocales', none: 'Aucune messagerie vocale.', key: (o) => o.id,
     help: 'Réglage complet : nom, numéro, utilisateurs, messages d\'accueil (écoute, envoi d\'un fichier), e-mail, code, langue, fuseau.',
@@ -100,12 +113,15 @@ export async function renderModuleList(id, view, site) {
       <div class="btnrow"><input id="mod-q" class="dk-search" type="search" placeholder="Rechercher" value="${esc(Q[id] || '')}"><button id="mod-reload" title="Relire depuis Wazo">Actualiser</button></div></div>
     ${sp.help ? `<p class="muted small">${esc(sp.help)}</p>` : ''}<div id="mod-out"></div>`;
   $('mod-q').oninput = (e) => { Q[id] = e.target.value; draw(); };
-  $('mod-reload').onclick = async () => { await Promise.all([cfModel(true), sp.presence ? loadPresences().then((p) => { PRES = p; }) : null]); draw(); };
+  // Indice des groupes : lu après l'affichage (journal de 30 jours), puis on redessine.
+  const readHints = (force) => { HINTS = null; return loadGroupHints(force).then((r) => { HINTS = r || { error: 'site changé' }; }, (e) => { HINTS = { error: e.message }; }).then(() => { if ($('mod-out') && view.isConnected) draw(); }); };
+  $('mod-reload').onclick = async () => { await Promise.all([cfModel(true), sp.presence ? loadPresences().then((p) => { PRES = p; }) : null]); draw(); if (sp.hints) readHints(true); };
   view.onclick = (e) => {
     const b = e.target.closest('[data-ed]'); if (!b) return;
     // Plage horaire : « Modifier » ouvre les heures ; le lien sous le nom, nom / fuseau / activation.
     edit(sp.type, b.dataset.ed, () => { if ($('mod-out')) draw(); }, { hours: !!sp.hours && !b.dataset.gen });
   };
   draw();
+  if (sp.hints) readHints(false);
 }
 export const MODULE_IDS = Object.keys(SPECS);

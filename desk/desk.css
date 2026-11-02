@@ -142,11 +142,20 @@ body.ready #sidebar .sidenav { border-bottom: 0; margin-bottom: 8px; }
 /* Listes de gestion */
 .dk-members { min-width: 180px; }
 .dk-members summary { cursor: pointer; color: var(--muted); font-size: .75rem; white-space: nowrap; }
-.dk-members ul, .dk-members ol { margin: 4px 0 0; padding: 0 0 0 18px; }
-.dk-members ul { list-style: none; padding-left: 0; }
+.dk-members ul, .dk-members ol { margin: 4px 0 0; padding: 0; list-style: none; }
 .dk-members li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 2px 0; white-space: nowrap; }
-.dk-members ol li { display: list-item; }
-.dk-members ol li .dk-ph { margin-left: 10px; }
+/* « Un par un » : même colonne d'état que « tous ensemble », le rang en tête du nom
+   (compteur CSS : une puce de liste casserait l'alignement flex). */
+.dk-members ol { counter-reset: dk-rank; }
+/* Inscrits par touche : indice du journal (grouphints.js). */
+.dk-hints { margin: 0; padding: 0; list-style: none; min-width: 200px; }
+.dk-hints li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 2px 0; white-space: nowrap; cursor: help; }
+.dk-hint { font-size: .75rem; color: var(--muted); }
+.dk-hint::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; border: 1.5px dashed currentColor; }
+.dk-hint-in { color: var(--ok); }
+.dk-hint-out { color: var(--muted); }
+.dk-hint-unk { color: var(--warn); }
+.dk-members ol li > span:first-child::before { counter-increment: dk-rank; content: counter(dk-rank) ". "; display: inline-block; min-width: 1.6em; color: var(--muted); }
 .dk-other { margin-top: 12px; }
 .dk-other summary { cursor: pointer; color: var(--accent); font-size: .8125rem; font-weight: 500; margin-bottom: 8px; }
 

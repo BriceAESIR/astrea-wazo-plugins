@@ -16,8 +16,8 @@
 //    SUPPOSÉ comme pour les autres champs « son » de confd).
 // Tout fichier audio envoyé est converti en WAV 8 kHz 16 bits mono (toWav8k
 // de Call Flow), le format attendu par Wazo ; sauf une musique en mode mp3.
-import { S, $, esc, toast, api, listAll, confirmModal, canWrite } from '../admin-tools/common/core.js?v=0.8.0';
-import { toWav8k, moTxt } from './cf/sound-play.js?v=0.8.0';
+import { S, $, esc, toast, api, listAll, confirmModal, canWrite } from '../admin-tools/common/core.js?v=0.8.1';
+import { toWav8k, moTxt } from './cf/sound-play.js?v=0.8.1';
 
 // Format audio et préparation des fichiers (demande de Brice, 02/11/2026) :
 // format exact, lien vers g711.org et pas-à-pas. Desk convertit de toute façon
@@ -76,18 +76,24 @@ const playBtn = (attr) => `<button type="button" class="dk-play" ${attr} title="
 const setBtn = (btn, s) => { btn.innerHTML = ICON[s]; btn.classList.toggle('on', s !== 'play'); btn.title = s === 'stop' ? 'Arrêter' : 'Écouter'; btn.setAttribute('aria-label', btn.title); };
 let player = null, playingBtn = null;
 function stop() { if (player) { player.pause(); URL.revokeObjectURL(player.src); } player = null; if (playingBtn) setBtn(playingBtn, 'play'); playingBtn = null; }
+// Changement de page (app.js go) : le son s'arrête avec elle (retour de Brice,
+// 02/11/2026 : il continuait, et le bouton revenu affichait « Écouter »).
+export const stopAudio = stop;
 async function play(btn, path, format) {
   if (playingBtn === btn) { stop(); return; }
   stop();
-  setBtn(btn, 'wait');
+  setBtn(btn, 'wait'); playingBtn = btn;
   try {
     let blob = await (await raw('GET', path)).blob();
     if (format === 'ulaw' || format === 'alaw') blob = g711ToWav(new Uint8Array(await blob.arrayBuffer()), format === 'ulaw' ? ulaw : alaw);
+    // Autre piste demandée, ou page quittée, pendant le téléchargement : on ne lit pas.
+    if (playingBtn !== btn || !btn.isConnected) { if (playingBtn === btn) stop(); return; }
     player = new Audio(URL.createObjectURL(blob));
-    playingBtn = btn; setBtn(btn, 'stop');
+    setBtn(btn, 'stop');
     player.onended = stop;
+    player.ontimeupdate = () => { if (!btn.isConnected) stop(); }; // filet : bouton retiré de la page
     await player.play();
-  } catch (e) { stop(); setBtn(btn, 'play'); toast(`Lecture impossible : ${e.message}`, 6000); }
+  } catch (e) { if (playingBtn === btn) stop(); setBtn(btn, 'play'); toast(`Lecture impossible : ${e.message}`, 6000); }
 }
 const playable = (fmt) => ['slin', 'wav', 'ulaw', 'alaw', 'mp3', 'ogg'].includes(fmt);
 
