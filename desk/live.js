@@ -19,8 +19,8 @@
 // Groupes : l'entrée / sortie dynamique (*735…) passe par AddQueueMember dans
 // le dialplan (wazo-agid group_member.py) ; seul amid la lit, et amid exige le
 // tenant principal : invisible et non modifiable pour un admin de site.
-import { S, $, esc, toast, api, listAll, confirmModal, canWrite, fullName } from '../admin-tools/common/core.js?v=0.7.4';
-import { edit } from './cfbridge.js?v=0.7.4';
+import { S, $, esc, toast, api, listAll, confirmModal, canWrite, fullName } from '../admin-tools/common/core.js?v=0.7.5';
+import { edit } from './cfbridge.js?v=0.7.5';
 
 const REFRESH = 20e3;
 export const PHONE = {
@@ -77,23 +77,46 @@ const userExts = () => L.users.flatMap((u) => (u.lines || []).flatMap((l) => (l.
 // le portent donc pour une ligne d'appli. Interface surveillée par agentd :
 // « PJSIP/<nom de l'endpoint> » (SUPPOSÉ ; agentd la refuse si elle n'est pas
 // une ligne de ce numéro, l'erreur est alors affichée).
-async function lineDevices(ids) {
+// Constaté en réel (02/11/2026) : les options seules ne suffisaient pas à
+// reconnaître l'appli (les deux lignes de Bart affichées « Téléphone ») ; on
+// regarde aussi les modèles SIP de l'endpoint (libellé « webrtc »). Le
+// téléphone est nommé d'après le périphérique associé à la ligne (GET
+// /devices/{id} : vendor, model) ; l'état de chaque ligne (enregistrée ou non)
+// vient de chatd (presences : lines[{id, state}]).
+async function lineDevices(ids, user) {
+  const pres = new Map((L.pr.get(user)?.lines || []).map((x) => [x.id, x.state]));
   return Promise.all(ids.map(async (id) => {
     try {
       const l = await api('GET', `/lines/${id}`);
       const sip = l?.endpoint_sip;
-      if (!sip?.uuid) return { id, kind: l?.endpoint_sccp ? 'SCCP' : 'autre', endpoint: null };
-      const ep = await api('GET', `/endpoints/sip/${sip.uuid}`);
+      if (!sip?.uuid) return { id, endpoint: null };
+      const [ep, dev] = await Promise.all([api('GET', `/endpoints/sip/${sip.uuid}`), l.device_id ? api('GET', `/devices/${l.device_id}`).catch(() => null) : null]);
       const opts = Object.fromEntries((ep?.endpoint_section_options || []).map(([k, v]) => [k, v]));
-      return { id, webrtc: String(opts.webrtc || '').toLowerCase() === 'yes', endpoint: `PJSIP/${ep?.name || sip.name}`, label: sip.label || ep?.label || '' };
+      const tpl = (ep?.templates || []).map((t) => t.label || t.name || '').join(' ');
+      const webrtc = String(opts.webrtc || '').toLowerCase() === 'yes' || /webrtc/i.test(tpl);
+      const model = dev ? [dev.vendor, dev.model].filter(Boolean).join(' ') : '';
+      return { id, webrtc, model, state: pres.get(id) || null, endpoint: `PJSIP/${ep?.name || sip.name}` };
     } catch (e) { return { id, error: e.message, endpoint: null }; }
   }));
 }
+const devTitle = (d) => (d.webrtc ? 'Appli Wazo (web / desktop)' : d.model ? `Téléphone ${d.model}` : 'Softphone ou appareil SIP (sans téléphone associé)');
 const hhmmss = (d) => d.toLocaleTimeString('fr-FR');
+
+// Motif de pause : l'appli Wazo envoie « <code>:<texte libre> » (vu en réel le
+// 02/11/2026 : « coffeeBreak:null », affiché « Pause café » dans l'appli).
+// Codes connus traduits ; sinon le code est rendu lisible ; texte libre ajouté s'il existe.
+const PAUSE = { coffeeBreak: 'Pause café', lunch: 'Déjeuner', lunchBreak: 'Déjeuner', meeting: 'Réunion', training: 'Formation', administrative: 'Administratif', break: 'Pause', other: 'Autre' };
+export function pauseLabel(reason) {
+  if (!reason) return '';
+  const [code, ...rest] = String(reason).split(':');
+  const extra = rest.join(':').trim();
+  const base = PAUSE[code] || code.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[_-]+/g, ' ').replace(/^./, (c) => c.toUpperCase());
+  return extra && extra !== 'null' && extra !== 'undefined' ? `${base} : ${extra}` : base;
+}
 
 function agentState(st) {
   if (!st?.logged) return ['off', 'Déconnecté'];
-  if (st.paused) return ['pause', `En pause${st.paused_reason ? ` (${st.paused_reason})` : ''}`];
+  if (st.paused) { const r = pauseLabel(st.paused_reason); return ['pause', `En pause${r ? ` (${r})` : ''}`]; }
   return ['on', 'Connecté'];
 }
 
@@ -107,6 +130,27 @@ function liveLoop(view, marker, draw) {
   const t = setInterval(tick, REFRESH);
   return tick;
 }
+
+// Menus « ⋯ » flottants (retour de Brice, 02/11/2026 : ouverts dans la zone qui
+// défile du tableau, ils la faisaient défiler). Le menu est placé en position
+// fixe sous son bouton ; un seul ouvert à la fois ; fermé au clic ailleurs ou
+// au défilement.
+function floatMenus(root) {
+  for (const d of root.querySelectorAll('details.dk-more')) {
+    d.addEventListener('toggle', () => {
+      if (!d.open) return;
+      for (const o of root.querySelectorAll('details.dk-more[open]')) if (o !== d) o.open = false;
+      const r = d.querySelector('summary').getBoundingClientRect(), m = d.querySelector(':scope > div');
+      m.style.position = 'fixed';
+      m.style.top = `${Math.min(r.bottom + 4, innerHeight - m.offsetHeight - 8)}px`;
+      m.style.left = `${Math.max(8, r.right - m.offsetWidth)}px`;
+      m.style.right = 'auto';
+    });
+  }
+}
+const closeMenus = (e) => { for (const o of document.querySelectorAll('details.dk-more[open]')) if (!o.contains(e?.target)) o.open = false; };
+document.addEventListener('click', closeMenus);
+document.addEventListener('scroll', () => closeMenus(), true);
 
 async function act(label, fn, after) {
   if (!canWrite()) return;
@@ -143,7 +187,10 @@ function loginAgent(a, after) {
   confirmModal(`<div class="dk-ed"><h3>Connecter l'agent ${esc(agentName(a))} <span class="muted small">n° ${esc(a.number)}</span></h3>
     <p class="muted small">Choisissez le poste sur lequel l'agent recevra les appels de ses files.</p>
     ${own.length ? `<h4>Son poste</h4><div class="dk-picks">${own.map((x) => row(x, exts.indexOf(x))).join('')}</div>` : '<p class="muted small">Aucun utilisateur n\'est lié à cet agent dans Wazo : choisissez un poste ci-dessous.</p>'}
-    ${others.length ? `<h4>Autres postes du site</h4>${others.length > 8 ? '<input id="la-q" type="search" placeholder="Rechercher un nom ou un numéro">' : ''}<div class="dk-picks dk-picks-scroll" id="la-others">${others.map((x) => row(x, exts.indexOf(x))).join('')}</div>` : ''}
+    ${others.length ? (own.length
+      // Son poste existe : les autres postes, rarement utiles, restent repliés (retour de Brice : « trompeur »).
+      ? `<details class="dk-other"><summary>Le connecter sur le poste de quelqu'un d'autre (${others.length})</summary>${others.length > 8 ? '<input id="la-q" type="search" placeholder="Rechercher un nom ou un numéro">' : ''}<div class="dk-picks dk-picks-scroll" id="la-others">${others.map((x) => row(x, exts.indexOf(x))).join('')}</div></details>`
+      : `<h4>Postes du site</h4>${others.length > 8 ? '<input id="la-q" type="search" placeholder="Rechercher un nom ou un numéro">' : ''}<div class="dk-picks dk-picks-scroll" id="la-others">${others.map((x) => row(x, exts.indexOf(x))).join('')}</div>`) : ''}
     <div id="la-dev"></div>
     <p id="la-err" class="error small"></p></div>`, async () => {
     const v = $('modal-body').querySelector('input[name="la-ext"]:checked')?.value;
@@ -164,11 +211,14 @@ function loginAgent(a, after) {
     const box = $('la-dev'); if (!box) return;
     if (!x || x.lines < 2) { box.innerHTML = ''; return; }
     box.innerHTML = '<p class="muted small">Lecture des lignes…</p>';
-    const devs = (await lineDevices(x.lineIds)).filter((d) => d.endpoint);
+    const devs = (await lineDevices(x.lineIds, x.user.uuid)).filter((d) => d.endpoint);
     if (!devs.length) { box.innerHTML = ''; return; }
-    const name = (d) => (d.webrtc ? 'Appli Wazo (web / desktop)' : 'Téléphone (ou softphone SIP)');
-    devs.forEach((d) => devName.set(d.endpoint, name(d)));
-    box.innerHTML = `<h4>Il répond sur</h4><p class="muted small">Wazo surveille cet appareil pour ne pas lui envoyer un appel de file s'il est déjà en ligne. Les appels font sonner toutes ses lignes.</p><div class="dk-picks">${devs.map((d, i) => `<label class="dk-pick"><input type="radio" name="la-dev" value="${esc(d.endpoint)}"${(devs.some((z) => z.webrtc) ? d.webrtc : i === 0) ? ' checked' : ''}><span class="dk-pick-main"><strong>${esc(name(d))}</strong><span class="muted small">${esc(d.label || d.endpoint)}</span></span></label>`).join('')}</div>`;
+    devs.forEach((d) => devName.set(d.endpoint, devTitle(d)));
+    // Coché d'office : l'appareil en ligne (l'appli d'abord), sinon l'appli, sinon le premier.
+    const on = (d) => d.state && d.state !== 'unavailable';
+    const pick = devs.find((d) => on(d) && d.webrtc) || devs.find(on) || devs.find((d) => d.webrtc) || devs[0];
+    const stateTxt = (d) => (!d.state ? '' : phoneBadge({ line_state: d.state }));
+    box.innerHTML = `<h4>Il répond sur</h4><p class="muted small">Les appels de file font sonner toutes ses lignes ; Wazo surveille l'appareil choisi pour ne pas lui envoyer un appel s'il est déjà en communication.</p><div class="dk-picks">${devs.map((d) => `<label class="dk-pick"><input type="radio" name="la-dev" value="${esc(d.endpoint)}"${d === pick ? ' checked' : ''}><span class="dk-pick-main"><strong>${esc(devTitle(d))}</strong></span><span>${stateTxt(d)}</span></label>`).join('')}</div>`;
   };
   $('modal-body').addEventListener('change', (e) => { if (e.target.name === 'la-ext') showDevices(); });
   showDevices();
@@ -210,6 +260,7 @@ export async function renderQueues(view, site) {
           + '</section>';
       }).join('') : '<p class="dk-empty">Aucune file d\'attente sur ce site.</p>');
     $('lq-refresh').onclick = async () => { await loadLive(); draw(); };
+    floatMenus(view);
   };
   const reload = async () => { await loadLists(); byId.clear(); for (const a of L.agents) byId.set(a.id, a); draw(); };
   view.onclick = (e) => {

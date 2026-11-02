@@ -14,9 +14,10 @@
 // Pas d'appelants en attente dans les files en direct : seul amid les donne
 // (QueueSummary), et amid est réservé au tenant principal
 // (required_master_tenant), donc inaccessible à un admin de site.
-import { S, esc, listAll } from '../admin-tools/common/core.js?v=0.7.4';
-import { stackedColumns, legend } from './charts.js?v=0.7.4';
-import { isService, statusKey, fmtDur, caller } from './calllogs.js?v=0.7.4';
+import { S, esc, listAll } from '../admin-tools/common/core.js?v=0.7.5';
+import { stackedColumns, legend } from './charts.js?v=0.7.5';
+import { isService, statusKey, fmtDur, caller } from './calllogs.js?v=0.7.5';
+import { pauseLabel } from './live.js?v=0.7.5';
 
 const REFRESH = 30e3;
 const SERIES = [
@@ -139,7 +140,7 @@ function blockNow(show) {
       const name = (a) => B.names?.get(a.id) || `Agent ${a.number}`;
       const rows = [...D.agents].sort((a, b) => (b.logged - a.logged) || (a.paused - b.paused) || name(a).localeCompare(name(b), 'fr'));
       out += `<section class="dk-panel"><h3>Agents</h3><div class="dk-scroll"><table class="dk-table"><thead><tr><th>Agent</th><th>État</th><th>Files</th></tr></thead><tbody>${rows.map((a) => {
-        const st = !a.logged ? ['off', 'Déconnecté'] : a.paused ? ['pause', `En pause${a.paused_reason ? ` (${a.paused_reason})` : ''}`] : ['on', 'Connecté'];
+        const st = !a.logged ? ['off', 'Déconnecté'] : a.paused ? ['pause', `En pause${a.paused_reason ? ` (${pauseLabel(a.paused_reason)})` : ''}`] : ['on', 'Connecté'];
         const qs = (a.queues || []).filter((q) => q.logged !== false).map((q) => q.display_name || q.name).join(', ');
         return `<tr><td class="nowrap">${esc(name(a))} <span class="muted small">${esc(a.number || '')}</span></td><td><span class="dk-ag dk-ag-${st[0]}">${esc(st[1])}</span></td><td class="muted small">${esc(qs)}</td></tr>`;
       }).join('')}</tbody></table></div></section>`;
