@@ -19,8 +19,8 @@
 // Groupes : l'entrée / sortie dynamique (*735…) passe par AddQueueMember dans
 // le dialplan (wazo-agid group_member.py) ; seul amid la lit, et amid exige le
 // tenant principal : invisible et non modifiable pour un admin de site.
-import { S, $, esc, toast, api, listAll, confirmModal, canWrite, fullName } from '../admin-tools/common/core.js?v=0.8.2';
-import { edit } from './cfbridge.js?v=0.8.2';
+import { S, $, esc, toast, api, listAll, confirmModal, canWrite, fullName } from '../admin-tools/common/core.js?v=0.8.3';
+import { edit } from './cfbridge.js?v=0.8.3';
 
 const REFRESH = 20e3;
 export const PHONE = {
@@ -114,13 +114,17 @@ export function pauseLabel(reason) {
 // alors pas). Ligne retrouvée par son nom dans les lignes des utilisateurs
 // (confd : users.lines[].name), état de la ligne par chatd (presences.lines).
 // Rien n'est déconnecté automatiquement : l'admin décide.
-// Appli mobile (constaté par Brice le 02/11/2026 : agent connecté par *30 depuis
-// Wazo Shift, ligne « hors ligne » pour chatd) : une appli mobile n'est pas
-// enregistrée en permanence, elle est réveillée par notification. chatd le dit
-// dans presences.mobile (vrai si l'utilisateur a une session ou un jeton
-// mobile, vérifié dans wazo-chatd presences/schemas.py) : pas un fantôme.
-// Non vérifié : qu'Asterisk fasse bien sonner un agent de file dont la ligne
-// surveillée est « hors ligne » dans ce cas.
+// Appli mobile (Brice, 02-03/11/2026 : agent connecté par *30 depuis Wazo
+// Shift, ligne « hors ligne » pour chatd, presences.mobile vrai). Un appel de
+// la file NE SONNE PAS sur le mobile (testé en réel le 03/11/2026), et le code
+// l'explique (lu le 03/11/2026) :
+//  - Asterisk app_queue can_ring_entry : un membre dont l'appareil surveillé est
+//    UNAVAILABLE n'est pas appelé (sauf ringinuse) ;
+//  - même appelé, wazo-agid agentfeatures compose directement state_interface
+//    (PJSIP/<ligne>) : pas de réveil du mobile, contrairement à l'appel direct
+//    d'un utilisateur (helpers.build_sip_interface → wazo_wait_for_registration).
+// L'agent est donc injoignable pour ses files, comme un fantôme, mais pour une
+// autre raison : on le signale avec son propre texte.
 export function ghostOf(st, users, pres) {
   if (!st?.logged || !st.state_interface) return null;
   const name = String(st.state_interface).replace(/^(PJSIP|SCCP)\//i, '');
@@ -135,11 +139,12 @@ export function ghostOf(st, users, pres) {
 }
 export const GHOST_TXT = 'Connecté, mais son appareil est hors ligne';
 export const GHOST_HELP = "Wazo le considère connecté alors que l'appareil qu'il surveille pour lui est hors ligne (PC éteint ou redémarré sans quitter l'appli, téléphone débranché…). Les appels de file risquent de sonner dans le vide : déconnectez-le s'il est absent.";
-export const MOBILE_TXT = 'Connecté sur l\'appli mobile';
-export const MOBILE_HELP = "L'utilisateur est connecté à l'appli mobile Wazo : sa ligne apparaît hors ligne tant qu'aucun appel ne réveille l'appli (notification), c'est normal. Ce n'est pas un agent fantôme. À vérifier une fois en réel : qu'un appel de la file sonne bien sur le mobile.";
+export const MOBILE_TXT = 'Connecté sur l\'appli mobile : ne reçoit pas les appels de file';
+export const MOBILE_HELP = "L'agent est connecté depuis l'appli mobile Wazo, dont la ligne est au repos (réveillée par notification pour les appels directs seulement). Wazo ne réveille pas le mobile pour un appel de file : il ne sonnera pas (constaté en réel, et confirmé dans le code d'Asterisk et de Wazo). Pour recevoir les appels de la file, l'agent doit se connecter depuis un appareil qui reste en ligne : appli Wazo sur ordinateur ou navigateur, ou téléphone de bureau.";
 // État affiché d'un agent connecté dont la ligne est hors ligne : fantôme ou mobile.
-export const ghostState = (g) => (g ? (g.mobile ? ['mobile', MOBILE_TXT, MOBILE_HELP] : ['ghost', GHOST_TXT, GHOST_HELP]) : null);
-export const isGhost = (g) => !!g && !g.mobile;
+export const ghostState = (g) => (g ? (g.mobile ? ['ghost', MOBILE_TXT, MOBILE_HELP] : ['ghost', GHOST_TXT, GHOST_HELP]) : null);
+// Injoignable pour ses files, quelle qu'en soit la raison.
+export const isGhost = (g) => !!g;
 
 function agentState(st) {
   if (!st?.logged) return ['off', 'Déconnecté'];
@@ -285,14 +290,15 @@ export async function renderQueues(view, site) {
           // état n'est PAS une file où il reçoit des appels (constaté en réel le
           // 02/11/2026 : membre dans confd, connecté, mais « 0/0 file active » dans l'appli).
           const ghost = ghostOf(st, L.users, L.pr);
-          const here = isGhost(ghost) ? ['ghost', GHOST_TXT] : st?.logged ?(!inq ? ['off', 'Hors de la file pour Wazo'] : inq.logged === false ? ['off', 'A quitté la file'] : inq.paused ? ['pause', 'En pause dans la file'] : ['on', 'Dans la file']) : [c, lbl];
+          const gs = ghostState(ghost);
+          const here = gs || (st?.logged ?(!inq ? ['off', 'Hors de la file pour Wazo'] : inq.logged === false ? ['off', 'A quitté la file'] : inq.paused ? ['pause', 'En pause dans la file'] : ['on', 'Dans la file']) : [c, lbl]);
           // Pilotage (retours de Brice, 02/11/2026) : actions affichées directement
           // sur la ligne (le menu « ⋯ » a été retiré) ; les membres se règlent ailleurs.
           const btn = ro ? '' : !st?.logged ? `<button class="dk-text" data-on="${m.id}">Connecter</button>`
             : [st.paused ? `<button class="dk-text" data-unp="${esc(a.number)}">Reprendre</button>` : `<button class="dk-text" data-pause="${esc(a.number)}">Pause</button>`,
               !inq || inq.logged === false ? `<button class="dk-text" data-qin="${q.id}:${m.id}">${inq ? 'Reconnecter à la file' : 'Connecter à la file'}</button>` : `<button class="dk-text" data-qout="${q.id}:${m.id}">Déconnecter de la file</button>`,
               `<button class="dk-text" data-off="${m.id}" title="Déconnecte l'agent de toutes ses files">Déconnecter l'agent</button>`].join(' ');
-          return `<tr><td class="nowrap">${esc(agentName(a))} <span class="muted small">${esc(a.number || '')}</span><br><button class="dk-link-sm" data-info="${m.id}" title="État de l'agent tel que Wazo (agentd) le connaît">Détails</button></td><td><span class="dk-ag dk-ag-${here[0]}"${isGhost(ghost) ? ` title="${esc(GHOST_HELP)}"` : ''}>${esc(here[1])}</span>${st?.logged && st.extension ? ` <span class="muted small">sur ${esc(st.extension)}</span>` : ''}${ghost?.mobile ? ` <span class="muted small" title="${esc(MOBILE_HELP)}">· appli mobile</span>` : ''}</td><td>${phoneBadge(L.pr.get(agentUser(a)))}</td><td class="dk-acts">${btn}</td></tr>`;
+          return `<tr><td class="nowrap">${esc(agentName(a))} <span class="muted small">${esc(a.number || '')}</span><br><button class="dk-link-sm" data-info="${m.id}" title="État de l'agent tel que Wazo (agentd) le connaît">Détails</button></td><td><span class="dk-ag dk-ag-${here[0]}"${gs ? ` title="${esc(gs[2])}"` : ''}>${esc(here[1])}</span>${st?.logged && st.extension ? ` <span class="muted small">sur ${esc(st.extension)}</span>` : ''}</td><td>${phoneBadge(L.pr.get(agentUser(a)))}</td><td class="dk-acts">${btn}</td></tr>`;
         }).join('');
         return `<section class="dk-panel"><div class="dk-panhead"><h3>${esc(q.label || q.name)} <span class="muted small">${esc((q.extensions || []).map((e) => e.exten).join(', '))} · ${logged} / ${members.length} agent${members.length > 1 ? 's' : ''} dans la file</span></h3>${ro ? '' : `<button class="dk-text" data-qcfg="${q.id}" title="Stratégie, délais, débordements, membres, numéro, horaire">Régler la file…</button>`}</div>`
           + (rows ? `<div class="dk-scroll"><table class="dk-table"><thead><tr><th>Agent</th><th>Dans la file</th><th>Téléphone</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : '<p class="muted small">Aucun agent membre.</p>')

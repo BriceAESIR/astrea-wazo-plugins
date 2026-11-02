@@ -17,10 +17,10 @@
 // Ces chiffres sont exacts (comptés par Wazo), contrairement aux causes
 // déduites du journal d'appels. Ils viennent des tables stat_* que Wazo remplit
 // périodiquement : les appels des dernières heures peuvent manquer.
-import { S, $, esc, toast, listAll } from '../admin-tools/common/core.js?v=0.8.2';
-import { stackedColumns, hbars, legend } from './charts.js?v=0.8.2';
-import { periodRange, fmtDur, fmtDate } from './calllogs.js?v=0.8.2';
-import { download, fileSafe, csv, printHtml, REPORT_CSS, hoverTips } from './report.js?v=0.8.2';
+import { S, $, esc, toast, listAll } from '../admin-tools/common/core.js?v=0.8.3';
+import { stackedColumns, hbars, legend } from './charts.js?v=0.8.3';
+import { periodRange, fmtDur, fmtDate } from './calllogs.js?v=0.8.3';
+import { download, fileSafe, csv, printHtml, REPORT_CSS, hoverTips } from './report.js?v=0.8.3';
 
 // Issue des appels en file : 4 séries au plus (palette validée, slots 1-4).
 // Fermé, saturé et sans agent sont regroupés dans le graphique, détaillés

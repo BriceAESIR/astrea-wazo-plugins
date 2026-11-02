@@ -14,10 +14,10 @@
 // Pas d'appelants en attente dans les files en direct : seul amid les donne
 // (QueueSummary), et amid est réservé au tenant principal
 // (required_master_tenant), donc inaccessible à un admin de site.
-import { S, esc, listAll } from '../admin-tools/common/core.js?v=0.8.2';
-import { stackedColumns, legend } from './charts.js?v=0.8.2';
-import { isService, statusKey, fmtDur, caller } from './calllogs.js?v=0.8.2';
-import { pauseLabel, ghostOf, isGhost, GHOST_TXT, GHOST_HELP, loadPresences } from './live.js?v=0.8.2';
+import { S, esc, listAll } from '../admin-tools/common/core.js?v=0.8.3';
+import { stackedColumns, legend } from './charts.js?v=0.8.3';
+import { isService, statusKey, fmtDur, caller } from './calllogs.js?v=0.8.3';
+import { pauseLabel, ghostOf, ghostState, isGhost, GHOST_HELP, MOBILE_HELP, loadPresences } from './live.js?v=0.8.3';
 
 const REFRESH = 30e3;
 const SERIES = [
@@ -129,7 +129,8 @@ function blockNow(show) {
     const logged = D.agents.filter((a) => a.logged), paused = logged.filter((a) => a.paused);
     const ghosts = logged.filter((a) => isGhost(ghostOf(a, B.users, D.pres)));
     kpis += kpi('Agents connectés', `${logged.length} / ${D.agents.length}`) + kpi('Agents en pause', paused.length);
-    if (ghosts.length) kpis += `<div class="dk-kpi dk-kpi-warn" title="${esc(GHOST_HELP)}"><span>Agents fantômes</span><strong>${ghosts.length}</strong><em>connectés, appareil hors ligne</em></div>`;
+    // Fantômes (appareil hors ligne) et agents sur appli mobile : connectés mais injoignables pour leurs files.
+    if (ghosts.length) kpis += `<div class="dk-kpi dk-kpi-warn" title="${esc(`${GHOST_HELP}\n\n${MOBILE_HELP}`)}"><span>Agents injoignables</span><strong>${ghosts.length}</strong><em>connectés, la file ne les fait pas sonner</em></div>`;
   }
   if (show.switchboards && Array.isArray(D.switchboards)) {
     const q = D.switchboards.reduce((a, s) => a + (s.queued?.length || 0), 0), h = D.switchboards.reduce((a, s) => a + (s.held?.length || 0), 0);
@@ -142,10 +143,10 @@ function blockNow(show) {
       const name = (a) => B.names?.get(a.id) || `Agent ${a.number}`;
       const rows = [...D.agents].sort((a, b) => (b.logged - a.logged) || (a.paused - b.paused) || name(a).localeCompare(name(b), 'fr'));
       out += `<section class="dk-panel"><h3>Agents</h3><div class="dk-scroll"><table class="dk-table"><thead><tr><th>Agent</th><th>État</th><th>Files</th></tr></thead><tbody>${rows.map((a) => {
-        const g = ghostOf(a, B.users, D.pres), ghost = isGhost(g);
-        const st = ghost ? ['ghost', GHOST_TXT] : !a.logged ? ['off', 'Déconnecté'] : a.paused ? ['pause', `En pause${a.paused_reason ? ` (${pauseLabel(a.paused_reason)})` : ''}`] : ['on', g?.mobile ? 'Connecté (appli mobile)' : 'Connecté'];
+        const gs = ghostState(ghostOf(a, B.users, D.pres)), ghost = !!gs;
+        const st = gs || (!a.logged ? ['off', 'Déconnecté'] : a.paused ? ['pause', `En pause${a.paused_reason ? ` (${pauseLabel(a.paused_reason)})` : ''}`] : ['on', 'Connecté']);
         const qs = (a.queues || []).filter((q) => q.logged !== false).map((q) => q.display_name || q.name).join(', ');
-        return `<tr><td class="nowrap">${esc(name(a))} <span class="muted small">${esc(a.number || '')}</span></td><td><span class="dk-ag dk-ag-${st[0]}"${ghost ? ` title="${esc(GHOST_HELP)}"` : ''}>${esc(st[1])}</span>${ghost ? ' <button class="dk-text" data-go="queues">Voir dans les files</button>' : ''}</td><td class="muted small">${esc(qs)}</td></tr>`;
+        return `<tr><td class="nowrap">${esc(name(a))} <span class="muted small">${esc(a.number || '')}</span></td><td><span class="dk-ag dk-ag-${st[0]}"${gs ? ` title="${esc(gs[2])}"` : ''}>${esc(st[1])}</span>${ghost ? ' <button class="dk-text" data-go="queues">Voir dans les files</button>' : ''}</td><td class="muted small">${esc(qs)}</td></tr>`;
       }).join('')}</tbody></table></div></section>`;
     }
   }
