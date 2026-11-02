@@ -136,8 +136,13 @@ export function stackVersion() { try { return sdk.getContext()?.app?.extra?.stac
 // ---------------------------------------------------------------------------
 // Dialogue de confirmation (le contenu peut porter des champs : les lire
 // dans onOk, le DOM reste en place après fermeture).
+// #modal-body est remplacé par un clone vide à chaque ouverture : les
+// écouteurs posés par le dialogue précédent (addEventListener des éditeurs)
+// partent avec l'ancien élément. Relire $('modal-body') après l'appel.
 // ---------------------------------------------------------------------------
 export function confirmModal(html, onOk, okText = 'Confirmer') {
+  const old = $('modal-body');
+  old.replaceWith(old.cloneNode(false));
   $('modal-body').innerHTML = html;
   $('modal-ok').textContent = okText;
   $('modal').hidden = false;
