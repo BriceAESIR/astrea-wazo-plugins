@@ -2,13 +2,15 @@
 // dans le Portal (visualization), choix du site, connexion à la stack, menu
 // et accueil. Les appels confd passent par common/core.js (api, listAll,
 // filtre tenant), avec le token de la stack du site.
-import { sdk, S, $, esc, toast, applyTheme, listAll, showCompat } from '../admin-tools/common/core.js?v=0.4.1';
-import { renderCallLogs } from './calllogs.js?v=0.4.1';
-import { renderStats } from './stats.js?v=0.4.1';
-import { renderDashboard, stopDashboard } from './dashboard.js?v=0.4.1';
-import { P, ST, PortalError, portalLogin, portalResume, remembered, checkScopes, loadVisualization, loadLocations, openSite, stackLogin, logout, closeSite } from './portal.js?v=0.4.1';
+import { sdk, S, $, esc, toast, applyTheme, listAll, showCompat } from '../admin-tools/common/core.js?v=0.5.0';
+import { renderCallLogs } from './calllogs.js?v=0.5.0';
+import { renderStats } from './stats.js?v=0.5.0';
+import { renderDashboard, stopDashboard } from './dashboard.js?v=0.5.0';
+import { renderGroups, renderSchedules, renderVoicemails } from './manage.js?v=0.5.0';
+import { renderQueues, renderAgents } from './live.js?v=0.5.0';
+import { P, ST, PortalError, portalLogin, portalResume, remembered, checkScopes, loadVisualization, loadLocations, openSite, stackLogin, logout, closeSite } from './portal.js?v=0.5.0';
 
-const APP_VERSION = '0.4.1';
+const APP_VERSION = '0.5.0';
 const TESTED_STACK = ['26.07', '26.10'];
 // Droit Portal sans lequel aucune stack n'est accessible (vérifié : contrôlé
 // par le Portal avant d'ouvrir un site).
@@ -16,15 +18,15 @@ const CRED_SCOPE = 'deployd.instances.*.credentials.*.read';
 
 // Modules : `page` = identifiant de la case « Menu de Stack » du Portal
 // (vérifié le 29/10/2026). `path` : liste confd lue pour l'accueil et la vue.
+// `render` : écran propre au module (sinon tableau en lecture seule).
 const MODULES = [
-  { id: 'groups', label: "Groupes d'appels", page: 'pbx.ring-groups', path: '/groups', none: "Aucun groupe d'appels sur ce site.",
-    cols: [['Nom', (o) => o.label || o.name], ['Numéro', (o) => exts(o)], ['Membres', (o) => (o.members?.users?.length ?? '') ]] },
-  { id: 'queues', label: "Files d'attente", page: 'pbx.queues', path: '/queues', none: "Aucune file d'attente sur ce site.",
-    cols: [['Nom', (o) => o.label || o.name], ['Numéro', (o) => exts(o)], ['Agents', (o) => (o.members?.agents?.length ?? '')]] },
+  { id: 'groups', label: "Groupes d'appels", page: 'pbx.ring-groups', path: '/groups', none: "Aucun groupe d'appels sur ce site.", render: renderGroups },
+  { id: 'queues', label: "Files d'attente", page: 'pbx.queues', path: '/queues', none: "Aucune file d'attente sur ce site.", render: renderQueues },
+  { id: 'agents', label: 'Agents', page: 'pbx.agents', path: '/agents', none: 'Aucun agent sur ce site.', render: renderAgents },
   { id: 'switchboards', label: 'POPC', page: 'pbx.switchboards', path: '/switchboards', none: 'Aucun POPC sur ce site.',
     cols: [['Nom', (o) => o.name], ['Opérateurs', (o) => (o.members?.users?.length ?? '')]] },
-  { id: 'agents', label: 'Agents', page: 'pbx.agents', path: '/agents', none: 'Aucun agent sur ce site.',
-    cols: [['Numéro', (o) => o.number], ['Nom', (o) => [o.firstname, o.lastname].filter(Boolean).join(' ')], ['Files', (o) => (o.queues?.length ?? '')]] },
+  { id: 'schedules', label: 'Plages horaires', page: 'pbx.schedules', path: '/schedules', none: 'Aucune plage horaire sur ce site.', render: renderSchedules },
+  { id: 'voicemails', label: 'Messageries vocales', page: 'pbx.voicemails', path: '/voicemails', none: 'Aucune messagerie vocale sur ce site.', render: renderVoicemails },
   { id: 'calllogs', label: "Journal d'appels", page: 'pbx.cdr', render: renderCallLogs, sub: 'Filtres, graphiques, exports' },
   { id: 'stats', label: 'Statistiques', page: 'pbx.stats', render: renderStats, sub: "Files d'attente et agents" },
 ];
@@ -97,17 +99,13 @@ $('login-form').addEventListener('submit', async (e) => {
 
 async function afterLogin() {
   D.warns = [];
-  try {
-    const sc = await checkScopes([CRED_SCOPE]);
-    if (!sc[CRED_SCOPE]) throw new PortalError('scopes', 403, "Votre compte Portal n'a pas accès aux stacks des sites. Demandez à votre revendeur de vous donner l'accès au site.");
-  } catch (err) {
-    if (err.step === 'scopes' && err.status === 403) throw err;
+  // Droits, menus et sites lus en même temps (reconnexion plus rapide).
+  const [sc, , locs] = await Promise.all([checkScopes([CRED_SCOPE]).catch((err) => err), loadVisualization(), loadLocations()]);
+  if (sc instanceof Error) {
     // Contrôle indisponible : on continue, l'accès au site dira le reste.
-    D.warns.push('Contrôle des droits du Portal indisponible (' + err.message + ').');
-  }
-  await loadVisualization();
+    D.warns.push('Contrôle des droits du Portal indisponible (' + sc.message + ').');
+  } else if (!sc[CRED_SCOPE]) throw new PortalError('scopes', 403, "Votre compte Portal n'a pas accès aux stacks des sites. Demandez à votre revendeur de vous donner l'accès au site.");
   if (!P.visualization) D.warns.push('Aucune liste de menus dans le Portal pour ce compte : tous les modules sont affichés (compte sans restriction, supposé).');
-  const locs = await loadLocations();
   if (!locs.length) throw new PortalError('locations', 0, 'Aucun site accessible avec ce compte Portal.');
   if (locs.length === 1) return enterSite(locs[0]);
   let last = null;
@@ -183,7 +181,7 @@ function selfCheck() {
 // Menu et vues
 // ---------------------------------------------------------------------------
 function renderNav() {
-  const items = [{ id: 'home', label: 'Accueil' }, ...MODULES.filter(allowed)];
+  const items = [{ id: 'home', label: 'Dashboard' }, ...MODULES.filter(allowed)];
   $('nav').innerHTML = items.map((m) => `<button data-view="${m.id}" class="${D.view === m.id ? 'active' : ''}">${esc(m.label)}</button>`).join('');
 }
 $('nav').addEventListener('click', (e) => { const b = e.target.closest('[data-view]'); if (b) go(b.dataset.view); });
@@ -237,6 +235,7 @@ async function renderModule(m) {
   const head = `<div class="phonehead"><div><h2>${esc(m.label)}</h2><div class="muted small">${esc(ST.site.name)} · lecture seule</div></div></div>`;
   if (m.lot) { $('view').innerHTML = head + `<p class="dk-empty">Ce module arrive avec le lot ${m.lot}.</p>`; return; }
   if (m.render) {
+    $('view').onclick = null; // gestionnaire posé par l'écran précédent (files, agents)
     try { await m.render($('view'), ST.site); } catch (err) { $('view').innerHTML = head + `<p class="error">${esc(err.message)}</p>`; }
     return;
   }

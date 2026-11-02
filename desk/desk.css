@@ -91,6 +91,37 @@ button.dk-text:hover:not(:disabled), .dk-link:hover { background: none; text-dec
 .dk-missed li span:first-child { color: var(--muted); font-variant-numeric: tabular-nums; }
 #db-at { align-self: center; }
 
+/* Gestion : éditeurs (fenêtre modale) */
+.modal-box:has(.dk-ed) { width: min(720px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow: auto; }
+.dk-ed { display: flex; flex-direction: column; gap: 10px; }
+.dk-ed h3 { margin: 0; }
+.dk-ed h4 { margin: 8px 0 0; font-size: .875rem; font-weight: 700; }
+.dk-ed label { display: flex; flex-direction: column; gap: 2px; }
+.dk-ed label.inline { flex-direction: row; align-items: center; gap: 6px; }
+.dk-ed-3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
+.dk-ed-checks { display: flex; flex-wrap: wrap; gap: 4px 20px; }
+.dk-ed-list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: var(--radius); }
+.dk-ed-list li { display: flex; align-items: center; gap: 6px; padding: 4px 8px; border-bottom: 1px solid var(--line); }
+.dk-ed-list li:last-child { border-bottom: 0; }
+.dk-ed-list .spacer, .dk-ed-period .spacer { flex: 1; }
+.dk-ed-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; }
+.dk-ed-row select { flex: 1; min-width: 200px; }
+.dk-ed-exc label { flex-direction: column; }
+.dk-ed-period { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.dk-ed-days { display: flex; flex-wrap: wrap; gap: 2px 10px; }
+.dk-ed-days label.inline { gap: 3px; }
+button.icon { padding: 2px 8px; min-width: 0; }
+.dk-click tbody tr { cursor: pointer; }
+
+/* État des téléphones (chatd) */
+.dk-ph { display: inline-flex; align-items: center; gap: 4px; font-size: .75rem; white-space: nowrap; color: var(--muted); }
+.dk-ph::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); opacity: .5; }
+.dk-ph-free::before { background: var(--ok); opacity: 1; }
+.dk-ph-busy { color: var(--ink); font-weight: 600; }
+.dk-ph-busy::before { background: var(--danger); opacity: 1; }
+.dk-ph-ring::before { background: var(--warn); opacity: 1; }
+.dk-mem { display: inline-flex; align-items: center; gap: 4px; margin: 1px 10px 1px 0; white-space: nowrap; }
+
 /* Diagnostic */
 .dk-diag { white-space: pre-wrap; font: .75rem/1.5 ui-monospace, Consolas, monospace; background: var(--tile); padding: 12px 16px; border-radius: var(--radius); max-height: 60vh; overflow: auto; }
 
@@ -99,3 +130,5 @@ button.dk-text:hover:not(:disabled), .dk-link:hover { background: none; text-dec
   body.ready #sidebar { height: auto; }
   .dk-foot { margin: 8px -16px -16px; }
 }
+.dk-table td.dk-acts { text-align: right; }
+.dk-acts button.dk-text { display: inline-block; padding: 2px 0 2px 8px; }
