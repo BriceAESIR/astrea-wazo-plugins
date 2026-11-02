@@ -2,15 +2,17 @@
 // dans le Portal (visualization), choix du site, connexion à la stack, menu
 // et accueil. Les appels confd passent par common/core.js (api, listAll,
 // filtre tenant), avec le token de la stack du site.
-import { sdk, S, $, esc, toast, applyTheme, listAll, showCompat } from '../admin-tools/common/core.js?v=0.6.1';
-import { renderCallLogs } from './calllogs.js?v=0.6.1';
-import { renderStats } from './stats.js?v=0.6.1';
-import { renderDashboard, stopDashboard } from './dashboard.js?v=0.6.1';
-import { renderModuleList } from './modules.js?v=0.6.1';
-import { renderQueues, renderAgents } from './live.js?v=0.6.1';
-import { P, ST, PortalError, portalLogin, portalResume, remembered, checkScopes, loadVisualization, loadLocations, openSite, stackLogin, logout, closeSite } from './portal.js?v=0.6.1';
+import { sdk, S, $, esc, toast, applyTheme, listAll, showCompat } from '../admin-tools/common/core.js?v=0.7.0';
+import { renderCallLogs } from './calllogs.js?v=0.7.0';
+import { renderStats } from './stats.js?v=0.7.0';
+import { renderDashboard, stopDashboard } from './dashboard.js?v=0.7.0';
+import { renderModuleList } from './modules.js?v=0.7.0';
+import { renderQueues, renderAgents } from './live.js?v=0.7.0';
+import { renderSounds, renderMoh, renderRecordings } from './media.js?v=0.7.0';
+import { renderPhonebooks } from './phonebook.js?v=0.7.0';
+import { P, ST, PortalError, portalLogin, portalResume, remembered, checkScopes, loadVisualization, loadLocations, openSite, stackLogin, logout, closeSite } from './portal.js?v=0.7.0';
 
-const APP_VERSION = '0.6.1';
+const APP_VERSION = '0.7.0';
 const TESTED_STACK = ['26.07', '26.10'];
 // Droit Portal sans lequel aucune stack n'est accessible (vérifié : contrôlé
 // par le Portal avant d'ouvrir un site).
@@ -29,11 +31,12 @@ const ICON = {
   reporting: svg('M16 6l2.29 2.29-4.88 4.88-4-4L2 16.59 3.41 18l6-6 4 4 6.3-6.29L22 12V6z'),
   callManagement: svg('M6.62 10.79c1.44 2.83 3.76 5.14 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z'),
   services: svg('M18 17H6v-2h12v2zm2-5H4V7c0-1.1.9-2 2-2h12c1.1 0 2 .9 2 2v5zM2 20h20v-2H2v2z'),
+  soundsAndGreetings: svg('M20 2H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm-2 5h-3v5.5c0 1.38-1.12 2.5-2.5 2.5S10 13.88 10 12.5s1.12-2.5 2.5-2.5c.57 0 1.08.19 1.5.51V5h4v2zM4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6z'),
   callCenter: svg('M12 1c-4.97 0-9 4.03-9 9v7c0 1.66 1.34 3 3 3h3v-8H5v-2c0-3.87 3.13-7 7-7s7 3.13 7 7v2h-4v8h4v1h-7v2h6c1.66 0 3-1.34 3-3V10c0-4.97-4.03-9-9-9z'),
 };
 let NAV_CLOSED = new Set();
 try { NAV_CLOSED = new Set(JSON.parse(localStorage.getItem('astrea-desk-nav') || '[]')); } catch { /* stockage indisponible */ }
-const SECTIONS = [['userManagement', 'Gestion utilisateurs'], ['reporting', 'Rapports'], ['callManagement', 'Gestion des appels'], ['services', 'Services'], ['callCenter', "Centre d'appel"]];
+const SECTIONS = [['userManagement', 'Gestion utilisateurs'], ['reporting', 'Rapports'], ['callManagement', 'Gestion des appels'], ['services', 'Services'], ['soundsAndGreetings', 'Sons & Musiques'], ['callCenter', "Centre d'appel"]];
 const list = (id) => (view, site) => renderModuleList(id, view, site);
 const MODULES = [
   { id: 'users', section: 'userManagement', label: 'Utilisateurs', page: 'pbx.users', path: '/users', none: 'Aucun utilisateur.', render: list('users') },
@@ -46,6 +49,10 @@ const MODULES = [
   { id: 'ivr', section: 'services', label: 'SVI', page: 'pbx.ivr', path: '/ivr', none: 'Aucun SVI.', render: list('ivr') },
   { id: 'conferences', section: 'services', label: 'Conférences', page: 'pbx.conference', path: '/conferences', none: 'Aucune conférence.', render: list('conferences') },
   { id: 'switchboards', section: 'services', label: 'POPC', page: 'pbx.switchboards', path: '/switchboards', none: 'Aucun POPC.', render: list('switchboards') },
+  { id: 'phonebooks', section: 'services', label: 'Annuaire', page: ['pbx.phonebooks', 'pbx.phonebooks-contacts'], render: renderPhonebooks, sub: 'Contacts partagés, import / export CSV' },
+  { id: 'sounds', section: 'soundsAndGreetings', label: 'Sons', page: 'pbx.sounds', render: renderSounds, sub: 'Écoute, envoi, remplacement' },
+  { id: 'moh', section: 'soundsAndGreetings', label: 'Musiques', page: 'pbx.moh', path: '/moh', none: "Aucune musique d'attente.", render: renderMoh },
+  { id: 'recordings', section: 'soundsAndGreetings', label: 'Enregistrements', page: 'pbx.recordings', render: renderRecordings, sub: 'Tons de début et de fin' },
   { id: 'agents', section: 'callCenter', label: 'Agents', page: 'pbx.agents', path: '/agents', none: 'Aucun agent.', render: renderAgents },
   { id: 'queues', section: 'callCenter', label: "Files d'attente", page: 'pbx.queues', path: '/queues', none: "Aucune file d'attente.", render: renderQueues },
   { id: 'stats', section: 'callCenter', label: 'Statistiques', page: ['pbx.stats', 'pbx.stats-agents', 'pbx.stats-queues'], render: renderStats, sub: "Files d'attente et agents" },

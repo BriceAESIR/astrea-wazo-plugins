@@ -16,8 +16,8 @@
 // Groupes : l'entrée / sortie dynamique (*735…) passe par AddQueueMember dans
 // le dialplan (wazo-agid group_member.py) ; seul amid la lit, et amid exige le
 // tenant principal : invisible et non modifiable pour un admin de site.
-import { S, $, esc, toast, listAll, confirmModal, canWrite, fullName } from '../admin-tools/common/core.js?v=0.6.1';
-import { edit } from './cfbridge.js?v=0.6.1';
+import { S, $, esc, toast, listAll, confirmModal, canWrite, fullName } from '../admin-tools/common/core.js?v=0.7.0';
+import { edit } from './cfbridge.js?v=0.7.0';
 
 const REFRESH = 20e3;
 export const PHONE = {
@@ -94,17 +94,42 @@ async function act(label, fn, after) {
 }
 
 // Connexion d'un agent sur un poste du site (son propre poste proposé en premier).
+// Un agent se connecte sur un NUMÉRO (extension + contexte), pas sur une ligne :
+// un utilisateur qui a plusieurs lignes sur le même numéro (poste + appli)
+// n'apparaît qu'une fois (retour de Brice, 02/11/2026 : doublons illisibles).
 function loginAgent(a, after) {
   if (!a || !canWrite()) return;
   const mine = agentUser(a);
-  const exts = userExts().sort((x, y) => (y.user.uuid === mine) - (x.user.uuid === mine) || fullName(x.user).localeCompare(fullName(y.user), 'fr'));
+  const seen = new Map();
+  for (const x of userExts()) {
+    const k = `${x.exten}@${x.context}`;
+    const o = seen.get(k) || { ...x, lines: 0 };
+    o.lines++; seen.set(k, o);
+  }
+  const ctxs = new Set([...seen.values()].map((x) => x.context));
+  // Poste déjà pris par un autre agent connecté (agentd le refuserait).
+  const taken = new Map([...L.st.values()].filter((s) => s.logged && s.id !== a.id && s.extension).map((s) => [`${s.extension}@${s.context}`, L.agents.find((g) => g.id === s.id)]));
+  const exts = [...seen.values()].sort((x, y) => (y.user.uuid === mine) - (x.user.uuid === mine) || fullName(x.user).localeCompare(fullName(y.user), 'fr'));
   if (!exts.length) { toast('Aucun poste sur ce site pour connecter l\'agent.', 6000); return; }
-  confirmModal(`<h3>Connecter ${esc(agentName(a))}</h3><label>Sur le poste<select id="la-ext">${exts.map((x, i) => `<option value="${i}">${esc(x.exten)} · ${esc(fullName(x.user))}</option>`).join('')}</select></label><p class="muted small">L'agent recevra les appels de ses files sur ce poste.</p><p id="la-err" class="error small"></p>`, async () => {
-    const x = exts[Number($('la-ext').value)]; if (!x) return false;
-    try { await svc('POST', `agentd/1.0/agents/by-id/${a.id}/login`, { extension: x.exten, context: x.context }); toast('Agent connecté.'); }
+  const row = (x, i) => {
+    const k = `${x.exten}@${x.context}`, other = taken.get(k);
+    return `<label class="dk-pick${other ? ' dk-pick-off' : ''}"><input type="radio" name="la-ext" value="${i}"${other ? ' disabled' : ''}${i === 0 && !other ? ' checked' : ''}>
+      <span class="dk-pick-main"><strong>${esc(fullName(x.user) || x.user.username || '?')}</strong><span class="muted small">poste ${esc(x.exten)}${ctxs.size > 1 ? ` · ${esc(x.context)}` : ''}${x.lines > 1 ? ` · ${x.lines} lignes (poste et appli)` : ''}</span></span>
+      <span>${other ? `<span class="muted small">déjà utilisé par ${esc(agentName(other))}</span>` : phoneBadge(L.pr.get(x.user.uuid))}</span></label>`;
+  };
+  const own = exts.filter((x) => x.user.uuid === mine), others = exts.filter((x) => x.user.uuid !== mine);
+  confirmModal(`<div class="dk-ed"><h3>Connecter l'agent ${esc(agentName(a))} <span class="muted small">n° ${esc(a.number)}</span></h3>
+    <p class="muted small">Choisissez le poste sur lequel l'agent recevra les appels de ses files.</p>
+    ${own.length ? `<h4>Son poste</h4><div class="dk-picks">${own.map((x) => row(x, exts.indexOf(x))).join('')}</div>` : '<p class="muted small">Aucun utilisateur n\'est lié à cet agent dans Wazo : choisissez un poste ci-dessous.</p>'}
+    ${others.length ? `<h4>Autres postes du site</h4>${others.length > 8 ? '<input id="la-q" type="search" placeholder="Rechercher un nom ou un numéro">' : ''}<div class="dk-picks dk-picks-scroll" id="la-others">${others.map((x) => row(x, exts.indexOf(x))).join('')}</div>` : ''}
+    <p id="la-err" class="error small"></p></div>`, async () => {
+    const v = $('modal-body').querySelector('input[name="la-ext"]:checked')?.value;
+    const x = exts[Number(v)]; if (!x) { $('la-err').textContent = 'Choisissez un poste.'; return false; }
+    try { await svc('POST', `agentd/1.0/agents/by-id/${a.id}/login`, { extension: x.exten, context: x.context }); toast(`${agentName(a)} connecté sur le poste ${x.exten}.`); }
     catch (err) { $('la-err').textContent = `Échec : ${err.message}`; return false; }
     await loadLive(); after(); return true;
   }, 'Connecter');
+  if ($('la-q')) $('la-q').oninput = (e) => { const q = e.target.value.toLowerCase(); for (const l of $('la-others').children) l.hidden = q && !l.textContent.toLowerCase().includes(q); };
 }
 
 // ---------------------------------------------------------------------------
