@@ -19,8 +19,8 @@
 // Groupes : l'entrée / sortie dynamique (*735…) passe par AddQueueMember dans
 // le dialplan (wazo-agid group_member.py) ; seul amid la lit, et amid exige le
 // tenant principal : invisible et non modifiable pour un admin de site.
-import { S, $, esc, toast, listAll, confirmModal, canWrite, fullName } from '../admin-tools/common/core.js?v=0.7.12';
-import { edit } from './cfbridge.js?v=0.7.12';
+import { S, $, esc, toast, api, listAll, confirmModal, canWrite, fullName } from '../admin-tools/common/core.js?v=0.7.13';
+import { edit } from './cfbridge.js?v=0.7.13';
 
 const REFRESH = 20e3;
 export const PHONE = {
@@ -71,6 +71,27 @@ const agentName = (a) => [a.firstname, a.lastname].filter(Boolean).join(' ') || 
 const agentUser = (a) => (a.users || [])[0]?.uuid;
 const userExts = () => L.users.flatMap((u) => (u.lines || []).flatMap((l) => (l.extensions || []).filter((e) => e.exten).map((e) => ({ exten: e.exten, context: e.context, user: u, line: l.id }))));
 
+// Interface de la ligne en ligne d'un numéro (état par ligne : chatd presences.lines).
+// Une seule ligne, ou aucune en ligne : null (comportement par défaut d'agentd).
+async function onlineInterface(x) {
+  if ((x.lineIds || []).length < 2) return null;
+  const st = new Map((L.pr.get(x.user.uuid)?.lines || []).map((l) => [l.id, l.state]));
+  const on = x.lineIds.filter((id) => st.get(id) && st.get(id) !== 'unavailable');
+  if (!on.length) return null;
+  const lines = await Promise.all(on.map((id) => api('GET', `/lines/${id}`)));
+  let pick = lines[0];
+  if (lines.length > 1) {
+    // Plusieurs lignes en ligne : l'appli (modèle SIP « webrtc ») d'abord.
+    for (const l of lines) {
+      if (!l?.endpoint_sip?.uuid) continue;
+      const ep = await api('GET', `/endpoints/sip/${l.endpoint_sip.uuid}`).catch(() => null);
+      const opts = Object.fromEntries((ep?.endpoint_section_options || []).map(([k, v]) => [k, v]));
+      if (String(opts.webrtc || '').toLowerCase() === 'yes' || (ep?.templates || []).some((t) => /webrtc/i.test(t.label || ''))) { pick = l; break; }
+    }
+  }
+  if (!pick?.name) return null;
+  return pick.endpoint_sccp ? `SCCP/${pick.name}` : pick.endpoint_custom ? pick.name : `PJSIP/${pick.name}`;
+}
 const hhmmss = (d) => d.toLocaleTimeString('fr-FR');
 
 // Motif de pause : l'appli Wazo envoie « <code>:<texte libre> » (vu en réel le
@@ -138,7 +159,19 @@ function loginAgent(a, after) {
       <span>${other ? `<span class="muted small">déjà utilisé par ${esc(agentName(other))}</span>` : phoneBadge(L.pr.get(x.user.uuid))}</span></label>`;
   };
   const own = exts.filter((x) => x.user.uuid === mine), others = exts.filter((x) => x.user.uuid !== mine);
-  const login = (x) => svc('POST', `agentd/1.0/agents/by-id/${a.id}/login`, { extension: x.exten, context: x.context });
+  // Ligne surveillée (vécu en réel le 02/11/2026 : connecté depuis Desk, Bart ne
+  // recevait rien ; depuis l'appli, si). Lu dans xivo-dao (line_dao) : sans
+  // « endpoint », agentd surveille la LIGNE PRINCIPALE de l'utilisateur (son
+  // téléphone, hors ligne ce jour-là) → membre « indisponible » pour la file.
+  // L'appli, elle, se connecte sur sa propre ligne. Desk fait de même sans rien
+  // demander : la ligne en ligne de ce numéro (l'appli d'abord), au format
+  // « PJSIP/<nom de la ligne> » (_format_interface). Refusée : connexion sans.
+  const login = async (x) => {
+    const body = { extension: x.exten, context: x.context };
+    const ep = await onlineInterface(x).catch(() => null);
+    try { await svc('POST', `agentd/1.0/agents/by-id/${a.id}/login`, ep ? { ...body, endpoint: ep } : body); }
+    catch (e) { if (!ep) throw e; console.warn('[astrea] ligne refusée par agentd, connexion sans', ep, e.message); await svc('POST', `agentd/1.0/agents/by-id/${a.id}/login`, body); }
+  };
   // Cas courant : un seul poste, le sien, libre → connexion directe, comme dans l'appli.
   if (own.length === 1 && !taken.has(`${own[0].exten}@${own[0].context}`)) {
     act(`${agentName(a)} connecté sur son poste ${own[0].exten}.`, () => login(own[0]), after);
