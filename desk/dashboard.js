@@ -14,10 +14,10 @@
 // Pas d'appelants en attente dans les files en direct : seul amid les donne
 // (QueueSummary), et amid est réservé au tenant principal
 // (required_master_tenant), donc inaccessible à un admin de site.
-import { S, esc, listAll } from '../admin-tools/common/core.js?v=0.7.18';
-import { stackedColumns, legend } from './charts.js?v=0.7.18';
-import { isService, statusKey, fmtDur, caller } from './calllogs.js?v=0.7.18';
-import { pauseLabel } from './live.js?v=0.7.18';
+import { S, esc, listAll } from '../admin-tools/common/core.js?v=0.8.0';
+import { stackedColumns, legend } from './charts.js?v=0.8.0';
+import { isService, statusKey, fmtDur, caller } from './calllogs.js?v=0.8.0';
+import { pauseLabel, ghostOf, GHOST_TXT, GHOST_HELP, loadPresences } from './live.js?v=0.8.0';
 
 const REFRESH = 30e3;
 const SERIES = [
@@ -26,7 +26,7 @@ const SERIES = [
   { key: 'voicemail', label: 'Messagerie', color: 'var(--dk-s3)' },
   { key: 'blocked', label: 'Bloqués', color: 'var(--dk-s4)' },
 ];
-const B = { site: null, timer: null, names: null, switchboards: null, data: {}, at: null, busy: false };
+const B = { site: null, timer: null, names: null, users: null, switchboards: null, data: {}, at: null, busy: false };
 
 const pad = (n) => String(n).padStart(2, '0');
 const hhmm = (d) => `${pad(d.getHours())}:${pad(d.getMinutes())}`;
@@ -127,7 +127,9 @@ function blockNow(show) {
   if (show.calls) kpis += D.calls instanceof Error ? kpi('Appels en cours', '—', 'indisponible') : D.calls ? kpi('Appels en cours', D.calls.total, D.calls.ringing ? `dont ${D.calls.ringing} en sonnerie` : 'en conversation') : '';
   if (show.agents && D.agents && !(D.agents instanceof Error)) {
     const logged = D.agents.filter((a) => a.logged), paused = logged.filter((a) => a.paused);
+    const ghosts = logged.filter((a) => ghostOf(a, B.users, D.pres));
     kpis += kpi('Agents connectés', `${logged.length} / ${D.agents.length}`) + kpi('Agents en pause', paused.length);
+    if (ghosts.length) kpis += `<div class="dk-kpi dk-kpi-warn" title="${esc(GHOST_HELP)}"><span>Agents fantômes</span><strong>${ghosts.length}</strong><em>connectés, appareil hors ligne</em></div>`;
   }
   if (show.switchboards && Array.isArray(D.switchboards)) {
     const q = D.switchboards.reduce((a, s) => a + (s.queued?.length || 0), 0), h = D.switchboards.reduce((a, s) => a + (s.held?.length || 0), 0);
@@ -140,9 +142,10 @@ function blockNow(show) {
       const name = (a) => B.names?.get(a.id) || `Agent ${a.number}`;
       const rows = [...D.agents].sort((a, b) => (b.logged - a.logged) || (a.paused - b.paused) || name(a).localeCompare(name(b), 'fr'));
       out += `<section class="dk-panel"><h3>Agents</h3><div class="dk-scroll"><table class="dk-table"><thead><tr><th>Agent</th><th>État</th><th>Files</th></tr></thead><tbody>${rows.map((a) => {
-        const st = !a.logged ? ['off', 'Déconnecté'] : a.paused ? ['pause', `En pause${a.paused_reason ? ` (${pauseLabel(a.paused_reason)})` : ''}`] : ['on', 'Connecté'];
+        const ghost = ghostOf(a, B.users, D.pres);
+        const st = ghost ? ['ghost', GHOST_TXT] : !a.logged ? ['off', 'Déconnecté'] : a.paused ? ['pause', `En pause${a.paused_reason ? ` (${pauseLabel(a.paused_reason)})` : ''}`] : ['on', 'Connecté'];
         const qs = (a.queues || []).filter((q) => q.logged !== false).map((q) => q.display_name || q.name).join(', ');
-        return `<tr><td class="nowrap">${esc(name(a))} <span class="muted small">${esc(a.number || '')}</span></td><td><span class="dk-ag dk-ag-${st[0]}">${esc(st[1])}</span></td><td class="muted small">${esc(qs)}</td></tr>`;
+        return `<tr><td class="nowrap">${esc(name(a))} <span class="muted small">${esc(a.number || '')}</span></td><td><span class="dk-ag dk-ag-${st[0]}"${ghost ? ` title="${esc(GHOST_HELP)}"` : ''}>${esc(st[1])}</span>${ghost ? ' <button class="dk-text" data-go="queues">Voir dans les files</button>' : ''}</td><td class="muted small">${esc(qs)}</td></tr>`;
       }).join('')}</tbody></table></div></section>`;
     }
   }
@@ -192,14 +195,17 @@ async function refresh(view, show) {
   const keep = (p) => p.catch((e) => { console.warn('[astrea] tableau de bord', e.message); return e; });
   try {
     if (show.agents && !B.names) B.names = new Map((await listAll('/agents').catch(() => [])).map((a) => [a.id, [a.firstname, a.lastname].filter(Boolean).join(' ')]).filter(([, n]) => n));
-    const [agents, calls, switchboards, todayData, queues] = await Promise.all([
+    // Lignes des utilisateurs (noms) pour repérer les agents « fantômes ».
+    if (show.agents && !B.users) B.users = await listAll('/users').catch(() => []);
+    const [agents, pres, calls, switchboards, todayData, queues] = await Promise.all([
       show.agents ? keep(loadAgents()) : null,
+      show.agents ? loadPresences() : null,
       show.calls ? keep(loadCalls()) : null,
       show.switchboards ? keep(loadSwitchboards()) : null,
       show.cdr ? keep(loadToday()) : null,
       show.queues ? keep(loadQueuesToday()) : null,
     ]);
-    B.data = { agents, calls, switchboards, today: todayData, queues };
+    B.data = { agents, pres, calls, switchboards, today: todayData, queues };
     B.at = new Date();
     paint(view, show);
   } finally { B.busy = false; }
