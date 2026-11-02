@@ -159,6 +159,15 @@ body.ready #sidebar .sidenav { border-bottom: 0; margin-bottom: 8px; }
 .dk-pick:has(input:checked) { background: var(--selected); }
 .dk-pick-off { opacity: .55; cursor: not-allowed; }
 .dk-pick-main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+/* Lecture d'une piste : icône ▶ / ■ */
+button.dk-play { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; min-height: 0; padding: 0; margin: 0 2px; border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent); border-radius: 50%; background: none; color: var(--accent); vertical-align: middle; flex: none; }
+button.dk-play svg { width: 16px; height: 16px; fill: currentColor; }
+button.dk-play:hover:not(:disabled) { background: var(--selected); }
+button.dk-play.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.dk-spin { animation: dk-spin .8s linear infinite; }
+@keyframes dk-spin { to { transform: rotate(360deg); } }
+.dk-track { display: inline-flex; align-items: center; gap: 8px; }
+
 /* Aide au format audio (Sons, Musiques) */
 .dk-audio { margin: 0 0 16px; padding: 10px 14px; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 0; background: color-mix(in srgb, var(--accent) 5%, var(--panel)); font-size: .8125rem; }
 .dk-audio p { margin: 0 0 6px; }

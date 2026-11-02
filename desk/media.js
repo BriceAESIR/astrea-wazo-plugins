@@ -16,8 +16,8 @@
 //    SUPPOSÉ comme pour les autres champs « son » de confd).
 // Tout fichier audio envoyé est converti en WAV 8 kHz 16 bits mono (toWav8k
 // de Call Flow), le format attendu par Wazo ; sauf une musique en mode mp3.
-import { S, $, esc, toast, api, listAll, confirmModal, canWrite } from '../admin-tools/common/core.js?v=0.7.9';
-import { toWav8k, moTxt } from './cf/sound-play.js?v=0.7.9';
+import { S, $, esc, toast, api, listAll, confirmModal, canWrite } from '../admin-tools/common/core.js?v=0.7.10';
+import { toWav8k, moTxt } from './cf/sound-play.js?v=0.7.10';
 
 // Format audio et préparation des fichiers (demande de Brice, 02/11/2026) :
 // format exact, lien vers g711.org et pas-à-pas. Desk convertit de toute façon
@@ -60,20 +60,28 @@ function g711ToWav(buf, dec) {
   for (let i = 0; i < n; i++) out.setInt16(44 + i * 2, dec(buf[i]), true);
   return new Blob([out.buffer], { type: 'audio/wav' });
 }
+// Bouton de lecture : icône ▶ / ■ (demande de Brice, 02/11/2026), une seule piste à la fois.
+const ICON = {
+  play: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"/></svg>',
+  stop: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6h12v12H6z"/></svg>',
+  wait: '<svg viewBox="0 0 24 24" aria-hidden="true" class="dk-spin"><path d="M12 4a8 8 0 1 0 8 8h-2.5A5.5 5.5 0 1 1 12 6.5z"/></svg>',
+};
+const playBtn = (attr) => `<button type="button" class="dk-play" ${attr} title="Écouter" aria-label="Écouter">${ICON.play}</button>`;
+const setBtn = (btn, s) => { btn.innerHTML = ICON[s]; btn.classList.toggle('on', s !== 'play'); btn.title = s === 'stop' ? 'Arrêter' : 'Écouter'; btn.setAttribute('aria-label', btn.title); };
 let player = null, playingBtn = null;
-function stop() { if (player) { player.pause(); URL.revokeObjectURL(player.src); } player = null; if (playingBtn) playingBtn.textContent = 'Écouter'; playingBtn = null; }
+function stop() { if (player) { player.pause(); URL.revokeObjectURL(player.src); } player = null; if (playingBtn) setBtn(playingBtn, 'play'); playingBtn = null; }
 async function play(btn, path, format) {
   if (playingBtn === btn) { stop(); return; }
   stop();
-  btn.textContent = '…';
+  setBtn(btn, 'wait');
   try {
     let blob = await (await raw('GET', path)).blob();
     if (format === 'ulaw' || format === 'alaw') blob = g711ToWav(new Uint8Array(await blob.arrayBuffer()), format === 'ulaw' ? ulaw : alaw);
     player = new Audio(URL.createObjectURL(blob));
-    playingBtn = btn; btn.textContent = 'Arrêter';
+    playingBtn = btn; setBtn(btn, 'stop');
     player.onended = stop;
     await player.play();
-  } catch (e) { stop(); btn.textContent = 'Écouter'; toast(`Lecture impossible : ${e.message}`, 6000); }
+  } catch (e) { stop(); setBtn(btn, 'play'); toast(`Lecture impossible : ${e.message}`, 6000); }
 }
 const playable = (fmt) => ['slin', 'wav', 'ulaw', 'alaw', 'mp3', 'ogg'].includes(fmt);
 
@@ -99,7 +107,7 @@ export async function renderSounds(view, site) {
       + (cats.length ? cats.sort((a, b) => a.name.localeCompare(b.name, 'fr')).map((c) => `<section class="dk-panel"><div class="dk-panhead"><h3>${esc(c.name)} <span class="muted small">${(c.files || []).length} fichier${(c.files || []).length > 1 ? 's' : ''}</span></h3>${ro ? '' : `<button class="dk-text" data-add="${esc(c.name)}">Ajouter un son…</button>`}</div>`
         + ((c.files || []).length ? `<div class="dk-scroll"><table class="dk-table"><thead><tr><th>Nom</th><th>Versions</th><th></th></tr></thead><tbody>${[...c.files].sort((a, b) => a.name.localeCompare(b.name, 'fr')).map((f) => {
           const fm = f.formats || [];
-          return `<tr><td class="nowrap">${esc(f.name)}</td><td>${fm.map((x) => `<span class="dk-chip">${esc(FMT[x.format] || x.format || '?')}${x.language ? ` · ${esc(x.language)}` : ''}${playable(x.format) ? ` <button class="dk-link-sm" data-play="${esc(c.name)}|${esc(f.name)}|${esc(x.format || '')}|${esc(x.language || '')}">Écouter</button>` : ''}</span>`).join(' ')}</td><td class="dk-acts">${ro ? '' : `<button class="dk-text" data-rep="${esc(c.name)}|${esc(f.name)}">Remplacer…</button> <button class="dk-text" data-del="${esc(c.name)}|${esc(f.name)}">Supprimer</button>`}</td></tr>`;
+          return `<tr><td class="nowrap">${esc(f.name)}</td><td>${fm.map((x) => `<span class="dk-chip">${esc(FMT[x.format] || x.format || '?')}${x.language ? ` · ${esc(x.language)}` : ''}${playable(x.format) ? playBtn(`data-play="${esc(c.name)}|${esc(f.name)}|${esc(x.format || '')}|${esc(x.language || '')}"`) : ''}</span>`).join(' ')}</td><td class="dk-acts">${ro ? '' : `<button class="dk-text" data-rep="${esc(c.name)}|${esc(f.name)}">Remplacer…</button> <button class="dk-text" data-del="${esc(c.name)}|${esc(f.name)}">Supprimer</button>`}</td></tr>`;
         }).join('')}</tbody></table></div>` : '<p class="muted small">Aucun fichier.</p>') + '</section>').join('')
         : '<p class="dk-empty">Aucune catégorie de sons sur ce site.</p>');
   };
@@ -163,7 +171,7 @@ export async function renderMoh(view, site) {
     view.innerHTML = head("Musiques d'attente", site, '', ro ? '' : '<div class="btnrow"><button id="mh-new">Nouvelle musique</button></div>')
       + '<p class="muted small">Chaque musique est une liste de fichiers jouée en boucle (attente, transfert, file). En mode « Fichiers MP3 », les fichiers sont envoyés tels quels, sans conversion.</p>' + audioHelp()
       + (list.length ? list.sort((a, b) => (a.label || a.name).localeCompare(b.label || b.name, 'fr')).map((m) => `<section class="dk-panel"><div class="dk-panhead"><h3>${esc(m.label || m.name)} <span class="muted small">${esc(m.name)} · ${esc(MODE[m.mode] || m.mode)} · ${esc(SORT.find(([k]) => k === m.sort)?.[1] || 'ordre par défaut')}</span></h3>${ro ? '' : `<span class="btnrow"><button class="dk-text" data-madd="${m.uuid}"${m.mode === 'custom' ? ' disabled' : ''}>Ajouter un fichier…</button><button class="dk-text" data-medit="${m.uuid}">Modifier</button>${m.name === 'default' ? '' : `<button class="dk-text" data-mdel="${m.uuid}">Supprimer</button>`}</span>`}</div>`
-        + (m.mode === 'custom' ? `<p class="muted small">Application : ${esc(m.application || '—')}</p>` : (m.files || []).length ? `<ul class="dk-files">${m.files.map((f) => `<li><span>${esc(f.name)}</span><span><button class="dk-link-sm" data-mplay="${m.uuid}|${esc(f.name)}">Écouter</button>${ro ? '' : ` <button class="dk-link-sm" data-mfdel="${m.uuid}|${esc(f.name)}">Supprimer</button>`}</span></li>`).join('')}</ul>` : '<p class="muted small">Aucun fichier : rien n\'est joué.</p>')
+        + (m.mode === 'custom' ? `<p class="muted small">Application : ${esc(m.application || '—')}</p>` : (m.files || []).length ? `<ul class="dk-files">${m.files.map((f) => `<li><span class="dk-track">${playBtn(`data-mplay="${m.uuid}|${esc(f.name)}"`)}${esc(f.name)}</span><span>${ro ? '' : ` <button class="dk-link-sm" data-mfdel="${m.uuid}|${esc(f.name)}">Supprimer</button>`}</span></li>`).join('')}</ul>` : '<p class="muted small">Aucun fichier : rien n\'est joué.</p>')
         + '</section>').join('') : '<p class="dk-empty">Aucune musique d\'attente sur ce site.</p>');
   };
   const refresh = async () => { list = await listAll('/moh'); draw(); };
