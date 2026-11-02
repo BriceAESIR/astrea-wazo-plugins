@@ -7,8 +7,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Mulish:wght@300..800&display=swap">
-<link rel="stylesheet" href="../admin-tools/common/style.css?v=0.4.0">
-<link rel="stylesheet" href="./desk.css?v=0.4.0">
+<link rel="stylesheet" href="../admin-tools/common/style.css?v=0.4.1">
+<link rel="stylesheet" href="./desk.css?v=0.4.1">
 <script>if (window.parent !== window) document.documentElement.classList.add('framed');</script>
 </head>
 <body>
@@ -25,10 +25,11 @@
     <form id="login-form" autocomplete="on">
       <label>Adresse e-mail <input id="lg-email" type="email" autocomplete="username" required></label>
       <label>Mot de passe <input id="lg-pass" type="password" autocomplete="current-password" required></label>
+      <label class="inline"><input type="checkbox" id="lg-keep"> Rester connecté sur ce poste</label>
       <div class="btnrow"><button id="lg-go" class="primary" type="submit">Se connecter</button></div>
     </form>
     <p id="lg-err" class="error" role="alert"></p>
-    <p class="muted small">Le mot de passe n'est pas enregistré : il sert uniquement à ouvrir la session, qui reste en mémoire jusqu'à la fermeture du plugin.</p>
+    <p class="muted small">Le mot de passe n'est jamais enregistré. Avec « Rester connecté », le Portal fournit un jeton de reconnexion gardé sur ce poste : toute personne qui utilise cette session Windows ouvre alors Astrea Desk avec votre compte. « Se déconnecter » le supprime et le révoque. À éviter sur un poste partagé.</p>
   </section>
 
   <!-- Choix du site -->
@@ -62,6 +63,6 @@
     <div class="btnrow right"><button id="modal-cancel">Annuler</button><button id="modal-ok" class="primary">Confirmer</button></div></div></div>
   <div id="toast" class="toast" hidden></div>
 </div>
-<script type="module" src="./app.js?v=0.4.0"></script>
+<script type="module" src="./app.js?v=0.4.1"></script>
 </body>
 </html>

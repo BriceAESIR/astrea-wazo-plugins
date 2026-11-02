@@ -2,13 +2,13 @@
 // dans le Portal (visualization), choix du site, connexion à la stack, menu
 // et accueil. Les appels confd passent par common/core.js (api, listAll,
 // filtre tenant), avec le token de la stack du site.
-import { sdk, S, $, esc, toast, applyTheme, listAll, showCompat } from '../admin-tools/common/core.js?v=0.4.0';
-import { renderCallLogs } from './calllogs.js?v=0.4.0';
-import { renderStats } from './stats.js?v=0.4.0';
-import { renderDashboard, stopDashboard } from './dashboard.js?v=0.4.0';
-import { P, ST, PortalError, portalLogin, checkScopes, loadVisualization, loadLocations, openSite, stackLogin, logout, closeSite } from './portal.js?v=0.4.0';
+import { sdk, S, $, esc, toast, applyTheme, listAll, showCompat } from '../admin-tools/common/core.js?v=0.4.1';
+import { renderCallLogs } from './calllogs.js?v=0.4.1';
+import { renderStats } from './stats.js?v=0.4.1';
+import { renderDashboard, stopDashboard } from './dashboard.js?v=0.4.1';
+import { P, ST, PortalError, portalLogin, portalResume, remembered, checkScopes, loadVisualization, loadLocations, openSite, stackLogin, logout, closeSite } from './portal.js?v=0.4.1';
 
-const APP_VERSION = '0.4.0';
+const APP_VERSION = '0.4.1';
 const TESTED_STACK = ['26.07', '26.10'];
 // Droit Portal sans lequel aucune stack n'est accessible (vérifié : contrôlé
 // par le Portal avant d'ouvrir un site).
@@ -51,6 +51,12 @@ async function init() {
   }
   $('conn').textContent = '';
   try { $('lg-email').value = localStorage.getItem('astrea-desk-email') || ''; } catch { /* stockage indisponible */ }
+  // « Rester connecté » : reprise sans mot de passe.
+  if (remembered()) {
+    $('conn').textContent = 'Reconnexion au Portal…';
+    try { await portalResume(); await afterLogin(); return; }
+    catch (err) { console.warn('[astrea] reconnexion', err.step, err.status); $('conn').textContent = ''; return showLogin(err.message); }
+  }
   showLogin();
 }
 
@@ -74,9 +80,11 @@ $('login-form').addEventListener('submit', async (e) => {
   $('lg-go').disabled = true;
   $('lg-go').textContent = 'Connexion…';
   try {
-    await portalLogin(email, pass);
+    const keep = $('lg-keep').checked;
+    const { kept } = await portalLogin(email, pass, { keep });
     $('lg-pass').value = '';
     try { localStorage.setItem('astrea-desk-email', email); } catch { /* */ }
+    if (keep && !kept) toast("Le Portal n'a pas fourni de jeton de reconnexion : le mot de passe sera redemandé au prochain démarrage.", 8000);
     await afterLogin();
   } catch (err) {
     console.warn('[astrea] connexion', err.step, err.status);
@@ -249,7 +257,7 @@ function diagnostic() {
   return {
     plugin: `Astrea Desk ${APP_VERSION}`,
     contexte: (() => { try { const c = sdk.getContext(); return { host: c?.app?.host || null, locale: c?.app?.locale || null }; } catch { return null; } })(),
-    portal: { compte: P.email, tenant: P.tenant, expire: P.expiresAt, droits: P.scopes, sites: P.locations.length },
+    portal: { compte: P.email, tenant: P.tenant, expire: P.expiresAt, droits: P.scopes, sites: P.locations.length, resterConnecte: !!remembered() },
     menus: P.visualization,
     modules: MODULES.map((m) => `${m.id}: ${allowed(m) ? 'affiché' : 'masqué'}`),
     site: ST.site ? { nom: ST.site.name, uuid: ST.site.uuid } : null,

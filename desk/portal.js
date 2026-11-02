@@ -6,7 +6,9 @@
 // statut vérifié / supposé : docs/ASTREA-DESK.md.
 //
 // Aucun secret (mot de passe, token, identifiants de stack) n'est écrit dans
-// la console, dans le stockage du navigateur ou dans le diagnostic.
+// la console ou dans le diagnostic. Seule exception, à la demande de
+// l'utilisateur (« Rester connecté ») : le jeton de reconnexion du Portal,
+// gardé dans le stockage local (voir REMEMBER plus bas).
 
 export const PORTAL = 'https://portal.wazo.io';
 
@@ -24,35 +26,93 @@ export const ST = { site: null, host: null, port: null, base: null, tenant: null
 const json = async (r) => { const t = await r.text(); try { return t ? JSON.parse(t) : null; } catch { return null; } };
 const unwrap = (j) => (j && typeof j === 'object' && j.data && !Array.isArray(j.data) ? j.data : j);
 
-async function portal(method, path, { tenant, body, step } = {}) {
+async function portal(method, path, { tenant, body, step } = {}, retried = false) {
   const headers = { Accept: 'application/json', 'X-Auth-Token': P.token };
   if (tenant) headers['Wazo-Tenant'] = tenant;
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   const r = await fetch(`${PORTAL}/api${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
-  if (r.status === 401) throw new PortalError(step, 401, 'Session Portal expirée : reconnectez-vous.');
+  if (r.status === 401) {
+    // Session Portal expirée (1 h) : reprise avec le jeton de reconnexion s'il existe.
+    if (!retried && remembered()) { await portalResume(); return portal(method, path, { tenant, body, step }, true); }
+    throw new PortalError(step, 401, 'Session Portal expirée : reconnectez-vous.');
+  }
   if (!r.ok) throw new PortalError(step, r.status, `Portal ${method} ${path.replace(/[0-9a-f-]{36}/g, '<uuid>')} → ${r.status}`);
   return r.status === 204 ? null : json(r);
 }
 
-// Connexion au Portal (vérifié : POST /api/auth/0.1/token, en-tête Basic).
-// Corps : 42 octets côté Portal, champs exacts non relevés ; on envoie ceux
-// de wazo-auth (supposé : le Portal accepte backend et expiration).
-export async function portalLogin(email, password) {
-  const r = await fetch(`${PORTAL}/api/auth/0.1/token`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json', Authorization: 'Basic ' + btoa(unescape(encodeURIComponent(`${email}:${password}`))) },
-    body: JSON.stringify({ backend: 'wazo_user', expiration: 3600 }),
-  });
-  if (r.status === 401 || r.status === 403) throw new PortalError('login', r.status, 'Identifiant ou mot de passe incorrect.');
-  if (!r.ok) throw new PortalError('login', r.status, `Connexion au Portal refusée (${r.status}).`);
-  const d = unwrap(await json(r)) || {};
-  if (!d.token) throw new PortalError('login', r.status, 'Réponse du Portal inattendue (pas de token).');
+// « Rester connecté » : jeton de reconnexion (refresh token) de wazo-auth.
+// Lu dans le code de wazo-auth (02/11/2026) : POST /token avec
+// access_type=offline et client_id renvoie refresh_token ; POST /token avec
+// {refresh_token, client_id} et sans mot de passe ouvre une nouvelle session ;
+// DELETE /users/me/tokens/{client_id} le révoque. Un jeton par couple
+// (utilisateur, client_id) : client_id propre à chaque poste, pour qu'une
+// déconnexion sur un poste ne coupe pas les autres. Que le Portal applique ce
+// mécanisme de wazo-auth est SUPPOSÉ : s'il ne renvoie pas de refresh_token,
+// rien n'est gardé et l'appli le dit.
+const REMEMBER = 'astrea-desk-remember';
+const store = {
+  get() { try { const v = JSON.parse(localStorage.getItem(REMEMBER) || 'null'); return v?.refresh_token && v?.client_id ? v : null; } catch { return null; } },
+  set(v) { try { localStorage.setItem(REMEMBER, JSON.stringify(v)); return true; } catch { return false; } },
+  clear() { try { localStorage.removeItem(REMEMBER); } catch { /* */ } },
+};
+export const remembered = () => store.get();
+function clientId() {
+  let id = null;
+  try { id = localStorage.getItem('astrea-desk-device'); } catch { /* */ }
+  if (!id) {
+    id = `astrea-desk-${(crypto.randomUUID?.() || String(Date.now()) + Math.random().toString(16).slice(2)).slice(0, 18)}`;
+    try { localStorage.setItem('astrea-desk-device', id); } catch { /* */ }
+  }
+  return id;
+}
+
+function applySession(d, email) {
+  if (!d.token) throw new PortalError('login', 0, 'Réponse du Portal inattendue (pas de token).');
   P.token = d.token;
   P.expiresAt = d.utc_expires_at || d.expires_at || null;
   P.userUuid = d.metadata?.uuid || d.auth_id || null;
   P.tenant = d.metadata?.tenant_uuid || null;
   P.email = email;
-  return d;
+}
+
+// Connexion au Portal (vérifié : POST /api/auth/0.1/token, en-tête Basic,
+// corps {backend, expiration} accepté). keep : demande d'un jeton de
+// reconnexion. Renvoie { kept } : true si le Portal en a fourni un.
+export async function portalLogin(email, password, { keep = false } = {}) {
+  const body = { backend: 'wazo_user', expiration: 3600 };
+  if (keep) Object.assign(body, { access_type: 'offline', client_id: clientId() });
+  const r = await fetch(`${PORTAL}/api/auth/0.1/token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json', Authorization: 'Basic ' + btoa(unescape(encodeURIComponent(`${email}:${password}`))) },
+    body: JSON.stringify(body),
+  });
+  if (r.status === 401 || r.status === 403) throw new PortalError('login', r.status, 'Identifiant ou mot de passe incorrect.');
+  if (!r.ok) throw new PortalError('login', r.status, `Connexion au Portal refusée (${r.status}).`);
+  const d = unwrap(await json(r)) || {};
+  applySession(d, email);
+  store.clear();
+  const kept = !!(keep && d.refresh_token && store.set({ email, client_id: body.client_id, refresh_token: d.refresh_token }));
+  console.info('[astrea] rester connecté', keep ? (kept ? 'jeton reçu' : 'pas de jeton fourni par le Portal') : 'non demandé');
+  return { kept };
+}
+
+// Reconnexion sans mot de passe. Jeton refusé (révoqué, compte supprimé…) :
+// il est oublié et l'appli redemande le mot de passe.
+export async function portalResume() {
+  const m = store.get();
+  if (!m) throw new PortalError('resume', 0, 'Aucune connexion mémorisée.');
+  const r = await fetch(`${PORTAL}/api/auth/0.1/token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({ backend: 'wazo_user', expiration: 3600, refresh_token: m.refresh_token, client_id: m.client_id }),
+  });
+  if (r.status === 400 || r.status === 401 || r.status === 403 || r.status === 404) {
+    store.clear();
+    throw new PortalError('resume', r.status, 'Connexion mémorisée expirée ou révoquée : saisissez à nouveau votre mot de passe.');
+  }
+  if (!r.ok) throw new PortalError('resume', r.status, `Reconnexion au Portal impossible (${r.status}).`);
+  applySession(unwrap(await json(r)) || {}, m.email);
+  return P;
 }
 
 // Droits du Portal (vérifié : scopes/check, corps {scopes: [...]}). Réponse
@@ -128,8 +188,17 @@ export async function stackLogin() {
   return ST;
 }
 
-// Déconnexion : révoque les tokens (best effort) et oublie tout.
+// Déconnexion : révoque le jeton de reconnexion puis les tokens (best effort)
+// et oublie tout. La révocation du jeton de reconnexion demande l'ACL
+// auth.users.me.tokens.{client_id}.delete (non vérifiée sur le Portal) : en
+// cas de refus, il est quand même effacé du poste.
 export async function logout() {
+  const m = store.get();
+  store.clear();
+  if (m && P.token) {
+    await fetch(`${PORTAL}/api/auth/0.1/users/me/tokens/${encodeURIComponent(m.client_id)}`, { method: 'DELETE', headers: { 'X-Auth-Token': P.token } })
+      .then((r) => console.info('[astrea] révocation du jeton de reconnexion', r.status)).catch(() => console.info('[astrea] révocation du jeton de reconnexion impossible'));
+  }
   const del = (base, t) => t && fetch(`${base}/api/auth/0.1/token/${t}`, { method: 'DELETE', headers: { 'X-Auth-Token': t } }).catch(() => {});
   await Promise.all([del(ST.base, ST.token), del(PORTAL, P.token)]);
   closeSite();
