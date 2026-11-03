@@ -13,7 +13,7 @@
 // Les objets Wazo correspondants (destinations confd user_id, group_id…) ne
 // sont résolus qu'à l'écriture : convertir une file en groupe ne demande donc
 // aucune reprise des destinations qui la visent.
-import { nameOf, schedulesOf, STRATEGY } from './3cx.js?v=0.40.31';
+import { nameOf, schedulesOf, STRATEGY } from './3cx.js?v=0.40.32';
 
 export const DRAFT_FORMAT = 'astrea-3cx-draft';
 const KEY = 'astrea-migration-3cx-draft-v1';
@@ -33,6 +33,30 @@ export const AUTH_METHODS = { default: 'Défaut de l\'organisation', native: 'Na
 // confd user/schema.py (lu) : identifiant 2-254 caractères de ce jeu.
 const USERNAME_RE = /^[a-zA-Z0-9\-._~!$&'()*+,;=%@]{2,254}$/;
 export const HUNT_TARGETS = { group: 'Groupe d\'appel', queue: 'File d\'attente', skip: 'Non repris' };
+// Lignes créées pour un utilisateur (même numéro). L'import CSV de Wazo n'en
+// crée qu'une (line_protocol sip OU webrtc, csvparse.py) ; l'écriture guidée
+// crée les deux. WebRTC = endpoint SIP avec les modèles global + webrtc du
+// tenant (user_import/creators.py, WebRTCCreator) ; refusée en licence Voix
+// par le portail (vérifié par User Manager).
+export const LINE_MODES = { auto: 'Auto : SIP, + WebRTC si applications', sip: 'SIP seule', webrtc: 'WebRTC seule', both: 'SIP + WebRTC' };
+export function linesOf(u) {
+  const m = u.lines || 'auto';
+  if (m === 'sip') return ['sip'];
+  if (m === 'webrtc') return ['webrtc'];
+  if (m === 'both') return ['sip', 'webrtc'];
+  return u.appAccess && u.sub !== 0 ? ['sip', 'webrtc'] : ['sip'];
+}
+export const linesText = (u) => linesOf(u).map((t) => (t === 'sip' ? 'SIP' : 'WebRTC')).join(' + ');
+// Réglages d'une messagerie (confd voicemail/schema.py, lu le 03/11/2026) :
+// email ≤ 80 caractères, password chiffres seuls, max_messages ≥ 0,
+// language xx_XX ; delete_messages exige email ET attach_audio (validates_schema).
+// Valeurs envoyées explicitement à l'écriture (pas de défaut caché du serveur).
+// email null = celui de l'utilisateur ; notify false = aucune notification.
+export const VM_LANGS = { fr_FR: 'Français', en_US: 'Anglais (US)', fr_CA: 'Français (Canada)', de_DE: 'Allemand', es_ES: 'Espagnol', it_IT: 'Italien' };
+export const defaultVmo = () => ({ notify: true, email: null, attach: true, del: false, ask: true, max: null, lang: 'fr_FR' });
+export const vmEmail = (u) => (u.vmo?.notify === false ? '' : (u.vmo?.email ?? u.email ?? ''));
+// NOM en majuscules (demande de Brice, 03/11/2026) : « Tessier » → « TESSIER ».
+export const upperName = (s) => String(s || '').toLocaleUpperCase('fr-FR');
 
 // ---------------------------------------------------------------------------
 // Construction
@@ -68,7 +92,7 @@ export function buildDraft(m, file) {
     return {
       n: e.number, mode, first: n.first || (n.last ? '' : (e.devices.length ? `Poste ${e.number}` : '')), last: n.last, guessed: n.guessed,
       email: e.email, mobile: e.mobile, vm: e.vm.enabled, vmPin: false, ring: e.fwd.timeout || 30, fb, blf: true,
-      sub: null, username: '', authMethod: 'default', appAccess: true, checked: false,
+      sub: null, username: '', authMethod: 'default', appAccess: true, checked: false, lines: 'auto', vmo: defaultVmo(),
       devices: e.devices, src: { first: e.first, last: e.last, enabled: e.enabled },
     };
   });
@@ -90,7 +114,7 @@ export function buildDraft(m, file) {
   const ruled = new Set(dids.map((d) => d.did));
   for (const t of m.trunks) for (const did of t.dids) if (!ruled.has(did)) dids.push({ did, import: false, name: '(sans règle 3CX)', dest: { t: 'none' }, schedule: '', closed: { t: 'none' }, holiday: { t: 'none' }, viaCsv: false });
   const holidays = m.holidays.filter((h) => !h.past).map((h) => ({ ...h, include: true }));
-  return { format: DRAFT_FORMAT, version: 1, file, sourceDate: m.date, company: m.company, createdAt: new Date().toISOString(), users, devices: buildDevices(m, users), hunts, ivrs, dids, schedules, holidays, blfOffset: 1 };
+  return { format: DRAFT_FORMAT, version: 1, file, sourceDate: m.date, company: m.company, createdAt: new Date().toISOString(), users, devices: buildDevices(m, users), hunts, ivrs, dids, schedules, holidays, blfOffset: 1, upperLast: false };
 }
 // Appareils (demande de Brice, 19/10/2026) : MAC, modèle, utilisateur associé et
 // description « Prénom Nom ». confd (device/schema.py, lu) : mac au format
@@ -126,7 +150,10 @@ export function upgradeDraft(d) {
     if (!('authMethod' in u)) u.authMethod = 'default';
     if (!('appAccess' in u)) u.appAccess = true;
     if (!('checked' in u)) u.checked = false;
+    if (!('lines' in u)) u.lines = 'auto';
+    if (!u.vmo) u.vmo = defaultVmo();
   }
+  if (!('upperLast' in d)) d.upperLast = false;
   return d;
 }
 // Identifiant effectif : celui saisi, sinon l'e-mail (comme l'import Wazo :
@@ -200,7 +227,10 @@ export function draftIssues(d) {
     if (!(u.ring >= 5 && u.ring <= 300)) add('warn', w, `durée de sonnerie ${u.ring} s inhabituelle.`);
     if (u.sub == null) add('error', w, 'licence non choisie (Voix, Communication unifiée ou Relation client).');
     if ((u.sub === 1 || u.sub === 3) && !u.email) add('error', w, `e-mail obligatoire pour la licence ${LICENCES[u.sub]} (règle du portail).`);
-    if (u.sub === 0 && u.appAccess) add('info', w, 'licence Voix : les applications Wazo refuseront la connexion, même avec l\'accès autorisé (vérifié par User Manager).');
+    if (u.sub === 0 && u.appAccess) add('info', w, 'licence Voix : les applications Wazo refuseront la connexion, même avec l\'accès autorisé (vérifié par User Manager) ; pas de ligne WebRTC en mode Auto.');
+    if (u.sub === 0 && linesOf(u).includes('webrtc')) add('error', w, 'ligne WebRTC demandée en licence Voix : refusée par le portail (choisir SIP seule ou une autre licence).');
+    if (linesOf(u).includes('webrtc') && !u.appAccess) add('warn', w, 'ligne WebRTC sans accès aux applications : elle ne servira pas.');
+    if (!linesOf(u).includes('sip') && (d.devices || []).some((x) => x.import && x.owner === u.n)) add('error', w, 'appareil associé mais pas de ligne SIP (une ligne WebRTC ne se met pas sur un téléphone).');
     if (u.username && !USERNAME_RE.test(u.username)) add('error', w, `identifiant « ${u.username} » refusé par Wazo (2 à 254 caractères : lettres, chiffres, - . _ ~ ! $ & ' ( ) * + , ; = % @).`);
     if (!effectiveUsername(u)) add('warn', w, 'ni identifiant ni e-mail : Wazo prendra l\'identifiant interne (uuid) comme identifiant de connexion.');
     for (const [k, l] of [['noanswer', 'pas de réponse'], ['busy', 'occupé'], ['fail', 'indisponible']]) { const p = destProblem(d, u.fb[k]); if (p) add('warn', `${w} renvoi ${l}`, u.fb[k]?.t === 'none' ? `${p}.` : `${destLabel(d, u.fb[k])} : ${p}.`); }
@@ -215,6 +245,15 @@ export function draftIssues(d) {
   const unchecked = imported(d).filter((u) => !u.checked).map((u) => u.n);
   if (unchecked.length) add('warn', 'Vérification', `${unchecked.length} utilisateur(s) pas encore vérifiés : ${unchecked.join(', ')} (onglet Utilisateurs, « Vérifier un par un »).`);
   for (const u of d.users.filter((x) => x.mode === 'voicemail')) if (!u.vm) add('warn', `Messagerie ${u.n}`, 'reprise en « messagerie seule » mais la messagerie est décochée.');
+  // Réglages des messageries (règles de confd voicemail/schema.py).
+  for (const u of d.users.filter((x) => x.mode !== 'skip' && x.vm)) {
+    const w = `Messagerie ${u.n}`; const o = u.vmo || defaultVmo(); const mail = vmEmail(u);
+    if (o.notify && !mail) add('warn', w, 'notification par e-mail sans adresse (ni e-mail de l\'utilisateur) : aucune notification.');
+    if (mail && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(mail)) add('error', w, `adresse de notification invalide (${mail}).`);
+    if (mail.length > 80) add('error', w, 'adresse de notification de plus de 80 caractères (refusée par Wazo).');
+    if (o.del && !(mail && o.attach)) add('error', w, '« supprimer après envoi » exige une adresse de notification et « joindre l\'audio » (règle de Wazo) : les messages seraient perdus.');
+    if (o.max != null && !(o.max >= 0)) add('error', w, 'nombre maximal de messages invalide.');
+  }
   const macs = new Map();
   for (const dv of (d.devices || []).filter((x) => x.import)) {
     const w = `Appareil ${dv.mac}`;
@@ -314,16 +353,20 @@ export function usersCsv(d, { ctx, incallCtx, pins = {} }) {
   // subscription_type : IntRule de USER_RULES ; username : WAZO_USER_RULES (vide
   // → Wazo prend l'e-mail). Ni méthode de connexion ni accès aux applications
   // dans le CSV (WazoUserSchema) : à poser après l'import.
-  const cols = ['firstname', 'lastname', 'email', 'mobile_phone_number', 'enabled', 'subscription_type', 'ring_seconds', 'context', 'line_protocol', 'exten', 'voicemail_name', 'voicemail_number', 'voicemail_context', 'voicemail_password', 'voicemail_email', 'voicemail_attach_audio', 'incall_exten', 'incall_context', 'username'];
+  // Une seule ligne par utilisateur dans le CSV (SIP, ou WebRTC si c'est la
+  // seule demandée) : la seconde ligne d'un « SIP + WebRTC » n'est créée que
+  // par l'écriture guidée.
+  const cols = ['firstname', 'lastname', 'email', 'mobile_phone_number', 'enabled', 'subscription_type', 'ring_seconds', 'context', 'line_protocol', 'exten', 'voicemail_name', 'voicemail_number', 'voicemail_context', 'voicemail_password', 'voicemail_email', 'voicemail_attach_audio', 'voicemail_delete_messages', 'voicemail_ask_password', 'incall_exten', 'incall_context', 'username'];
   const did = new Map();
   for (const r of d.dids) if (r.import && r.viaCsv && r.dest.t === 'user' && !did.has(r.dest.ref)) did.set(r.dest.ref, r.did);
   const q = (s) => (/[",\n]/.test(String(s ?? '')) ? `"${String(s).replace(/"/g, '""')}"` : String(s ?? ''));
   const rows = imported(d).map((u) => {
     const pin = u.vm && u.vmPin && /^\d+$/.test(pins[u.n] || '') ? pins[u.n] : '';
+    const o = u.vmo || defaultVmo(); const mail = u.vm ? vmEmail(u) : '';
     const v = {
-      firstname: u.first || (u.last ? '' : `Poste ${u.n}`), lastname: u.last, email: u.email, mobile_phone_number: u.mobile, enabled: '1', subscription_type: u.sub ?? '', ring_seconds: u.ring, context: ctx, line_protocol: 'sip', exten: u.n,
+      firstname: u.first || (u.last ? '' : `Poste ${u.n}`), lastname: u.last, email: u.email, mobile_phone_number: u.mobile, enabled: '1', subscription_type: u.sub ?? '', ring_seconds: u.ring, context: ctx, line_protocol: linesOf(u)[0], exten: u.n,
       voicemail_name: u.vm ? userName(u) : '', voicemail_number: u.vm ? u.n : '', voicemail_context: u.vm ? ctx : '', voicemail_password: pin,
-      voicemail_email: u.vm ? u.email : '', voicemail_attach_audio: u.vm && u.email ? '1' : '', incall_exten: did.get(u.n) || '', incall_context: did.has(u.n) ? incallCtx : '', username: u.username || '',
+      voicemail_email: mail, voicemail_attach_audio: mail ? (o.attach ? '1' : '0') : '', voicemail_delete_messages: u.vm ? (o.del && mail && o.attach ? '1' : '0') : '', voicemail_ask_password: u.vm ? (o.ask ? '1' : '0') : '', incall_exten: did.get(u.n) || '', incall_context: did.has(u.n) ? incallCtx : '', username: u.username || '',
     };
     return cols.map((c) => q(v[c])).join(',');
   });

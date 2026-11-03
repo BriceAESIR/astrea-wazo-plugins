@@ -10,10 +10,10 @@
 // appels sortants ; lues dans le code, testées sur faux tenant). Les phases
 // Personnes, Routage et Finitions sont planifiées (lecture seule) ; leur
 // écriture arrive aux lots 5b-5d.
-import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.31';
-import { I, sameTenant } from './inventory.js?v=0.40.31';
-import { buildExport, exportFileName } from './export.js?v=0.40.31';
-import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES } from './3cx-draft.js?v=0.40.31';
+import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.32';
+import { I, sameTenant } from './inventory.js?v=0.40.32';
+import { buildExport, exportFileName } from './export.js?v=0.40.32';
+import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText } from './3cx-draft.js?v=0.40.32';
 
 const W = { d: null, m: null, t: null, busy: false, msg: null, at: null };
 export function setWizard(d, m) { W.d = d; W.m = m; W.t = null; W.msg = null; ensureState(); }
@@ -66,6 +66,14 @@ async function readTenant() {
   };
   t.localization = await soft(() => tapi('GET', '/localization'), (e) => ({ error: e.message }));
   t.retention = await soft(() => logd('GET', '/retention'), (e) => ({ error: e.message }));
+  // Modèles SIP du tenant pour les lignes : l'import de Wazo prend ceux du
+  // tenant (creators.py : tenant.global_sip_template, webrtc_sip_template ;
+  // GET /tenants/{uuid} les donne, tenant/schema.py, lu le 03/11/2026). À
+  // défaut de droit sur /tenants, les modèles libellés « global » / « webrtc »
+  // (même repli que User Manager).
+  const ten = await soft(() => tapi('GET', `/tenants/${S.tenant}`), () => null);
+  const tpls = ten?.global_sip_template_uuid ? [] : unwrap(await list('/endpoints/sip/templates'));
+  t.sipTpl = { global: ten?.global_sip_template_uuid || tpls.find((x) => x.label === 'global')?.uuid || null, webrtc: ten?.webrtc_sip_template_uuid || tpls.find((x) => x.label === 'webrtc')?.uuid || null, from: ten ? 'tenant' : 'libellés' };
   return t;
 }
 // Contextes cibles : ceux choisis dans Exports (gardés dans le brouillon), sinon le premier du type.
@@ -134,6 +142,9 @@ function prerequisites(t) {
   const fixes = rangeFixes(c.internal);
   if (fixes.length) add('fix', `Plages du contexte ${c.internal.label || c.internal.name}`, `${fixes.map((f) => `${f.missing.length} ${f.label} hors des plages`).join(', ')} : la phase Fondations ajoute ${fixes.map((f) => `${f.label} ${f.add.map(rangeTxt).join(', ')}`).join(' ; ')}. Personnes et Routage attendent cette correction.`, ['people', 'routing']);
   for (const x of grouped(draftIssues(W.d).filter((y) => y.sev === 'error'), kindOf)) add('error', x.area, x.text, [/^\d+ (utilisateurs|appareils)|^(Utilisateur|Appareil)/.test(x.area) ? 'people' : 'routing']);
+  if (!t.sipTpl?.global) add('error', 'Modèle SIP global', 'modèle SIP « global » du tenant introuvable : aucune ligne ne peut être créée (l\'import de Wazo échoue de même).', ['people']);
+  const webrtc = imported(W.d).filter((u) => linesOf(u).includes('webrtc'));
+  if (webrtc.length && !t.sipTpl?.webrtc) add('error', 'Modèle SIP WebRTC', `modèle SIP « webrtc » du tenant introuvable : ${webrtc.length} ligne(s) WebRTC impossibles.`, ['people']);
   const unchecked = imported(W.d).filter((u) => !u.checked).length;
   if (unchecked) add('warn', 'Vérification des utilisateurs', `${unchecked} utilisateur(s) pas encore vérifiés (onglet Utilisateurs, « Vérifier un par un »).`, ['people']);
   if (!t.trunks.length) add('manual', 'Trunk opérateur', 'aucun trunk dans le tenant. À créer dans le Portal avec le modèle de l\'opérateur (valeurs ci-dessous), puis « Relire le tenant ». Sans trunk : pas d\'appels sortants ni d\'appels entrants.', ['found']);
@@ -186,7 +197,7 @@ function buildPlan(t) {
   const extIn = new Set(t.extensions.filter((e) => e.context === c.internal?.name).map((e) => e.exten));
   for (const u of imported(d)) {
     const lic = u.sub == null ? 'licence à choisir' : LICENCES[u.sub];
-    add('people', extIn.has(u.n) ? 'conflict' : u.sub == null ? 'conflict' : 'create', `Utilisateur ${u.n} ${userName(u)}`, extIn.has(u.n) ? 'numéro déjà pris dans le contexte' : `${lic}${u.vm ? ', messagerie' : ''}${u.checked ? '' : ' · non vérifié'}`);
+    add('people', extIn.has(u.n) ? 'conflict' : u.sub == null ? 'conflict' : 'create', `Utilisateur ${u.n} ${userName(u)}`, extIn.has(u.n) ? 'numéro déjà pris dans le contexte' : `${lic}, ligne${linesOf(u).length > 1 ? 's' : ''} ${linesText(u)}${u.vm ? ', messagerie' : ''}${u.checked ? '' : ' · non vérifié'}`);
   }
   const macs = new Set(t.devices.map((x) => String(x.mac || '').toLowerCase()));
   for (const dv of (d.devices || []).filter((x) => x.import)) add('people', macs.has(dv.mac.toLowerCase()) ? 'exists' : 'create', `Appareil ${dv.model} ${dv.mac}`, `${macs.has(dv.mac.toLowerCase()) ? 'déjà présent : sera associé' : 'à créer'}${dv.owner ? ` → ligne de ${dv.owner}` : ' (stock)'}`);

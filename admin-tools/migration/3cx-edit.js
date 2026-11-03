@@ -2,19 +2,20 @@
 // Modèle et règles : 3cx-draft.js. Chaque modification est enregistrée dans le
 // navigateur (brouillon par fichier et date de sauvegarde) ; rien n'est écrit
 // dans Wazo depuis ces tableaux.
-import { $, esc, toast, helpButton, helpBox, confirmModal, downloadJson } from '../common/core.js?v=0.40.31';
-import { I } from './inventory.js?v=0.40.31';
+import { $, esc, toast, helpButton, helpBox, confirmModal, downloadJson } from '../common/core.js?v=0.40.32';
+import { I } from './inventory.js?v=0.40.32';
 import {
   GROUP_STRATEGIES, MODES, HUNT_TARGETS, LICENCES, AUTH_METHODS, effectiveUsername, upgradeDraft, saveDraft, clearDraft, buildDraft, acceptDraft, userBy, userName, imported,
   destLabel, destProblem, draftIssues, usersCsv, blfRows, devicesCsv, deviceDesc, macWazo, macValid, tenantIssues,
-} from './3cx-draft.js?v=0.40.31';
-import { setWizard, wizardTab, wizardChange, wizardClick, wizardDone, wizardTotal } from './3cx-wizard.js?v=0.40.31';
+  LINE_MODES, linesOf, VM_LANGS, vmEmail, upperName,
+} from './3cx-draft.js?v=0.40.32';
+import { setWizard, wizardTab, wizardChange, wizardClick, wizardDone, wizardTotal } from './3cx-wizard.js?v=0.40.32';
 
-const E = { d: null, m: null, file: '', tab: 'users', sel: { users: new Set(), dids: new Set() }, q: '', onReset: null };
+const E = { d: null, m: null, file: '', tab: 'users', sel: { users: new Set(), dids: new Set(), vms: new Set() }, q: '', onReset: null };
 export const TABS = [
-  ['fiche', 'Fiche 3CX'], ['users', 'Utilisateurs'], ['devices', 'Appareils'], ['hunts', 'Groupes et files'], ['ivrs', 'SVI'], ['dids', 'SDA'], ['scheds', 'Horaires'], ['checks', 'Contrôles'], ['exports', 'Exports'], ['write', 'Écriture'],
+  ['fiche', 'Fiche 3CX'], ['users', 'Utilisateurs'], ['vms', 'Messageries'], ['devices', 'Appareils'], ['hunts', 'Groupes et files'], ['ivrs', 'SVI'], ['dids', 'SDA'], ['scheds', 'Horaires'], ['checks', 'Contrôles'], ['exports', 'Exports'], ['write', 'Écriture'],
 ];
-export function setDraft(d, m, file, onReset) { E.d = upgradeDraft(d); E.m = m; E.file = file; E.onReset = onReset; E.sel.users.clear(); E.sel.dids.clear(); E.review = null; setWizard(E.d, m); }
+export function setDraft(d, m, file, onReset) { E.d = upgradeDraft(d); E.m = m; E.file = file; E.onReset = onReset; E.sel.users.clear(); E.sel.dids.clear(); E.sel.vms.clear(); E.review = null; setWizard(E.d, m); }
 export const draft = () => E.d;
 // Contextes cibles (choisis dans Exports, gardés dans le brouillon) : ceux du
 // tenant ouvert ; à défaut, le premier interne / entrant du tenant.
@@ -27,7 +28,7 @@ const tenantChecks = () => tenantIssues(E.d, tenantCtx(), { contexts: I.lists.co
 export function tabCounts() {
   const d = E.d; if (!d) return {};
   const iss = [...draftIssues(d), ...tenantChecks()];
-  return { users: imported(d).length, devices: (d.devices || []).filter((x) => x.import).length, hunts: d.hunts.filter((h) => h.target !== 'skip').length, ivrs: d.ivrs.filter((v) => v.import).length, dids: d.dids.filter((r) => r.import).length, scheds: d.schedules.length, checks: iss.filter((x) => x.sev !== 'info').length, write: `${wizardDone()}/${wizardTotal()}` };
+  return { users: imported(d).length, vms: d.users.filter((u) => u.mode !== 'skip' && u.vm).length, devices: (d.devices || []).filter((x) => x.import).length, hunts: d.hunts.filter((h) => h.target !== 'skip').length, ivrs: d.ivrs.filter((v) => v.import).length, dids: d.dids.filter((r) => r.import).length, scheds: d.schedules.length, checks: iss.filter((x) => x.sev !== 'info').length, write: `${wizardDone()}/${wizardTotal()}` };
 }
 
 // ---------------------------------------------------------------------------
@@ -70,9 +71,11 @@ const intro = (id, title, text, extra = '') => `<div class="titlerow"><h3>${esc(
 // ---------------------------------------------------------------------------
 export function renderTab(root, tab) {
   E.tab = tab;
+  // Un seul défilement : celui de la page (#workbench), gardé d'un rendu à l'autre.
+  const wb = document.getElementById('workbench'); const keepWb = wb ? [wb.scrollTop, wb.scrollLeft] : null;
   const keep = [...root.querySelectorAll('.x3-edit-wrap')].map((w) => [w.scrollTop, w.scrollLeft]);
   const opts = destOptions();
-  const html = { users: usersTab, devices: devicesTab, hunts: huntsTab, ivrs: ivrsTab, dids: didsTab, scheds: schedsTab, checks: checksTab, exports: exportsTab, write: wizardTab }[tab]?.(opts) || '';
+  const html = { users: usersTab, vms: vmsTab, devices: devicesTab, hunts: huntsTab, ivrs: ivrsTab, dids: didsTab, scheds: schedsTab, checks: checksTab, exports: exportsTab, write: wizardTab }[tab]?.(opts) || '';
   root.innerHTML = html;
   // Listes à valeur posée après rendu (utilisateur d'un appareil).
   for (const s of root.querySelectorAll('select[data-p][data-val]')) {
@@ -85,12 +88,13 @@ export function renderTab(root, tab) {
     s.value = s.dataset.val;
   }
   root.querySelectorAll('.x3-edit-wrap').forEach((w, i) => { if (keep[i]) [w.scrollTop, w.scrollLeft] = keep[i]; });
+  if (keepWb) [wb.scrollTop, wb.scrollLeft] = keepWb;
   root.onchange = (e) => onChange(e, root);
   root.onclick = (e) => onClick(e, root);
   root.oninput = (e) => { if (e.target.id === 'x3e-q') { E.q = e.target.value; renderTab(root, tab); const q = $('x3e-q'); q.focus(); q.setSelectionRange(q.value.length, q.value.length); } };
 }
 
-const USER_HELP = 'Une ligne par poste 3CX. « Vérifier un par un » ouvre la fiche de chaque utilisateur (nom, e-mail, licence, connexion, renvois, appareil) avec ses problèmes : « Valider et suivant » le marque vérifié. Licence : à choisir pour chacun (aucune valeur par défaut : les licences sont décomptées par le portail). Identifiant de connexion : vide = l\'e-mail, comme l\'import Wazo. Méthode de connexion et accès aux applications ne passent pas par le CSV : à régler après l\'import. Reprise : utilisateur Wazo (ligne SIP + numéro), messagerie seule (boîte vocale sans utilisateur, pour les répondeurs) ou non repris. Les noms en italique sont déduits de l\'e-mail. Sonnerie : durée avant le débordement « pas de réponse » (ring_seconds). Renvois du profil 3CX « Disponible » → débordements de l\'utilisateur Wazo (pas de réponse, occupé, indisponible). « corrigé » : un renvoi vers un numéro du client a été remplacé par sa destination. Touches : reprendre les BLF de ce poste. Cochez des lignes pour une modification groupée.';
+const USER_HELP = 'Une ligne par poste 3CX. « Vérifier un par un » ouvre la fiche de chaque utilisateur (nom, e-mail, licence, connexion, renvois, appareil) avec ses problèmes : « Valider et suivant » le marque vérifié. Licence : à choisir pour chacun (aucune valeur par défaut : les licences sont décomptées par le portail). Identifiant de connexion : vide = l\'e-mail, comme l\'import Wazo. Méthode de connexion et accès aux applications ne passent pas par le CSV : à régler après l\'import. Reprise : utilisateur Wazo (ligne SIP + numéro), messagerie seule (boîte vocale sans utilisateur, pour les répondeurs) ou non repris. Les noms en italique sont déduits de l\'e-mail. Sonnerie : durée avant le débordement « pas de réponse » (ring_seconds). Renvois du profil 3CX « Disponible » → débordements de l\'utilisateur Wazo (pas de réponse, occupé, indisponible). « corrigé » : un renvoi vers un numéro du client a été remplacé par sa destination. Touches : reprendre les BLF de ce poste. Lignes (fiche « Vérifier un par un » ou action groupée) : en Auto, une ligne SIP pour le téléphone et, si les applications sont autorisées hors licence Voix, une ligne WebRTC au même numéro ; identifiant d\'authentification de chaque ligne = nom de son endpoint, comme l\'import de Wazo. Messagerie : réglages dans l\'onglet Messageries. Cochez des lignes pour une modification groupée.';
 function usersTab(opts) {
   const d = E.d; const q = E.q.trim().toLowerCase();
   const list = d.users.map((u, i) => [u, i]).filter(([u]) => !q || `${u.n} ${userName(u)} ${u.email}`.toLowerCase().includes(q));
@@ -109,7 +113,7 @@ function usersTab(opts) {
       <td>${on ? sel(`${p}.authMethod`, AUTH_METHODS) : ''}</td>
       <td class="x3-c">${on ? check(`${p}.appAccess`, 'Autorisé à utiliser les applications Wazo') : ''}</td>
       <td>${input(`${p}.mobile`, 'class="x3-num"')}</td>
-      <td class="x3-c">${check(`${p}.vm`, 'Messagerie')}${u.vm ? `<label class="x3-mini" title="Reprendre le code de messagerie 3CX (lu dans la sauvegarde à l'export, jamais stocké dans le brouillon)">${check(`${p}.vmPin`)} code</label>` : ''}</td>
+      <td class="x3-c">${check(`${p}.vm`, 'Messagerie')}${u.vm ? `<button class="x3-link x3-mini" data-act="goto-vms" title="Réglages de la messagerie (onglet Messageries)">${esc(vmSummary(u))}</button>` : ''}</td>
       <td>${on ? num(`${p}.ring`, 5, 300) : ''}</td>
       <td>${on ? destCell(`${p}.fb.noanswer`, opts) : ''}</td>
       <td>${on ? destCell(`${p}.fb.busy`, opts) : ''}</td>
@@ -120,15 +124,17 @@ function usersTab(opts) {
   }).join('');
   const n = E.sel.users.size;
   const imp = imported(d); const done = imp.filter((u) => u.checked).length;
-  return `${intro('users', 'Utilisateurs', USER_HELP, `<button data-act="review-start" class="${done < imp.length ? 'primary' : ''}">Vérifier un par un (${done}/${imp.length})</button><input id="x3e-q" type="search" placeholder="Filtrer" value="${esc(E.q)}" class="x3-q">`)}
+  return `${intro('users', 'Utilisateurs', USER_HELP, `<label class="inline small" title="Met le nom de tous les utilisateurs en majuscules, et ceux saisis ensuite (Tessier → TESSIER). Décocher ne rétablit pas l'ancienne casse.">${check('upperLast')} NOM en majuscules</label><button data-act="review-start" class="${done < imp.length ? 'primary' : ''}">Vérifier un par un (${done}/${imp.length})</button><input id="x3e-q" type="search" placeholder="Filtrer" value="${esc(E.q)}" class="x3-q">`)}
     ${E.review != null ? reviewPanel(opts) : ''}
-    ${n ? '' : '<p class="x3-bulk-hint muted small">Cochez des lignes pour les modifier en groupe (reprise, licence, connexion, sonnerie, renvois, messagerie).</p>'}
+    ${n ? '' : '<p class="x3-bulk-hint muted small">Cochez des lignes pour les modifier en groupe (reprise, licence, connexion, lignes, nom en majuscules, sonnerie, renvois, messagerie).</p>'}
     <div class="x3-bulk"${n ? '' : ' hidden'}>
       <strong>${n} sélectionné(s)</strong>
       <label>Reprise <select id="xb-mode"><option value="">inchangée</option>${Object.entries(MODES).map(([k, l]) => `<option value="${k}">${esc(l)}</option>`).join('')}</select></label>
       <label>Licence <select id="xb-sub"><option value="">inchangée</option>${Object.entries(LICENCES).map(([k, l]) => `<option value="${k}">${esc(l)}</option>`).join('')}</select></label>
       <label>Méthode <select id="xb-auth"><option value="">inchangée</option>${Object.entries(AUTH_METHODS).map(([k, l]) => `<option value="${k}">${esc(l)}</option>`).join('')}</select></label>
       <label>Applications <select id="xb-app"><option value="">inchangé</option><option value="1">autorisées</option><option value="0">refusées</option></select></label>
+      <label>Lignes <select id="xb-lines"><option value="">inchangées</option>${Object.entries(LINE_MODES).map(([k, l]) => `<option value="${k}">${esc(l)}</option>`).join('')}</select></label>
+      <label>Nom <select id="xb-last"><option value="">inchangé</option><option value="upper">en MAJUSCULES</option></select></label>
       <label>Sonnerie <input id="xb-ring" type="number" min="5" max="300" placeholder="s" class="x3-short"></label>
       <label>Renvoi <select id="xb-fbk"><option value="all">tous</option><option value="noanswer">pas de réponse</option><option value="busy">occupé</option><option value="fail">indisponible</option></select></label>
       <label>vers <select id="xb-dest"><option value="keep">inchangé</option>${opts}</select></label>
@@ -165,7 +171,8 @@ function reviewPanel(opts) {
       ${f('Identifiant de connexion', input(`${p}.username`, `placeholder="${esc(u.email || '')}"`), `Vide : ${effectiveUsername(u) ? `« ${effectiveUsername(u)} » (e-mail)` : 'identifiant interne'}.`)}
       ${f('Méthode de connexion', sel(`${p}.authMethod`, AUTH_METHODS), 'Non portée par le CSV : à régler après l\'import.')}
       ${f('Applications Wazo', `<span>${check(`${p}.appAccess`)} autorisées</span>`, 'Non porté par le CSV.')}
-      ${f('Messagerie', `<span>${check(`${p}.vm`)} active ${u.vm ? `· ${check(`${p}.vmPin`)} reprendre le code 3CX` : ''}</span>`)}
+      ${f('Lignes', sel(`${p}.lines`, LINE_MODES), `Créées : ${linesOf(u).map((t) => `${t === 'sip' ? 'SIP' : 'WebRTC'} ${u.n}`).join(' + ')} (même numéro). Identifiant d'authentification = nom de l'endpoint, comme l'import de Wazo.`)}
+      ${vmFields(p, u, f)}
       ${f('Sonnerie (s)', num(`${p}.ring`, 5, 300))}
       ${f('Pas de réponse', destCell(`${p}.fb.noanswer`, opts))}
       ${f('Occupé', destCell(`${p}.fb.busy`, opts))}
@@ -177,7 +184,77 @@ function reviewPanel(opts) {
   </div>`;
 }
 
-const DEVICE_HELP = 'Une ligne par téléphone de la sauvegarde 3CX. MAC : convertie au format Wazo (00:15:65:a1:b2:c3), modifiable. Utilisateur : celui dont la ligne sera associée à l\'appareil (au départ, le poste 3CX qui l\'utilisait) ; « aucun » = appareil créé seul, en stock. Description : « Prénom Nom » de l\'utilisateur, mise à jour automatiquement quand son nom change ; une description saisie à la main n\'est plus mise à jour (case « auto » pour revenir au nom). Une MAC déjà présente dans le tenant Wazo ouvert est signalée.';
+// ---------------------------------------------------------------------------
+// Messageries (demande de Brice, 03/11/2026 : plus de réglages par boîte).
+// Champs de confd voicemail/schema.py ; le code 3CX n'est jamais stocké dans
+// le brouillon (lu dans la sauvegarde au moment de l'écriture ou de l'export).
+// ---------------------------------------------------------------------------
+const pinOf = (n) => E.m?.extensions.find((e) => e.number === n)?.vm.pin || '';
+function vmSummary(u) {
+  const o = u.vmo; const mail = vmEmail(u);
+  return [mail ? (o.attach ? 'e-mail + audio' : 'e-mail') : 'sans e-mail', o.del ? 'supprimé après envoi' : '', o.ask ? '' : 'sans code demandé', u.vmPin ? 'code 3CX' : ''].filter(Boolean).join(' · ');
+}
+const nullStr = (path, attrs = '') => `<input data-p="${path}" data-type="nullstr" value="${esc(get(path) ?? '')}" ${attrs}>`;
+const nullInt = (path, ph) => `<input type="number" min="0" max="9999" data-p="${path}" data-type="nullint" value="${esc(get(path) ?? '')}" placeholder="${esc(ph)}" class="x3-short">`;
+function vmFields(p, u, f) {
+  const on = `${f('Messagerie', `<span>${check(`${p}.vm`)} active</span>`)}`;
+  if (!u.vm) return on;
+  const pin = pinOf(u.n);
+  return `${on}
+    ${f('Notification', `<span>${check(`${p}.vmo.notify`)} par e-mail</span>`, 'Chaque nouveau message est annoncé par e-mail.')}
+    ${f('Adresse de notification', nullStr(`${p}.vmo.email`, `type="email" placeholder="${esc(u.email || 'adresse')}"`), 'Vide : l\'e-mail de l\'utilisateur.')}
+    ${f('Message en pièce jointe', `<span>${check(`${p}.vmo.attach`)} joindre l'audio</span>`)}
+    ${f('Après envoi', `<span>${check(`${p}.vmo.del`)} supprimer de la boîte</span>`, 'Exige une adresse et « joindre l\'audio » (règle de Wazo).')}
+    ${f('Code d\'accès', `<span>${check(`${p}.vmo.ask`)} demander le code</span>${pin ? `<span>${check(`${p}.vmPin`)} reprendre le code 3CX</span>` : '<span class="muted small">pas de code dans 3CX</span>'}`, 'Le code 3CX est lu dans la sauvegarde à l\'écriture, jamais stocké dans le brouillon.')}
+    ${f('Messages au maximum', nullInt(`${p}.vmo.max`, 'défaut'), 'Vide : valeur du serveur.')}
+    ${f('Langue des annonces', sel(`${p}.vmo.lang`, VM_LANGS))}`;
+}
+const VM_HELP = 'Une ligne par poste repris (utilisateur ou messagerie seule). Réglages envoyés à Wazo tels quels, sans valeur par défaut du serveur (sauf « Max » vide). Notification : un e-mail par nouveau message, à l\'adresse indiquée ou, si vide, à l\'e-mail de l\'utilisateur. Joindre l\'audio : le message en pièce jointe. Supprimer après envoi : la boîte reste vide (exige l\'adresse et la pièce jointe, règle de Wazo). Demander le code : décoché, l\'utilisateur entre dans sa boîte depuis son poste sans code. Code 3CX : reprend le code de la sauvegarde (lu à l\'écriture, jamais stocké dans le brouillon). Cochez des lignes pour une modification groupée.';
+const VM_BULK = [['vm', 'Messagerie'], ['vmo.notify', 'Notification'], ['vmo.attach', 'Joindre l\'audio'], ['vmo.del', 'Supprimer après envoi'], ['vmo.ask', 'Demander le code'], ['vmPin', 'Code 3CX']];
+function vmsTab() {
+  const d = E.d; const q = E.q.trim().toLowerCase();
+  const list = d.users.map((u, i) => [u, i]).filter(([u]) => u.mode !== 'skip' && (!q || `${u.n} ${userName(u)} ${u.email}`.toLowerCase().includes(q)));
+  const rows = list.map(([u, i]) => {
+    const p = `users.${i}`; const pin = pinOf(u.n);
+    const cells = u.vm ? `
+      <td class="x3-c">${check(`${p}.vmo.notify`, 'Notification par e-mail')}</td>
+      <td>${u.vmo.notify ? nullStr(`${p}.vmo.email`, `type="email" placeholder="${esc(u.email || 'adresse')}" class="x3-mail" title="Vide : e-mail de l'utilisateur"`) : '<span class="muted small">aucune</span>'}</td>
+      <td class="x3-c">${check(`${p}.vmo.attach`, 'Joindre le message audio à l\'e-mail')}</td>
+      <td class="x3-c">${check(`${p}.vmo.del`, 'Supprimer le message de la boîte après l\'envoi par e-mail')}</td>
+      <td class="x3-c">${check(`${p}.vmo.ask`, 'Demander le code d\'accès')}</td>
+      <td class="x3-c">${pin ? check(`${p}.vmPin`, 'Reprendre le code 3CX') : '<span class="muted small">aucun</span>'}</td>
+      <td>${nullInt(`${p}.vmo.max`, 'défaut')}</td>
+      <td>${sel(`${p}.vmo.lang`, VM_LANGS)}</td>` : '<td colspan="8" class="muted small">messagerie désactivée</td>';
+    return `<tr class="${u.vm ? '' : 'x3-off'}${E.sel.vms.has(i) ? ' sel' : ''}">
+      <td><input type="checkbox" data-sel="vms" data-i="${i}" ${E.sel.vms.has(i) ? 'checked' : ''}></td>
+      <td>${esc(u.n)}</td><td>${esc(userName(u))}<div class="muted small">${esc(MODES[u.mode])}</div></td>
+      <td class="x3-c">${check(`${p}.vm`, 'Messagerie active')}</td>${cells}</tr>`;
+  }).join('');
+  const n = E.sel.vms.size;
+  const yn = (id, l) => `<label>${esc(l)} <select id="${id}"><option value="">inchangé</option><option value="1">oui</option><option value="0">non</option></select></label>`;
+  return `${intro('vms', 'Messageries', VM_HELP, `<input id="x3e-q" type="search" placeholder="Filtrer" value="${esc(E.q)}" class="x3-q">`)}
+    ${n ? '' : '<p class="x3-bulk-hint muted small">Cochez des lignes pour les modifier en groupe.</p>'}
+    <div class="x3-bulk"${n ? '' : ' hidden'}><strong>${n} sélectionnée(s)</strong>
+      ${VM_BULK.map(([, l], j) => yn(`xv-${j}`, l)).join('')}
+      <label>Langue <select id="xv-lang"><option value="">inchangée</option>${Object.entries(VM_LANGS).map(([k, l]) => `<option value="${k}">${esc(l)}</option>`).join('')}</select></label>
+      <label>Max <input id="xv-max" type="number" min="0" placeholder="inchangé" class="x3-short"></label>
+      <button data-act="bulk-vms" ${n ? '' : 'disabled'}>Appliquer</button></div>
+    <div class="x3-edit-wrap"><table class="diff x3-edit">${head([['[all:vms]'], ['N°'], ['Nom'], ['Active'], ['Notification', 'E-mail à chaque nouveau message'], ['Adresse', 'Vide : e-mail de l\'utilisateur'], ['Audio joint', 'attach_audio'], ['Supprimer après envoi', 'delete_messages : exige adresse et audio joint'], ['Code demandé', 'ask_password'], ['Code 3CX', 'Reprendre le code de la sauvegarde 3CX'], ['Max', 'max_messages ; vide = défaut du serveur'], ['Langue', 'language']])}<tbody>${rows || '<tr><td colspan="12" class="muted">Aucun poste repris.</td></tr>'}</tbody></table></div>`;
+}
+function bulkVms(root) {
+  const d = E.d; const ids = [...E.sel.vms];
+  const vals = VM_BULK.map(([k], j) => [k, $(`xv-${j}`).value]).filter(([, v]) => v);
+  const lang = $('xv-lang').value; const max = $('xv-max').value;
+  for (const i of ids) {
+    for (const [k, v] of vals) set(`users.${i}.${k}`, v === '1');
+    if (lang) d.users[i].vmo.lang = lang;
+    if (max !== '') d.users[i].vmo.max = Math.max(0, Number(max) || 0);
+  }
+  toast(`${ids.length} messagerie(s) modifiée(s).`);
+  changed(root);
+}
+
+const DEVICE_HELP ='Une ligne par téléphone de la sauvegarde 3CX. MAC : convertie au format Wazo (00:15:65:a1:b2:c3), modifiable. Utilisateur : celui dont la ligne sera associée à l\'appareil (au départ, le poste 3CX qui l\'utilisait) ; « aucun » = appareil créé seul, en stock. Description : « Prénom Nom » de l\'utilisateur, mise à jour automatiquement quand son nom change ; une description saisie à la main n\'est plus mise à jour (case « auto » pour revenir au nom). Une MAC déjà présente dans le tenant Wazo ouvert est signalée.';
 function devicesTab() {
   const d = E.d;
   const wazo = new Map((I.lists.device || []).filter((x) => x.mac).map((x) => [String(x.mac).toLowerCase(), x]));
@@ -357,7 +434,11 @@ function onChange(e, root) {
     if (typeof v === 'string') v = v.trim();
     if (t.dataset.type === 'mac') v = macWazo(v);
     if (t.dataset.type === 'int') v = t.value === '' ? null : Number(t.value);
+    if (t.dataset.type === 'nullstr') v = v === '' ? null : v;
+    if (t.dataset.type === 'nullint') v = t.value === '' ? null : Math.max(0, Math.round(Number(t.value)) || 0);
+    if (E.d.upperLast && /^users\.\d+\.last$/.test(t.dataset.p)) v = upperName(v);
     set(t.dataset.p, v);
+    if (t.dataset.p === 'upperLast' && v) for (const u of E.d.users) u.last = upperName(u.last);
     // Description saisie à la main : elle ne suit plus le nom de l'utilisateur.
     const md = t.dataset.p.match(/^devices\.(\d+)\.(desc|descAuto)$/);
     if (md && md[2] === 'desc') E.d.devices[Number(md[1])].descAuto = false;
@@ -389,6 +470,8 @@ function onClick(e, root) {
       return;
     }
     case 'bulk-users': return bulkUsers(root);
+    case 'bulk-vms': return bulkVms(root);
+    case 'goto-vms': return document.querySelector('#x3-tabs [data-tab="vms"]')?.click();
     case 'bulk-dids': return bulkDids(root);
     case 'csv-users': return exportUsers();
     case 'csv-blf': return exportBlf();
@@ -401,7 +484,7 @@ function onClick(e, root) {
 function bulkUsers(root) {
   const d = E.d; const ids = [...E.sel.users];
   const mode = $('xb-mode').value; const ring = Number($('xb-ring').value); const fbk = $('xb-fbk').value; const dv = $('xb-dest').value; const vmset = $('xb-vmset').value;
-  const sub = $('xb-sub').value; const auth = $('xb-auth').value; const app = $('xb-app').value;
+  const sub = $('xb-sub').value; const auth = $('xb-auth').value; const app = $('xb-app').value; const lines = $('xb-lines').value; const last = $('xb-last').value;
   const dest = dv === 'keep' ? null : parseDest(dv, $('xb-num').value.trim());
   for (const i of ids) {
     const u = d.users[i];
@@ -412,6 +495,8 @@ function bulkUsers(root) {
     if (sub !== '') u.sub = Number(sub);
     if (auth) u.authMethod = auth;
     if (app) u.appAccess = app === '1';
+    if (lines) u.lines = lines;
+    if (last === 'upper') u.last = upperName(u.last);
   }
   toast(`${ids.length} utilisateur(s) modifié(s).`);
   changed(root);
