@@ -1,7 +1,7 @@
 // Astrea Desk — outils communs aux modules à exports (journal d'appels,
 // statistiques) : téléchargement, impression PDF, styles du rapport HTML,
 // infobulles des graphiques.
-import { $, toast } from '../admin-tools/common/core.js?v=0.9.0';
+import { $, toast } from '../admin-tools/common/core.js?v=0.9.1';
 
 export function download(name, text, type) {
   try {
@@ -25,11 +25,15 @@ export function csv(head, rows) {
 
 // PDF : impression du rapport HTML (« Enregistrer au format PDF »). En cas
 // d'échec dans l'appli, on propose l'export HTML à imprimer ailleurs.
+// Police attendue avant l'impression (Mulish chargée par REPORT_FONT) : sans
+// elle, le PDF partait sur une police de secours où le « l » sortait en gras
+// (constaté par Brice le 03/11/2026, Mulish non installée sur le PC). 3 s au plus.
 export function printHtml(html) {
   const f = document.createElement('iframe');
   f.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0';
   document.body.appendChild(f);
-  f.onload = () => {
+  f.onload = async () => {
+    try { await Promise.race([f.contentDocument.fonts.ready, new Promise((r) => setTimeout(r, 3000))]); } catch { /* */ }
     try { f.contentWindow.focus(); f.contentWindow.print(); }
     catch (e) { console.warn('[astrea] impression', e); toast("Impression impossible ici : utilisez l'export HTML puis imprimez-le en PDF.", 8000); }
     setTimeout(() => f.remove(), 60000);
@@ -38,7 +42,9 @@ export function printHtml(html) {
 }
 
 // Styles du rapport HTML autonome (couleurs en dur, mode clair).
-export const REPORT_CSS = `body{font:14px/1.45 "Mulish",Helvetica,Arial,sans-serif;color:#0b0b0b;margin:24px;background:#fff}h1{font-size:20px;margin:0}h3{font-size:15px;margin:0 0 8px}
+// Mulish (police de l'appli) chargée dans le rapport ; sans internet, Arial.
+export const REPORT_FONT = '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Mulish:wght@400;600;700&display=block">';
+export const REPORT_CSS = `body{font:14px/1.45 "Mulish",Arial,sans-serif;color:#0b0b0b;margin:24px;background:#fff}h1{font-size:20px;margin:0}h3{font-size:15px;margin:0 0 8px}
 .sub{color:#52514e;font-size:12px;margin:2px 0 16px}.dk-kpis{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px;margin-bottom:16px}.dk-panel>p{color:#52514e;font-size:11px;margin:-4px 0 8px}
 .dk-kpi{border:1px solid #e1e0d9;border-radius:4px;padding:8px 12px}.dk-kpi span{display:block;color:#52514e;font-size:11px}.dk-kpi strong{font-size:18px}
 .dk-panel{border:1px solid #e1e0d9;border-radius:4px;padding:12px 16px;margin-bottom:16px;break-inside:avoid}.dk-two{display:grid;grid-template-columns:1fr 1fr;gap:16px}

@@ -17,10 +17,10 @@
 // Ces chiffres sont exacts (comptés par Wazo), contrairement aux causes
 // déduites du journal d'appels. Ils viennent des tables stat_* que Wazo remplit
 // périodiquement : les appels des dernières heures peuvent manquer.
-import { S, $, esc, toast, listAll } from '../admin-tools/common/core.js?v=0.9.0';
-import { stackedColumns, hbars, legend } from './charts.js?v=0.9.0';
-import { periodRange, fmtDur, fmtDate } from './calllogs.js?v=0.9.0';
-import { download, fileSafe, csv, printHtml, REPORT_CSS, hoverTips } from './report.js?v=0.9.0';
+import { S, $, esc, toast, listAll } from '../admin-tools/common/core.js?v=0.9.1';
+import { stackedColumns, hbars, legend } from './charts.js?v=0.9.1';
+import { periodRange, fmtDur, fmtDate } from './calllogs.js?v=0.9.1';
+import { download, fileSafe, csv, printHtml, REPORT_CSS, REPORT_FONT, hoverTips } from './report.js?v=0.9.1';
 
 // Issue des appels en file : 4 séries au plus (palette validée, slots 1-4).
 // Fermé, saturé et sans agent sont regroupés dans le graphique, détaillés
@@ -243,7 +243,7 @@ function draw() {
 const fileBase = (site) => `statistiques_${fileSafe(site.name)}_${dayKey(periodRange(F)[0])}`;
 function needData() { if (!X.loadedFor || (!X.queues.length && !X.agents.length)) { toast("Rien à exporter : affichez d'abord des statistiques."); return false; } return true; }
 function filtersText() {
-  return [`Période : ${periodRange(F)[2]}`, F.days === 'week' && 'du lundi au vendredi', F.h1 !== '' && F.h2 !== '' && `de ${F.h1} h à ${F.h2} h (incluse)`, `seuil de qualité : ${F.qos} s`].filter(Boolean).join(' · ');
+  return [`Période : ${periodRange(F)[2]}`, F.days === 'week' && 'du lundi au vendredi', F.h1 !== '' && F.h2 !== '' && `de ${F.h1} h à ${F.h2} h (incluse)`, `objectif de décroché : ${F.qos} s`].filter(Boolean).join(' · ');
 }
 
 // Un seul fichier : les files, puis les agents (deux blocs séparés par une ligne vide).
@@ -260,6 +260,6 @@ function exportCsv(site) {
 }
 
 function reportHtml(site) {
-  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Statistiques · ${esc(site.name)}</title><style>${REPORT_CSS}.muted{color:#52514e}.small{font-size:11px}</style></head><body><h1>Statistiques des files et des agents · ${esc(site.name)}</h1><p class="sub">${esc(site.customer || '')} · ${esc(filtersText())} · édité le ${esc(fmtDate(new Date().toISOString()))} par Astrea Desk</p>${summaryHtml('hex')}</body></html>`;
+  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Statistiques · ${esc(site.name)}</title>${REPORT_FONT}<style>${REPORT_CSS}.muted{color:#52514e}.small{font-size:11px}</style></head><body><h1>Statistiques des files et des agents · ${esc(site.name)}</h1><p class="sub">${esc(site.customer || '')} · ${esc(filtersText())} · édité le ${esc(fmtDate(new Date().toISOString()))} par Astrea Desk</p>${summaryHtml('hex')}</body></html>`;
 }
 function exportHtml(site) { if (needData()) download(`${fileBase(site)}.html`, reportHtml(site), 'text/html;charset=utf-8'); }

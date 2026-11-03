@@ -8,9 +8,9 @@
 //  - réponse : { items, total, filtered } ;
 //  - call_status : blocked > voicemail > answered, sinon unknown (= non
 //    répondu) ; duration = fin - décroché (null si non décroché).
-import { S, $, esc, toast, listAll } from '../admin-tools/common/core.js?v=0.9.0';
-import { stackedColumns, hbars, legend } from './charts.js?v=0.9.0';
-import { download, fileSafe, csv, printHtml, REPORT_CSS, hoverTips } from './report.js?v=0.9.0';
+import { S, $, esc, toast, listAll } from '../admin-tools/common/core.js?v=0.9.1';
+import { stackedColumns, hbars, legend } from './charts.js?v=0.9.1';
+import { download, fileSafe, csv, printHtml, REPORT_CSS, REPORT_FONT, hoverTips } from './report.js?v=0.9.1';
 
 const PAGE = 1000;       // taille d'une requête call-logd
 const MAX = 20000;       // au-delà, on s'arrête et on le dit
@@ -337,7 +337,7 @@ function exportCsv(site) {
 function reportHtml(site) {
   const sum = summarize(C.items, periodRange());
   const rows = C.items.map((c) => `<tr><td>${esc(fmtDate(c.start))}</td><td>${esc(DIRECTION[c.call_direction] || '')}</td><td>${esc(caller(c))}</td><td>${esc(callee(c))}</td><td>${esc(statusLabel(c))}</td><td class="num">${esc(fmtDur(waitSecs(c)))}</td><td class="num">${esc(fmtDur(c.duration))}</td><td>${esc(probableCause(c))}</td></tr>`).join('');
-  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Journal d'appels · ${esc(site.name)}</title><style>${REPORT_CSS}</style></head><body><h1>Journal d'appels · ${esc(site.name)}</h1><p class="sub">${esc(site.customer || '')} · ${esc(filtersText())} · ${C.items.length} appels · édité le ${esc(fmtDate(new Date().toISOString()))} par Astrea Desk${C.truncated ? ` · <strong>limité aux ${C.items.length} plus récents</strong>` : ''}</p>
+  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Journal d'appels · ${esc(site.name)}</title>${REPORT_FONT}<style>${REPORT_CSS}</style></head><body><h1>Journal d'appels · ${esc(site.name)}</h1><p class="sub">${esc(site.customer || '')} · ${esc(filtersText())} · ${C.items.length} appels · édité le ${esc(fmtDate(new Date().toISOString()))} par Astrea Desk${C.truncated ? ` · <strong>limité aux ${C.items.length} plus récents</strong>` : ''}</p>
 ${summaryHtml(sum, 'hex')}<section class="dk-panel"><h3>Détail des appels</h3><table><thead><tr><th>Date</th><th>Sens</th><th>Appelant</th><th>Appelé</th><th>Statut</th><th class="num">Attente</th><th class="num">Durée</th><th>Cause probable</th></tr></thead><tbody>${rows}</tbody></table></section></body></html>`;
 }
 function exportHtml(site) { if (needData()) download(`${fileBase(site)}.html`, reportHtml(site), 'text/html;charset=utf-8'); }
