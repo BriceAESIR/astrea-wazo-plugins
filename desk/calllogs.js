@@ -8,9 +8,9 @@
 //  - réponse : { items, total, filtered } ;
 //  - call_status : blocked > voicemail > answered, sinon unknown (= non
 //    répondu) ; duration = fin - décroché (null si non décroché).
-import { S, $, esc, toast, listAll } from '../admin-tools/common/core.js?v=0.9.2';
-import { stackedColumns, hbars, legend } from './charts.js?v=0.9.2';
-import { download, fileSafe, csv, printHtml, REPORT_CSS, REPORT_FONT, hoverTips } from './report.js?v=0.9.2';
+import { S, $, esc, toast, listAll } from '../admin-tools/common/core.js?v=0.9.3';
+import { stackedColumns, hbars, legend } from './charts.js?v=0.9.3';
+import { download, fileSafe, csv, printHtml, REPORT_CSS, REPORT_FONT, hoverTips } from './report.js?v=0.9.3';
 
 const PAGE = 1000;       // taille d'une requête call-logd
 const MAX = 20000;       // au-delà, on s'arrête et on le dit
@@ -29,7 +29,10 @@ const SERIES = [
   { key: 'service', label: 'Code étoile', color: 'var(--dk-s0)', hex: '#898781' },
 ];
 
-const F0 = { period: 'today', from: '', until: '', direction: '', status: '', search: '', user: '', services: false };
+// users : plusieurs utilisateurs (call-logd user_uuid=a,b : appels où l'un
+// d'eux a participé, vérifié dans call-logd le 03/11/2026). group : appels
+// destinés à un groupe, filtrés ici (call-logd n'a pas ce filtre).
+const F0 = { period: 'today', from: '', until: '', direction: '', status: '', search: '', users: [], group: '', services: false };
 const F = { ...F0 };
 const C = { all: [], items: [], hiddenServices: 0, truncated: false, page: 0, loadedFor: null, users: null, site: null };
 
@@ -80,7 +83,7 @@ export const waitSecs = (c) => (c.answer ? secs(c.start, c.answer) : secs(c.star
 
 // Numéros du site : utilisateurs (ring_seconds), groupes et files (timeout ;
 // vide = pas de limite). Champs lus dans le code confd le 29/10/2026.
-const T = { byExten: new Map() };
+const T = { byExten: new Map(), groups: [], userNames: new Set() };
 // Numéro demandé (groupe, file…) avant celui du membre qui a pris l'appel :
 // c'est son délai de sonnerie qui compte.
 const dialed = (c) => c.requested_internal_extension || c.destination_internal_extension || c.requested_extension || c.destination_extension || '';
@@ -93,7 +96,27 @@ async function loadTargets() {
   }
   for (const g of groups) for (const e of g.extensions || []) if (e.exten) T.byExten.set(e.exten, { kind: 'Groupe', label: g.label || g.name, timeout: g.timeout ?? null });
   for (const q of queues) for (const e of q.extensions || []) if (e.exten) T.byExten.set(e.exten, { kind: 'File', label: q.label || q.name, timeout: q.timeout ?? null });
+  T.groups = groups.map((g) => ({ id: g.id, label: g.label || g.name, extens: (g.extensions || []).map((e) => e.exten).filter(Boolean) })).sort((a, b) => a.label.localeCompare(b.label, 'fr'));
+  T.userNames = new Set(users.map((u) => [u.firstname, u.lastname].filter(Boolean).join(' ')).filter(Boolean));
   return users;
+}
+
+// Appel destiné à un groupe (choix A de Brice, 03/11/2026 : les appels vers le
+// groupe, pas tous les appels de ses membres). Lu dans call-logd
+// (cel_interpretor.py, 03/11/2026) :
+//  - WAZO_CALL_LOG_DESTINATION type group → destination_details {type: 'group',
+//    group_id, group_label} ; une destination suivante (débordement vers une
+//    messagerie…) la remplace ;
+//  - WAZO_GROUP_FWD (débordement du groupe) → requested_name = libellé du groupe
+//    s'il n'était pas déjà rempli ;
+//  - repli (Wazo ancien, appel direct) : numéro du groupe composé.
+// Le libellé n'est retenu que s'il n'est pas aussi le nom d'un utilisateur.
+// Non vérifié en réel : SDA → SVI → groupe, et un groupe dans un groupe.
+function toGroup(c, g) {
+  const d = c.destination_details;
+  if (d?.type === 'group' && Number(d.group_id) === Number(g.id)) return true;
+  if (c.requested_name && c.requested_name === g.label && !T.userNames.has(g.label) && d?.type !== 'user') return true;
+  return [c.requested_internal_extension, c.destination_internal_extension, c.requested_extension].some((x) => x && g.extens.includes(x));
 }
 
 // Cause probable d'un appel non répondu : DÉDUITE (call-logd n'enregistre ni
@@ -135,7 +158,7 @@ async function load(onProgress) {
   if (F.direction) params.call_direction = F.direction;
   if (F.status) params.call_status = F.status;
   if (F.search) params.search = F.search;
-  if (F.user) params.user_uuid = F.user;
+  if (F.users.length) params.user_uuid = F.users.join(',');
   const items = [];
   let filtered = null;
   for (let offset = 0; offset < MAX; offset += PAGE) {
@@ -152,10 +175,12 @@ async function load(onProgress) {
   C.filtered = filtered;
   applyLocal();
 }
-// Filtre local : codes de service masqués sauf demande.
+// Filtres locaux : groupe (appels vers le groupe), codes étoile masqués sauf demande.
 function applyLocal() {
-  C.items = F.services ? C.all : C.all.filter((c) => !isService(c));
-  C.hiddenServices = C.all.length - C.items.length;
+  const g = F.group ? T.groups.find((x) => String(x.id) === String(F.group)) : null;
+  const base = g ? C.all.filter((c) => toGroup(c, g)) : C.all;
+  C.items = F.services ? base : base.filter((c) => !isService(c));
+  C.hiddenServices = base.length - C.items.length;
   C.page = 0;
 }
 
@@ -251,7 +276,11 @@ export async function renderCallLogs(view, site) {
       <label class="cl-custom">Au <input id="cl-until" type="date" value="${esc(F.until)}"></label>
       <label>Sens <select id="cl-dir">${opt('', 'Tous', F.direction)}${Object.entries(DIRECTION).map(([v, l]) => opt(v, l, F.direction)).join('')}</select></label>
       <label>Statut <select id="cl-status">${opt('', 'Tous', F.status)}${Object.entries(STATUS).map(([v, l]) => opt(v, l, F.status)).join('')}</select></label>
-      <label>Utilisateur <select id="cl-user">${opt('', 'Tous', F.user)}${C.users.map((u) => opt(u.uuid, u.name, F.user)).join('')}</select></label>
+      <div class="dk-field"><span>Utilisateurs</span><details class="dk-multi" id="cl-users"><summary>${esc(usersText())}</summary><div class="dk-multi-pop">
+        ${C.users.length > 8 ? '<input type="search" class="dk-multi-q" placeholder="Rechercher un nom">' : ''}
+        <div class="dk-multi-list">${C.users.map((u) => `<label class="inline"><input type="checkbox" value="${esc(u.uuid)}"${F.users.includes(u.uuid) ? ' checked' : ''}> <span>${esc(u.name)}</span></label>`).join('')}</div>
+        <button type="button" class="dk-link-sm" data-uclear>Tous les utilisateurs</button></div></details></div>
+      ${T.groups.length ? `<label title="Appels arrivés sur le groupe, y compris ceux partis ensuite vers sa messagerie.">Appels vers le groupe <select id="cl-group">${opt('', '—', F.group)}${T.groups.map((g) => opt(String(g.id), g.label, String(F.group))).join('')}</select></label>` : ''}
       <label class="dk-grow">Recherche <input id="cl-search" value="${esc(F.search)}" placeholder="Nom ou numéro"></label>
       <div class="dk-go"><button class="primary" type="submit">Afficher</button></div>
       <label class="inline dk-svc" title="Codes composés depuis un poste (entrée / sortie de groupe, renvois…)."><input type="checkbox" id="cl-svc"${F.services ? ' checked' : ''}> Afficher les codes étoile (*…)</label>
@@ -260,7 +289,15 @@ export async function renderCallLogs(view, site) {
   const syncCustom = () => view.querySelectorAll('.cl-custom').forEach((l) => (l.hidden = $('cl-period').value !== 'custom'));
   syncCustom();
   $('cl-period').onchange = syncCustom;
-  $('cl-filters').onsubmit = (e) => { e.preventDefault(); readFilters(); refresh(); };
+  $('cl-filters').onsubmit = (e) => { e.preventDefault(); $('cl-users').open = false; readFilters(); refresh(); };
+  // Liste d'utilisateurs à cocher : résumé à jour, recherche, fermeture au clic dehors.
+  const box = $('cl-users');
+  const sumUp = () => { box.querySelector('summary').textContent = usersText([...box.querySelectorAll('input[type=checkbox]:checked')].map((i) => i.value)); };
+  box.addEventListener('change', sumUp);
+  box.querySelector('[data-uclear]').onclick = () => { box.querySelectorAll('input[type=checkbox]').forEach((i) => { i.checked = false; }); sumUp(); };
+  const uq = box.querySelector('.dk-multi-q');
+  if (uq) uq.oninput = () => { const q = uq.value.trim().toLowerCase(); box.querySelectorAll('.dk-multi-list label').forEach((l) => { l.hidden = !!q && !l.textContent.toLowerCase().includes(q); }); };
+  view.addEventListener('click', (e) => { if (box.open && !box.contains(e.target)) box.open = false; });
   // Bascule locale, sans relire call-logd.
   $('cl-svc').onchange = () => { F.services = $('cl-svc').checked; if (C.loadedFor) { applyLocal(); C.loadedFor = JSON.stringify(F); draw(); } };
   $('cl-csv').onclick = () => exportCsv(site);
@@ -273,7 +310,9 @@ export async function renderCallLogs(view, site) {
 
 function readFilters() {
   F.period = $('cl-period').value; F.from = $('cl-from').value; F.until = $('cl-until').value;
-  F.direction = $('cl-dir').value; F.status = $('cl-status').value; F.user = $('cl-user').value; F.search = $('cl-search').value.trim();
+  F.direction = $('cl-dir').value; F.status = $('cl-status').value; F.search = $('cl-search').value.trim();
+  F.users = [...document.querySelectorAll('#cl-users input[type=checkbox]:checked')].map((i) => i.value);
+  F.group = $('cl-group')?.value || '';
   if (F.period === 'custom' && F.from && F.until && F.until < F.from) [F.from, F.until] = [F.until, F.from];
 }
 
@@ -294,7 +333,7 @@ function draw() {
   const range = periodRange();
   const sum = summarize(C.items, range);
   const warn = (C.truncated ? `<div class="warn">Plus de ${MAX} appels sur la période : seuls les ${C.all.length} plus récents sont affichés et exportés. Réduisez la période.</div>` : '')
-    + (C.hiddenServices ? `<p class="muted small">${C.hiddenServices} code${C.hiddenServices > 1 ? 's' : ''} de service masqué${C.hiddenServices > 1 ? 's' : ''} (numéros commençant par *).</p>` : '');
+    + (C.hiddenServices ? `<p class="muted small">${C.hiddenServices} code${C.hiddenServices > 1 ? 's' : ''} étoile masqué${C.hiddenServices > 1 ? 's' : ''}.</p>` : '');
   if (!C.items.length) { out.innerHTML = warn + `<p class="dk-empty">Aucun appel ${esc(range[2])} avec ces filtres.</p>`; return; }
   out.innerHTML = warn + summaryHtml(sum) + `<section class="dk-panel"><h3>Détail des appels <span class="muted small">(${C.items.length})</span></h3><div id="cl-table"></div></section>`;
   drawTable();
@@ -317,9 +356,16 @@ function drawTable() {
 // ---------------------------------------------------------------------------
 const fileBase = (site) => `journal-appels_${fileSafe(site.name)}_${toLocalInput(periodRange()[0])}`;
 function needData() { if (!C.items.length) { toast('Rien à exporter : lancez d\'abord une recherche avec des résultats.'); return false; } return true; }
+// Résumé du choix d'utilisateurs : « Tous », un nom, ou « n utilisateurs ».
+function usersText(sel = F.users) {
+  if (!sel.length) return 'Tous';
+  if (sel.length === 1) return C.users?.find((x) => x.uuid === sel[0])?.name || '1 utilisateur';
+  return `${sel.length} utilisateurs`;
+}
 function filtersText() {
-  const u = C.users?.find((x) => x.uuid === F.user);
-  return [`Période : ${periodRange()[2]}`, F.direction && `Sens : ${DIRECTION[F.direction]}`, F.status && `Statut : ${STATUS[F.status]}`, u && `Utilisateur : ${u.name}`, F.search && `Recherche : ${F.search}`, !F.services && C.hiddenServices && `${C.hiddenServices} codes étoile masqués`].filter(Boolean).join(' · ');
+  const names = F.users.map((id) => C.users?.find((x) => x.uuid === id)?.name).filter(Boolean);
+  const g = F.group && T.groups.find((x) => String(x.id) === String(F.group));
+  return [`Période : ${periodRange()[2]}`, g && `Appels vers le groupe ${g.label}`, F.direction && `Sens : ${DIRECTION[F.direction]}`, F.status && `Statut : ${STATUS[F.status]}`, names.length && `Utilisateur${names.length > 1 ? 's' : ''} : ${names.join(', ')}`, F.search && `Recherche : ${F.search}`, !F.services && C.hiddenServices && `${C.hiddenServices} code${C.hiddenServices > 1 ? 's' : ''} étoile masqué${C.hiddenServices > 1 ? 's' : ''}`].filter(Boolean).join(' · ');
 }
 
 // CSV pour Excel en français : séparateur « ; », BOM UTF-8.

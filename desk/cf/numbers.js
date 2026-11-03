@@ -9,8 +9,8 @@
 // Même champ partout (création et éditeurs complets) : liste des numéros
 // libres, plages du contexte choisi et premier numéro libre, mis à jour au
 // changement de contexte.
-import { esc } from '../../admin-tools/common/core.js?v=0.9.2';
-import { M, showNum } from './model.js?v=0.9.2';
+import { esc } from '../../admin-tools/common/core.js?v=0.9.3';
+import { M, showNum } from './model.js?v=0.9.3';
 
 export const RANGE_KEY = { group: 'group_ranges', queue: 'queue_ranges', conference: 'conference_room_ranges' };
 const RANGE_NAME = { group: 'groupes', queue: 'files d\'attente', conference: 'conférences' };

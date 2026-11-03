@@ -17,10 +17,10 @@
 // Ces chiffres sont exacts (comptés par Wazo), contrairement aux causes
 // déduites du journal d'appels. Ils viennent des tables stat_* que Wazo remplit
 // périodiquement : les appels des dernières heures peuvent manquer.
-import { S, $, esc, toast, listAll } from '../admin-tools/common/core.js?v=0.9.2';
-import { stackedColumns, hbars, legend } from './charts.js?v=0.9.2';
-import { periodRange, fmtDur, fmtDate } from './calllogs.js?v=0.9.2';
-import { download, fileSafe, csv, printHtml, REPORT_CSS, REPORT_FONT, hoverTips } from './report.js?v=0.9.2';
+import { S, $, esc, toast, listAll } from '../admin-tools/common/core.js?v=0.9.3';
+import { stackedColumns, hbars, legend } from './charts.js?v=0.9.3';
+import { periodRange, fmtDur, fmtDate } from './calllogs.js?v=0.9.3';
+import { download, fileSafe, csv, printHtml, REPORT_CSS, REPORT_FONT, hoverTips } from './report.js?v=0.9.3';
 
 // Issue des appels en file : 4 séries au plus (palette validée, slots 1-4).
 // Fermé, saturé et sans agent sont regroupés dans le graphique, détaillés
@@ -197,7 +197,7 @@ export async function renderStats(view, site) {
       <label title="Un appel décroché en moins de ce délai compte comme bien servi.">Objectif de décroché (secondes) <input id="st-qos" type="number" min="0" max="600" value="${esc(F.qos)}"></label>
       <div class="dk-go"><button class="primary" type="submit">Afficher</button></div>
     </form>
-    <p class="muted small">Les derniers appels en file peuvent mettre un peu de temps à apparaître.</p>
+    <p class="muted small">Les derniers appels en file peuvent mettre un peu de temps à apparaître. Pour un groupe d'appels ou des utilisateurs : <button type="button" class="dk-link-sm" data-go="calllogs">Journal d'appels</button>, filtres « Utilisateurs » et « Appels vers le groupe ».</p>
     <div id="st-out"></div><div id="dk-tip" class="dk-tip" hidden></div>`;
   const syncCustom = () => view.querySelectorAll('.st-custom').forEach((l) => (l.hidden = $('st-period').value !== 'custom'));
   syncCustom();

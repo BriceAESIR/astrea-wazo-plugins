@@ -42,6 +42,17 @@ button.dk-text:hover:not(:disabled), .dk-link:hover { background: none; text-dec
 .dk-filters label { margin: 4px 0; min-width: 130px; }
 .dk-filters .dk-grow { flex: 1; min-width: 160px; }
 .dk-go { padding-bottom: 4px; }
+/* Choix de plusieurs utilisateurs (journal) : même allure qu'un champ, liste déroulante à cocher. */
+.dk-field { display: flex; flex-direction: column; margin: 4px 0; min-width: 180px; font-size: .75rem; color: var(--muted); }
+.dk-multi { position: relative; }
+.dk-multi > summary { list-style: none; cursor: pointer; height: 32px; box-sizing: border-box; padding: 4px 18px 5px 0; font-size: .875rem; color: var(--ink); border-bottom: 1px solid color-mix(in srgb, var(--ink) 42%, transparent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; position: relative; }
+.dk-multi > summary::-webkit-details-marker { display: none; }
+.dk-multi > summary::after { content: "▾"; position: absolute; right: 2px; top: 5px; color: var(--muted); }
+.dk-multi[open] > summary { border-bottom-color: var(--accent); }
+.dk-multi-pop { position: absolute; z-index: 20; top: 34px; left: 0; min-width: 240px; max-width: 320px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 0 4px 12px rgba(0,0,0,.15); padding: 8px 10px; }
+.dk-multi-list { max-height: 260px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; margin: 4px 0 6px; }
+.dk-multi-list label { margin: 0; min-width: 0; font-size: .875rem; color: var(--ink); }
+.dk-multi-q { width: 100%; }
 .dk-kpis { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; margin-bottom: 16px; }
 .dk-kpi { border: 1px solid var(--line); border-radius: var(--radius); padding: 10px 14px; }
 .dk-kpi span { display: block; color: var(--muted); font-size: .75rem; }

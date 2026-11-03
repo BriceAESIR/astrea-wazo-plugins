@@ -14,10 +14,10 @@
 // Pas d'appelants en attente dans les files en direct : seul amid les donne
 // (QueueSummary), et amid est réservé au tenant principal
 // (required_master_tenant), donc inaccessible à un admin de site.
-import { S, esc, listAll } from '../admin-tools/common/core.js?v=0.9.2';
-import { stackedColumns, legend } from './charts.js?v=0.9.2';
-import { isService, statusKey, fmtDur, caller } from './calllogs.js?v=0.9.2';
-import { pauseLabel, ghostOf, ghostState, isGhost, GHOST_HELP, loadPresences } from './live.js?v=0.9.2';
+import { S, esc, listAll } from '../admin-tools/common/core.js?v=0.9.3';
+import { stackedColumns, legend } from './charts.js?v=0.9.3';
+import { isService, statusKey, fmtDur, caller } from './calllogs.js?v=0.9.3';
+import { pauseLabel, ghostOf, ghostState, isGhost, GHOST_HELP, loadPresences } from './live.js?v=0.9.3';
 
 const REFRESH = 30e3;
 const SERIES = [
