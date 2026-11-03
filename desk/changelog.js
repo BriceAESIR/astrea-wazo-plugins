@@ -2,7 +2,7 @@
 // nouveau, en une phrase, sans jargon ni détail technique (le détail est dans
 // docs/ASTREA-DESK.md). À compléter à chaque publication qui change quelque
 // chose de visible : ajouter l'entrée en tête, avec la version publiée.
-import { $, esc } from '../admin-tools/common/core.js?v=0.9.5';
+import { $, esc } from '../admin-tools/common/core.js?v=0.9.6';
 
 export const CHANGES = [
   { v: '0.9.5', date: '3 novembre 2026', items: [
@@ -64,5 +64,7 @@ export function renderNews(view) {
   markNews();
   view.innerHTML = `<div class="phonehead"><div><h2>Nouveautés</h2><div class="muted small">Ce qui a changé dans Astrea Desk, de la plus récente à la plus ancienne.</div></div></div>`
     + `<div class="dk-news">${CHANGES.map((c, i) => `<section class="dk-news-v${i === 0 ? ' latest' : ''}"><h3>${i === 0 ? '<span class="dk-badge">Dernière version</span> ' : ''}${esc(c.date)} <span class="muted small">· version ${esc(c.v)}</span></h3><ul>${c.items.map((t) => `<li>${esc(t)}</li>`).join('')}</ul></section>`).join('')}</div>`;
-  view.scrollIntoView({ block: 'start' });
+  // Retour en haut, sans scrollIntoView : dans l'iframe, il fait aussi défiler
+  // l'appli Wazo autour (en-tête de l'appli coupé, vu par Brice le 03/11/2026).
+  for (const el of [$('workbench'), document.scrollingElement]) if (el) el.scrollTop = 0;
 }
