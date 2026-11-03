@@ -155,7 +155,9 @@ input.short { width: 110px !important; }
 .x3-ok { color: var(--ok); }
 /* Assistant d'écriture guidé (lot 5) */
 .x3w-steps { display: flex; flex-direction: column; gap: 8px; max-width: 980px; }
-.x3w-step { padding: 10px 14px; border-left: 4px solid var(--line); }
+/* .card (commun) a « margin: 24px auto » : dans une colonne flex, chaque carte
+   était centrée et réduite à son contenu (retour de Brice, 03/11/2026). */
+.x3w-step { margin: 0; width: 100%; box-sizing: border-box; padding: 10px 14px; border-left: 4px solid var(--line); }
 .x3w-step.open { border-left-color: var(--accent); }
 .x3w-step.ok { border-left-color: var(--ok); }
 .x3w-step.locked, .x3w-step.later { opacity: .6; }
@@ -170,11 +172,26 @@ input.short { width: 110px !important; }
 .x3w-todo, .x3w-plan { margin: 6px 0; padding-left: 22px; line-height: 1.6; }
 .x3w-step .btnrow { margin-top: 8px; }
 .x3w-step code { font-size: .75rem; }
+.x3w-phase { margin: 8px 0; border: 1px solid var(--line); border-radius: var(--radius); padding: 6px 10px; }
+.x3w-phase > summary { cursor: pointer; }
+.x3w-items { width: 100%; margin: 6px 0 0; }
+.x3w-items td { padding: 3px 6px; }
+.x3w-items td.x3w-st { width: 110px; white-space: nowrap; font-size: .75rem; font-weight: 600; }
+.x3w-items tr.st-create td.x3w-st { color: var(--accent); }
+.x3w-items tr.st-update td.x3w-st { color: var(--accent); }
+.x3w-items tr.st-exists td.x3w-st, .x3w-items tr.st-skip td.x3w-st { color: var(--muted); }
+.x3w-items tr.st-conflict td.x3w-st { color: var(--danger); }
+.x3w-remind { margin: 0 0 6px; padding: 4px 10px; border-left: 3px solid var(--line); color: var(--muted); }
+.x3w-step .compat, .x3w-step .warn { margin: 0 0 6px; }
+.x3w-loss { max-height: 360px; margin: 8px 0; }
+.x3w-apply { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.x3w-apply .spacer { flex: 1; }
+.x3w-log { flex-basis: 100%; }
 
 /* Vérification utilisateur par utilisateur */
 .x3-edit tr.x3-unchecked td:nth-child(2) { box-shadow: inset 3px 0 0 var(--warn); }
 .x3-edit select.x3-todo { color: var(--danger); box-shadow: inset 0 -1px 0 var(--danger); }
-.x3-review { margin: 0 0 16px; padding: 12px 16px; border-left: 4px solid var(--accent); max-width: 1100px; }
+.x3-review { margin: 0 0 16px !important; padding: 12px 16px; border-left: 4px solid var(--accent); max-width: 1100px; }
 .x3-review-head { display: flex; align-items: center; gap: 12px; margin: 0 0 8px; }
 .x3-review-head .spacer, .x3-review .btnrow .spacer { flex: 1; }
 .x3-review-iss > div { margin: 0 0 6px; }

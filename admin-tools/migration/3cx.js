@@ -117,12 +117,23 @@ export function parse3cx(xmlText) {
       fwd.timeout = Number(txt(avail, 'NoAnswerTimeout')) || 0;
       fwd.ringMobile = txt(avail, 'RingMyMobile') === 'True';
     }
+    // Autres profils (Away, Out of office, Custom…) : AwayRoute, appels internes
+    // et externes séparés, destination « toute la journée » et « hors heures de
+    // bureau » ; exclusion des groupes et des files. Relevé sur la sauvegarde
+    // réelle (03/11/2026) ; sens exact de OutOfHoursInactive non documenté.
+    const profiles = {};
+    for (const p of all(T(e, 'FwdProfiles'), 'FwdProfile')) {
+      const route = T(p, 'AwayRoute');
+      if (!route) continue;
+      const side = (k) => { const n = T(route, k); return n ? { all: destOf(T(n, 'AllHours')), outOfHours: destOf(T(n, 'OutOfOfficeHours')) } : null; };
+      profiles[txt(p, 'Name')] = { internal: side('Internal'), external: side('External'), noRingGroups: txt(p, 'DisableRingGroupCalls') === 'True', queueLogout: txt(p, 'ForceQueueStatus') === '0' };
+    }
     const mobile = prop(e, 'MOBILENUMBER');
     const x = {
       number, first: txt(e, 'FirstName'), last: txt(e, 'LastName'), email: txt(e, 'EmailAddress'),
       enabled: txt(e, 'Enabled') !== 'False', mobile: /^\+?\d{6,}$/.test(mobile) ? mobile : '',
       vm: { enabled: txt(e, 'VMEnabled') === 'True', pin: txt(e, 'VMPIN') }, recordCalls: txt(e, 'RecordCalls') === 'True',
-      authId: txt(e, 'AuthID'), devices, blfs, fwd,
+      authId: txt(e, 'AuthID'), devices, blfs, fwd, currentProfile: txt(e, 'CurrentProfile') || 'Available', profiles,
     };
     m.extensions.push(x); reg('Extension', number, [x.first, x.last].filter(Boolean).join(' '), x);
   }
