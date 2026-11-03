@@ -8,9 +8,9 @@
 //  - réponse : { items, total, filtered } ;
 //  - call_status : blocked > voicemail > answered, sinon unknown (= non
 //    répondu) ; duration = fin - décroché (null si non décroché).
-import { S, $, esc, toast, listAll } from '../admin-tools/common/core.js?v=0.9.1';
-import { stackedColumns, hbars, legend } from './charts.js?v=0.9.1';
-import { download, fileSafe, csv, printHtml, REPORT_CSS, REPORT_FONT, hoverTips } from './report.js?v=0.9.1';
+import { S, $, esc, toast, listAll } from '../admin-tools/common/core.js?v=0.9.2';
+import { stackedColumns, hbars, legend } from './charts.js?v=0.9.2';
+import { download, fileSafe, csv, printHtml, REPORT_CSS, REPORT_FONT, hoverTips } from './report.js?v=0.9.2';
 
 const PAGE = 1000;       // taille d'une requête call-logd
 const MAX = 20000;       // au-delà, on s'arrête et on le dit
@@ -231,7 +231,7 @@ export function summaryHtml(sum, colors = 'css') {
   return `<div class="dk-kpis">${tiles.map(([l, v]) => `<div class="dk-kpi"><span>${esc(l)}</span><strong>${esc(v)}</strong></div>`).join('')}</div>`
     + `<section class="dk-panel"><h3>${sum.oneDay ? 'Appels par heure' : 'Appels par jour'}</h3>${legend(series.map((s) => ({ ...s, color: col(s) })))}${stackedColumns(sum.buckets, series.map((s) => ({ ...s, color: col(s) })), chartOpts)}</section>`
     + `<div class="dk-two"><section class="dk-panel"><h3>Par sens</h3>${hbars(Object.entries(DIRECTION).map(([k, l]) => ({ label: l, value: sum.dir[k] })), bar)}</section>`
-    + `<section class="dk-panel"><h3>Numéros les plus appelés</h3>${sum.top.length ? hbars(sum.top.map((t) => ({ label: t.label, value: t.value, extra: `${t.answered} répondus` })), bar) : '<p class="muted small">Aucun appel reçu.</p>'}</section></div>`
+    + `<section class="dk-panel"><h3>Numéros les plus appelés</h3>${sum.top.length ? hbars(sum.top.map((t) => ({ label: t.label, value: t.value, extra: `${t.answered} répondu${t.answered > 1 ? 's' : ''}` })), bar) : '<p class="muted small">Aucun appel reçu.</p>'}</section></div>`
     + (sum.causes.length ? `<section class="dk-panel dk-causes"><h3>Non répondus : cause probable</h3><p class="muted small">${esc(CAUSE_HELP)}</p>${hbars(sum.causes, bar2)}</section>` : '');
 }
 
@@ -337,7 +337,7 @@ function exportCsv(site) {
 function reportHtml(site) {
   const sum = summarize(C.items, periodRange());
   const rows = C.items.map((c) => `<tr><td>${esc(fmtDate(c.start))}</td><td>${esc(DIRECTION[c.call_direction] || '')}</td><td>${esc(caller(c))}</td><td>${esc(callee(c))}</td><td>${esc(statusLabel(c))}</td><td class="num">${esc(fmtDur(waitSecs(c)))}</td><td class="num">${esc(fmtDur(c.duration))}</td><td>${esc(probableCause(c))}</td></tr>`).join('');
-  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Journal d'appels · ${esc(site.name)}</title>${REPORT_FONT}<style>${REPORT_CSS}</style></head><body><h1>Journal d'appels · ${esc(site.name)}</h1><p class="sub">${esc(site.customer || '')} · ${esc(filtersText())} · ${C.items.length} appels · édité le ${esc(fmtDate(new Date().toISOString()))} par Astrea Desk${C.truncated ? ` · <strong>limité aux ${C.items.length} plus récents</strong>` : ''}</p>
+  return `<!doctype html><html lang="fr"><head><meta charset="utf-8"><title>Journal d'appels · ${esc(site.name)}</title>${REPORT_FONT}<style>${REPORT_CSS}</style></head><body><h1>Journal d'appels · ${esc(site.name)}</h1><p class="sub">${esc(site.customer || '')} · ${esc(filtersText())} · ${C.items.length} appel${C.items.length > 1 ? 's' : ''} · édité le ${esc(fmtDate(new Date().toISOString()))} par Astrea Desk${C.truncated ? ` · <strong>limité aux ${C.items.length} plus récents</strong>` : ''}</p>
 ${summaryHtml(sum, 'hex')}<section class="dk-panel"><h3>Détail des appels</h3><table><thead><tr><th>Date</th><th>Sens</th><th>Appelant</th><th>Appelé</th><th>Statut</th><th class="num">Attente</th><th class="num">Durée</th><th>Cause probable</th></tr></thead><tbody>${rows}</tbody></table></section></body></html>`;
 }
 function exportHtml(site) { if (needData()) download(`${fileBase(site)}.html`, reportHtml(site), 'text/html;charset=utf-8'); }

@@ -8,8 +8,8 @@
 //    son uuid ;
 //  - import : POST /phonebooks/{uuid}/contacts/import, corps CSV (en-tête =
 //    noms des champs), charset dans le Content-Type → {created, failed}.
-import { S, $, esc, toast, confirmModal, canWrite } from '../admin-tools/common/core.js?v=0.9.1';
-import { download, csv } from './report.js?v=0.9.1';
+import { S, $, esc, toast, confirmModal, canWrite } from '../admin-tools/common/core.js?v=0.9.2';
+import { download, csv } from './report.js?v=0.9.2';
 
 const FIELDS = [['firstname', 'Prénom'], ['lastname', 'Nom'], ['company', 'Société'], ['number', 'Numéro'], ['mobile', 'Mobile'], ['email', 'E-mail']];
 const LABEL = Object.fromEntries(FIELDS);
@@ -99,7 +99,7 @@ export async function renderPhonebooks(view, site) {
       const c = P.contacts.find((x) => String(x.id) === b.dataset.cdel);
       if (canWrite()) confirmModal(`<p>Supprimer le contact <strong>${esc(name(c))}</strong> ?</p>`, async () => { try { await dird('DELETE', `/phonebooks/${P.cur}/contacts/${c.id}`); toast('Contact supprimé.'); } catch (x) { toast(`Échec : ${x.message}`, 8000); } refresh(); return true; }, 'Supprimer');
     } else if (b.id === 'pb-del') {
-      if (canWrite()) confirmModal(`<p>Supprimer l'annuaire <strong>${esc(book.name)}</strong> et ses ${P.contacts.length} contacts ?</p><p class="muted small">Définitif. Pensez à l'exporter en CSV avant.</p>`, async () => { try { await dird('DELETE', `/phonebooks/${book.uuid}`); toast('Annuaire supprimé.'); } catch (x) { toast(`Échec : ${x.message}`, 8000); } refresh(true); return true; }, 'Supprimer');
+      if (canWrite()) confirmModal(`<p>Supprimer l'annuaire <strong>${esc(book.name)}</strong> ${P.contacts.length ? `et ${P.contacts.length > 1 ? `ses ${P.contacts.length} contacts` : 'son contact'}` : '(vide)'} ?</p><p class="muted small">Définitif. Pensez à l'exporter en CSV avant.</p>`, async () => { try { await dird('DELETE', `/phonebooks/${book.uuid}`); toast('Annuaire supprimé.'); } catch (x) { toast(`Échec : ${x.message}`, 8000); } refresh(true); return true; }, 'Supprimer');
     } else if (b.id === 'pb-export') {
       // Colonnes usuelles toujours présentes : l'export sert aussi de modèle pour l'import.
       const cs = [...new Set([...FIELDS.map(([k]) => k), ...cols()])];
