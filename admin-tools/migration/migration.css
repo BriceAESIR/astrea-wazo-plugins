@@ -150,6 +150,21 @@ input.short { width: 110px !important; }
 .x3-edit input.x3-desc { min-width: 200px; }
 .x3-edit input.x3-auto { color: var(--muted); }
 .x3-warn { color: var(--warn); }
+.x3-tenant-iss { margin: 8px 0; }
+.x3-tenant-iss > div { margin: 0 0 6px; }
+.x3-ok { color: var(--ok); }
+/* Vérification utilisateur par utilisateur */
+.x3-edit tr.x3-unchecked td:nth-child(2) { box-shadow: inset 3px 0 0 var(--warn); }
+.x3-edit select.x3-todo { color: var(--danger); box-shadow: inset 0 -1px 0 var(--danger); }
+.x3-review { margin: 0 0 16px; padding: 12px 16px; border-left: 4px solid var(--accent); max-width: 1100px; }
+.x3-review-head { display: flex; align-items: center; gap: 12px; margin: 0 0 8px; }
+.x3-review-head .spacer, .x3-review .btnrow .spacer { flex: 1; }
+.x3-review-iss > div { margin: 0 0 6px; }
+.x3-review-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px 20px; margin: 8px 0; }
+.x3-rf { display: flex; flex-direction: column; gap: 2px; margin: 0; font-size: .8125rem; }
+.x3-rf > span:first-child { font-size: .75rem; color: var(--muted); }
+.x3-rf input:not([type="checkbox"]), .x3-rf select { height: 30px; font-size: .875rem; }
+.x3-rf small { font-size: .6875rem; line-height: 1.3; }
 .x3-edit td.x3-nowrap { white-space: nowrap; }
 .x3-bulk select#xb-dest, .x3-bulk select#xd-dest { max-width: 260px; }
 .x3-edit select[data-p$=".mode"], .x3-edit select[data-p$=".target"] { min-width: 140px; }

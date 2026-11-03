@@ -13,7 +13,7 @@
 // Les objets Wazo correspondants (destinations confd user_id, group_id…) ne
 // sont résolus qu'à l'écriture : convertir une file en groupe ne demande donc
 // aucune reprise des destinations qui la visent.
-import { nameOf, schedulesOf, STRATEGY } from './3cx.js?v=0.40.27';
+import { nameOf, schedulesOf, STRATEGY } from './3cx.js?v=0.40.28';
 
 export const DRAFT_FORMAT = 'astrea-3cx-draft';
 const KEY = 'astrea-migration-3cx-draft-v1';
@@ -23,6 +23,15 @@ export const GROUP_STRATEGIES = { all: 'Tous en même temps', linear: 'Un par un
 // Équivalent file d'attente (option Asterisk « strategy » des files Wazo, supposé).
 export const QUEUE_STRATEGY = { all: 'ringall', linear: 'linear', random: 'random', least_recent: 'leastrecent', fewest_calls: 'fewestcalls', memorized_round_robin: 'rrmemory', weight_random: 'wrandom' };
 export const MODES = { user: 'Utilisateur', voicemail: 'Messagerie seule', skip: 'Non repris' };
+// Licence = subscription_type (confd : 0 à 10). Libellés relevés en réel par
+// User Manager (13/10/2026) ; 2 jamais vu. Retour terrain du 20/10 : le CSV ne
+// portait aucune licence → choix obligatoire, sans valeur par défaut.
+export const LICENCES = { 0: 'Voix', 1: 'Communication unifiée', 3: 'Relation client' };
+// Méthode de connexion du compte des applications (wazo-auth, validée contre
+// les fournisseurs configurés ; lu par User Manager). Pas de colonne dans le CSV.
+export const AUTH_METHODS = { default: 'Défaut de l\'organisation', native: 'Native', saml: 'SAML', ldap: 'LDAP' };
+// confd user/schema.py (lu) : identifiant 2-254 caractères de ce jeu.
+const USERNAME_RE = /^[a-zA-Z0-9\-._~!$&'()*+,;=%@]{2,254}$/;
 export const HUNT_TARGETS = { group: 'Groupe d\'appel', queue: 'File d\'attente', skip: 'Non repris' };
 
 // ---------------------------------------------------------------------------
@@ -59,6 +68,7 @@ export function buildDraft(m, file) {
     return {
       n: e.number, mode, first: n.first || (n.last ? '' : (e.devices.length ? `Poste ${e.number}` : '')), last: n.last, guessed: n.guessed,
       email: e.email, mobile: e.mobile, vm: e.vm.enabled, vmPin: false, ring: e.fwd.timeout || 30, fb, blf: true,
+      sub: null, username: '', authMethod: 'default', appAccess: true, checked: false,
       devices: e.devices, src: { first: e.first, last: e.last, enabled: e.enabled },
     };
   });
@@ -106,6 +116,22 @@ export function deviceDesc(d, dv) {
   const u = userBy(d, dv.owner);
   return u ? userName(u) : '';
 }
+
+// Brouillon d'une version précédente : champs ajoutés depuis (licence, compte
+// des applications, vérification), sans toucher à ce qui a été saisi.
+export function upgradeDraft(d) {
+  for (const u of d.users) {
+    if (!('sub' in u)) u.sub = null;
+    if (!('username' in u)) u.username = '';
+    if (!('authMethod' in u)) u.authMethod = 'default';
+    if (!('appAccess' in u)) u.appAccess = true;
+    if (!('checked' in u)) u.checked = false;
+  }
+  return d;
+}
+// Identifiant effectif : celui saisi, sinon l'e-mail (comme l'import Wazo :
+// wazo_user_service.py, username or email_address or uuid).
+export const effectiveUsername = (u) => u.username || u.email || '';
 
 // ---------------------------------------------------------------------------
 // Sauvegarde dans le navigateur (confort) et fichier JSON (partage, reprise)
@@ -172,8 +198,22 @@ export function draftIssues(d) {
     if (u.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(u.email)) add('warn', w, `e-mail invalide (${u.email}).`);
     if (u.mobile && !/^\+?\d{6,}$/.test(u.mobile)) add('warn', w, `mobile invalide (${u.mobile}).`);
     if (!(u.ring >= 5 && u.ring <= 300)) add('warn', w, `durée de sonnerie ${u.ring} s inhabituelle.`);
+    if (u.sub == null) add('error', w, 'licence non choisie (Voix, Communication unifiée ou Relation client).');
+    if ((u.sub === 1 || u.sub === 3) && !u.email) add('error', w, `e-mail obligatoire pour la licence ${LICENCES[u.sub]} (règle du portail).`);
+    if (u.sub === 0 && u.appAccess) add('info', w, 'licence Voix : les applications Wazo refuseront la connexion, même avec l\'accès autorisé (vérifié par User Manager).');
+    if (u.username && !USERNAME_RE.test(u.username)) add('error', w, `identifiant « ${u.username} » refusé par Wazo (2 à 254 caractères : lettres, chiffres, - . _ ~ ! $ & ' ( ) * + , ; = % @).`);
+    if (!effectiveUsername(u)) add('warn', w, 'ni identifiant ni e-mail : Wazo prendra l\'identifiant interne (uuid) comme identifiant de connexion.');
     for (const [k, l] of [['noanswer', 'pas de réponse'], ['busy', 'occupé'], ['fail', 'indisponible']]) { const p = destProblem(d, u.fb[k]); if (p) add('warn', `${w} renvoi ${l}`, u.fb[k]?.t === 'none' ? `${p}.` : `${destLabel(d, u.fb[k])} : ${p}.`); }
   }
+  // Identifiants de connexion uniques sur tout le serveur : au moins entre eux.
+  const logins = new Map();
+  for (const u of d.users.filter((x) => x.mode === 'user')) {
+    const k = effectiveUsername(u).toLowerCase(); if (!k) continue;
+    if (logins.has(k)) add('error', `Utilisateur ${u.n}`, `identifiant de connexion « ${effectiveUsername(u)} » identique à celui de ${logins.get(k)} (unique sur le serveur).`);
+    logins.set(k, u.n);
+  }
+  const unchecked = imported(d).filter((u) => !u.checked).map((u) => u.n);
+  if (unchecked.length) add('warn', 'Vérification', `${unchecked.length} utilisateur(s) pas encore vérifiés : ${unchecked.join(', ')} (onglet Utilisateurs, « Vérifier un par un »).`);
   for (const u of d.users.filter((x) => x.mode === 'voicemail')) if (!u.vm) add('warn', `Messagerie ${u.n}`, 'reprise en « messagerie seule » mais la messagerie est décochée.');
   const macs = new Map();
   for (const dv of (d.devices || []).filter((x) => x.import)) {
@@ -217,6 +257,53 @@ export function draftIssues(d) {
 }
 
 // ---------------------------------------------------------------------------
+// Contrôles contre le tenant Wazo ouvert (avant l'import CSV)
+// Lu dans wazo-confd (user_import, 03/11/2026) : l'import est tout ou rien
+// (rollback à la première erreur).
+//  - poste : line_extension/validator.py exige le numéro dans les user_ranges
+//    du contexte (« outside of range ») ; EXTEN_REGEX accepte les zéros en tête ;
+//  - numéro existant : ExtensionCreator.find le réutilise, puis l'association
+//    à la nouvelle ligne échoue (extension déjà associée) ;
+//  - SDA : aucune plage exigée (incall_extension/validator.py), mais une SDA
+//    existante est réutilisée et déjà associée → refus ;
+//  - messagerie existante (numéro@contexte) : VoicemailCreator.find la rattache
+//    au nouvel utilisateur au lieu d'en créer une ;
+//  - e-mail : compte wazo-auth ; unicité supposée (non lue), vérifiable ici
+//    seulement dans le tenant ouvert.
+// `t` = { contexts, extensions, users, voicemails } (listes du tenant).
+// ---------------------------------------------------------------------------
+const inUserRanges = (exten, ctx) => (ctx?.user_ranges || []).some((r) => Number(r.start) <= Number(exten) && Number(exten) <= Number(r.end ?? r.start));
+export function tenantIssues(d, { ctx, incallCtx }, t) {
+  const out = [];
+  const add = (sev, area, text) => out.push({ sev, area, text, tenant: true });
+  const c = (t.contexts || []).find((x) => x.name === ctx);
+  if (!c) { add('error', 'Contexte interne', 'aucun contexte interne choisi ou lu dans le tenant.'); return out; }
+  const users = imported(d);
+  const outRange = users.filter((u) => !inUserRanges(u.n, c)).map((u) => u.n);
+  if (outRange.length) add('error', `Contexte ${c.label || c.name}`, `${outRange.length} numéro(s) hors des plages utilisateurs du contexte (${(c.user_ranges || []).map((r) => (r.end && r.end !== r.start ? `${r.start}-${r.end}` : r.start)).join(', ') || 'aucune plage'}) : ${outRange.join(', ')}. Wazo refusera tout l'import : élargir les plages du contexte (Portal) ou changer les numéros.`);
+  const ext = new Map((t.extensions || []).filter((e) => e.context === ctx).map((e) => [e.exten, e]));
+  const taken = users.filter((u) => ext.has(u.n)).map((u) => u.n);
+  if (taken.length) add('error', `Contexte ${c.label || c.name}`, `numéro(s) déjà utilisés dans ce contexte : ${taken.join(', ')}.`);
+  if (incallCtx) {
+    const inc = new Set((t.extensions || []).filter((e) => e.context === incallCtx).map((e) => e.exten));
+    const dids = d.dids.filter((r) => r.import && r.viaCsv && r.dest.t === 'user' && inc.has(r.did)).map((r) => r.did);
+    if (dids.length) add('error', 'SDA', `SDA déjà présentes dans le contexte entrant : ${dids.join(', ')}. Décochez « CSV » dans l'onglet SDA pour celles-ci.`);
+  }
+  const vms = new Set((t.voicemails || []).filter((v) => v.context === ctx).map((v) => v.number));
+  const vmTaken = users.filter((u) => u.vm && vms.has(u.n)).map((u) => u.n);
+  if (vmTaken.length) add('warn', 'Messageries', `messagerie(s) déjà présentes (${vmTaken.join(', ')}) : l'import les rattache aux nouveaux utilisateurs au lieu d'en créer.`);
+  const mails = new Map((t.users || []).filter((u) => u.email).map((u) => [u.email.toLowerCase(), u]));
+  const seen = new Map();
+  for (const u of users.filter((x) => x.email)) {
+    const k = u.email.toLowerCase();
+    if (mails.has(k)) add('warn', `Utilisateur ${u.n}`, `e-mail ${u.email} déjà utilisé dans le tenant (${[mails.get(k).firstname, mails.get(k).lastname].filter(Boolean).join(' ')}).`);
+    if (seen.has(k)) add('warn', `Utilisateur ${u.n}`, `même e-mail que ${seen.get(k)} dans le brouillon.`);
+    seen.set(k, u.n);
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
 // Exports depuis le brouillon
 // ---------------------------------------------------------------------------
 // CSV d'import utilisateurs de Wazo (colonnes de confd user_import/csvparse.py ;
@@ -224,16 +311,19 @@ export function draftIssues(d) {
 // dans le brouillon (navigateur, fichier partageable) : `pins` est lu dans la
 // sauvegarde 3CX au moment de l'export ({ numéro: code }).
 export function usersCsv(d, { ctx, incallCtx, pins = {} }) {
-  const cols = ['firstname', 'lastname', 'email', 'mobile_phone_number', 'enabled', 'ring_seconds', 'context', 'line_protocol', 'exten', 'voicemail_name', 'voicemail_number', 'voicemail_context', 'voicemail_password', 'voicemail_email', 'voicemail_attach_audio', 'incall_exten', 'incall_context', 'username'];
+  // subscription_type : IntRule de USER_RULES ; username : WAZO_USER_RULES (vide
+  // → Wazo prend l'e-mail). Ni méthode de connexion ni accès aux applications
+  // dans le CSV (WazoUserSchema) : à poser après l'import.
+  const cols = ['firstname', 'lastname', 'email', 'mobile_phone_number', 'enabled', 'subscription_type', 'ring_seconds', 'context', 'line_protocol', 'exten', 'voicemail_name', 'voicemail_number', 'voicemail_context', 'voicemail_password', 'voicemail_email', 'voicemail_attach_audio', 'incall_exten', 'incall_context', 'username'];
   const did = new Map();
   for (const r of d.dids) if (r.import && r.viaCsv && r.dest.t === 'user' && !did.has(r.dest.ref)) did.set(r.dest.ref, r.did);
   const q = (s) => (/[",\n]/.test(String(s ?? '')) ? `"${String(s).replace(/"/g, '""')}"` : String(s ?? ''));
   const rows = imported(d).map((u) => {
     const pin = u.vm && u.vmPin && /^\d+$/.test(pins[u.n] || '') ? pins[u.n] : '';
     const v = {
-      firstname: u.first || (u.last ? '' : `Poste ${u.n}`), lastname: u.last, email: u.email, mobile_phone_number: u.mobile, enabled: '1', ring_seconds: u.ring, context: ctx, line_protocol: 'sip', exten: u.n,
+      firstname: u.first || (u.last ? '' : `Poste ${u.n}`), lastname: u.last, email: u.email, mobile_phone_number: u.mobile, enabled: '1', subscription_type: u.sub ?? '', ring_seconds: u.ring, context: ctx, line_protocol: 'sip', exten: u.n,
       voicemail_name: u.vm ? userName(u) : '', voicemail_number: u.vm ? u.n : '', voicemail_context: u.vm ? ctx : '', voicemail_password: pin,
-      voicemail_email: u.vm ? u.email : '', voicemail_attach_audio: u.vm && u.email ? '1' : '', incall_exten: did.get(u.n) || '', incall_context: did.has(u.n) ? incallCtx : '', username: '',
+      voicemail_email: u.vm ? u.email : '', voicemail_attach_audio: u.vm && u.email ? '1' : '', incall_exten: did.get(u.n) || '', incall_context: did.has(u.n) ? incallCtx : '', username: u.username || '',
     };
     return cols.map((c) => q(v[c])).join(',');
   });
