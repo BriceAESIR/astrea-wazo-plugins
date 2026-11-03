@@ -2,18 +2,19 @@
 // Modèle et règles : 3cx-draft.js. Chaque modification est enregistrée dans le
 // navigateur (brouillon par fichier et date de sauvegarde) ; rien n'est écrit
 // dans Wazo depuis ces tableaux.
-import { $, esc, toast, helpButton, helpBox, confirmModal, downloadJson } from '../common/core.js?v=0.40.28';
-import { I } from './inventory.js?v=0.40.28';
+import { $, esc, toast, helpButton, helpBox, confirmModal, downloadJson } from '../common/core.js?v=0.40.29';
+import { I } from './inventory.js?v=0.40.29';
 import {
   GROUP_STRATEGIES, MODES, HUNT_TARGETS, LICENCES, AUTH_METHODS, effectiveUsername, upgradeDraft, saveDraft, clearDraft, buildDraft, acceptDraft, userBy, userName, imported,
   destLabel, destProblem, draftIssues, usersCsv, blfRows, devicesCsv, deviceDesc, macWazo, macValid, tenantIssues,
-} from './3cx-draft.js?v=0.40.28';
+} from './3cx-draft.js?v=0.40.29';
+import { setWizard, wizardTab, wizardChange, wizardClick, wizardDone, wizardTotal } from './3cx-wizard.js?v=0.40.29';
 
 const E = { d: null, m: null, file: '', tab: 'users', sel: { users: new Set(), dids: new Set() }, q: '', onReset: null };
 export const TABS = [
-  ['fiche', 'Fiche 3CX'], ['users', 'Utilisateurs'], ['devices', 'Appareils'], ['hunts', 'Groupes et files'], ['ivrs', 'SVI'], ['dids', 'SDA'], ['scheds', 'Horaires'], ['checks', 'Contrôles'], ['exports', 'Exports'],
+  ['fiche', 'Fiche 3CX'], ['users', 'Utilisateurs'], ['devices', 'Appareils'], ['hunts', 'Groupes et files'], ['ivrs', 'SVI'], ['dids', 'SDA'], ['scheds', 'Horaires'], ['checks', 'Contrôles'], ['exports', 'Exports'], ['write', 'Écriture'],
 ];
-export function setDraft(d, m, file, onReset) { E.d = upgradeDraft(d); E.m = m; E.file = file; E.onReset = onReset; E.sel.users.clear(); E.sel.dids.clear(); E.review = null; }
+export function setDraft(d, m, file, onReset) { E.d = upgradeDraft(d); E.m = m; E.file = file; E.onReset = onReset; E.sel.users.clear(); E.sel.dids.clear(); E.review = null; setWizard(E.d, m); }
 export const draft = () => E.d;
 // Contextes cibles (choisis dans Exports, gardés dans le brouillon) : ceux du
 // tenant ouvert ; à défaut, le premier interne / entrant du tenant.
@@ -26,7 +27,7 @@ const tenantChecks = () => tenantIssues(E.d, tenantCtx(), { contexts: I.lists.co
 export function tabCounts() {
   const d = E.d; if (!d) return {};
   const iss = [...draftIssues(d), ...tenantChecks()];
-  return { users: imported(d).length, devices: (d.devices || []).filter((x) => x.import).length, hunts: d.hunts.filter((h) => h.target !== 'skip').length, ivrs: d.ivrs.filter((v) => v.import).length, dids: d.dids.filter((r) => r.import).length, scheds: d.schedules.length, checks: iss.filter((x) => x.sev !== 'info').length };
+  return { users: imported(d).length, devices: (d.devices || []).filter((x) => x.import).length, hunts: d.hunts.filter((h) => h.target !== 'skip').length, ivrs: d.ivrs.filter((v) => v.import).length, dids: d.dids.filter((r) => r.import).length, scheds: d.schedules.length, checks: iss.filter((x) => x.sev !== 'info').length, write: `${wizardDone()}/${wizardTotal()}` };
 }
 
 // ---------------------------------------------------------------------------
@@ -71,7 +72,7 @@ export function renderTab(root, tab) {
   E.tab = tab;
   const keep = [...root.querySelectorAll('.x3-edit-wrap')].map((w) => [w.scrollTop, w.scrollLeft]);
   const opts = destOptions();
-  const html = { users: usersTab, devices: devicesTab, hunts: huntsTab, ivrs: ivrsTab, dids: didsTab, scheds: schedsTab, checks: checksTab, exports: exportsTab }[tab]?.(opts) || '';
+  const html = { users: usersTab, devices: devicesTab, hunts: huntsTab, ivrs: ivrsTab, dids: didsTab, scheds: schedsTab, checks: checksTab, exports: exportsTab, write: wizardTab }[tab]?.(opts) || '';
   root.innerHTML = html;
   // Listes à valeur posée après rendu (utilisateur d'un appareil).
   for (const s of root.querySelectorAll('select[data-p][data-val]')) {
@@ -337,6 +338,7 @@ export function onDraftChange(fn) { E.onChange = fn; }
 function parseDest(v, numVal) { const [t, ref] = v.split(':'); return t === 'ext' ? { t, num: numVal || '' } : ref ? { t, ref } : { t }; }
 
 function onChange(e, root) {
+  if (e.target.dataset.w) { wizardChange(e.target).then(() => { renderTab(root, E.tab); E.onChange?.(); }); return; }
   const t = e.target;
   if (t.id === 'x3-draft-file') return loadDraftFile(t, root);
   if (t.dataset.sel) { const s = E.sel[t.dataset.sel]; const i = Number(t.dataset.i); t.checked ? s.add(i) : s.delete(i); return renderTab(root, E.tab); }
@@ -366,6 +368,8 @@ function onChange(e, root) {
   }
 }
 function onClick(e, root) {
+  const wb = e.target.closest('[data-wact]');
+  if (wb) { wizardClick(wb, () => { renderTab(root, 'write'); E.onChange?.(); }); return; }
   const b = e.target.closest('[data-act]'); if (!b || b.tagName === 'SELECT') return;
   const d = E.d;
   switch (b.dataset.act) {
@@ -390,7 +394,7 @@ function onClick(e, root) {
     case 'csv-blf': return exportBlf();
     case 'csv-devices': return download(`astrea-3cx-appareils-${base()}.csv`, devicesCsv(d));
     case 'draft-dl': return downloadJson(`astrea-3cx-brouillon-${(E.file || '3cx').replace(/\.xml$/i, '')}.json`, d);
-    case 'draft-reset': return confirmModal('<h3>Réinitialiser le brouillon ?</h3><p>Toutes les modifications sont perdues ; le brouillon repart de la sauvegarde 3CX.</p>', () => { clearDraft(d); E.d = buildDraft(E.m, E.file); saveDraft(E.d); E.onReset?.(E.d); renderTab(root, E.tab); E.onChange?.(); }, 'Réinitialiser');
+    case 'draft-reset': return confirmModal('<h3>Réinitialiser le brouillon ?</h3><p>Toutes les modifications sont perdues ; le brouillon repart de la sauvegarde 3CX.</p>', () => { clearDraft(d); E.d = buildDraft(E.m, E.file); saveDraft(E.d); setWizard(E.d, E.m); E.onReset?.(E.d); renderTab(root, E.tab); E.onChange?.(); }, 'Réinitialiser');
     default:
   }
 }
@@ -459,7 +463,7 @@ function loadDraftFile(input, root) {
   if (!f) return;
   const r = new FileReader();
   r.onload = () => {
-    try { E.d = upgradeDraft(acceptDraft(JSON.parse(r.result), E.file, E.d.sourceDate)); saveDraft(E.d); E.onReset?.(E.d); toast('Brouillon chargé.'); renderTab(root, E.tab); E.onChange?.(); }
+    try { E.d = upgradeDraft(acceptDraft(JSON.parse(r.result), E.file, E.d.sourceDate)); saveDraft(E.d); setWizard(E.d, E.m); E.onReset?.(E.d); toast('Brouillon chargé.'); renderTab(root, E.tab); E.onChange?.(); }
     catch (err) { toast(`Brouillon refusé : ${err.message}`, 7000); }
   };
   r.readAsText(f);
