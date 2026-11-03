@@ -1,7 +1,7 @@
 // Astrea Desk — outils communs aux modules à exports (journal d'appels,
 // statistiques) : téléchargement, impression PDF, styles du rapport HTML,
 // infobulles des graphiques.
-import { $, toast } from '../admin-tools/common/core.js?v=0.9.4';
+import { $, toast } from '../admin-tools/common/core.js?v=0.9.5';
 
 export function download(name, text, type) {
   try {

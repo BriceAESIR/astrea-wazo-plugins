@@ -2,17 +2,18 @@
 // dans le Portal (visualization), choix du site, connexion à la stack, menu
 // et accueil. Les appels confd passent par common/core.js (api, listAll,
 // filtre tenant), avec le token de la stack du site.
-import { sdk, S, $, esc, toast, applyTheme, listAll, showCompat } from '../admin-tools/common/core.js?v=0.9.4';
-import { renderCallLogs } from './calllogs.js?v=0.9.4';
-import { renderStats } from './stats.js?v=0.9.4';
-import { renderDashboard, stopDashboard } from './dashboard.js?v=0.9.4';
-import { renderModuleList } from './modules.js?v=0.9.4';
-import { renderQueues } from './live.js?v=0.9.4';
-import { renderSounds, renderMoh, renderRecordings, stopAudio } from './media.js?v=0.9.4';
-import { renderPhonebooks } from './phonebook.js?v=0.9.4';
-import { P, ST, PortalError, portalLogin, portalResume, remembered, checkScopes, loadVisualization, loadLocations, openSite, stackLogin, logout, closeSite } from './portal.js?v=0.9.4';
+import { sdk, S, $, esc, toast, applyTheme, listAll, showCompat } from '../admin-tools/common/core.js?v=0.9.5';
+import { renderCallLogs } from './calllogs.js?v=0.9.5';
+import { renderStats } from './stats.js?v=0.9.5';
+import { renderDashboard, stopDashboard } from './dashboard.js?v=0.9.5';
+import { renderModuleList } from './modules.js?v=0.9.5';
+import { renderQueues } from './live.js?v=0.9.5';
+import { renderSounds, renderMoh, renderRecordings, stopAudio } from './media.js?v=0.9.5';
+import { renderPhonebooks } from './phonebook.js?v=0.9.5';
+import { renderNews, markNews } from './changelog.js?v=0.9.5';
+import { P, ST, PortalError, portalLogin, portalResume, remembered, checkScopes, loadVisualization, loadLocations, openSite, stackLogin, logout, closeSite } from './portal.js?v=0.9.5';
 
-const APP_VERSION = '0.9.4';
+const APP_VERSION = '0.9.5';
 const TESTED_STACK = ['26.07', '26.10'];
 // Droit Portal sans lequel aucune stack n'est accessible (vérifié : contrôlé
 // par le Portal avant d'ouvrir un site).
@@ -279,6 +280,7 @@ function go(view) {
   renderNav();
   if (view === 'home') return renderHome();
   if (view === 'diag') return renderDiag();
+  if (view === 'news') return renderNews($('view'));
   const m = MODULES.find((x) => x.id === view);
   if (m && allowed(m)) renderModule(m);
 }
@@ -357,7 +359,9 @@ function renderDiag() {
   $('dg-copy').onclick = async () => { try { await navigator.clipboard.writeText(txt); toast('Diagnostic copié.'); } catch { toast('Copie impossible : sélectionnez le texte.'); } };
 }
 
-$('ft-diag').onclick = () => { D.view = 'diag'; renderNav(); renderDiag(); };
+$('ft-diag').onclick = () => go('diag');
+$('ft-news').onclick = () => go('news');
+markNews();
 $('ft-change').onclick = () => { leaveSite(); showSites(); };
 $('ft-logout').onclick = () => doLogout();
 

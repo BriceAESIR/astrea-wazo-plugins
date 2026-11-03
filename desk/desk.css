@@ -221,6 +221,16 @@ button.dk-link-sm:hover:not(:disabled) { background: none; text-decoration: unde
 .dk-off { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 8px; background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--ink); font-size: .6875rem; }
 .dk-panhead { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px; }
 
+/* Nouveautés : point sur le bouton tant que la dernière version n'est pas lue */
+button.dk-text.dk-new::after { content: ''; width: 8px; height: 8px; margin-left: 6px; border-radius: 50%; background: var(--danger); display: inline-block; }
+.dk-news { max-width: 760px; }
+.dk-news-v { padding: 12px 0; border-bottom: 1px solid var(--line); }
+.dk-news-v h3 { margin: 0 0 6px; font-size: .9375rem; font-weight: 700; }
+.dk-news-v ul { margin: 0; padding-left: 20px; }
+.dk-news-v li { margin: 3px 0; line-height: 1.5; }
+.dk-news-v:not(.latest) { color: var(--muted); }
+.dk-news-v:not(.latest) h3 { color: var(--ink); }
+
 /* Diagnostic */
 .dk-diag { white-space: pre-wrap; font: .75rem/1.5 ui-monospace, Consolas, monospace; background: var(--tile); padding: 12px 16px; border-radius: var(--radius); max-height: 60vh; overflow: auto; }
 
