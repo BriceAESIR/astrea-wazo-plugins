@@ -10,8 +10,8 @@
 // PCM. Les autres (gsm, g722…) ne sont pas lisibles : message, pas d'erreur
 // silencieuse. Supposé : un son système dans un sous-dossier (« digits/1 »)
 // passe encodé (%2F) dans l'URL — à tester en réel.
-import { S, toast } from '../common/core.js?v=0.40.30';
-import { M, sameTenant } from './model.js?v=0.40.30';
+import { S, toast } from '../common/core.js?v=0.40.31';
+import { M, sameTenant } from './model.js?v=0.40.31';
 
 // Bouton de lecture : icône ▶ / ■ comme Astrea Desk (demande de Brice,
 // 02/11/2026). data-tip garde une infobulle propre au bouton au repos.

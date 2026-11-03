@@ -10,10 +10,10 @@
 // appels sortants ; lues dans le code, testées sur faux tenant). Les phases
 // Personnes, Routage et Finitions sont planifiées (lecture seule) ; leur
 // écriture arrive aux lots 5b-5d.
-import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.30';
-import { I, sameTenant } from './inventory.js?v=0.40.30';
-import { buildExport, exportFileName } from './export.js?v=0.40.30';
-import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES } from './3cx-draft.js?v=0.40.30';
+import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.31';
+import { I, sameTenant } from './inventory.js?v=0.40.31';
+import { buildExport, exportFileName } from './export.js?v=0.40.31';
+import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES } from './3cx-draft.js?v=0.40.31';
 
 const W = { d: null, m: null, t: null, busy: false, msg: null, at: null };
 export function setWizard(d, m) { W.d = d; W.m = m; W.t = null; W.msg = null; ensureState(); }
@@ -74,6 +74,40 @@ function contextsOf(t) {
   return { internal: pick(W.d.ctx, 'internal'), incall: pick(W.d.incallCtx, 'incall'), outcall: t.contexts.find((c) => c.type === 'outcall') || null };
 }
 
+// ---------------------------------------------------------------------------
+// Plages du contexte interne (demande de Brice, 03/11/2026) : les numéros 3CX
+// à recréer doivent tomber dans les plages du contexte, sinon confd refuse
+// (line_extension/validator.py pour les postes ; même contrôle à
+// l'association d'un groupe ou d'une file, extension/validator.py). L'outil
+// ajoute les plages manquantes, sans jamais retirer une plage existante.
+// Lu dans confd (03/11/2026) : PUT /contexts/{id} partiel (ContextMiddleWare,
+// parse_and_update), chaque clé envoyée remplace toute la liste de ce type ;
+// début et fin de même longueur (RangeSchema) ; « dialplan reload » à l'écriture.
+// ---------------------------------------------------------------------------
+const RANGE_TYPES = [
+  ['user_ranges', 'postes', (d) => imported(d).map((u) => u.n)],
+  ['group_ranges', 'groupes', (d) => d.hunts.filter((h) => h.target === 'group').map((h) => h.n)],
+  ['queue_ranges', 'files d\'attente', (d) => d.hunts.filter((h) => h.target === 'queue').map((h) => h.n)],
+];
+const inR = (n, ranges) => (ranges || []).some((r) => Number(r.start) <= Number(n) && Number(n) <= Number(r.end ?? r.start));
+const rangeTxt = (r) => (r.end && r.end !== r.start ? `${r.start}-${r.end}` : r.start);
+// Une plage englobante par longueur de numéro (« 001-037 ») : simple à lire
+// dans le Portal ; les numéros libres au milieu restent utilisables.
+function spanOf(nums) {
+  const by = new Map();
+  for (const n of nums) { const k = n.length; if (!by.has(k)) by.set(k, []); by.get(k).push(n); }
+  return [...by.values()].map((l) => { l.sort((a, b) => Number(a) - Number(b)); return { start: l[0], end: l[l.length - 1] }; });
+}
+function rangeFixes(ctx) {
+  if (!ctx) return [];
+  const out = [];
+  for (const [key, label, nums] of RANGE_TYPES) {
+    const missing = [...new Set(nums(W.d))].filter((n) => /^\d+$/.test(n) && !inR(n, ctx[key]));
+    if (missing.length) out.push({ key, label, missing, add: spanOf(missing), current: ctx[key] || [] });
+  }
+  return out;
+}
+
 // Messages identiques regroupés en une ligne (« 19 utilisateurs : licence non choisie »).
 // La zone « Utilisateur 005 renvoi occupé » est réduite à son objet (« 005 »).
 function grouped(list, label) {
@@ -95,7 +129,10 @@ function prerequisites(t) {
   if (!c.incall) add('error', 'Contexte entrant', 'aucun contexte entrant : les SDA ne pourront pas être créées.', ['routing']);
   if (!c.outcall) add('error', 'Contexte sortant', 'aucun contexte sortant : pas de règle d\'appels sortants possible.', ['found']);
   const tIss = c.internal ? tenantIssues(W.d, { ctx: c.internal.name, incallCtx: c.incall?.name }, { contexts: t.contexts, extensions: t.extensions, users: t.users, voicemails: t.voicemails }) : [];
-  for (const x of tIss.filter((y) => y.sev === 'error')) add('error', x.area, x.text, ['people']);
+  // Numéros hors des plages : corrigés par la phase Fondations (ajout des plages), pas une erreur à régler à la main.
+  for (const x of tIss.filter((y) => y.sev === 'error' && !/hors des plages/.test(y.text))) add('error', x.area, x.text, ['people']);
+  const fixes = rangeFixes(c.internal);
+  if (fixes.length) add('fix', `Plages du contexte ${c.internal.label || c.internal.name}`, `${fixes.map((f) => `${f.missing.length} ${f.label} hors des plages`).join(', ')} : la phase Fondations ajoute ${fixes.map((f) => `${f.label} ${f.add.map(rangeTxt).join(', ')}`).join(' ; ')}. Personnes et Routage attendent cette correction.`, ['people', 'routing']);
   for (const x of grouped(draftIssues(W.d).filter((y) => y.sev === 'error'), kindOf)) add('error', x.area, x.text, [/^\d+ (utilisateurs|appareils)|^(Utilisateur|Appareil)/.test(x.area) ? 'people' : 'routing']);
   const unchecked = imported(W.d).filter((u) => !u.checked).length;
   if (unchecked) add('warn', 'Vérification des utilisateurs', `${unchecked} utilisateur(s) pas encore vérifiés (onglet Utilisateurs, « Vérifier un par un »).`, ['people']);
@@ -104,7 +141,7 @@ function prerequisites(t) {
   add('remind', 'IP publique', 'postes fixes : autoriser l\'IP publique du client dans les paramètres globaux de la stack (tenant principal).');
   return out;
 }
-const blockedPhases = (pre) => new Set(pre.filter((p) => p.sev === 'error' || p.sev === 'manual').flatMap((p) => p.phases));
+const blockedPhases = (pre) => new Set(pre.filter((p) => ['error', 'manual', 'fix'].includes(p.sev)).flatMap((p) => p.phases));
 
 // ---------------------------------------------------------------------------
 // 2. Plan de migration (ordre de dépendances, calculé par l'outil)
@@ -120,7 +157,8 @@ function buildPlan(t) {
   const d = W.d; const c = contextsOf(t);
   const P = { found: [], people: [], routing: [], finish: [] };
   const add = (k, status, label, detail = '') => P[k].push({ status, label, detail });
-  // Fondations
+  // Fondations : d'abord les plages du contexte interne (les numéros en dépendent).
+  for (const f of rangeFixes(c.internal)) add('found', 'update', `Plages ${f.label} du contexte ${c.internal.label || c.internal.name}`, `ajouter ${f.add.map(rangeTxt).join(', ')} (actuelles : ${f.current.map(rangeTxt).join(', ') || 'aucune'} ; ${f.missing.length} numéro(s) hors plages)`);
   if (t.localization?.error) add('found', 'conflict', 'Pays', `lecture impossible : ${t.localization.error}`);
   else add('found', t.localization?.country === 'FR' ? 'exists' : 'update', 'Pays France', t.localization?.country === 'FR' ? 'déjà réglé' : `${t.localization?.country || 'aucun'} → FR`);
   if (t.retention?.error) add('found', 'conflict', 'Conservation des données', `lecture impossible (call-logd) : ${t.retention.error}`);
@@ -240,6 +278,18 @@ function losses() {
 // ---------------------------------------------------------------------------
 async function foundationOps(t) {
   const d = W.d; const c = contextsOf(t); const ops = [];
+  if (c.internal && rangeFixes(c.internal).length) {
+    const id = c.internal.id;
+    ops.push({ label: `Plages du contexte ${c.internal.label || c.internal.name} : ${rangeFixes(c.internal).map((f) => `${f.label} + ${f.add.map(rangeTxt).join(', ')}`).join(' ; ')} (PUT /contexts/${id})`, run: async () => {
+      // Relu juste avant : on renvoie les plages actuelles + les nouvelles, par type (PUT partiel, liste remplacée).
+      const cur = await tapi('GET', `/contexts/${id}`);
+      const body = {}; const prev = {};
+      for (const f of rangeFixes(cur)) { prev[f.key] = cur[f.key] || []; body[f.key] = [...(cur[f.key] || []).map((r) => ({ start: r.start, end: r.end ?? r.start })), ...f.add]; }
+      if (!Object.keys(body).length) return { created: 'plages déjà suffisantes' };
+      await tapi('PUT', `/contexts/${id}`, body);
+      return { created: Object.entries(body).map(([k, v]) => `${k} : ${v.map(rangeTxt).join(', ')}`).join(' ; '), undo: { method: 'PUT', path: `/contexts/${id}`, body: Object.fromEntries(Object.entries(prev).map(([k, v]) => [k, v.map((r) => ({ start: r.start, end: r.end ?? r.start }))])) } };
+    } });
+  }
   if (!t.localization?.error && t.localization?.country !== 'FR') {
     const prev = t.localization?.country ?? null;
     ops.push({ label: 'Pays : FR (PUT /localization)', run: async () => { await tapi('PUT', '/localization', { country: 'FR' }); return { undo: { method: 'PUT', path: '/localization', body: { country: prev } } }; } });
@@ -313,7 +363,7 @@ export function wizardTab() {
   if (!W.t) html += '<p class="small muted">Lecture seule : l\'outil lit le tenant ouvert et le confronte au brouillon.</p></div>';
   else {
     const pre = prerequisites(W.t);
-    html += `<p class="small muted">Lu à ${esc(W.t.at.toLocaleTimeString('fr-FR'))}.</p>${pre.map((p) => `<div class="${p.sev === 'error' ? 'compat blocking' : p.sev === 'manual' ? 'warn' : p.sev === 'warn' ? 'warn' : 'x3w-remind small'}"><strong>${esc(p.title)}</strong> : ${esc(p.text)}</div>`).join('')}`;
+    html += `<p class="small muted">Lu à ${esc(W.t.at.toLocaleTimeString('fr-FR'))}.</p>${pre.map((p) => `<div class="${p.sev === 'error' ? 'compat blocking' : ['manual', 'warn', 'fix'].includes(p.sev) ? 'warn' : 'x3w-remind small'}"><strong>${esc(p.title)}</strong> : ${esc(p.text)}</div>`).join('')}`;
     if (!W.t.trunks.length) html += trunkHelp();
     else html += `<label class="small">Trunk des appels sortants <select data-w="trunkId">${W.t.trunks.map((t) => `<option value="${t.id}" ${String(w.trunkId) === String(t.id) ? 'selected' : ''}>${esc(t.endpoint_sip?.label || t.endpoint_sip?.name || `Trunk ${t.id}`)}</option>`).join('')}</select></label>`;
     html += '</div>';
