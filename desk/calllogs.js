@@ -8,9 +8,9 @@
 //  - réponse : { items, total, filtered } ;
 //  - call_status : blocked > voicemail > answered, sinon unknown (= non
 //    répondu) ; duration = fin - décroché (null si non décroché).
-import { S, $, esc, toast, listAll } from '../admin-tools/common/core.js?v=0.9.3';
-import { stackedColumns, hbars, legend } from './charts.js?v=0.9.3';
-import { download, fileSafe, csv, printHtml, REPORT_CSS, REPORT_FONT, hoverTips } from './report.js?v=0.9.3';
+import { S, $, esc, toast, listAll } from '../admin-tools/common/core.js?v=0.9.4';
+import { stackedColumns, hbars, legend } from './charts.js?v=0.9.4';
+import { download, fileSafe, csv, printHtml, REPORT_CSS, REPORT_FONT, hoverTips } from './report.js?v=0.9.4';
 
 const PAGE = 1000;       // taille d'une requête call-logd
 const MAX = 20000;       // au-delà, on s'arrête et on le dit
@@ -279,7 +279,7 @@ export async function renderCallLogs(view, site) {
       <div class="dk-field"><span>Utilisateurs</span><details class="dk-multi" id="cl-users"><summary>${esc(usersText())}</summary><div class="dk-multi-pop">
         ${C.users.length > 8 ? '<input type="search" class="dk-multi-q" placeholder="Rechercher un nom">' : ''}
         <div class="dk-multi-list">${C.users.map((u) => `<label class="inline"><input type="checkbox" value="${esc(u.uuid)}"${F.users.includes(u.uuid) ? ' checked' : ''}> <span>${esc(u.name)}</span></label>`).join('')}</div>
-        <button type="button" class="dk-link-sm" data-uclear>Tous les utilisateurs</button></div></details></div>
+        <div class="btnrow"><button type="button" class="dk-link-sm" data-uall="1">Tout cocher</button><button type="button" class="dk-link-sm" data-uall="0">Tout décocher</button></div></div></details></div>
       ${T.groups.length ? `<label title="Appels arrivés sur le groupe, y compris ceux partis ensuite vers sa messagerie.">Appels vers le groupe <select id="cl-group">${opt('', '—', F.group)}${T.groups.map((g) => opt(String(g.id), g.label, String(F.group))).join('')}</select></label>` : ''}
       <label class="dk-grow">Recherche <input id="cl-search" value="${esc(F.search)}" placeholder="Nom ou numéro"></label>
       <div class="dk-go"><button class="primary" type="submit">Afficher</button></div>
@@ -294,7 +294,8 @@ export async function renderCallLogs(view, site) {
   const box = $('cl-users');
   const sumUp = () => { box.querySelector('summary').textContent = usersText([...box.querySelectorAll('input[type=checkbox]:checked')].map((i) => i.value)); };
   box.addEventListener('change', sumUp);
-  box.querySelector('[data-uclear]').onclick = () => { box.querySelectorAll('input[type=checkbox]').forEach((i) => { i.checked = false; }); sumUp(); };
+  // Tout cocher / décocher (demande de Brice, 03/11/2026) : seulement les noms affichés si une recherche est en cours.
+  box.querySelectorAll('[data-uall]').forEach((b) => { b.onclick = () => { box.querySelectorAll('.dk-multi-list label:not([hidden]) input[type=checkbox]').forEach((i) => { i.checked = b.dataset.uall === '1'; }); sumUp(); }; });
   const uq = box.querySelector('.dk-multi-q');
   if (uq) uq.oninput = () => { const q = uq.value.trim().toLowerCase(); box.querySelectorAll('.dk-multi-list label').forEach((l) => { l.hidden = !!q && !l.textContent.toLowerCase().includes(q); }); };
   view.addEventListener('click', (e) => { if (box.open && !box.contains(e.target)) box.open = false; });
@@ -312,6 +313,8 @@ function readFilters() {
   F.period = $('cl-period').value; F.from = $('cl-from').value; F.until = $('cl-until').value;
   F.direction = $('cl-dir').value; F.status = $('cl-status').value; F.search = $('cl-search').value.trim();
   F.users = [...document.querySelectorAll('#cl-users input[type=checkbox]:checked')].map((i) => i.value);
+  // Tout coché = pas de filtre (« Tous ») : on garde aussi les appels sans utilisateur (SVI, files…).
+  if (F.users.length === C.users.length) F.users = [];
   F.group = $('cl-group')?.value || '';
   if (F.period === 'custom' && F.from && F.until && F.until < F.from) [F.from, F.until] = [F.until, F.from];
 }
@@ -358,7 +361,7 @@ const fileBase = (site) => `journal-appels_${fileSafe(site.name)}_${toLocalInput
 function needData() { if (!C.items.length) { toast('Rien à exporter : lancez d\'abord une recherche avec des résultats.'); return false; } return true; }
 // Résumé du choix d'utilisateurs : « Tous », un nom, ou « n utilisateurs ».
 function usersText(sel = F.users) {
-  if (!sel.length) return 'Tous';
+  if (!sel.length || sel.length === C.users?.length) return 'Tous';
   if (sel.length === 1) return C.users?.find((x) => x.uuid === sel[0])?.name || '1 utilisateur';
   return `${sel.length} utilisateurs`;
 }
