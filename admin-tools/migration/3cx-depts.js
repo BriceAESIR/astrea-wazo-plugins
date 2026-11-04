@@ -13,7 +13,7 @@
 //    département des SDA qui le visent, s'il n'y en a qu'un, sinon à celui
 //    dont le nom figure dans le sien (« Fermeture exceptionnelle - Site B »).
 // Supposé : un poste dans deux départements réels (le premier est retenu, signalé).
-import { imported } from './3cx-draft.js?v=0.40.48';
+import { imported } from './3cx-draft.js?v=0.40.49';
 
 export const DEFAULT = '__DEFAULT__';
 export const DEPT_MODES = { own: 'Jeu de contextes propre', merge: 'Fusionné dans un autre', skip: 'Site Wazo séparé (non importé ici)' };
@@ -74,8 +74,11 @@ export const deptBy = (d, k) => (d.depts || []).find((x) => x.key === k);
 export function unitKey(d, k) {
   if (!d.depts?.length) return '_';
   let x = deptBy(d, k || DEFAULT) || deptBy(d, DEFAULT) || d.depts[0];
-  for (let i = 0; i < 6 && x?.mode === 'merge'; i++) x = deptBy(d, x.into);
-  if (!x || x.mode === 'merge') return deptBy(d, DEFAULT)?.key || d.depts[0].key;
+  const seen = new Set();
+  while (x?.mode === 'merge' && !seen.has(x.key)) { seen.add(x.key); x = deptBy(d, x.into); }
+  // Fusion vers un département absent ou en boucle (protégée par setDeptMode, brouillon modifié
+  // à la main) : premier département « propre », pour que l'objet garde un jeu de contextes.
+  if (!x || x.mode === 'merge') return d.depts.find((y) => y.mode === 'own')?.key || deptBy(d, DEFAULT)?.key || d.depts[0].key;
   return x.mode === 'skip' ? '' : x.key;
 }
 export const unitOf = (d, o) => unitKey(d, o?.dept);
@@ -95,20 +98,30 @@ export const deptObjects = (d, k) => ({ users: d.users.filter((u) => u.dept === 
 export function setDeptMode(d, k, mode, into = '') {
   const x = deptBy(d, k); if (!x) return;
   const was = x.mode; x.mode = mode; x.into = mode === 'merge' ? (into || x.into || d.depts.find((y) => y.key !== k && y.mode === 'own')?.key || '') : '';
+  // Fusion en boucle (A dans B, B dans A) : la cible ne peut plus fusionner, elle redevient « propre ».
+  if (mode === 'merge') { const seen = new Set([k]); let y = deptBy(d, x.into); while (y?.mode === 'merge' && !seen.has(y.key)) { seen.add(y.key); y = deptBy(d, y.into); } if (y && y.mode === 'merge') { const t = deptBy(d, x.into); if (t) { t.mode = 'own'; t.into = ''; } } }
   const o = deptObjects(d, k);
-  if (mode === 'skip' && was !== 'skip') {
-    for (const u of o.users) { u.deptPrev = u.mode; u.mode = 'skip'; }
-    for (const h of o.hunts) { h.deptPrev = h.target; h.target = 'skip'; }
-    for (const v of [...o.ivrs, ...o.dids]) { v.deptPrev = v.import; v.import = false; }
-  }
-  if (mode !== 'skip' && was === 'skip') {
-    for (const u of o.users) if (u.deptPrev) { u.mode = u.deptPrev; delete u.deptPrev; }
-    for (const h of o.hunts) if (h.deptPrev) { h.target = h.deptPrev; delete h.deptPrev; }
-    for (const v of [...o.ivrs, ...o.dids]) if ('deptPrev' in v) { v.import = v.deptPrev; delete v.deptPrev; }
-  }
+  const kinds = [['users', o.users], ['hunts', o.hunts], ['ivrs', o.ivrs], ['dids', o.dids]];
+  if (mode === 'skip' && was !== 'skip') for (const [kind, l] of kinds) for (const v of l) park(kind, v);
+  if (mode !== 'skip' && was === 'skip') for (const [kind, l] of kinds) for (const v of l) unpark(kind, v);
 }
-// Un objet déplacé à la main d'un département à un autre.
+// « Site séparé » : objet retiré de l'import, état d'avant gardé (deptPrev) ; et inversement.
+function park(kind, v) {
+  if ('deptPrev' in v) return;
+  if (kind === 'users') { v.deptPrev = v.mode; v.mode = 'skip'; } else if (kind === 'hunts') { v.deptPrev = v.target; v.target = 'skip'; } else { v.deptPrev = v.import; v.import = false; }
+}
+function unpark(kind, v) {
+  if (!('deptPrev' in v)) return;
+  if (kind === 'users') v.mode = v.deptPrev || v.mode; else if (kind === 'hunts') v.target = v.deptPrev || v.target; else v.import = v.deptPrev;
+  delete v.deptPrev;
+}
+// Un objet déplacé à la main d'un département à un autre : il suit le mode de sa destination
+// (retiré de l'import vers un site séparé, rétabli en en sortant).
 export function moveObject(d, kind, n, k) {
-  const list = { user: d.users, hunt: d.hunts, ivr: d.ivrs, did: d.dids }[kind] || [];
-  const o = list.find((x) => (kind === 'did' ? x.did : x.n) === n); if (o) { o.dept = k; o.deptBy = 'manuel'; }
+  const key = { user: 'users', hunt: 'hunts', ivr: 'ivrs', did: 'dids' }[kind]; const list = d[key] || [];
+  const o = list.find((x) => (kind === 'did' ? x.did : x.n) === n); if (!o) return;
+  const from = deptBy(d, o.dept)?.mode; const to = deptBy(d, k)?.mode;
+  o.dept = k; o.deptBy = 'manuel';
+  if (to === 'skip' && from !== 'skip') park(key, o);
+  else if (from === 'skip' && to !== 'skip') unpark(key, o);
 }

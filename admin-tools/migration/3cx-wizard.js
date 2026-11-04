@@ -11,16 +11,16 @@
 // de l'assistant France de Call Flow ; lues dans le code, testées sur faux tenant). Les phases
 // Personnes, Routage et Finitions sont planifiées (lecture seule) ; leur
 // écriture arrive aux lots 5b-5d.
-import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.48';
-import { I, sameTenant } from './inventory.js?v=0.40.48';
-import { buildExport, exportFileName } from './export.js?v=0.40.48';
-import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText, didWazo } from './3cx-draft.js?v=0.40.48';
+import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.49';
+import { I, sameTenant } from './inventory.js?v=0.40.49';
+import { buildExport, exportFileName } from './export.js?v=0.40.49';
+import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText, didWazo, numWazo } from './3cx-draft.js?v=0.40.49';
 import {
   SITE_MODES, FR_FAMILIES, FR_FORMATS, BLOCK_118, defaultSite, defaultOut, clientPatterns, unitDids, rangeIssues, occupancy, placements, unitLabels, unitCfg, futureOf, siteChecks, routeText, newRanges, multi as multiSites,
-} from './3cx-sites.js?v=0.40.48';
-import { unitList, unitOf, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.48';
-import { mohLabel, soundCategory, loaded, wazoName, putBinary, CATEGORY_RE } from './3cx-sounds.js?v=0.40.48';
-import { phonebookName, companyContacts, sourceColumns, dird } from './3cx-phonebook.js?v=0.40.48';
+} from './3cx-sites.js?v=0.40.49';
+import { unitList, unitOf, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.49';
+import { mohLabel, soundCategory, loaded, uniqueNames, putBinary, CATEGORY_RE } from './3cx-sounds.js?v=0.40.49';
+import { phonebookName, companyContacts, sourceColumns, dird } from './3cx-phonebook.js?v=0.40.49';
 
 const W = { d: null, m: null, t: null, busy: false, msg: null, at: null };
 export function setWizard(d, m) { W.d = d; W.m = m; W.t = null; W.msg = null; ensureState(); }
@@ -56,7 +56,7 @@ async function logd(method, path, body) {
   if (!r.ok) { let m = `call-logd ${method} ${path} → ${r.status}`; try { m += ' ' + JSON.stringify(await r.json()).slice(0, 300); } catch { /* */ } throw new ApiError(r.status, m); }
   return r.status === 204 ? null : r.json();
 }
-const e164 = (n) => { const s = String(n || '').replace(/[^\d+]/g, ''); return s.startsWith('+') ? s : s.startsWith('00') ? `+${s.slice(2)}` : s.startsWith('0') ? `+33${s.slice(1)}` : s; };
+const e164 = numWazo; // même normalisation que le brouillon (3cx-draft.js)
 const soft = async (fn, fallback) => { try { return await fn(); } catch (e) { return fallback(e); } };
 
 // ---------------------------------------------------------------------------
@@ -74,6 +74,8 @@ async function readTenant() {
   };
   t.localization = await soft(() => tapi('GET', '/localization'), (e) => ({ error: e.message }));
   t.retention = await soft(() => logd('GET', '/retention'), (e) => ({ error: e.message }));
+  // Carnets d'annuaire du tenant (wazo-dird) : un carnet du même nom n'est pas recréé.
+  t.phonebooks = await soft(async () => { guard(); return (await dird('GET', '/phonebooks'))?.items || []; }, () => []);
   // Modèles SIP du tenant pour les lignes : l'import de Wazo prend ceux du
   // tenant (creators.py : tenant.global_sip_template, webrtc_sip_template ;
   // GET /tenants/{uuid} les donne, tenant/schema.py, lu le 03/11/2026). À
@@ -138,9 +140,9 @@ const ocNameOf = (u, many) => `${W.d.write.clientName || 'Client'}${many ? ` - $
 // début et fin de même longueur (RangeSchema) ; « dialplan reload » à l'écriture.
 // ---------------------------------------------------------------------------
 const RANGE_TYPES = [
-  ['user_ranges', 'postes', (d) => imported(d).map((u) => u.n)],
-  ['group_ranges', 'groupes', (d) => d.hunts.filter((h) => h.target === 'group').map((h) => h.n)],
-  ['queue_ranges', 'files d\'attente', (d) => d.hunts.filter((h) => h.target === 'queue').map((h) => h.n)],
+  ['user_ranges', 'postes', (d) => imported(d)],
+  ['group_ranges', 'groupes', (d) => d.hunts.filter((h) => h.target === 'group')],
+  ['queue_ranges', 'files d\'attente', (d) => d.hunts.filter((h) => h.target === 'queue')],
 ];
 const inR = (n, ranges) => (ranges || []).some((r) => Number(r.start) <= Number(n) && Number(n) <= Number(r.end ?? r.start));
 const rangeTxt = (r) => (r.end && r.end !== r.start ? `${r.start}-${r.end}` : r.start);
@@ -151,15 +153,21 @@ function spanOf(nums) {
   for (const n of nums) { const k = n.length; if (!by.has(k)) by.set(k, []); by.get(k).push(n); }
   return [...by.values()].map((l) => { l.sort((a, b) => Number(a) - Number(b)); return { start: l[0], end: l[l.length - 1] }; });
 }
-function rangeFixes(ctx) {
-  if (!ctx) return [];
+// unit : clé du jeu de contextes (plusieurs jeux) ; seuls ses objets comptent.
+function rangeFixes(ctx, unit = null) {
+  if (!ctx || ctx.virtual) return [];
   const out = [];
-  for (const [key, label, nums] of RANGE_TYPES) {
-    const missing = [...new Set(nums(W.d))].filter((n) => /^\d+$/.test(n) && !inR(n, ctx[key]));
+  for (const [key, label, objs] of RANGE_TYPES) {
+    const nums = objs(W.d).filter((o) => unit == null || unitOf(W.d, o) === unit).map((o) => o.n);
+    const missing = [...new Set(nums)].filter((n) => /^\d+$/.test(n) && !inR(n, ctx[key]));
     if (missing.length) out.push({ key, label, missing, add: spanOf(missing), current: ctx[key] || [] });
   }
   return out;
 }
+
+// Contextes internes existants à contrôler : celui du client (un seul jeu), ou celui de chaque
+// jeu déjà créé (plusieurs jeux, chacun avec ses propres objets).
+const rangeTargets = (c) => (c.many ? c.units.filter((u) => u.ctxObj && !u.ctxObj.virtual).map((u) => ({ ctx: u.ctxObj, unit: u.key })) : c.internal && !c.internal.virtual ? [{ ctx: c.internal, unit: null }] : []);
 
 // Messages identiques regroupés en une ligne (« 19 utilisateurs : licence non choisie »).
 // La zone « Utilisateur 005 renvoi occupé » est réduite à son objet (« 005 »).
@@ -199,8 +207,10 @@ function prerequisites(t) {
   const tIss = c.internal ? tenantIssues(W.d, { ctx: c.internal.name, incallCtx: c.incall?.name }, { contexts: c.internal.virtual ? [...t.contexts, c.internal] : t.contexts, extensions: t.extensions, users: t.users, voicemails: t.voicemails }) : [];
   // Numéros hors des plages : corrigés par la phase Fondations (ajout des plages), pas une erreur à régler à la main.
   for (const x of tIss.filter((y) => y.sev === 'error' && !/hors des plages/.test(y.text))) add('error', x.area, x.text, ['people']);
-  const fixes = rangeFixes(c.internal);
-  if (fixes.length) add('fix', `Plages du contexte ${c.internal.label || c.internal.name}`, `${fixes.map((f) => `${f.missing.length} ${f.label} hors des plages`).join(', ')} : la phase Fondations ajoute ${fixes.map((f) => `${f.label} ${f.add.map(rangeTxt).join(', ')}`).join(' ; ')}. Personnes et Routage attendent cette correction.`, ['people', 'routing']);
+  for (const { ctx, unit } of rangeTargets(c)) {
+    const fixes = rangeFixes(ctx, unit);
+    if (fixes.length) add('fix', `Plages du contexte ${ctx.label || ctx.name}`, `${fixes.map((f) => `${f.missing.length} ${f.label} hors des plages`).join(', ')} : la phase Fondations ajoute ${fixes.map((f) => `${f.label} ${f.add.map(rangeTxt).join(', ')}`).join(' ; ')}. Personnes et Routage attendent cette correction.`, ['people', 'routing']);
+  }
   for (const x of grouped(draftIssues(W.d).filter((y) => y.sev === 'error'), kindOf)) add('error', x.area, x.text, [/^\d+ (utilisateurs|appareils)|^(Utilisateur|Appareil)/.test(x.area) ? 'people' : 'routing']);
   if (!t.sipTpl?.global) add('error', 'Modèle SIP global', 'modèle SIP « global » du tenant introuvable : aucune ligne ne peut être créée (l\'import de Wazo échoue de même).', ['people']);
   const webrtc = imported(W.d).filter((u) => linesOf(u).includes('webrtc'));
@@ -226,7 +236,7 @@ const PHASES = [
   { id: 'found', title: 'Fondations', help: 'Réglages du tenant et ce dont dépendent les appels : pays, conservation des données, numéros publics, appels sortants.', lot: null },
   { id: 'people', title: 'Personnes', help: 'Messageries communes, utilisateurs (licence, ligne, numéro, messagerie, compte des applications) et appareils associés. Création objet par objet comme l\'import de Wazo (décision de Brice).', lot: '5b' },
   { id: 'routing', title: 'Routage', help: 'Horaires, groupes et files, SVI, SDA : dans cet ordre, chaque objet après ses cibles.', lot: '5c' },
-  { id: 'finish', title: 'Finitions', help: 'Renvois et débordements (deuxième passe, quand toutes les cibles existent), touches de fonction, annuaire.', lot: '5c / 5d' },
+  { id: 'finish', title: 'Finitions', help: 'Renvois et débordements (deuxième passe, quand toutes les cibles existent), touches de fonction. L\'annuaire de la société est écrit par les Fondations.', lot: '5c / 5d' },
 ];
 function buildPlan(t) {
   const d = W.d; const c = contextsOf(t);
@@ -245,7 +255,7 @@ function buildPlan(t) {
     } else if (u.newOut && u.ctxObj) add('found', 'create', `Contexte sortant « ${u.L.out} »`, `inclus en tête par « ${u.ctxObj.label || u.ctxObj.name} »`);
   }
   // Fondations : d'abord les plages du contexte interne (les numéros en dépendent).
-  if (!c.many) for (const f of rangeFixes(c.internal)) add('found', 'update', `Plages ${f.label} du contexte ${c.internal.label || c.internal.name}`, `ajouter ${f.add.map(rangeTxt).join(', ')} (actuelles : ${f.current.map(rangeTxt).join(', ') || 'aucune'} ; ${f.missing.length} numéro(s) hors plages)`);
+  for (const { ctx, unit } of rangeTargets(c)) for (const f of rangeFixes(ctx, unit)) add('found', 'update', `Plages ${f.label} du contexte ${ctx.label || ctx.name}`, `ajouter ${f.add.map(rangeTxt).join(', ')} (actuelles : ${f.current.map(rangeTxt).join(', ') || 'aucune'} ; ${f.missing.length} numéro(s) hors plages)`);
   if (t.localization?.error) add('found', 'conflict', 'Pays', `lecture impossible : ${t.localization.error}`);
   else add('found', t.localization?.country === 'FR' ? 'exists' : 'update', 'Pays France', t.localization?.country === 'FR' ? 'déjà réglé' : `${t.localization?.country || 'aucun'} → FR`);
   if (t.retention?.error) add('found', 'conflict', 'Conservation des données', `lecture impossible (call-logd) : ${t.retention.error}`);
@@ -278,7 +288,8 @@ function buildPlan(t) {
   }
   if (sp.files.length) { const ok = sp.files.filter((f) => loaded(f)).length; const ex = t.sounds.some((x) => x.name === sp.cat); add('found', ok ? 'create' : 'conflict', `Sons « ${sp.cat} »`, `${ok} fichier(s) sur ${sp.files.length} déposés${ex ? ' · catégorie déjà présente' : ''}`); }
   const pbn = d.phonebook ? companyContacts(d).length : 0;
-  if (pbn) add('found', 'create', `Annuaire « ${phonebookName(d)} »`, `${pbn} contact(s)${d.phonebook.includePersonal ? ', contacts personnels compris' : ''} ; carnet, source d'annuaire et profil du site (wazo-dird)`);
+  if (pbn && (t.phonebooks || []).some((x) => x.name === phonebookName(d))) add('found', 'exists', `Annuaire « ${phonebookName(d)} »`, 'carnet du même nom déjà présent : rien recréé');
+  else if (pbn) add('found', 'create', `Annuaire « ${phonebookName(d)} »`, `${pbn} contact(s)${d.phonebook.includePersonal ? ', contacts personnels compris' : ''} ; carnet, source d'annuaire et profil du site (wazo-dird)`);
   const pers = (d.phonebook?.personal || []).filter((x) => x.import).length;
   if (pers && !d.phonebook.includePersonal) add('finish', 'skip', `${pers} contact(s) personnels des postes`, 'non écrits par l\'outil (wazo-dird n\'accepte que le jeton de l\'utilisateur) : CSV par poste dans l\'onglet Annuaire, à importer par chaque utilisateur');
   if (sp.def) add('found', 'update', `Musique d'attente par défaut : « ${sp.def.label} »`, 'option moh_suggest du modèle SIP global (comme le Wizard de déploiement de Wazo), les autres options du modèle inchangées');
@@ -316,7 +327,6 @@ function buildPlan(t) {
   if (prof.length) add('finish', d.write.keepProfiles ? 'create' : 'skip', `Profil 3CX actuel de ${prof.length} poste(s) repris en renvoi`, prof.map((u) => u.n).join(', '));
   const blf = blfRows(d, W.m).filter((b) => b.ok);
   add('finish', blf.length ? 'create' : 'skip', `${blf.length} touche(s) de fonction`);
-  add('finish', W.m.phonebook.length ? 'create' : 'skip', `Annuaire : ${W.m.phonebook.length} contact(s)`);
   return P;
 }
 
@@ -425,9 +435,17 @@ async function foundationOps(t) {
         }
         // 2. Inclusions de chaque unité : son sortant, les autres unités, les établissements existants.
         const peers = fresh[0].peers.map((n) => t.contexts.find((x) => x.name === n)).filter(Boolean);
+        // Jeux déjà créés lors d'un passage précédent (département ajouté ensuite) : inclus par les
+        // nouveaux, et ils incluent les nouveaux en fin de liste (relus juste avant).
+        const older = c.many && s.interUnits ? c.units.filter((x) => !x.newCtx && x.ctxObj?.id) : [];
         for (const u of fresh) {
-          const others = c.many && s.interUnits ? fresh.filter((x) => x !== u).map((x) => made[x.key].ic.id) : [];
+          const others = c.many && s.interUnits ? [...fresh.filter((x) => x !== u).map((x) => made[x.key].ic.id), ...older.map((x) => x.ctxObj.id)] : [];
           await tapi('PUT', `/contexts/${made[u.key].ic.id}/contexts`, incl([made[u.key].oc.id, ...others, ...peers.map((x) => x.id)]));
+        }
+        for (const x of older) {
+          const cur = await includesOf(x.ctxObj.id); const add = fresh.map((u) => made[u.key].ic.id);
+          await tapi('PUT', `/contexts/${x.ctxObj.id}/contexts`, incl([...cur.filter((id) => !add.includes(id)), ...add]));
+          undo.unshift({ method: 'PUT', path: `/contexts/${x.ctxObj.id}/contexts`, body: incl(cur) });
         }
         // 3. Chez les établissements existants : relu juste avant, les unités ajoutées en fin de liste.
         for (const x of peers) {
@@ -458,13 +476,14 @@ async function foundationOps(t) {
       return { created: oc.name, undo: { seq: [{ method: 'PUT', path: `/contexts/${id}/contexts`, body: incl(cur) }, { method: 'DELETE', path: `/contexts/${oc.id}` }] } };
     } });
   }
-  if (c.internal && !c.internal.virtual && rangeFixes(c.internal).length) {
-    const id = c.internal.id;
-    ops.push({ label: `Plages du contexte ${c.internal.label || c.internal.name} : ${rangeFixes(c.internal).map((f) => `${f.label} + ${f.add.map(rangeTxt).join(', ')}`).join(' ; ')} (PUT /contexts/${id})`, run: async () => {
+  for (const { ctx, unit } of rangeTargets(c)) {
+    const fx = rangeFixes(ctx, unit); if (!fx.length) continue;
+    const id = ctx.id;
+    ops.push({ label: `Plages du contexte ${ctx.label || ctx.name} : ${fx.map((f) => `${f.label} + ${f.add.map(rangeTxt).join(', ')}`).join(' ; ')} (PUT /contexts/${id})`, run: async () => {
       // Relu juste avant : on renvoie les plages actuelles + les nouvelles, par type (PUT partiel, liste remplacée).
       const cur = await tapi('GET', `/contexts/${id}`);
       const body = {}; const prev = {};
-      for (const f of rangeFixes(cur)) { prev[f.key] = cur[f.key] || []; body[f.key] = [...(cur[f.key] || []).map((r) => ({ start: r.start, end: r.end ?? r.start })), ...f.add]; }
+      for (const f of rangeFixes(cur, unit)) { prev[f.key] = cur[f.key] || []; body[f.key] = [...(cur[f.key] || []).map((r) => ({ start: r.start, end: r.end ?? r.start })), ...f.add]; }
       if (!Object.keys(body).length) return { created: 'plages déjà suffisantes' };
       await tapi('PUT', `/contexts/${id}`, body);
       return { created: Object.entries(body).map(([k, v]) => `${k} : ${v.map(rangeTxt).join(', ')}`).join(' ; '), undo: { method: 'PUT', path: `/contexts/${id}`, body: Object.fromEntries(Object.entries(prev).map(([k, v]) => [k, v.map((r) => ({ start: r.start, end: r.end ?? r.start }))])) } };
@@ -539,48 +558,63 @@ async function foundationOps(t) {
   // Musique existante du même nom : fichiers ajoutés (annulation : ces fichiers seulement).
   const sp = soundPlan(d); const mohName = {};
   for (const m of sp.mohs) { const ex = t.moh.find((x) => x.label === m.label); if (ex) mohName[m.x.key] = ex.name; }
+  // Un fichier déjà présent dans Wazo sous le même nom n'est jamais remplacé : l'annulation ne
+  // pourrait pas le rendre (elle ne garde que des appels d'API, pas le son d'avant). Il est
+  // signalé dans le journal ; seuls les fichiers envoyés par l'outil sont annulables.
   for (const m of sp.mohs) {
     const files = m.files.filter((f) => loaded(f)); if (!files.length) continue;
+    const names = uniqueNames(m.files);
     ops.push({ label: `Musique d'attente « ${m.label} » : ${files.length} fichier(s) WAV 8 kHz (POST /moh, PUT /moh/…/files/…)`, run: async () => {
       const undo = []; const cur = (await listAll('/moh')).find((x) => x.label === m.label);
       const moh = cur || await tapi('POST', '/moh', { label: m.label, mode: 'files', sort: m.x.sort || 'alphabetical' });
       if (!cur) undo.unshift({ method: 'DELETE', path: `/moh/${moh.uuid}` });
+      const have = new Set(cur ? ((await tapi('GET', `/moh/${moh.uuid}`)).files || []).map((x) => String(x.name).toLowerCase()) : []);
+      const kept = [];
       try {
         for (const f of files) {
-          const fn = `${wazoName(f)}.wav`; guard();
+          const fn = `${names.get(f)}.wav`; if (have.has(fn.toLowerCase())) { kept.push(fn); continue; }
+          guard();
           await putBinary(`/moh/${moh.uuid}/files/${encodeURIComponent(fn)}`, loaded(f).blob);
           if (cur) undo.unshift({ method: 'DELETE', path: `/moh/${moh.uuid}/files/${encodeURIComponent(fn)}` });
         }
       } catch (e) { for (const x of undo) { try { await runUndo(x); } catch { /* signalé par l'erreur d'origine */ } } throw e; }
       mohName[m.x.key] = moh.name;
-      return { created: moh.name, undo: { seq: undo } };
+      return { created: `${moh.name}${kept.length ? ` · déjà présents, non remplacés : ${kept.join(', ')}` : ''}`, undo: { seq: undo } };
     } });
   }
   const sfiles = sp.files.filter((f) => loaded(f));
   if (sfiles.length && CATEGORY_RE.test(sp.cat)) {
+    const names = uniqueNames(sp.files);
     ops.push({ label: `Sons « ${sp.cat} » : ${sfiles.length} fichier(s) WAV 8 kHz, langue fr_FR (POST /sounds, PUT /sounds/…/files/…)`, run: async () => {
       const undo = []; const ex = (await listAll('/sounds')).some((x) => x.name === sp.cat);
       if (!ex) { await tapi('POST', '/sounds', { name: sp.cat }); undo.unshift({ method: 'DELETE', path: `/sounds/${sp.cat}` }); }
+      // Fichiers de la catégorie (SoundFileSchema : name, formats [{format, language}]) : présent = même nom en fr_FR.
+      const have = new Set(ex ? ((await tapi('GET', `/sounds/${sp.cat}`)).files || []).filter((x) => (x.formats || []).some((y) => !y.language || y.language === 'fr_FR')).map((x) => String(x.name).toLowerCase()) : []);
+      const kept = []; let sent = 0;
       try {
         for (const f of sfiles) {
-          const fn = encodeURIComponent(wazoName(f)); guard();
-          await putBinary(`/sounds/${sp.cat}/files/${fn}?format=wav&language=fr_FR`, loaded(f).blob);
+          const n = names.get(f); if (have.has(n.toLowerCase())) { kept.push(n); continue; }
+          const fn = encodeURIComponent(n); guard();
+          await putBinary(`/sounds/${sp.cat}/files/${fn}?format=wav&language=fr_FR`, loaded(f).blob); sent++;
           if (ex) undo.unshift({ method: 'DELETE', path: `/sounds/${sp.cat}/files/${fn}?format=wav&language=fr_FR` });
         }
       } catch (e) { for (const x of undo) { try { await runUndo(x); } catch { /* signalé par l'erreur d'origine */ } } throw e; }
-      return { created: `${sfiles.length} fichier(s) dans ${sp.cat}`, undo: { seq: undo } };
+      return { created: `${sent} fichier(s) dans ${sp.cat}${kept.length ? ` · déjà présents, non remplacés : ${kept.join(', ')}` : ''}`, undo: { seq: undo } };
     } });
   }
   // Annuaire (wazo-dird, lu le 04/11/2026, voir 3cx-phonebook.js) : carnet, contacts, source de
   // type carnet (colonnes reprises d'une source carnet existante du site, sinon par défaut), ajout
   // de la source aux services du profil du site. Annulation : profil d'avant, source, carnet.
   const contacts = d.phonebook ? companyContacts(d) : [];
-  if (contacts.length) {
+  // Carnet du même nom déjà présent (phase relancée après une erreur, ou annuaire fait à la main) :
+  // rien n'est recréé ; relu aussi juste avant l'écriture.
+  if (contacts.length && !(t.phonebooks || []).some((x) => x.name === phonebookName(d))) {
     const name = phonebookName(d);
     ops.push({ label: `Annuaire « ${name} » : ${contacts.length} contact(s), source d'annuaire et profil du site (wazo-dird)`, run: async () => {
       const undo = [];
       try {
         guard();
+        if (((await dird('GET', '/phonebooks'))?.items || []).some((x) => x.name === name)) return { created: `carnet « ${name} » déjà présent : rien recréé` };
         const pb = await dird('POST', '/phonebooks', { name, description: 'Import 3CX (Migration Assistant)' });
         undo.unshift({ api: 'dird', method: 'DELETE', path: `/phonebooks/${pb.uuid}` });
         for (const c of contacts) { guard(); await dird('POST', `/phonebooks/${pb.uuid}/contacts`, c); }

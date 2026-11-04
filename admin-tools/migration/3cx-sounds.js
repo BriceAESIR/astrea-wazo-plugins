@@ -15,13 +15,26 @@
 //    (sound/storage.py) ; DELETE /sounds/{catégorie} supprime ses fichiers.
 // Musique d'attente par défaut : option moh_suggest du modèle SIP global, comme
 // le Wizard de déploiement de Wazo (lu dans son code) ; effet exact supposé.
-import { S, ApiError } from '../common/core.js?v=0.40.48';
+import { S, ApiError } from '../common/core.js?v=0.40.49';
 
 export const CATEGORY_RE = /^[a-zA-Z0-9][-_.a-zA-Z0-9]+$/;
 export const SORTS = { alphabetical: 'Ordre alphabétique', random: 'Aléatoire', random_start: 'Départ aléatoire' };
 const base = (f) => String(f || '').split('/').pop().replace(/\.(wav|mp3)$/i, '');
 export const wazoName = (f) => base(f).normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-zA-Z0-9_-]+/g, '_').replace(/^_+|_+$/g, '') || 'son';
-
+// Noms Wazo uniques pour des fichiers rangés au même endroit (une musique, une catégorie) :
+// deux noms 3CX qui donnent le même nom Wazo (« Fermeture été » / « Fermeture-ete ») reçoivent
+// « _2 », « _3 »… dans l'ordre alphabétique des noms 3CX. Les lots suivants (SVI, files)
+// doivent viser les sons par ce même tableau, jamais par wazoName seul.
+export function uniqueNames(files) {
+  const out = new Map(); const used = new Set();
+  for (const f of [...files].sort()) { const b = wazoName(f); let n = b; for (let i = 2; used.has(n.toLowerCase()); i++) n = `${b}_${i}`; used.add(n.toLowerCase()); out.set(f, n); }
+  return out;
+}
+// Nom Wazo d'un fichier du brouillon, parmi les fichiers rangés au même endroit.
+export function targetName(d, file) {
+  const to = d.sounds?.files?.[file]?.to;
+  return uniqueNames(Object.entries(d.sounds?.files || {}).filter(([, x]) => x.to === to).map(([f]) => f)).get(file) || wazoName(file);
+}
 export const SYSTEM_3CX = /^onhold\.wav$/i;
 const ROUTE_FR = { closed: 'fermé', holiday: 'férié', break: 'pause' };
 // Où chaque fichier 3CX sert : [{ file, uses: [{ kind: moh|sound, what }] }].
@@ -84,7 +97,7 @@ export async function toWav8k(file) {
 export async function addFiles(list) {
   const res = [];
   for (const f of list) {
-    try { const w = await toWav8k(f); FILES.set(keyOf(f.name), { name: f.name, ...w, url: URL.createObjectURL(w.blob) }); res.push({ name: f.name, ok: true }); } catch (e) { res.push({ name: f.name, ok: false, error: e.message || String(e) }); }
+    try { const w = await toWav8k(f); const old = FILES.get(keyOf(f.name)); if (old?.url) URL.revokeObjectURL(old.url); FILES.set(keyOf(f.name), { name: f.name, ...w, url: URL.createObjectURL(w.blob) }); res.push({ name: f.name, ok: true }); } catch (e) { res.push({ name: f.name, ok: false, error: e.message || String(e) }); }
   }
   return res;
 }

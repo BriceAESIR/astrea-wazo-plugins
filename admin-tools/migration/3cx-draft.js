@@ -13,7 +13,7 @@
 // Les objets Wazo correspondants (destinations confd user_id, group_id…) ne
 // sont résolus qu'à l'écriture : convertir une file en groupe ne demande donc
 // aucune reprise des destinations qui la visent.
-import { nameOf, schedulesOf, STRATEGY } from './3cx.js?v=0.40.48';
+import { nameOf, schedulesOf, STRATEGY } from './3cx.js?v=0.40.49';
 
 export const DRAFT_FORMAT = 'astrea-3cx-draft';
 const KEY = 'astrea-migration-3cx-draft-v1';
@@ -200,7 +200,10 @@ export function upgradeDraft(d) {
 // +33… comme les numéros que l'outil crée (POST /phone-numbers), pour que Wazo le
 // retrouve dans les numéros présentables (user_callerid, same_phone_number).
 export const CALLER_ID_RE = /^\+?\d{2,}$/;
-export function callerIdWazo(n) { const s = String(n || '').trim(); if (!s) return ''; if (/^anonymous$/i.test(s)) return 'anonymous'; const w = didWazo(s); return /^\d+$/.test(w) ? `+${w}` : s; }
+// Numéro public au format des numéros Wazo (POST /phone-numbers : +33…). 9 chiffres sans le 0
+// (forme parfois notée par 3CX) : numéro français (supposé).
+export function numWazo(n) { const w = didWazo(n); if (/^\d{9}$/.test(w)) return `+33${w}`; return /^\d+$/.test(w) ? `+${w}` : w; }
+export function callerIdWazo(n) { const s = String(n || '').trim(); if (!s) return ''; if (/^anonymous$/i.test(s)) return 'anonymous'; const w = numWazo(s); return /^\+\d+$/.test(w) ? w : s; }
 // SDA du client, comparées sur les 9 derniers chiffres (3CX les note parfois sans le 0).
 const last9 = (s) => String(s || '').replace(/\D/g, '').slice(-9);
 export const clientCids = (d) => new Set((d.dids || []).map((r) => last9(r.did)).filter(Boolean));

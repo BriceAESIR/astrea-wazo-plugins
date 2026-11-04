@@ -2,25 +2,28 @@
 // Modèle et règles : 3cx-draft.js. Chaque modification est enregistrée dans le
 // navigateur (brouillon par fichier et date de sauvegarde) ; rien n'est écrit
 // dans Wazo depuis ces tableaux.
-import { $, esc, toast, helpButton, helpBox, confirmModal, downloadJson } from '../common/core.js?v=0.40.48';
-import { I } from './inventory.js?v=0.40.48';
+import { $, esc, toast, helpButton, helpBox, confirmModal, downloadJson } from '../common/core.js?v=0.40.49';
+import { I } from './inventory.js?v=0.40.49';
 import {
   GROUP_STRATEGIES, MODES, HUNT_TARGETS, LICENCES, AUTH_METHODS, effectiveUsername, isVoix, applyLicence, fillCallerIds, callerIdWazo, upgradeDraft, saveDraft, clearDraft, buildDraft, acceptDraft, userBy, userName, imported,
   destLabel, destProblem, draftIssues, usersCsv, blfRows, devicesCsv, deviceDesc, macWazo, macValid, tenantIssues,
   LINE_MODES, linesOf, VM_LANGS, vmEmail, upperName, upgradeSchedules, pastHolidays, didWazo,
-} from './3cx-draft.js?v=0.40.48';
-import { setWizard, wizardTab, wizardChange, wizardClick, wizardDone, wizardTotal } from './3cx-wizard.js?v=0.40.48';
-import { unitCfg, unitLabels, autoRanges, RANGE_KEYS, rangeIssues } from './3cx-sites.js?v=0.40.48';
-import { rangesText } from './multisite.js?v=0.40.48';
-import { WAZO_FIELDS, tagsOf, tagLabel, tagChecked, ensurePhonebook, phonebookName, phonebookIssues, companyContacts, personalCsv, toWazoContact, csvKeys } from './3cx-phonebook.js?v=0.40.48';
-import { SORTS, CATEGORY_RE, soundUsages, ensureSounds, mohLabel, soundCategory, FILES, keyOf, loaded, addFiles, addFileAs, wazoName } from './3cx-sounds.js?v=0.40.48';
-import { DEPT_MODES, deptLabel, ensureDepts, deptObjects, unitOf, unitList, setDeptMode, moveObject } from './3cx-depts.js?v=0.40.48';
+} from './3cx-draft.js?v=0.40.49';
+import { setWizard, wizardTab, wizardChange, wizardClick, wizardDone, wizardTotal } from './3cx-wizard.js?v=0.40.49';
+import { unitCfg, unitLabels, autoRanges, RANGE_KEYS, rangeIssues } from './3cx-sites.js?v=0.40.49';
+import { rangesText } from './multisite.js?v=0.40.49';
+import { WAZO_FIELDS, tagsOf, tagLabel, tagChecked, ensurePhonebook, phonebookName, phonebookIssues, companyContacts, personalCsv, toWazoContact, csvKeys } from './3cx-phonebook.js?v=0.40.49';
+import { SORTS, CATEGORY_RE, soundUsages, ensureSounds, mohLabel, soundCategory, FILES, keyOf, loaded, addFiles, addFileAs, targetName } from './3cx-sounds.js?v=0.40.49';
+import { DEPT_MODES, deptLabel, ensureDepts, deptObjects, unitOf, unitList, setDeptMode, moveObject } from './3cx-depts.js?v=0.40.49';
 
 const E = { d: null, m: null, file: '', tab: 'users', sel: { users: new Set(), dids: new Set(), vms: new Set() }, q: '', onReset: null };
 export const TABS = [
   ['fiche', 'Fiche 3CX'], ['depts', 'Départements'], ['users', 'Utilisateurs'], ['vms', 'Messageries'], ['devices', 'Appareils'], ['hunts', 'Groupes et files'], ['ivrs', 'SVI'], ['dids', 'SDA'], ['scheds', 'Horaires'], ['sounds', 'Sons'], ['phonebook', 'Annuaire'], ['checks', 'Contrôles'], ['exports', 'Exports'], ['write', 'Écriture'],
 ];
-export function setDraft(d, m, file, onReset) { E.d = ensurePhonebook(ensureSounds(ensureDepts(upgradeSchedules(fillCallerIds(upgradeDraft(d), m), m), m), m), m); E.m = m; E.file = file; E.onReset = onReset; E.sel.users.clear(); E.sel.dids.clear(); E.sel.vms.clear(); E.review = null; setWizard(E.d, m); }
+// Brouillon complété (versions précédentes, champs ajoutés depuis) : même chaîne à
+// l'ouverture, au chargement d'un fichier et à la réinitialisation.
+const normalize = (d, m) => ensurePhonebook(ensureSounds(ensureDepts(upgradeSchedules(fillCallerIds(upgradeDraft(d), m), m), m), m), m);
+export function setDraft(d, m, file, onReset) { E.d = normalize(d, m); E.m = m; E.file = file; E.onReset = onReset; E.sel.users.clear(); E.sel.dids.clear(); E.sel.vms.clear(); E.review = null; setWizard(E.d, m); }
 export const draft = () => E.d;
 // Contextes cibles (choisis dans Exports, gardés dans le brouillon) : ceux du
 // tenant ouvert ; à défaut, le premier interne / entrant du tenant.
@@ -314,7 +317,7 @@ function soundsTab() {
   const toSel = (r) => { const x = s.files[r.file]; const cur = x.to === 'skip' ? (x.prev || keepTo(r)) : x.to; return `<select data-snd-to="${esc(r.file)}" ${x.to === 'skip' ? 'disabled' : ''}>${s.moh.map((m) => opt(`moh:${m.key}`, `Musique d'attente « ${mohLabel(d, m)} »`, cur)).join('')}${opt('sound', `Son « ${soundCategory(d)} »`, cur)}</select>`; };
   const fileRows = rows.map((r) => {
     const to = s.files[r.file].to;
-    return `<tr class="${to === 'skip' ? 'x3-off' : ''}"><td class="x3-c"><input type="checkbox" data-snd-keep="${esc(r.file)}" ${to === 'skip' ? '' : 'checked'} title="Reprendre ce fichier dans Wazo"></td><td>${esc(r.file)}<div class="muted small">${to === 'skip' ? '' : `Wazo : ${esc(wazoName(r.file))}.wav`}</div></td>
+    return `<tr class="${to === 'skip' ? 'x3-off' : ''}"><td class="x3-c"><input type="checkbox" data-snd-keep="${esc(r.file)}" ${to === 'skip' ? '' : 'checked'} title="Reprendre ce fichier dans Wazo"></td><td>${esc(r.file)}<div class="muted small">${to === 'skip' ? '' : `Wazo : ${esc(targetName(E.d, r.file))}.wav`}</div></td>
       <td class="small">${r.uses.map((u) => esc(u.what)).join('<br>') || '<span class="muted">ajouté, non cité par 3CX</span>'}</td>
       <td>${toSel(r)}</td>
       <td class="small">${to === 'skip' && !loaded(r.file) ? '' : soundSlot(r.file)}</td></tr>`;
@@ -753,7 +756,7 @@ function onClick(e, root) {
     case 'csv-blf': return exportBlf();
     case 'csv-devices': return download(`astrea-3cx-appareils-${base()}.csv`, devicesCsv(d));
     case 'draft-dl': return downloadJson(`astrea-3cx-brouillon-${(E.file || '3cx').replace(/\.xml$/i, '')}.json`, d);
-    case 'draft-reset': return confirmModal('<h3>Réinitialiser le brouillon ?</h3><p>Toutes les modifications sont perdues ; le brouillon repart de la sauvegarde 3CX.</p>', () => { clearDraft(d); E.d = ensureDepts(buildDraft(E.m, E.file), E.m); saveDraft(E.d); setWizard(E.d, E.m); E.onReset?.(E.d); renderTab(root, E.tab); E.onChange?.(); }, 'Réinitialiser');
+    case 'draft-reset': return confirmModal('<h3>Réinitialiser le brouillon ?</h3><p>Toutes les modifications sont perdues ; le brouillon repart de la sauvegarde 3CX.</p>', () => { clearDraft(d); E.d = normalize(buildDraft(E.m, E.file), E.m); saveDraft(E.d); setWizard(E.d, E.m); E.onReset?.(E.d); renderTab(root, E.tab); E.onChange?.(); }, 'Réinitialiser');
     default:
   }
 }
@@ -851,7 +854,7 @@ function loadDraftFile(input, root) {
   if (!f) return;
   const r = new FileReader();
   r.onload = () => {
-    try { E.d = ensureDepts(upgradeSchedules(upgradeDraft(acceptDraft(JSON.parse(r.result), E.file, E.d.sourceDate)), E.m), E.m); saveDraft(E.d); setWizard(E.d, E.m); E.onReset?.(E.d); toast('Brouillon chargé.'); renderTab(root, E.tab); E.onChange?.(); }
+    try { E.d = normalize(acceptDraft(JSON.parse(r.result), E.file, E.d.sourceDate), E.m); saveDraft(E.d); setWizard(E.d, E.m); E.onReset?.(E.d); toast('Brouillon chargé.'); renderTab(root, E.tab); E.onChange?.(); }
     catch (err) { toast(`Brouillon refusé : ${err.message}`, 7000); }
   };
   r.readAsText(f);

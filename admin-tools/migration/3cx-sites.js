@@ -26,11 +26,11 @@
 // (_X.) inclus avant un autre établissement prend aussi ses numéros internes ;
 // inclus après, les numéros externes passent par l'établissement inclus, donc
 // par son trunk. Les écarts sont montrés avant écriture.
-import { matches, comparePatterns, dialedNumber } from '../callflow/dialsim.js?v=0.40.48';
-import { FR_FAMILIES, FR_FORMATS, frTransform, BLOCK_118 } from '../callflow/outcall-editor.js?v=0.40.48';
-import { imported, didWazo } from './3cx-draft.js?v=0.40.48';
-import { unitList, unitOf } from './3cx-depts.js?v=0.40.48';
-import { parseRanges, rangesText, inRanges } from './multisite.js?v=0.40.48';
+import { matches, comparePatterns, dialedNumber } from '../callflow/dialsim.js?v=0.40.49';
+import { FR_FAMILIES, FR_FORMATS, frTransform, BLOCK_118 } from '../callflow/outcall-editor.js?v=0.40.49';
+import { imported, didWazo } from './3cx-draft.js?v=0.40.49';
+import { unitList, unitOf } from './3cx-depts.js?v=0.40.49';
+import { parseRanges, rangesText, inRanges } from './multisite.js?v=0.40.49';
 
 export { FR_FAMILIES, FR_FORMATS, BLOCK_118 };
 export const SITE_MODES = {
@@ -206,6 +206,8 @@ export function futureOf(t, d) {
     else if (p.newOut) clone.ctx.get(p.ctx).includes.unshift(p.out);
     // Chez les établissements existants : l'unité en fin de liste, pour ne rien changer à leurs appels actuels.
     if (p.newCtx) for (const peer of p.peers) clone.ctx.get(peer)?.includes.push(p.ctx);
+    // Jeu déjà créé : il inclut les nouveaux jeux en fin de liste (comme la phase Fondations).
+    if (!p.newCtx && ps.length > 1 && s.interUnits) { const inc = clone.ctx.get(p.ctx)?.includes; if (inc) for (const x of ps.filter((y) => y.newCtx && !inc.includes(y.ctx))) inc.push(x.ctx); }
     for (const x of unitNums(p)) clone.exts.set(`${x.n}@${p.ctx}`, { ctx: p.ctx, users: 1, client: true, unit: p.key });
     // Motifs déjà présents dans le sortant (même exten@contexte) : confd refuserait le doublon, ils restent à leur règle.
     const cur = clone.outs.get(p.out) || [];
