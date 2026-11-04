@@ -2,12 +2,12 @@
 // vérification du paramétrage et export JSON. Lecture seule.
 // Cadrage : astrea-wazo-dev/docs/MIGRATION-ASSISTANT.md.
 // Inventaire : inventory.js ; contrôles : checks.js ; export : export.js.
-import { S, $, esc, toast, connect, showCompat, setReadonly, loaded, loadFailed, stackVersion, helpButton, helpBox, confirmModal, downloadJson } from '../common/core.js?v=0.40.42';
-import { I, SOURCES, CATEGORIES, loadInventory, ctxLabel } from './inventory.js?v=0.40.42';
-import { runChecks, SEV } from './checks.js?v=0.40.42';
-import { buildExport, exportFileName } from './export.js?v=0.40.42';
-import { initMultisite, renderMultisite, loadJournalFile } from './multisite-ui.js?v=0.40.42';
-import { init3cx, render3cx } from './3cx-ui.js?v=0.40.42';
+import { S, $, esc, toast, connect, showCompat, setReadonly, loaded, loadFailed, stackVersion, helpButton, helpBox, confirmModal, downloadJson } from '../common/core.js?v=0.40.43';
+import { I, SOURCES, CATEGORIES, loadInventory, ctxLabel } from './inventory.js?v=0.40.43';
+import { runChecks, SEV } from './checks.js?v=0.40.43';
+import { buildExport, exportFileName } from './export.js?v=0.40.43';
+import { initMultisite, renderMultisite, loadJournalFile } from './multisite-ui.js?v=0.40.43';
+import { init3cx, render3cx } from './3cx-ui.js?v=0.40.43';
 
 const TESTED_STACK = ['26.07'];
 const VIEW_KEY = 'astrea-migration-view-v1';

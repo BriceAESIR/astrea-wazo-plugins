@@ -276,5 +276,7 @@ body.in-portal.ready #sidebar, body.in-portal.ready #detail { height: 100vh; }
 .helpbtn { flex: none; width: 28px; min-width: 28px; height: 28px; padding: 0; border-radius: 50%; font-weight: 700; text-transform: none; }
 .helpbtn[aria-expanded="true"] { background: var(--accent); color: var(--accent-ink); }
 .helpbox { margin: 0 0 12px; padding: 8px 12px; border-left: 3px solid var(--accent); background: var(--selected); line-height: 1.45; }
+/* Croix de fermeture des dialogues : collée en haut à droite (à côté du « ? »). */
+.modal-x { position: sticky; top: 0; float: right; z-index: 2; margin: -8px -12px 0 8px; width: 32px; height: 32px; font-size: 1.25rem; background: var(--panel); border-radius: 50%; }
 .titlerow { display: flex; align-items: center; gap: 8px; }
 .titlerow h3 { margin: 0; flex: 1; }

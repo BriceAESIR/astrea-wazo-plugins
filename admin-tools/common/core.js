@@ -140,7 +140,18 @@ export function stackVersion() { try { return sdk.getContext()?.app?.extra?.stac
 // écouteurs posés par le dialogue précédent (addEventListener des éditeurs)
 // partent avec l'ancien élément. Relire $('modal-body') après l'appel.
 // ---------------------------------------------------------------------------
+// Croix de fermeture (norme Astrea, demande de Brice du 04/11/2026) : en haut à
+// droite, à côté du « ? », toujours visible (collante) même quand le dialogue
+// défile ; même effet qu'« Annuler ». Échap ferme aussi.
+function modalClose() {
+  const box = document.querySelector('#modal .modal-box');
+  if (!box || $('modal-x')) return;
+  box.insertAdjacentHTML('afterbegin', '<button type="button" id="modal-x" class="icon modal-x" title="Fermer (Échap)" aria-label="Fermer">×</button>');
+  $('modal-x').onclick = () => $('modal-cancel').click();
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('modal').hidden) $('modal-cancel').click(); });
+}
 export function confirmModal(html, onOk, okText = 'Confirmer') {
+  modalClose();
   const old = $('modal-body');
   old.replaceWith(old.cloneNode(false));
   $('modal-body').innerHTML = html;
