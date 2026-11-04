@@ -12,8 +12,9 @@
 //    queue_label, voicemail_name, ivr_name… ajoutés par confd.
 // Supposé, à vérifier en réel : le token du portail peut lire /moh,
 // /voicemails, /callpermissions, /schedules (sinon libellés techniques).
-import { S, $, esc, toast, api, listAll, connect, fullName, setReadonly, showCompat, loaded, loadFailed, canWrite, confirmModal, downloadJson, helpButton, helpBox } from '../common/core.js?v=0.40.41';
-import { SETTINGS, settingById, same, LANG, subLabel, authApi, IDX, readLines } from './settings.js?v=0.40.41';
+import { S, $, esc, toast, api, listAll, connect, fullName, setReadonly, showCompat, loaded, loadFailed, canWrite, confirmModal, downloadJson, helpButton, helpBox } from '../common/core.js?v=0.40.42';
+import { SETTINGS, settingById, same, LANG, subLabel, authApi, IDX, readLines } from './settings.js?v=0.40.42';
+import { openCreate, openPersonalImport } from './create.js?v=0.40.42';
 
 const A = { auth: new Map(), authErr: '', users: [], byId: new Map(), moh: new Map(), groups: new Map(), vms: new Map(), perms: new Map(), scheds: new Map(), queues: new Map(), sbs: new Map(), contexts: [], callerOpts: [], callerOptsErr: '', lr: null, picked: new Set(), sort: { col: 'name', dir: 1 }, sel: null, scope: null, cols: null };
 
@@ -333,7 +334,8 @@ function renderDetail() {
       + (g === 'Boîte vocale' && vm ? row('E-mail (réglage de la boîte)', vm.email) : '');
   };
   $('d-body').innerHTML = grps.map((g) => sec(g, body(g))
-      + (g === 'Compte (applications)' && u._auth ? '<div class="btnrow"><button id="d-pw">Changer le mot de passe…</button></div>' : '')).join('')
+      + (g === 'Compte (applications)' && u._auth ? '<div class="btnrow"><button id="d-pw">Changer le mot de passe…</button><button id="d-contacts">Importer des contacts personnels…</button></div>' : '')).join('')
+    + '<div class="btnrow"><button id="d-dup">Créer un utilisateur à partir de celui-ci…</button></div>'
     + '<p class="muted small">Les réglages de la boîte vocale se modifient dans Messageries vocales.</p>';
 }// Mot de passe des applications (wazo-auth, lu dans le code le 13/10/2026) :
 // PUT /users/{uuid}/password exige l'ancien ; la réinitialisation
@@ -710,6 +712,9 @@ function openRestore() {
 // ---------------------------------------------------------------------------
 A.cols = loadCols();
 $('mass').onclick = openMass;
+// Création (create.js) : même état, même rechargement, compte rendu dans #massres.
+const createDeps = { A, ctx, reload: () => reload(), report: (html) => { $('massres').innerHTML = html; } };
+$('create').onclick = () => openCreate(null, createDeps);
 $('restore').onclick = openRestore;
 $('massres').onclick = (e) => { if (e.target.closest('[data-close]')) $('massres').innerHTML = ''; };
 $('q').oninput = render;
@@ -765,6 +770,8 @@ $('g-body').onclick = (e) => {
 $('d-close').onclick = () => { A.sel = null; render(); };
 $('d-body').onclick = (e) => {
   if (e.target.id === 'd-pw') return openPassword(A.byId.get(A.sel));
+  if (e.target.id === 'd-dup') return openCreate(A.byId.get(A.sel), createDeps);
+  if (e.target.id === 'd-contacts') return openPersonalImport(A.byId.get(A.sel), createDeps);
   const b = e.target.closest('button[data-edit]');
   if (b) openEdit(b.dataset.edit);
 };

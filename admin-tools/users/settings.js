@@ -19,7 +19,7 @@
 //                     rechargement à redéclencher à la fin ('user')
 // Routes et sémantique vérifiées dans le code de wazo-confd (13/10/2026),
 // voir docs/USER-MANAGER.md. Écritures non encore testées en réel.
-import { S, api, esc, fullName } from '../common/core.js?v=0.40.41';
+import { S, api, esc, fullName } from '../common/core.js?v=0.40.42';
 
 // Comparaison indépendante de l'ordre des clés (objets relus vs construits).
 const canon = (v) => (Array.isArray(v) ? v.map(canon) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, canon(v[k])])) : v ?? null);
@@ -694,18 +694,7 @@ const linesSetting = {
     // 3. Créations (et lignes d'une sauvegarde qui n'existent plus).
     for (const l of next) {
       if (l.id != null && byId.has(l.id)) continue;
-      const templates = (l.type === 'webrtc' ? [IDX.tpl.global, IDX.tpl.webrtc] : [IDX.tpl.global]).map((uuid) => ({ uuid }));
-      // Nom de l'endpoint = identifiant d'authentification, comme l'import de Wazo
-      // (vérifié, wazo-confd user_import/creators.py : 'name': fields['username']).
-      // Deux valeurs différentes = ligne qui ne s'authentifie pas (retour de Brice,
-      // 21/10/2026, lignes WebRTC : 4 h de diagnostic). Le portail fait de même et pose
-      // aussi le libellé égal au nom (code du portail, pbx.lines getEndpointData).
-      const sipName = rnd(8, 'abcdefghijklmnopqrstuvwxyz');
-      const line = await api('POST', '/lines', {
-        context: l.context,
-        endpoint_sip: { name: sipName, label: sipName, templates, auth_section_options: [['username', sipName], ['password', rnd(16, 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789')]] },
-        extensions: l.exten ? [{ exten: l.exten, context: l.context }] : [],
-      });
+      const line = await api('POST', '/lines', newLineBody(l));
       try { await api('PUT', `/users/${u.uuid}/lines/${line.id}`); } catch (e) {
         // Ligne orpheline : supprimée pour ne pas bloquer le numéro.
         try { await api('DELETE', `/lines/${line.id}?recursive=true`); } catch { /* signalé par l'erreur d'origine */ }
@@ -724,6 +713,24 @@ const linesSetting = {
   },
 };
 const rnd = (n, cs) => { const b = new Uint32Array(n); crypto.getRandomValues(b); return [...b].map((x) => cs[x % cs.length]).join(''); };
+// Corps d'une nouvelle ligne SIP / WebRTC (POST /lines, ou ligne imbriquée de
+// POST /users). Nom de l'endpoint = identifiant d'authentification, comme
+// l'import de Wazo (user_import/creators.py : 'name': fields['username']) ;
+// deux valeurs différentes = ligne qui ne s'authentifie pas (retour de Brice,
+// 21/10/2026, lignes WebRTC : 4 h de diagnostic). Le portail fait de même et
+// pose aussi le libellé égal au nom (code du portail, pbx.lines getEndpointData).
+// Modèles : global, + webrtc pour une ligne WebRTC (import et portail).
+export function newLineBody(l) {
+  const templates = (l.type === 'webrtc' ? [IDX.tpl.global, IDX.tpl.webrtc] : [IDX.tpl.global]).map((uuid) => ({ uuid }));
+  const sipName = rnd(8, 'abcdefghijklmnopqrstuvwxyz');
+  return {
+    context: l.context,
+    endpoint_sip: { name: sipName, label: sipName, templates, auth_section_options: [['username', sipName], ['password', rnd(16, 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789')]] },
+    extensions: l.exten ? [{ exten: l.exten, context: l.context }] : [],
+  };
+}
+// Outils partagés avec la création d'utilisateur (create.js).
+export const LINES = { internalCtx, ctxText, inRange, takenBy, defaultStart, nextFree, defaultCtx, freeDevices, LTYPES_NEW, setGroups, LTYPE };
 
 // Prénom, nom : le portail les écrit aussi dans le compte des applications
 // (code du portail lu le 21/10/2026, updateAuthUser : PUT /api/auth/0.1/users/{uuid}

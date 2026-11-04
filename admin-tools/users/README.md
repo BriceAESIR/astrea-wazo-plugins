@@ -76,7 +76,17 @@ Cadrage, sources et décisions : `docs/USER-MANAGER.md` (dépôt de dev).
 - Identifiant et mot de passe SIP générés au hasard. Une restauration recrée
   les lignes supprimées avec de nouveaux identifiants (postes à resynchroniser).
 
-Le CSV (export, création) arrive ensuite.
+## Création d'utilisateur
+- « Nouvel utilisateur… » (barre du haut) ou « Créer un utilisateur à partir de
+  celui-ci… » (fiche) : nom, e-mail, licence, ligne (SIP, WebRTC ou les deux),
+  boîte vocale libre, compte des applications (identifiant, mot de passe généré),
+  réglages copiés au choix. Même enchaînement que le portail ; si le compte ne
+  peut pas être créé, l'utilisateur est supprimé.
+- Contacts personnels : fichier CSV au format d'import Wazo, à la création ou
+  depuis la fiche (« Importer des contacts personnels… », mot de passe de
+  l'utilisateur demandé : wazo-dird n'accepte que son propre jeton).
+
+Le CSV (export, création en masse) arrive ensuite.
 ## Droits utilisés
 Lecture : `confd.users.read`, plus, pour les libellés, `confd.moh.read`,
 `confd.groups.read`, `confd.voicemails.read`, `confd.callpermissions.read`
