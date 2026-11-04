@@ -394,7 +394,7 @@ export function blfStatus(m, { skipNoDevice = false } = {}) {
       let status = 'oui';
       const t = m.dn.get(b.target);
       if (!kept.has(e.number)) status = 'non (poste non repris)';
-      else if (b.type === 'SharedParking') status = 'oui';
+      else if (b.type === 'SharedParking') status = 'non (parking non repris)';
       else if (!t) status = 'non (cible absente)';
       else if (t.kind === 'Extension' && !kept.has(b.target)) status = 'non (cible non reprise)';
       else if (seen.has(b.target)) status = 'non (doublon)';

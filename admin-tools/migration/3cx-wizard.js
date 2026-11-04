@@ -11,16 +11,16 @@
 // de l'assistant France de Call Flow ; lues dans le code, testées sur faux tenant). Les phases
 // Personnes, Routage et Finitions sont planifiées (lecture seule) ; leur
 // écriture arrive aux lots 5b-5d.
-import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.47';
-import { I, sameTenant } from './inventory.js?v=0.40.47';
-import { buildExport, exportFileName } from './export.js?v=0.40.47';
-import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText, didWazo } from './3cx-draft.js?v=0.40.47';
+import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.48';
+import { I, sameTenant } from './inventory.js?v=0.40.48';
+import { buildExport, exportFileName } from './export.js?v=0.40.48';
+import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText, didWazo } from './3cx-draft.js?v=0.40.48';
 import {
   SITE_MODES, FR_FAMILIES, FR_FORMATS, BLOCK_118, defaultSite, defaultOut, clientPatterns, unitDids, rangeIssues, occupancy, placements, unitLabels, unitCfg, futureOf, siteChecks, routeText, newRanges, multi as multiSites,
-} from './3cx-sites.js?v=0.40.47';
-import { unitList, unitOf, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.47';
-import { mohLabel, soundCategory, loaded, wazoName, putBinary, CATEGORY_RE } from './3cx-sounds.js?v=0.40.47';
-import { phonebookName, companyContacts, sourceColumns, dird } from './3cx-phonebook.js?v=0.40.47';
+} from './3cx-sites.js?v=0.40.48';
+import { unitList, unitOf, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.48';
+import { mohLabel, soundCategory, loaded, wazoName, putBinary, CATEGORY_RE } from './3cx-sounds.js?v=0.40.48';
+import { phonebookName, companyContacts, sourceColumns, dird } from './3cx-phonebook.js?v=0.40.48';
 
 const W = { d: null, m: null, t: null, busy: false, msg: null, at: null };
 export function setWizard(d, m) { W.d = d; W.m = m; W.t = null; W.msg = null; ensureState(); }
@@ -380,11 +380,13 @@ function losses() {
   for (const x of grouped(routeIss, kindOf)) add('warn', x.area, x.text, 'À corriger dans l\'onglet concerné avant d\'écrire, sinon l\'appel sera rejeté à cet endroit.');
   const skipped = d.dids.filter((r) => !r.import).length;
   if (skipped) add('info', `${skipped} SDA non reprises`, 'Appels vers ces numéros rejetés (comme dans 3CX : règle par défaut sans destination).', 'Cocher la reprise dans l\'onglet SDA si besoin.');
-  const blf = blfRows(d, m).filter((b) => !b.ok);
+  const blfAll = blfRows(d, m); const parkKeys = blfAll.filter((b) => b.type === 'parking' && b.status === 'non (parking non repris)');
+  const blf = blfAll.filter((b) => !b.ok && !parkKeys.includes(b));
   if (blf.length) add('info', `${blf.length} touche(s) BLF non reprises`, 'Cibles absentes (anciens postes), postes non repris ou doublons.', 'Liste exacte dans l\'onglet Exports (CSV des touches).');
+  if (m.parks.length) add('info', `Parking 3CX non repris${parkKeys.length ? ` (${parkKeys.length} touche(s) de place sur ${new Set(parkKeys.map((b) => b.owner)).size} poste(s))` : ''}`, 'Plusieurs appels en attente : touches ligne du poste Wazo (un appel par touche) ou appli Wazo. Un appel en attente ne se reprend que depuis le poste qui l\'a mis en attente ; pour le passer à un collègue, le transférer.', 'Si un collègue doit reprendre l\'appel depuis son poste, créer un parking Wazo à la main (touches « place de parking »).');
   if (d.dids.some((r) => r.import && [r.holiday, r.closed].some((x) => x?.t === 'sound'))) add('info', 'Message de fermeture des jours fériés', 'Le son du jour férié doit exister dans Wazo, sinon la fermeture n\'a rien à jouer.', 'Fournir les sons (phase musiques), ou viser la messagerie.');
   if (m.ivrs.some((v) => v.system)) add('info', 'SVI internes de 3CX (code PIN, rappel de file)', 'Sans équivalent : non repris.', '—');
-  if (m.others.length) add('info', m.others.map((o) => `${o.kind.replace('Extension', '')} ${o.number}`).join(', '), 'Fax, conférence et menu spécial 3CX : non repris à ce stade.', 'À créer à la main si utilisés.');
+  if (m.others.length) add('info', m.others.map((o) => `${o.kind.replace('Extension', '')} ${o.number}`).join(', '), 'Fax, conférence et menu spécial 3CX : non repris.', 'À créer à la main si utilisés.');
   add('info', 'Messages vocaux, enregistrements et journaux d\'appels 3CX', 'Non migrables par l\'API de Wazo.', 'Les exporter depuis 3CX si le client veut les garder.');
   add('info', 'Postes à reprovisionner', 'Les lignes Wazo sont nouvelles : chaque poste doit récupérer sa configuration Wazo.', 'Appareils créés par MAC et associés aux lignes (phase Personnes) ; redémarrer les postes.');
   const lic = {}; for (const u of imported(d)) if (u.sub != null) lic[u.sub] = (lic[u.sub] || 0) + 1;

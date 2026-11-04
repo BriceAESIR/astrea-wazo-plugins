@@ -3,8 +3,8 @@
 // bascule multisite (lot 2). Les objets sont gardés tels que confd les renvoie,
 // sans transformation : la restauration fera la correspondance des ids et des
 // noms de contextes.
-import { S, stackVersion } from '../common/core.js?v=0.40.47';
-import { I, SOURCES } from './inventory.js?v=0.40.47';
+import { S, stackVersion } from '../common/core.js?v=0.40.48';
+import { I, SOURCES } from './inventory.js?v=0.40.48';
 
 export const FORMAT = 'astrea-migration';
 export const FORMAT_VERSION = 1;

@@ -13,7 +13,7 @@
 // Les objets Wazo correspondants (destinations confd user_id, group_id…) ne
 // sont résolus qu'à l'écriture : convertir une file en groupe ne demande donc
 // aucune reprise des destinations qui la visent.
-import { nameOf, schedulesOf, STRATEGY } from './3cx.js?v=0.40.47';
+import { nameOf, schedulesOf, STRATEGY } from './3cx.js?v=0.40.48';
 
 export const DRAFT_FORMAT = 'astrea-3cx-draft';
 const KEY = 'astrea-migration-3cx-draft-v1';
@@ -453,7 +453,9 @@ export function blfRows(d, m) {
       let status = 'oui';
       if (!u || u.mode !== 'user') status = 'non (poste non repris)';
       else if (!u.blf) status = 'non (touches non reprises pour ce poste)';
-      else if (b.type === 'SharedParking') status = 'oui';
+      // Parking 3CX non repris (décision de Brice, 04/11/2026) : il sert à mettre plusieurs
+      // appels en attente, ce que font les touches ligne de Wazo.
+      else if (b.type === 'SharedParking') status = 'non (parking non repris)';
       else if (!m.dn.has(b.target)) status = 'non (cible absente)';
       else if (m.dn.get(b.target).kind === 'Extension' && t?.mode !== 'user') status = 'non (cible non reprise)';
       else if (seen.has(b.target)) status = 'non (doublon)';

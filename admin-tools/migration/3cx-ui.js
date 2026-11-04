@@ -1,11 +1,11 @@
 // Migration Assistant — vue « Import 3CX » (lot 4) : fiche de reprise (état de
 // la sauvegarde 3CX) et brouillon d'import modifiable par onglets (3cx-edit.js),
 // source des exports. Aucune écriture dans Wazo. Lecteur : 3cx.js ; brouillon : 3cx-draft.js.
-import { $, esc, toast, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.47';
-import { I } from './inventory.js?v=0.40.47';
-import { parse3cx, issuesOf, schedulesOf, destText, periodsText, redacted, nameOf, STRATEGY, STRATEGY_FR, KIND_FR } from './3cx.js?v=0.40.47';
-import { buildDraft, buildDevices, loadDraft, saveDraft, blfRows } from './3cx-draft.js?v=0.40.47';
-import { TABS, setDraft, renderTab, tabCounts, onDraftChange, draft } from './3cx-edit.js?v=0.40.47';
+import { $, esc, toast, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.48';
+import { I } from './inventory.js?v=0.40.48';
+import { parse3cx, issuesOf, schedulesOf, destText, periodsText, redacted, nameOf, STRATEGY, STRATEGY_FR, KIND_FR } from './3cx.js?v=0.40.48';
+import { buildDraft, buildDevices, loadDraft, saveDraft, blfRows } from './3cx-draft.js?v=0.40.48';
+import { TABS, setDraft, renderTab, tabCounts, onDraftChange, draft } from './3cx-edit.js?v=0.40.48';
 
 const X = { m: null, file: '', tab: 'fiche' };
 const SEV_FR = { error: 'Erreur', warn: 'À vérifier', info: 'Info' };
@@ -111,7 +111,7 @@ function ficheHtml() {
       name(e.number), blfOk(e).map((b) => `${b.wpos}:${b.type === 'parking' ? 'parking' : esc(b.target)}`).join(' ') || '<span class="muted">aucune</span>',
       blfKo(e).some((b) => b.status === 'non (poste non repris)') ? '<span class="muted">poste non repris</span>' : blfKo(e).map((b) => `${esc(b.target)} <span class="muted">${esc(b.status.replace(/^non \((.*)\)$/, '$1'))}</span>`).join(', ') || '—',
     ]))), 'Touches de supervision des postes 3CX. Wazo : touches de fonction de l\'utilisateur (BLF Manager), type « supervision » vers l\'utilisateur cible ; « parking partagé » → touche parking. Non reprises : cible absente de la sauvegarde, cible ou poste non repris (mêmes règles que le CSV d\'import), doublon sur le même poste. Le CSV donne poste, position Wazo, type, cible et reprise.')}
-    ${sec('other', 'Autres éléments', `<p class="small">Parkings : ${m.parks.length} emplacement(s) (${esc(m.parks.map((p) => p.number).join(', '))}) → un parking Wazo. ${m.others.map((o) => `${esc(KIND_FR[o.kind] || o.kind)} ${esc(o.number)}${o.name ? ` (${esc(o.name)})` : ''}`).join(' ; ')}. Annuaire partagé : ${m.phonebook.length} contact(s) → annuaire Wazo (à saisir).</p>`)}`;
+    ${sec('other', 'Autres éléments', `<p class="small">Parkings : ${m.parks.length} emplacement(s) (${esc(m.parks.map((p) => p.number).join(', '))}) : non repris (touches ligne de Wazo pour les appels en attente). ${m.others.map((o) => `${esc(KIND_FR[o.kind] || o.kind)} ${esc(o.number)}${o.name ? ` (${esc(o.name)})` : ''}`).join(' ; ')}. Annuaire partagé : ${m.phonebook.length} contact(s) → annuaire Wazo (à saisir).</p>`)}`;
 }
 function routesTxt(m, r) {
   const parts = [];
