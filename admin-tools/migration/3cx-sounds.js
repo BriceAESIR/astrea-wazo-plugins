@@ -15,7 +15,7 @@
 //    (sound/storage.py) ; DELETE /sounds/{catégorie} supprime ses fichiers.
 // Musique d'attente par défaut : option moh_suggest du modèle SIP global, comme
 // le Wizard de déploiement de Wazo (lu dans son code) ; effet exact supposé.
-import { S, ApiError } from '../common/core.js?v=0.40.40';
+import { S, ApiError } from '../common/core.js?v=0.40.41';
 
 export const CATEGORY_RE = /^[a-zA-Z0-9][-_.a-zA-Z0-9]+$/;
 export const SORTS = { alphabetical: 'Ordre alphabétique', random: 'Aléatoire', random_start: 'Départ aléatoire' };

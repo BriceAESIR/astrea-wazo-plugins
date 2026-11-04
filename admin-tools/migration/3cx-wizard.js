@@ -11,16 +11,16 @@
 // de l'assistant France de Call Flow ; lues dans le code, testées sur faux tenant). Les phases
 // Personnes, Routage et Finitions sont planifiées (lecture seule) ; leur
 // écriture arrive aux lots 5b-5d.
-import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.40';
-import { I, sameTenant } from './inventory.js?v=0.40.40';
-import { buildExport, exportFileName } from './export.js?v=0.40.40';
-import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText, didWazo } from './3cx-draft.js?v=0.40.40';
+import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.41';
+import { I, sameTenant } from './inventory.js?v=0.40.41';
+import { buildExport, exportFileName } from './export.js?v=0.40.41';
+import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText, didWazo } from './3cx-draft.js?v=0.40.41';
 import {
   SITE_MODES, FR_FAMILIES, FR_FORMATS, BLOCK_118, defaultSite, defaultOut, clientPatterns, unitDids, rangeIssues, occupancy, placements, unitLabels, unitCfg, futureOf, siteChecks, routeText, newRanges, multi as multiSites,
-} from './3cx-sites.js?v=0.40.40';
-import { unitList, unitOf, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.40';
-import { mohLabel, soundCategory, loaded, wazoName, putBinary, CATEGORY_RE } from './3cx-sounds.js?v=0.40.40';
-import { phonebookName, toWazoContact, DEFAULT_COLUMNS, dird } from './3cx-phonebook.js?v=0.40.40';
+} from './3cx-sites.js?v=0.40.41';
+import { unitList, unitOf, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.41';
+import { mohLabel, soundCategory, loaded, wazoName, putBinary, CATEGORY_RE } from './3cx-sounds.js?v=0.40.41';
+import { phonebookName, companyContacts, DEFAULT_COLUMNS, dird } from './3cx-phonebook.js?v=0.40.41';
 
 const W = { d: null, m: null, t: null, busy: false, msg: null, at: null };
 export function setWizard(d, m) { W.d = d; W.m = m; W.t = null; W.msg = null; ensureState(); }
@@ -277,8 +277,10 @@ function buildPlan(t) {
     add('found', ok ? (ex ? 'update' : 'create') : 'conflict', `Musique d'attente « ${m.label} »`, `${ok} fichier(s) sur ${m.files.length} déposés${ex ? ' · existe déjà : fichiers ajoutés' : ''}${sp.def === m ? ' · par défaut du site' : ''}`);
   }
   if (sp.files.length) { const ok = sp.files.filter((f) => loaded(f)).length; const ex = t.sounds.some((x) => x.name === sp.cat); add('found', ok ? 'create' : 'conflict', `Sons « ${sp.cat} »`, `${ok} fichier(s) sur ${sp.files.length} déposés${ex ? ' · catégorie déjà présente' : ''}`); }
-  const pbn = (d.phonebook?.contacts || []).filter((x) => x.import).length;
-  if (pbn) add('found', 'create', `Annuaire « ${phonebookName(d)} »`, `${pbn} contact(s) ; carnet, source d'annuaire et profil du site (wazo-dird)`);
+  const pbn = d.phonebook ? companyContacts(d).length : 0;
+  if (pbn) add('found', 'create', `Annuaire « ${phonebookName(d)} »`, `${pbn} contact(s)${d.phonebook.includePersonal ? ', contacts personnels compris' : ''} ; carnet, source d'annuaire et profil du site (wazo-dird)`);
+  const pers = (d.phonebook?.personal || []).filter((x) => x.import).length;
+  if (pers && !d.phonebook.includePersonal) add('finish', 'skip', `${pers} contact(s) personnels des postes`, 'non écrits par l\'outil (wazo-dird n\'accepte que le jeton de l\'utilisateur) : CSV par poste dans l\'onglet Annuaire, à importer par chaque utilisateur');
   if (sp.def) add('found', 'update', `Musique d'attente par défaut : « ${sp.def.label} »`, 'option moh_suggest du modèle SIP global (comme le Wizard de déploiement de Wazo), les autres options du modèle inchangées');
   // Personnes
   const unitCtx = new Set(c.units.map((u) => u.ctx));
@@ -570,7 +572,7 @@ async function foundationOps(t) {
   // Annuaire (wazo-dird, lu le 04/11/2026, voir 3cx-phonebook.js) : carnet, contacts, source de
   // type carnet (colonnes reprises d'une source carnet existante du site, sinon par défaut), ajout
   // de la source aux services du profil du site. Annulation : profil d'avant, source, carnet.
-  const contacts = (d.phonebook?.contacts || []).filter((x) => x.import).map(toWazoContact).filter((x) => Object.keys(x).length);
+  const contacts = d.phonebook ? companyContacts(d) : [];
   if (contacts.length) {
     const name = phonebookName(d);
     ops.push({ label: `Annuaire « ${name} » : ${contacts.length} contact(s), source d'annuaire et profil du site (wazo-dird)`, run: async () => {

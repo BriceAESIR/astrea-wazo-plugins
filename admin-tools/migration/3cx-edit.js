@@ -2,19 +2,19 @@
 // Modèle et règles : 3cx-draft.js. Chaque modification est enregistrée dans le
 // navigateur (brouillon par fichier et date de sauvegarde) ; rien n'est écrit
 // dans Wazo depuis ces tableaux.
-import { $, esc, toast, helpButton, helpBox, confirmModal, downloadJson } from '../common/core.js?v=0.40.40';
-import { I } from './inventory.js?v=0.40.40';
+import { $, esc, toast, helpButton, helpBox, confirmModal, downloadJson } from '../common/core.js?v=0.40.41';
+import { I } from './inventory.js?v=0.40.41';
 import {
   GROUP_STRATEGIES, MODES, HUNT_TARGETS, LICENCES, AUTH_METHODS, effectiveUsername, upgradeDraft, saveDraft, clearDraft, buildDraft, acceptDraft, userBy, userName, imported,
   destLabel, destProblem, draftIssues, usersCsv, blfRows, devicesCsv, deviceDesc, macWazo, macValid, tenantIssues,
   LINE_MODES, linesOf, VM_LANGS, vmEmail, upperName, upgradeSchedules, pastHolidays, didWazo,
-} from './3cx-draft.js?v=0.40.40';
-import { setWizard, wizardTab, wizardChange, wizardClick, wizardDone, wizardTotal } from './3cx-wizard.js?v=0.40.40';
-import { unitCfg, unitLabels, autoRanges, RANGE_KEYS, rangeIssues } from './3cx-sites.js?v=0.40.40';
-import { rangesText } from './multisite.js?v=0.40.40';
-import { CONTACT_FIELDS, ensurePhonebook, phonebookName, phonebookIssues } from './3cx-phonebook.js?v=0.40.40';
-import { SORTS, CATEGORY_RE, soundUsages, ensureSounds, mohLabel, soundCategory, FILES, keyOf, loaded, addFiles, addFileAs, wazoName } from './3cx-sounds.js?v=0.40.40';
-import { DEPT_MODES, deptLabel, ensureDepts, deptObjects, unitOf, unitList, setDeptMode, moveObject } from './3cx-depts.js?v=0.40.40';
+} from './3cx-draft.js?v=0.40.41';
+import { setWizard, wizardTab, wizardChange, wizardClick, wizardDone, wizardTotal } from './3cx-wizard.js?v=0.40.41';
+import { unitCfg, unitLabels, autoRanges, RANGE_KEYS, rangeIssues } from './3cx-sites.js?v=0.40.41';
+import { rangesText } from './multisite.js?v=0.40.41';
+import { WAZO_FIELDS, tagsOf, tagLabel, tagChecked, ensurePhonebook, phonebookName, phonebookIssues, companyContacts, personalCsv, toWazoContact } from './3cx-phonebook.js?v=0.40.41';
+import { SORTS, CATEGORY_RE, soundUsages, ensureSounds, mohLabel, soundCategory, FILES, keyOf, loaded, addFiles, addFileAs, wazoName } from './3cx-sounds.js?v=0.40.41';
+import { DEPT_MODES, deptLabel, ensureDepts, deptObjects, unitOf, unitList, setDeptMode, moveObject } from './3cx-depts.js?v=0.40.41';
 
 const E = { d: null, m: null, file: '', tab: 'users', sel: { users: new Set(), dids: new Set(), vms: new Set() }, q: '', onReset: null };
 export const TABS = [
@@ -240,19 +240,41 @@ function reviewPanel(opts) {
 // ---------------------------------------------------------------------------
 // Annuaire de la société (demande de Brice, 04/11/2026). Règles et API : 3cx-phonebook.js.
 // ---------------------------------------------------------------------------
-const PB_HELP = 'Contacts de l\'annuaire de la société 3CX, modifiables avant import. Dans Wazo : un carnet d\'adresses (wazo-dird) à ce nom, rempli contact par contact, puis une source d\'annuaire de type carnet ajoutée au profil d\'annuaire du site, pour que les postes et les applications le consultent et affichent le nom à la réception d\'un appel. Envoyé par la phase Fondations (onglet Écriture). Dans 3CX, les autres numéros et l\'e-mail d\'un contact sont dans des champs numérotés sans signification écrite : ils sont classés d\'après leur contenu (e-mail, mobile 06 / 07) ; à vérifier ici.';
+const PB_HELP = 'Annuaire de la société 3CX et contacts personnels des postes. Correspondance : chaque champ 3CX et le champ Wazo qui le reçoit (« vérifié » : contrôlé sur une fiche 3CX ; sinon supposé, d\'après l\'ordre de la fiche). Comparez l\'exemple avec la fiche d\'un contact dans 3CX et corrigez ici : tous les contacts suivent. Numéro principal Wazo, à défaut : bureau, domicile, mobile. Dans Wazo : un carnet d\'adresses (wazo-dird) rempli contact par contact, puis une source d\'annuaire ajoutée au profil d\'annuaire du site, pour que les postes et les applications le consultent et affichent le nom à la réception d\'un appel (phase Fondations). Contacts personnels : Wazo ne les accepte qu\'avec le jeton de l\'utilisateur lui-même (wazo-dird /personal) ; l\'outil donne un CSV par poste, au format d\'import de Wazo, ou peut les verser dans le carnet de la société (visibles alors par tous).';
 function phonebookTab() {
   const d = E.d; const pb = d.phonebook; const q = E.q.trim().toLowerCase();
-  const rows = pb.contacts.map((c, i) => [c, i]).filter(([c]) => !q || CONTACT_FIELDS.some(([k]) => String(c[k] || '').toLowerCase().includes(q))).map(([c, i]) => `<tr class="${c.import ? '' : 'x3-off'}">
+  const tags = tagsOf(E.m); const opt = (v, l, cur) => `<option value="${esc(v)}" ${v === cur ? 'selected' : ''}>${esc(l)}</option>`;
+  const all = [...pb.contacts, ...pb.personal];
+  const sample = (t) => all.find((c) => c.raw?.[t])?.raw[t] || '';
+  const mapRows = tags.map((t) => { const k = pb.map[t]; const cur = k || pb.mapPrev?.[t] || ''; return `<tr class="${k ? '' : 'x3-off'}">
+    <td class="x3-c"><input type="checkbox" data-pb-keep="${esc(t)}" ${k ? 'checked' : ''} title="Reprendre ce champ"></td>
+    <td>${esc(tagLabel(t))}<div class="muted small">${esc(t)}${tagChecked(t) ? ' · vérifié' : ' · supposé'}</div></td>
+    <td class="small">${pb.contacts.filter((c) => c.raw?.[t]).length} / ${pb.personal.filter((c) => c.raw?.[t]).length}</td>
+    <td class="small">${esc(sample(t))}</td>
+    <td><select data-pb-map="${esc(t)}" ${k ? '' : 'disabled'}>${cur ? '' : opt('', 'À choisir', '')}${Object.entries(WAZO_FIELDS).map(([w, l]) => opt(w, l, cur)).join('')}</select></td></tr>`; }).join('');
+  // Contacts de la société : une colonne par champ 3CX repris.
+  const cols = tags.filter((t) => pb.map[t]);
+  const rows = pb.contacts.map((c, i) => [c, i]).filter(([c]) => !q || Object.values(c.raw || {}).some((v) => String(v).toLowerCase().includes(q))).map(([c, i]) => `<tr class="${c.import ? '' : 'x3-off'}">
     <td class="x3-c">${check(`phonebook.contacts.${i}.import`, 'Reprendre ce contact')}</td>
-    ${CONTACT_FIELDS.map(([k]) => `<td>${input(`phonebook.contacts.${i}.${k}`, k === 'email' ? 'type="email" class="x3-mail"' : '')}</td>`).join('')}
+    ${cols.map((t) => `<td>${input(`phonebook.contacts.${i}.raw.${t}`, pb.map[t] === 'email' ? 'type="email" class="x3-mail"' : '')}</td>`).join('')}
     <td><button class="icon" data-act="pb-del" data-i="${i}" title="Supprimer ce contact">×</button></td></tr>`).join('');
+  // Contacts personnels, par poste.
+  const owners = [...new Set(pb.personal.map((c) => c.owner))].sort((a, b) => String(a).localeCompare(String(b), 'fr', { numeric: true }));
+  const persRows = owners.map((o) => { const n = pb.personal.filter((c) => c.owner === o && c.import).length; const u = userBy(d, o); return `<tr><td>${esc(o)} ${u ? esc(userName(u)) : ''}${u && u.mode !== 'user' ? '<div class="muted small">poste non repris</div>' : ''}</td><td class="small">${n} contact(s)</td><td>${n ? `<button data-act="pb-csv" data-o="${esc(o)}">CSV</button>` : ''}</td></tr>`; }).join('');
   const iss = phonebookIssues(d);
   return `${intro('phonebook', 'Annuaire', PB_HELP, `<input id="x3e-q" type="search" placeholder="Filtrer" value="${esc(E.q)}" class="x3-q">`)}
     <div class="ms-tools small"><label>Carnet Wazo <input data-pb-name="1" value="${esc(pb.name)}" placeholder="${esc(phonebookName(d))}" class="x3-mail"></label>
-      <button data-act="pb-all" data-v="1">Tout reprendre</button><button data-act="pb-all" data-v="0">Ne rien reprendre</button><button data-act="pb-add">+ contact</button></div>
+      <span class="muted">${companyContacts(d).length} contact(s) envoyés au carnet</span></div>
+    <h4 class="x3-h">Correspondance des champs</h4>
+    <div class="x3-edit-wrap"><table class="diff x3-edit">${head([['Reprise'], ['Champ 3CX'], ['Contacts', 'Société / personnels où ce champ est rempli'], ['Exemple'], ['Champ Wazo']])}<tbody>${mapRows || '<tr><td colspan="5" class="muted">Aucun contact dans la sauvegarde.</td></tr>'}</tbody></table></div>
     ${iss.length ? `<div class="small">${iss.slice(0, 8).map((x) => `<div class="warn">${esc(x.text)}</div>`).join('')}${iss.length > 8 ? `<div class="muted">… et ${iss.length - 8} autre(s)</div>` : ''}</div>` : ''}
-    <div class="x3-edit-wrap"><table class="diff x3-edit">${head([['Reprise'], ...CONTACT_FIELDS.map(([, , l]) => [l]), ['']])}<tbody>${rows || '<tr><td colspan="8" class="muted">Aucun contact dans la sauvegarde.</td></tr>'}</tbody></table></div>`;
+    <h4 class="x3-h">Annuaire de la société (${pb.contacts.length})</h4>
+    <div class="btnrow"><button data-act="pb-all" data-v="1">Tout reprendre</button><button data-act="pb-all" data-v="0">Ne rien reprendre</button><button data-act="pb-add">+ contact</button></div>
+    <div class="x3-edit-wrap"><table class="diff x3-edit">${head([['Reprise'], ...cols.map((t) => [`${tagLabel(t)} → ${WAZO_FIELDS[pb.map[t]]}`]), ['']])}<tbody>${rows || `<tr><td colspan="${cols.length + 2}" class="muted">Aucun contact.</td></tr>`}</tbody></table></div>
+    <h4 class="x3-h">Contacts personnels des postes (${pb.personal.length})</h4>
+    ${pb.personal.length ? `<label class="inline small"><input type="checkbox" data-pb-incl="1" ${pb.includePersonal ? 'checked' : ''}> Les verser aussi dans le carnet de la société (visibles par tous, doublons retirés)</label>
+    <div class="btnrow"><button data-act="pb-csv-all">CSV de tous les postes (colonne « poste »)</button></div>
+    <div class="x3-edit-wrap"><table class="diff x3-edit">${head([['Poste'], ['Contacts'], ['Export', 'CSV au format d\'import des contacts personnels de Wazo, à importer par l\'utilisateur']])}<tbody>${persRows}</tbody></table></div>` : '<p class="muted small">Aucun contact personnel dans la sauvegarde.</p>'}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -269,19 +291,24 @@ function soundSlot(f, { player = true } = {}) {
   return `<div class="x3-slot" data-drop-as="${esc(f)}" title="Déposer un fichier ici pour « ${esc(f)} »">${l ? `${player ? `<audio controls preload="none" src="${esc(l.url)}"></audio>` : ''}<div class="muted">${l.seconds.toFixed(1)} s${l.source && keyOf(l.source) !== keyOf(f) ? ` · depuis « ${esc(l.source)} »` : ''} · ${esc(l.from)} → WAV 8 kHz mono 16 bits</div>` : '<span class="x3-warn">à déposer</span>'}
     <label class="x3-link">${l ? 'Remplacer' : 'Déposer'}…<input type="file" accept="audio/*,.wav,.mp3" data-snd-slot="${esc(f)}" hidden></label></div>`;
 }
-const SOUNDS_HELP ='La sauvegarde 3CX ne donne que le nom des fichiers son (répondeurs, SVI, messages de fermeture, musiques). Déposez ici les fichiers (récupérés dans la sauvegarde complète de 3CX, ou fournis par le client) : ils sont reconnus par leur nom, sans tenir compte de l\'extension, et convertis dans le navigateur en WAV 8 kHz mono 16 bits, le format exigé par Wazo pour une musique d\'attente. Ils restent dans la mémoire de la page (à redéposer après un rechargement) et sont envoyés par la phase Fondations (onglet Écriture). Pour chaque fichier : une musique d\'attente, la catégorie de sons du client (messages : SVI, fermetures…), ou ne pas reprendre. Musique d\'attente par défaut : réglée dans le modèle SIP global du site (option moh_suggest), comme le Wizard de déploiement de Wazo.';
+const SOUNDS_HELP ='La sauvegarde 3CX ne donne que le nom des fichiers son (répondeurs, SVI, messages de fermeture, musiques). Déposez ici les fichiers (récupérés dans la sauvegarde complète de 3CX, ou fournis par le client) : ils sont reconnus par leur nom, sans tenir compte de l\'extension, et convertis dans le navigateur en WAV 8 kHz mono 16 bits, le format exigé par Wazo pour une musique d\'attente. Ils restent dans la mémoire de la page (à redéposer après un rechargement) et sont envoyés par la phase Fondations (onglet Écriture). Reprise : décochez un fichier à ne pas reprendre (onhold.wav, fourni par 3CX lui-même, l\'est d\'office). Dans Wazo : une musique d\'attente, ou la catégorie de sons du client (messages : SVI, fermetures…). Musique d\'attente par défaut : réglée dans le modèle SIP global du site (option moh_suggest), comme le Wizard de déploiement de Wazo.';
+// Destination proposée quand on recoche une ligne sans choix antérieur : musique si 3CX
+// s'en sert comme musique, sinon son.
+const keepTo = (r) => (r.uses.some((u) => u.kind === 'moh') ? `moh:${E.d.sounds.moh[0]?.key || 'attente'}` : 'sound');
 function soundsTab() {
   const d = E.d; const s = d.sounds; const us = soundUsages(E.m);
   const known = new Set(us.map((u) => keyOf(u.file)));
   const rows = [...us, ...[...FILES.values()].filter((f) => !known.has(keyOf(f.name))).map((f) => ({ file: f.name, uses: [], extra: true }))];
   for (const r of rows) s.files[r.file] ||= { to: 'sound' };
   const opt = (v, l, cur) => `<option value="${esc(v)}" ${v === cur ? 'selected' : ''}>${esc(l)}</option>`;
-  const toSel = (f) => `<select data-snd-to="${esc(f)}">${s.moh.map((x) => opt(`moh:${x.key}`, `Musique d'attente « ${mohLabel(d, x)} »`, s.files[f].to)).join('')}${opt('sound', `Son « ${soundCategory(d)} »`, s.files[f].to)}${opt('skip', 'Ne pas reprendre', s.files[f].to)}</select>`;
+  // « Ne pas reprendre » = case Reprise décochée (retour de Brice) ; le menu ne propose que la
+  // destination dans Wazo, grisé et gardé (prev) tant que la ligne n'est pas reprise.
+  const toSel = (r) => { const x = s.files[r.file]; const cur = x.to === 'skip' ? (x.prev || keepTo(r)) : x.to; return `<select data-snd-to="${esc(r.file)}" ${x.to === 'skip' ? 'disabled' : ''}>${s.moh.map((m) => opt(`moh:${m.key}`, `Musique d'attente « ${mohLabel(d, m)} »`, cur)).join('')}${opt('sound', `Son « ${soundCategory(d)} »`, cur)}</select>`; };
   const fileRows = rows.map((r) => {
     const to = s.files[r.file].to;
-    return `<tr class="${to === 'skip' ? 'x3-off' : ''}"><td>${esc(r.file)}<div class="muted small">${to === 'skip' ? '' : `Wazo : ${esc(wazoName(r.file))}.wav`}</div></td>
+    return `<tr class="${to === 'skip' ? 'x3-off' : ''}"><td class="x3-c"><input type="checkbox" data-snd-keep="${esc(r.file)}" ${to === 'skip' ? '' : 'checked'} title="Reprendre ce fichier dans Wazo"></td><td>${esc(r.file)}<div class="muted small">${to === 'skip' ? '' : `Wazo : ${esc(wazoName(r.file))}.wav`}</div></td>
       <td class="small">${r.uses.map((u) => esc(u.what)).join('<br>') || '<span class="muted">ajouté, non cité par 3CX</span>'}</td>
-      <td>${toSel(r.file)}</td>
+      <td>${toSel(r)}</td>
       <td class="small">${to === 'skip' && !loaded(r.file) ? '' : soundSlot(r.file)}</td></tr>`;
   }).join('');
   const count = (k) => Object.entries(s.files).filter(([, x]) => x.to === `moh:${k}`).length;
@@ -295,7 +322,7 @@ function soundsTab() {
   return `${intro('sounds', 'Sons et musiques d\'attente', SOUNDS_HELP)}
     <div class="x3-drop" data-drop="1"><label class="filebtn"><input type="file" id="x3-snd-file" multiple accept="audio/*,.wav,.mp3" hidden><span>Déposer des fichiers son…</span></label>
       <span class="muted small">ou glissez-les ici · ${FILES.size} chargé(s)${missing ? ` · <span class="x3-warn">${missing} à déposer</span>` : ''}</span></div>
-    <div class="x3-edit-wrap"><table class="diff x3-edit">${head([['Fichier 3CX'], ['Utilisé par'], ['Dans Wazo'], ['Fichier chargé']])}<tbody>${fileRows || '<tr><td colspan="4" class="muted">Aucun fichier son dans la sauvegarde.</td></tr>'}</tbody></table></div>
+    <div class="x3-edit-wrap"><table class="diff x3-edit">${head([['Reprise', 'Décoché : fichier non repris dans Wazo'], ['Fichier 3CX'], ['Utilisé par'], ['Dans Wazo'], ['Fichier chargé']])}<tbody>${fileRows || '<tr><td colspan="5" class="muted">Aucun fichier son dans la sauvegarde.</td></tr>'}</tbody></table></div>
     <h4 class="x3-h">Musiques d'attente à créer</h4>
     <div class="x3-edit-wrap"><table class="diff x3-edit">${head([['Défaut', 'Musique d\'attente par défaut du site (modèle SIP global, moh_suggest)'], ['Nom'], ['Lecture', 'Ordre de lecture des fichiers'], ['Fichiers'], ['']])}<tbody>${mohRows}</tbody></table></div>
     <div class="btnrow"><button data-act="moh-add">+ musique d'attente</button></div>
@@ -620,9 +647,21 @@ function onChange(e, root) {
   if (t.dataset.sndSlot) { const f = t.files?.[0]; const target = t.dataset.sndSlot; t.value = ''; return loadSoundAs(f, target, root); }
   if (t.id === 'x3-snd-file') { const list = [...(t.files || [])]; t.value = ''; return loadSounds(list, root); }
   if (t.dataset.sndTo) { E.d.sounds.files[t.dataset.sndTo].to = t.value; return changed(root); }
+  if (t.dataset.sndKeep) {
+    const x = E.d.sounds.files[t.dataset.sndKeep];
+    if (!t.checked) { if (x.to !== 'skip') x.prev = x.to; x.to = 'skip'; } else { const r = soundUsages(E.m).find((u) => u.file === t.dataset.sndKeep) || { uses: [] }; x.to = x.prev || keepTo(r); delete x.prev; }
+    return changed(root);
+  }
   if (t.dataset.mohDef) { E.d.sounds.defaultMoh = t.dataset.mohDef; return changed(root); }
   if (t.dataset.moh) { const [i, f] = t.dataset.moh.split('|'); E.d.sounds.moh[Number(i)][f] = t.value.trim(); return changed(root); }
   if (t.dataset.pbName) { E.d.phonebook.name = t.value.trim(); return changed(root); }
+  if (t.dataset.pbIncl) { E.d.phonebook.includePersonal = t.checked; return changed(root); }
+  if (t.dataset.pbMap) { E.d.phonebook.map[t.dataset.pbMap] = t.value; return changed(root); }
+  if (t.dataset.pbKeep) {
+    const pb = E.d.phonebook; const k = t.dataset.pbKeep; pb.mapPrev ||= {};
+    if (!t.checked) { if (pb.map[k]) pb.mapPrev[k] = pb.map[k]; pb.map[k] = ''; } else { pb.map[k] = pb.mapPrev[k] || 'other'; delete pb.mapPrev[k]; }
+    return changed(root);
+  }
   if (t.dataset.sndCat) { E.d.sounds.category = t.value.trim(); return changed(root); }
   if (t.dataset.ctxrange) {
     const [k, f] = t.dataset.ctxrange.split('|');
@@ -684,7 +723,15 @@ function onClick(e, root) {
     case 'bulk-users': return bulkUsers(root);
     case 'bulk-vms': return bulkVms(root);
     case 'pb-del': d.phonebook.contacts.splice(Number(b.dataset.i), 1); return changed(root);
-    case 'pb-add': d.phonebook.contacts.unshift({ first: '', last: '', company: '', number: '', mobile: '', email: '', import: true }); return changed(root);
+    case 'pb-add': d.phonebook.contacts.unshift({ owner: null, raw: {}, import: true }); return changed(root);
+    // Sans BOM : wazo-dird lirait « ﻿firstname » comme nom de la première colonne (supposé).
+    case 'pb-csv': return download(`contacts-personnels-${b.dataset.o}-${base()}.csv`, personalCsv(d, b.dataset.o));
+    case 'pb-csv-all': {
+      const rows = d.phonebook.personal.filter((c) => c.import).map((c) => ({ poste: c.owner, ...toWazoContact(d, c) }));
+      const keys = ['poste', ...Object.keys(WAZO_FIELDS).filter((k) => rows.some((r) => r[k]))];
+      const qq = (s) => `"${String(s ?? '').replace(/"/g, '""')}"`;
+      return download(`contacts-personnels-${base()}.csv`, '﻿' + [keys.join(','), ...rows.map((r) => keys.map((k) => qq(r[k])).join(','))].join('\r\n'));
+    }
     case 'pb-all': for (const c of d.phonebook.contacts) c.import = b.dataset.v === '1'; return changed(root);
     case 'moh-add': { const k = `moh${Date.now().toString(36)}`; d.sounds.moh.push({ key: k, label: '', sort: 'alphabetical' }); return changed(root); }
     case 'moh-del': {
