@@ -131,6 +131,9 @@ input.short { width: 110px !important; }
 .x3-hbar > div { height: 1px; }
 .x3-ranges { display: grid; grid-template-columns: repeat(2, minmax(150px, 1fr)); gap: 2px 10px; margin-top: 6px; }
 .x3-ranges input { width: 100% !important; min-width: 0 !important; }
+.x3-slot { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-top: 2px; padding: 2px 4px; border: 1px dashed transparent; border-radius: var(--radius); }
+.x3-slot:hover { border-color: var(--line); }
+.x3-slot .x3-link { cursor: pointer; color: var(--accent); }
 .x3-drop { display: flex; align-items: center; gap: 12px; margin: 0 0 12px; padding: 14px 16px; border: 1px dashed var(--line); border-radius: var(--radius); }
 .x3-edit audio { height: 28px; max-width: 240px; }
 .x3-edit input.bad, input.x3-mail.bad { color: var(--danger); box-shadow: inset 0 -1px 0 var(--danger); }

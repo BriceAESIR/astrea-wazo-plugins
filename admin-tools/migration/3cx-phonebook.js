@@ -13,7 +13,7 @@
 // Supposé : profil du site nommé « default » ; colonnes de la source reprises
 // d'une source carnet existante du site, sinon valeurs par défaut ci-dessous ;
 // CORS et droits du token du Portal sur dird.
-import { S, ApiError } from '../common/core.js?v=0.40.39';
+import { S, ApiError } from '../common/core.js?v=0.40.40';
 
 export const CONTACT_FIELDS = [['first', 'firstname', 'Prénom'], ['last', 'lastname', 'Nom'], ['company', 'company', 'Société'], ['number', 'number', 'Numéro'], ['mobile', 'mobile', 'Mobile'], ['email', 'email', 'E-mail']];
 export const DEFAULT_COLUMNS = {

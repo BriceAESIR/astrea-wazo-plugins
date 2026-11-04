@@ -2,19 +2,19 @@
 // Modèle et règles : 3cx-draft.js. Chaque modification est enregistrée dans le
 // navigateur (brouillon par fichier et date de sauvegarde) ; rien n'est écrit
 // dans Wazo depuis ces tableaux.
-import { $, esc, toast, helpButton, helpBox, confirmModal, downloadJson } from '../common/core.js?v=0.40.39';
-import { I } from './inventory.js?v=0.40.39';
+import { $, esc, toast, helpButton, helpBox, confirmModal, downloadJson } from '../common/core.js?v=0.40.40';
+import { I } from './inventory.js?v=0.40.40';
 import {
   GROUP_STRATEGIES, MODES, HUNT_TARGETS, LICENCES, AUTH_METHODS, effectiveUsername, upgradeDraft, saveDraft, clearDraft, buildDraft, acceptDraft, userBy, userName, imported,
   destLabel, destProblem, draftIssues, usersCsv, blfRows, devicesCsv, deviceDesc, macWazo, macValid, tenantIssues,
   LINE_MODES, linesOf, VM_LANGS, vmEmail, upperName, upgradeSchedules, pastHolidays, didWazo,
-} from './3cx-draft.js?v=0.40.39';
-import { setWizard, wizardTab, wizardChange, wizardClick, wizardDone, wizardTotal } from './3cx-wizard.js?v=0.40.39';
-import { unitCfg, unitLabels, autoRanges, RANGE_KEYS, rangeIssues } from './3cx-sites.js?v=0.40.39';
-import { rangesText } from './multisite.js?v=0.40.39';
-import { CONTACT_FIELDS, ensurePhonebook, phonebookName, phonebookIssues } from './3cx-phonebook.js?v=0.40.39';
-import { SORTS, CATEGORY_RE, soundUsages, ensureSounds, mohLabel, soundCategory, FILES, keyOf, loaded, addFiles, wazoName } from './3cx-sounds.js?v=0.40.39';
-import { DEPT_MODES, deptLabel, ensureDepts, deptObjects, unitOf, unitList, setDeptMode, moveObject } from './3cx-depts.js?v=0.40.39';
+} from './3cx-draft.js?v=0.40.40';
+import { setWizard, wizardTab, wizardChange, wizardClick, wizardDone, wizardTotal } from './3cx-wizard.js?v=0.40.40';
+import { unitCfg, unitLabels, autoRanges, RANGE_KEYS, rangeIssues } from './3cx-sites.js?v=0.40.40';
+import { rangesText } from './multisite.js?v=0.40.40';
+import { CONTACT_FIELDS, ensurePhonebook, phonebookName, phonebookIssues } from './3cx-phonebook.js?v=0.40.40';
+import { SORTS, CATEGORY_RE, soundUsages, ensureSounds, mohLabel, soundCategory, FILES, keyOf, loaded, addFiles, addFileAs, wazoName } from './3cx-sounds.js?v=0.40.40';
+import { DEPT_MODES, deptLabel, ensureDepts, deptObjects, unitOf, unitList, setDeptMode, moveObject } from './3cx-depts.js?v=0.40.40';
 
 const E = { d: null, m: null, file: '', tab: 'users', sel: { users: new Set(), dids: new Set(), vms: new Set() }, q: '', onReset: null };
 export const TABS = [
@@ -105,8 +105,14 @@ export function renderTab(root, tab) {
   root.onchange = (e) => onChange(e, root);
   root.onclick = (e) => onClick(e, root);
   // Glisser-déposer des fichiers son (onglet Sons).
-  root.ondragover = (e) => { if (e.target.closest?.('[data-drop]')) e.preventDefault(); };
-  root.ondrop = (e) => { if (!e.target.closest?.('[data-drop]')) return; e.preventDefault(); loadSounds([...(e.dataTransfer?.files || [])], root); };
+  // Sur une ligne (data-drop-as) : le fichier est rattaché au fichier 3CX de cette ligne.
+  root.ondragover = (e) => { if (e.target.closest?.('[data-drop],[data-drop-as]')) e.preventDefault(); };
+  root.ondrop = (e) => {
+    const slot = e.target.closest?.('[data-drop-as]'); const zone = e.target.closest?.('[data-drop]');
+    if (!slot && !zone) return; e.preventDefault();
+    const files = [...(e.dataTransfer?.files || [])];
+    if (slot) loadSoundAs(files[0], slot.dataset.dropAs, root); else loadSounds(files, root);
+  };
   root.oninput = (e) => { if (e.target.id === 'x3e-q') { E.q = e.target.value; renderTab(root, tab); const q = $('x3e-q'); q.focus(); q.setSelectionRange(q.value.length, q.value.length); } };
 }
 
@@ -254,7 +260,16 @@ function phonebookTab() {
 // 3cx-sounds.js. Les fichiers restent dans la mémoire de la page : à redéposer
 // après un rechargement.
 // ---------------------------------------------------------------------------
-const SOUNDS_HELP = 'La sauvegarde 3CX ne donne que le nom des fichiers son (répondeurs, SVI, messages de fermeture, musiques). Déposez ici les fichiers (récupérés dans la sauvegarde complète de 3CX, ou fournis par le client) : ils sont reconnus par leur nom, sans tenir compte de l\'extension, et convertis dans le navigateur en WAV 8 kHz mono 16 bits, le format exigé par Wazo pour une musique d\'attente. Ils restent dans la mémoire de la page (à redéposer après un rechargement) et sont envoyés par la phase Fondations (onglet Écriture). Pour chaque fichier : une musique d\'attente, la catégorie de sons du client (messages : SVI, fermetures…), ou ne pas reprendre. Musique d\'attente par défaut : réglée dans le modèle SIP global du site (option moh_suggest), comme le Wizard de déploiement de Wazo.';
+// Fichier son d'une ligne : état, écoute, bouton « Déposer… » et zone de dépôt (le fichier
+// déposé est rattaché à ce fichier 3CX, quel que soit son nom). Utilisé dans Sons, SVI,
+// Groupes et files.
+function soundSlot(f, { player = true } = {}) {
+  if (!f) return '';
+  const l = loaded(f);
+  return `<div class="x3-slot" data-drop-as="${esc(f)}" title="Déposer un fichier ici pour « ${esc(f)} »">${l ? `${player ? `<audio controls preload="none" src="${esc(l.url)}"></audio>` : ''}<div class="muted">${l.seconds.toFixed(1)} s${l.source && keyOf(l.source) !== keyOf(f) ? ` · depuis « ${esc(l.source)} »` : ''} · ${esc(l.from)} → WAV 8 kHz mono 16 bits</div>` : '<span class="x3-warn">à déposer</span>'}
+    <label class="x3-link">${l ? 'Remplacer' : 'Déposer'}…<input type="file" accept="audio/*,.wav,.mp3" data-snd-slot="${esc(f)}" hidden></label></div>`;
+}
+const SOUNDS_HELP ='La sauvegarde 3CX ne donne que le nom des fichiers son (répondeurs, SVI, messages de fermeture, musiques). Déposez ici les fichiers (récupérés dans la sauvegarde complète de 3CX, ou fournis par le client) : ils sont reconnus par leur nom, sans tenir compte de l\'extension, et convertis dans le navigateur en WAV 8 kHz mono 16 bits, le format exigé par Wazo pour une musique d\'attente. Ils restent dans la mémoire de la page (à redéposer après un rechargement) et sont envoyés par la phase Fondations (onglet Écriture). Pour chaque fichier : une musique d\'attente, la catégorie de sons du client (messages : SVI, fermetures…), ou ne pas reprendre. Musique d\'attente par défaut : réglée dans le modèle SIP global du site (option moh_suggest), comme le Wizard de déploiement de Wazo.';
 function soundsTab() {
   const d = E.d; const s = d.sounds; const us = soundUsages(E.m);
   const known = new Set(us.map((u) => keyOf(u.file)));
@@ -263,11 +278,11 @@ function soundsTab() {
   const opt = (v, l, cur) => `<option value="${esc(v)}" ${v === cur ? 'selected' : ''}>${esc(l)}</option>`;
   const toSel = (f) => `<select data-snd-to="${esc(f)}">${s.moh.map((x) => opt(`moh:${x.key}`, `Musique d'attente « ${mohLabel(d, x)} »`, s.files[f].to)).join('')}${opt('sound', `Son « ${soundCategory(d)} »`, s.files[f].to)}${opt('skip', 'Ne pas reprendre', s.files[f].to)}</select>`;
   const fileRows = rows.map((r) => {
-    const l = loaded(r.file); const to = s.files[r.file].to;
+    const to = s.files[r.file].to;
     return `<tr class="${to === 'skip' ? 'x3-off' : ''}"><td>${esc(r.file)}<div class="muted small">${to === 'skip' ? '' : `Wazo : ${esc(wazoName(r.file))}.wav`}</div></td>
       <td class="small">${r.uses.map((u) => esc(u.what)).join('<br>') || '<span class="muted">ajouté, non cité par 3CX</span>'}</td>
       <td>${toSel(r.file)}</td>
-      <td class="small">${l ? `<audio controls preload="none" src="${esc(l.url)}"></audio><div class="muted">${l.seconds.toFixed(1)} s · ${esc(l.from)} → WAV 8 kHz mono 16 bits</div>` : (to === 'skip' ? '' : '<span class="x3-warn">à déposer</span>')}</td></tr>`;
+      <td class="small">${to === 'skip' && !loaded(r.file) ? '' : soundSlot(r.file)}</td></tr>`;
   }).join('');
   const count = (k) => Object.entries(s.files).filter(([, x]) => x.to === `moh:${k}`).length;
   const mohRows = s.moh.map((x, i) => `<tr><td class="x3-c"><input type="radio" name="x3-moh-def" data-moh-def="${esc(x.key)}" ${s.defaultMoh === x.key ? 'checked' : ''} title="Musique d'attente par défaut du site"></td>
@@ -450,7 +465,7 @@ function huntsTab(opts) {
       <td><div class="x3-chips">${h.members.map((n) => { const u = userBy(d, n); const ok = u?.mode === 'user'; return `<span class="x3-chip${ok ? '' : ' bad'}" title="${esc(ok ? userName(u) : 'non repris')}">${esc(n)}${u ? ` ${esc(userName(u))}` : ''}<button data-act="rm-member" data-i="${i}" data-n="${esc(n)}" title="Retirer">×</button></span>`; }).join('')}
         ${add ? `<select data-act="add-member" data-i="${i}" class="x3-add"><option value="">+ membre</option>${add}</select>` : ''}</div></td>
       <td>${destCell(`${p}.noanswer`, opts)}</td>
-      <td class="small">${esc(h.music || '')}</td>
+      <td class="small">${esc(h.music || '')}${h.music ? soundSlot(h.music, { player: false }) : ''}</td>
     </tr>`;
   }).join('');
   return `${intro('hunts', 'Groupes et files', HUNT_HELP)}<div class="x3-edit-wrap"><table class="diff x3-edit">${head([['N°'], ['Origine'], ['Wazo'], ['Nom'], ['Stratégie'], ['Durée totale', 'Secondes avant « sans réponse »'], ['Par membre', 'Secondes de sonnerie par membre'], ['Membres'], ['Sans réponse'], ['Musique 3CX']])}<tbody>${rows}</tbody></table></div>`;
@@ -461,7 +476,7 @@ function ivrsTab(opts) {
   const rows = E.d.ivrs.map((v, i) => {
     const p = `ivrs.${i}`;
     return `<tr class="${v.import ? '' : 'x3-off'}">
-      <td>${esc(v.n)}</td><td class="x3-c">${check(`${p}.import`, 'Reprendre')}</td><td>${input(`${p}.name`)}</td><td class="small">${esc(v.prompt || '')}</td>
+      <td>${esc(v.n)}</td><td class="x3-c">${check(`${p}.import`, 'Reprendre')}</td><td>${input(`${p}.name`)}</td><td class="small">${esc(v.prompt || '')}${v.prompt ? soundSlot(v.prompt, { player: false }) : ''}</td>
       <td>${num(`${p}.timeout`, 1, 120)}</td>
       <td>${v.choices.map((c, k) => `<div class="x3-choice"><input data-p="${p}.choices.${k}.key" value="${esc(c.key)}" class="x3-key">${destCell(`${p}.choices.${k}.dest`, opts)}<button class="icon" data-act="rm-choice" data-i="${i}" data-k="${k}" title="Retirer la touche">×</button></div>`).join('')}
         <button class="x3-link" data-act="add-choice" data-i="${i}">+ touche</button></td>
@@ -602,6 +617,7 @@ function onChange(e, root) {
     for (const i of shown) (t.checked ? s.add(i) : s.delete(i));
     return renderTab(root, E.tab);
   }
+  if (t.dataset.sndSlot) { const f = t.files?.[0]; const target = t.dataset.sndSlot; t.value = ''; return loadSoundAs(f, target, root); }
   if (t.id === 'x3-snd-file') { const list = [...(t.files || [])]; t.value = ''; return loadSounds(list, root); }
   if (t.dataset.sndTo) { E.d.sounds.files[t.dataset.sndTo].to = t.value; return changed(root); }
   if (t.dataset.mohDef) { E.d.sounds.defaultMoh = t.dataset.mohDef; return changed(root); }
@@ -688,6 +704,11 @@ function onClick(e, root) {
   }
 }
 // Fichiers déposés (bouton ou glisser-déposer) : convertis puis gardés en mémoire.
+async function loadSoundAs(file, target, root) {
+  if (!file) return;
+  try { await addFileAs(file, target); toast(`« ${file.name} » converti et rattaché à « ${target} ».`, 4000); } catch (e) { toast(`« ${file.name} » illisible : ${e.message || e}`, 8000); }
+  renderTab(root, E.tab); E.onChange?.();
+}
 async function loadSounds(list, root) {
   if (!list.length) return;
   toast(`Conversion de ${list.length} fichier(s)…`, 3000);

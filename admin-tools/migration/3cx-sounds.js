@@ -15,7 +15,7 @@
 //    (sound/storage.py) ; DELETE /sounds/{catégorie} supprime ses fichiers.
 // Musique d'attente par défaut : option moh_suggest du modèle SIP global, comme
 // le Wizard de déploiement de Wazo (lu dans son code) ; effet exact supposé.
-import { S, ApiError } from '../common/core.js?v=0.40.39';
+import { S, ApiError } from '../common/core.js?v=0.40.40';
 
 export const CATEGORY_RE = /^[a-zA-Z0-9][-_.a-zA-Z0-9]+$/;
 export const SORTS = { alphabetical: 'Ordre alphabétique', random: 'Aléatoire', random_start: 'Départ aléatoire' };
@@ -87,6 +87,13 @@ export async function addFiles(list) {
     try { const w = await toWav8k(f); FILES.set(keyOf(f.name), { name: f.name, ...w, url: URL.createObjectURL(w.blob) }); res.push({ name: f.name, ok: true }); } catch (e) { res.push({ name: f.name, ok: false, error: e.message || String(e) }); }
   }
   return res;
+}
+// Fichier déposé sur une ligne précise (demande de Brice, 04/11/2026) : rattaché au fichier
+// 3CX de cette ligne, quel que soit son propre nom (« accueil-v2.mp3 » pour « REP.wav »).
+export async function addFileAs(file, target) {
+  const w = await toWav8k(file);
+  const old = FILES.get(keyOf(target)); if (old?.url) URL.revokeObjectURL(old.url);
+  FILES.set(keyOf(target), { name: target, source: file.name, ...w, url: URL.createObjectURL(w.blob) });
 }
 
 // Envoi binaire à confd (api() de core.js n'envoie que du JSON).
