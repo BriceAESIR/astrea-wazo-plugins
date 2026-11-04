@@ -21,10 +21,10 @@
 //    modifiable (15/10/2026) ;
 //  - fermeture liée à un jour de semaine ou valable tous les mois : conservée
 //    telle quelle et listée (supprimable).
-import { $, esc, confirmModal, helpButton, helpBox } from '../common/core.js?v=0.40.43';
-import { M, listOf, destLabel, loadSounds, soundName } from './model.js?v=0.40.43';
-import { attachPlay } from './sound-play.js?v=0.40.43';
-import { EXTRA_TYPES, destFieldsHtml, destOptsHtml, readDestExtra, bindDestExtra, hasOpts } from './dest-opts.js?v=0.40.43';
+import { $, esc, confirmModal, helpButton, helpBox } from '../common/core.js?v=0.40.44';
+import { M, listOf, destLabel, loadSounds, soundName } from './model.js?v=0.40.44';
+import { attachPlay } from './sound-play.js?v=0.40.44';
+import { EXTRA_TYPES, destFieldsHtml, destOptsHtml, readDestExtra, bindDestExtra, hasOpts } from './dest-opts.js?v=0.40.44';
 
 const SLOT = 15, N = 96;
 const DAYS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];

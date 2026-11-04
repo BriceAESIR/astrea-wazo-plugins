@@ -12,7 +12,7 @@
 //    « prefix » est lu mais pas appliqué.
 // Supposé : effet exact des autorisations d'appels et d'un horaire sur une
 // règle sortante (affichés à titre indicatif).
-import { M, scheduleState, whenOf, entity, groupMemberList, groupTimes } from './model.js?v=0.40.43';
+import { M, scheduleState, whenOf, entity, groupMemberList, groupTimes } from './model.js?v=0.40.44';
 
 // Motif → liste d'éléments { set: chaînes de caractères, size } | { dot } | { bang } ; null si numéro exact.
 export function parsePattern(p) {

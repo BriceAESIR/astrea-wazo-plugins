@@ -17,8 +17,8 @@
 // identifiant 2-254 caractères `^[a-zA-Z0-9-._~!$&'()*+,;=%@]+$` ; mot de
 // passe 4-64 caractères `^[a-zA-Z0-9-._~!$&'()*+,;=%]+$`.
 // Non testé en réel.
-import { S, $, esc, toast, api, fullName, canWrite, confirmModal, helpButton, helpBox } from '../common/core.js?v=0.40.43';
-import { settingById, same, LANG, SUBS, subLabel, authApi, IDX, readLines, newLineBody, normDest, LINES } from './settings.js?v=0.40.43';
+import { S, $, esc, toast, api, fullName, canWrite, confirmModal, helpButton, helpBox } from '../common/core.js?v=0.40.44';
+import { settingById, same, LANG, SUBS, subLabel, authApi, IDX, readLines, newLineBody, normDest, LINES } from './settings.js?v=0.40.44';
 
 const opts = (items, sel) => items.map(([v, t]) => `<option value="${esc(v)}"${String(v) === String(sel) ? ' selected' : ''}>${esc(t)}</option>`).join('');
 const $v = (id) => document.getElementById(id)?.value ?? '';
@@ -56,6 +56,8 @@ export function openCreate(src, deps) {
   const help = 'Crée l\'utilisateur comme le portail : utilisateur et lignes en une requête, puis compte des applications, puis associations. Si le compte des applications ne peut pas être créé, l\'utilisateur est supprimé (rien à moitié créé). Les boîtes vocales se créent dans Messageries vocales : ici, seulement l\'association à une boîte libre.';
   confirmModal(`<div class="titlerow"><h3>${src ? `Nouvel utilisateur à partir de ${esc(fullName(src))}` : 'Nouvel utilisateur'}</h3>${helpButton('m-help', 'Que fait cette création ?')}</div>${helpBox('m-help', help)}
     <div id="m-form" class="createform">
+      <label>Modèle (utilisateur de référence) <select id="c-src">${opts([['', 'Aucun'], ...A.users.map((u) => [u.uuid, fullName(u) + (readLines(u)[0]?.exten ? ` (${readLines(u)[0].exten})` : '')])], src?.uuid || '')}</select></label>
+      <p class="muted small">Avec un modèle : licence, type de ligne et contexte repris, réglages à copier au choix (en bas).</p>
       <h4 class="side-title">Utilisateur</h4>
       <label>Prénom <input id="c-fn" maxlength="128"></label>
       <label>Nom <input id="c-ln" maxlength="128"></label>
@@ -78,6 +80,8 @@ export function openCreate(src, deps) {
       <h4 class="side-title">Contacts personnels (facultatif)</h4>
       <label>Fichier CSV (format d'import Wazo, ex. Migration Assistant) <input type="file" id="c-csv" accept=".csv,text/csv"></label>
       <p class="muted small">Importés avec le mot de passe ci-dessus, juste après la création (jeton de l'utilisateur, révoqué ensuite ; rien n'est stocké).</p>
+      <h4 class="side-title">Ensuite</h4>
+      <label class="inline"><input type="checkbox" id="c-next" checked> Régler les autres paramètres du nouvel utilisateur (assistant pas à pas : services, renvois, débordements, numéro présenté, droits, groupes, horaire…)</label>
     </div>
     <div id="m-prev" class="mprev"></div>`, async () => {
     let spec;
@@ -89,6 +93,12 @@ export function openCreate(src, deps) {
   const showLine = () => { document.querySelector('[data-cl]').hidden = !$v('c-lt'); };
   $('c-lt').onchange = showLine; showLine();
   $('c-cx').onchange = () => { $('c-num').value = num0($v('c-cx')); };
+  // Changer de modèle : dialogue rouvert avec ce modèle, saisie gardée.
+  $('c-src').onchange = () => {
+    const keep = Object.fromEntries(['c-fn', 'c-ln', 'c-mail', 'c-login', 'c-pw'].map((id) => [id, $v(id)]));
+    openCreate(A.users.find((u) => u.uuid === $v('c-src')) || null, deps);
+    for (const [id, v] of Object.entries(keep)) if (v) document.getElementById(id).value = v;
+  };
 }
 
 const randomPw = () => {
@@ -126,11 +136,11 @@ async function readForm() {
   const f = document.getElementById('c-csv')?.files?.[0];
   const csv = f ? await f.text() : '';
   const copy = Object.fromEntries(COPY.map((x) => [x.k, document.getElementById(`c-cp-${x.k}`)?.checked === true]));
-  return { fn, ln, mail, sub, lines, dev: $v('c-dev') || null, vm: Number($v('c-vm')) || null, login, pw, enabled: document.getElementById('c-en').checked, copy, csv, csvName: f?.name || '' };
+  return { next: document.getElementById('c-next')?.checked === true, fn, ln, mail, sub, lines, dev: $v('c-dev') || null, vm: Number($v('c-vm')) || null, login, pw, enabled: document.getElementById('c-en').checked, copy, csv, csvName: f?.name || '' };
 }
 let A_users = () => [];
 
-async function runCreate(spec, src, { A, reload, report }) {
+async function runCreate(spec, src, { A, reload, report, after }) {
   const steps = [], warn = [];
   // 1. Utilisateur + lignes (une requête).
   const body = { firstname: spec.fn, lastname: spec.ln || null, email: spec.mail || null, subscription_type: spec.sub, outgoing_caller_id: 'default' };
@@ -189,7 +199,9 @@ async function runCreate(spec, src, { A, reload, report }) {
     ${warn.map((w) => `<div class="small error">${esc(w)}</div>`).join('')}<button class="icon" data-close title="Fermer">×</button></div>`);
   toast('Utilisateur créé.', 5000);
   try { await reload(); } catch (e) { toast(e.message, 8000); }
-  A.sel = A.users.find((x) => x.uuid === user.uuid)?.id ?? A.sel;
+  const nid = A.users.find((x) => x.uuid === user.uuid)?.id;
+  A.sel = nid ?? A.sel;
+  if (spec.next && nid != null && after) setTimeout(() => after(nid), 0); // le dialogue se ferme d'abord
 }
 
 // ---------------------------------------------------------------------------
