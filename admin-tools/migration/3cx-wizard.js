@@ -11,14 +11,14 @@
 // de l'assistant France de Call Flow ; lues dans le code, testées sur faux tenant). Les phases
 // Personnes, Routage et Finitions sont planifiées (lecture seule) ; leur
 // écriture arrive aux lots 5b-5d.
-import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.35';
-import { I, sameTenant } from './inventory.js?v=0.40.35';
-import { buildExport, exportFileName } from './export.js?v=0.40.35';
-import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText, didWazo } from './3cx-draft.js?v=0.40.35';
+import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.36';
+import { I, sameTenant } from './inventory.js?v=0.40.36';
+import { buildExport, exportFileName } from './export.js?v=0.40.36';
+import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText, didWazo } from './3cx-draft.js?v=0.40.36';
 import {
   SITE_MODES, FR_FAMILIES, FR_FORMATS, BLOCK_118, defaultSite, defaultOut, clientPatterns, unitDids, occupancy, placements, unitLabels, unitCfg, futureOf, siteChecks, routeText, newRanges, multi as multiSites,
-} from './3cx-sites.js?v=0.40.35';
-import { unitList, unitOf, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.35';
+} from './3cx-sites.js?v=0.40.36';
+import { unitList, unitOf, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.36';
 
 const W = { d: null, m: null, t: null, busy: false, msg: null, at: null };
 export function setWizard(d, m) { W.d = d; W.m = m; W.t = null; W.msg = null; ensureState(); }
@@ -170,14 +170,17 @@ function prerequisites(t) {
   if (!c.internal) add('error', 'Contexte interne', 'aucun contexte interne dans le tenant.', ['people', 'routing']);
   if (!c.incall) add('error', 'Contexte entrant', 'aucun contexte entrant : les SDA ne pourront pas être créées.', ['routing']);
   // Site Wazo, contextes et appels simulés (bloquant pour tout : les numéros en dépendent).
-  // Trunk repointé sur le nouveau contexte entrant : les SDA qu'il recevait ailleurs (autre client,
-  // autre établissement) ne seraient plus routées. Bloquant ; celles du client seront recréées.
-  for (const u of c.units.filter((x) => x.newCtx && x.trunkId)) {
+  // Trunks jamais modifiés par l'outil (décision de Brice, 04/11/2026). Contexte entrant d'un jeu
+  // créé : à régler à la main dans le Portal ; le Routage (SDA) attend que ce soit fait. Si le trunk
+  // reçoit déjà d'autres SDA dans son contexte actuel, le changer les couperait : signalé.
+  for (const u of c.units.filter((x) => x.inc && x.trunkId)) {
     const tr = t.trunks.find((x) => String(x.id) === String(u.trunkId)); const cur = tr?.context;
-    if (!cur) continue;
+    const target = u.incObj?.virtual ? u.L.inc : (u.incObj?.label || u.inc);
     const mine = new Set(unitDids(W.d, c.many ? u.key : null));
-    const foreign = t.incalls.flatMap((x) => x.extensions || []).filter((e) => e.context === cur && !mine.has(e.exten)).map((e) => e.exten);
-    if (foreign.length) add('error', `Trunk ${trunkLabel(t, u.trunkId)}`, `il reçoit déjà ${foreign.length} SDA dans « ${t.contexts.find((x) => x.name === cur)?.label || cur} » qui ne sont pas à ${c.many ? `« ${u.label} »` : 'ce client'} (${foreign.slice(0, 5).join(', ')}${foreign.length > 5 ? '…' : ''}) : le pointer sur « ${u.L.inc} » les couperait. Choisir un trunk propre à ${c.many ? 'ce département' : 'ce client'}.`, ['found', 'routing']);
+    const foreign = cur ? t.incalls.flatMap((x) => x.extensions || []).filter((e) => e.context === cur && !mine.has(e.exten)).map((e) => e.exten) : [];
+    const curLabel = t.contexts.find((x) => x.name === cur)?.label || cur || 'aucun';
+    if (foreign.length) add('warn', `Trunk ${trunkLabel(t, u.trunkId)}`, `il reçoit déjà ${foreign.length} SDA dans « ${curLabel} » qui ne sont pas à ${c.many ? `« ${u.label} »` : 'ce client'} (${foreign.slice(0, 5).join(', ')}${foreign.length > 5 ? '…' : ''}) : changer son contexte entrant les couperait. Prévoir un trunk propre à ${c.many ? 'ce département' : 'ce client'}.`);
+    if (cur !== u.inc) add('manual', `Trunk ${trunkLabel(t, u.trunkId)}`, `non modifié par l'outil. ${u.incObj?.virtual ? 'Après la phase Fondations, dans' : 'Dans'} le Portal (Interconnexions > ${trunkLabel(t, u.trunkId)}), régler le contexte entrant sur « ${target} » (actuel : « ${curLabel} »), puis « Relire le tenant ». Le Routage (SDA) attend ce réglage.`, ['routing']);
   }
   for (const x of siteChecks(t, W.d, (id) => trunkLabel(t, id)).issues) add(x.sev === 'info' ? 'remind' : x.sev, x.title, x.text, x.sev === 'error' ? ['found', 'people', 'routing'] : []);
   const tIss = c.internal ? tenantIssues(W.d, { ctx: c.internal.name, incallCtx: c.incall?.name }, { contexts: c.internal.virtual ? [...t.contexts, c.internal] : t.contexts, extensions: t.extensions, users: t.users, voicemails: t.voicemails }) : [];
@@ -219,7 +222,7 @@ function buildPlan(t) {
       add('found', 'create', `Contexte sortant « ${u.L.out} »`, `inclus par « ${u.L.ctx} » en premier`);
       const dids = unitDids(d, c.many ? u.key : null);
       add('found', 'create', `Contexte entrant « ${u.L.inc} »`, `${dids.length} SDA déclarées dans ses plages (${dids.slice(0, 3).join(', ')}${dids.length > 3 ? '…' : ''})`);
-      if (u.trunkId) { const tr = t.trunks.find((x) => String(x.id) === String(u.trunkId)); add('found', 'update', `Trunk ${trunkLabel(t, u.trunkId)}`, `contexte entrant : ${t.contexts.find((x) => x.name === tr?.context)?.label || tr?.context || 'aucun'} → « ${u.L.inc} »`); }
+      if (u.trunkId) add('found', 'skip', `Trunk ${trunkLabel(t, u.trunkId)}`, `non modifié par l'outil : son contexte entrant sera à régler dans le Portal sur « ${u.L.inc} », après la phase Fondations`);
       if (c.many && d.write.site.interUnits) add('found', 'create', `Inclusions de « ${u.L.ctx} »`, `les ${c.units.length - 1} autre(s) département(s), pour les appels internes entre eux`);
       for (const peer of u.peers) { const x = t.contexts.find((y) => y.name === peer); add('found', 'update', `Inclusions de « ${x?.label || peer} »`, `« ${u.L.ctx} » ajouté en fin de liste (appels vers lui), et inclus par lui (appels depuis lui)`); }
     } else if (u.newOut && u.ctxObj) add('found', 'create', `Contexte sortant « ${u.L.out} »`, `inclus en tête par « ${u.ctxObj.label || u.ctxObj.name} »`);
@@ -375,7 +378,7 @@ async function foundationOps(t) {
   // généré ; PUT /contexts/{id}/contexts remplace la liste des inclusions, dans l'ordre.
   const fresh = c.units.filter((u) => u.newCtx);
   if (fresh.length) {
-    ops.push({ label: `Contextes ${fresh.map((u) => `« ${u.L.ctx} », « ${u.L.inc} » et « ${u.L.out} »`).join(', ')}, inclusions${c.many && s.interUnits ? ' entre départements' : ''}${fresh[0].peers.length ? ` et avec ${fresh[0].peers.length} établissement(s)` : ''}, trunk${fresh.length > 1 ? 's' : ''} sur ${fresh.length > 1 ? 'leur' : 'son'} contexte entrant (POST /contexts, PUT /contexts/…/contexts, PUT /trunks/…)`, run: async () => {
+    ops.push({ label: `Contextes ${fresh.map((u) => `« ${u.L.ctx} », « ${u.L.inc} » et « ${u.L.out} »`).join(', ')}, inclusions${c.many && s.interUnits ? ' entre départements' : ''}${fresh[0].peers.length ? ` et avec ${fresh[0].peers.length} établissement(s)` : ''} (POST /contexts, PUT /contexts/…/contexts ; trunks non modifiés)`, run: async () => {
       const undo = []; const made = {};
       try {
         // 1. Tous les contextes d'abord (les unités s'incluent entre elles). Entrant : ses SDA dans
@@ -401,14 +404,9 @@ async function foundationOps(t) {
           await tapi('PUT', `/contexts/${x.id}/contexts`, incl([...cur.filter((id) => !add.includes(id)), ...add]));
           undo.unshift({ method: 'PUT', path: `/contexts/${x.id}/contexts`, body: incl(cur) });
         }
-        // 4. Trunk de chaque unité sur son contexte entrant, relu juste avant (confd trunk : context
-        //    modifiable, même tenant exigé, « module reload res_pjsip.so » à l'écriture ; lu le 04/11/2026).
-        for (const u of fresh.filter((x) => x.trunkId)) {
-          const tr = await tapi('GET', `/trunks/${u.trunkId}`);
-          if (tr.context === made[u.key].inc.name) continue;
-          await tapi('PUT', `/trunks/${u.trunkId}`, { context: made[u.key].inc.name });
-          undo.unshift({ method: 'PUT', path: `/trunks/${u.trunkId}`, body: { context: tr.context ?? null } });
-        }
+        // Trunks : jamais modifiés par l'outil (décision de Brice, 04/11/2026 : en cas de souci, il
+        // repart de zéro sur le trunk, mots de passe compris). Leur contexte entrant se règle dans le
+        // Portal ; Préparer le demande tant que ce n'est pas fait.
       } catch (e) { for (const u of undo) { try { await runUndo(u); } catch { /* signalé par l'erreur d'origine */ } } throw e; }
       for (const u of fresh) {
         const cr = { ctxId: made[u.key].ic.id, ctxName: made[u.key].ic.name, outId: made[u.key].oc.id, outName: made[u.key].oc.name, incId: made[u.key].inc.id, incName: made[u.key].inc.name, peers: u.peers };
@@ -677,7 +675,10 @@ export async function wizardClick(b, rerender) {
   }
   if (act === 'undo') {
     if (!canWrite()) return;
-    return confirmModal(`<h3>Annuler la phase ${esc(p.title)} ?</h3><p class="small">${s.undo.length} écriture(s) défaite(s), dans l'ordre inverse.</p>`, async () => {
+    // Contextes entrants créés : un trunk réglé dessus à la main (l'outil ne touche pas aux trunks) doit
+    // d'abord être remis ailleurs dans le Portal ; effet de la suppression sur le trunk non vérifié.
+    const incs = id === 'found' && W.t ? W.t.trunks.filter((tr) => [W.d.write.site.created?.incName, ...Object.values(W.d.write.units || {}).map((u) => u.created?.incName)].filter(Boolean).includes(tr.context)) : [];
+    return confirmModal(`<h3>Annuler la phase ${esc(p.title)} ?</h3><p class="small">${s.undo.length} écriture(s) défaite(s), dans l'ordre inverse.</p>${incs.length ? `<p class="compat blocking small">${incs.map((tr) => esc(trunkLabel(W.t, tr.id))).join(', ')} : contexte entrant réglé sur un contexte que l'annulation va supprimer. Le remettre d'abord sur un autre contexte dans le Portal (l'outil ne modifie pas les trunks), puis « Relire le tenant ».</p>` : ''}`, async () => {
       W.busy = true; rerender();
       try { for (const u of [...s.undo].reverse()) { await runUndo(u); s.undo.pop(); save(); } s.status = 'todo'; log('phase annulée'); W.msg = { text: `${p.title} annulée.` }; }
       catch (e) { log(`ERREUR à l'annulation : ${e.message}`); W.msg = { bad: true, text: `Annulation interrompue : ${e.message}` }; }
