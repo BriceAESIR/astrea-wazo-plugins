@@ -13,7 +13,7 @@
 // Les objets Wazo correspondants (destinations confd user_id, group_id…) ne
 // sont résolus qu'à l'écriture : convertir une file en groupe ne demande donc
 // aucune reprise des destinations qui la visent.
-import { nameOf, schedulesOf, STRATEGY } from './3cx.js?v=0.40.32';
+import { nameOf, schedulesOf, STRATEGY } from './3cx.js?v=0.40.33';
 
 export const DRAFT_FORMAT = 'astrea-3cx-draft';
 const KEY = 'astrea-migration-3cx-draft-v1';
@@ -349,7 +349,8 @@ export function tenantIssues(d, { ctx, incallCtx }, t) {
 // ring_seconds en fait partie). Les codes de messagerie ne sont jamais stockés
 // dans le brouillon (navigateur, fichier partageable) : `pins` est lu dans la
 // sauvegarde 3CX au moment de l'export ({ numéro: code }).
-export function usersCsv(d, { ctx, incallCtx, pins = {} }) {
+// ctxOf(u) : contexte propre à chaque utilisateur (départements en jeux de contextes séparés).
+export function usersCsv(d, { ctx, incallCtx, pins = {}, ctxOf = null }) {
   // subscription_type : IntRule de USER_RULES ; username : WAZO_USER_RULES (vide
   // → Wazo prend l'e-mail). Ni méthode de connexion ni accès aux applications
   // dans le CSV (WazoUserSchema) : à poser après l'import.
@@ -362,10 +363,10 @@ export function usersCsv(d, { ctx, incallCtx, pins = {} }) {
   const q = (s) => (/[",\n]/.test(String(s ?? '')) ? `"${String(s).replace(/"/g, '""')}"` : String(s ?? ''));
   const rows = imported(d).map((u) => {
     const pin = u.vm && u.vmPin && /^\d+$/.test(pins[u.n] || '') ? pins[u.n] : '';
-    const o = u.vmo || defaultVmo(); const mail = u.vm ? vmEmail(u) : '';
+    const o = u.vmo || defaultVmo(); const mail = u.vm ? vmEmail(u) : ''; const c = ctxOf ? ctxOf(u) : ctx;
     const v = {
-      firstname: u.first || (u.last ? '' : `Poste ${u.n}`), lastname: u.last, email: u.email, mobile_phone_number: u.mobile, enabled: '1', subscription_type: u.sub ?? '', ring_seconds: u.ring, context: ctx, line_protocol: linesOf(u)[0], exten: u.n,
-      voicemail_name: u.vm ? userName(u) : '', voicemail_number: u.vm ? u.n : '', voicemail_context: u.vm ? ctx : '', voicemail_password: pin,
+      firstname: u.first || (u.last ? '' : `Poste ${u.n}`), lastname: u.last, email: u.email, mobile_phone_number: u.mobile, enabled: '1', subscription_type: u.sub ?? '', ring_seconds: u.ring, context: c, line_protocol: linesOf(u)[0], exten: u.n,
+      voicemail_name: u.vm ? userName(u) : '', voicemail_number: u.vm ? u.n : '', voicemail_context: u.vm ? c : '', voicemail_password: pin,
       voicemail_email: mail, voicemail_attach_audio: mail ? (o.attach ? '1' : '0') : '', voicemail_delete_messages: u.vm ? (o.del && mail && o.attach ? '1' : '0') : '', voicemail_ask_password: u.vm ? (o.ask ? '1' : '0') : '', incall_exten: did.get(u.n) || '', incall_context: did.has(u.n) ? incallCtx : '', username: u.username || '',
     };
     return cols.map((c) => q(v[c])).join(',');

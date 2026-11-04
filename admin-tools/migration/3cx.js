@@ -183,21 +183,34 @@ export function parse3cx(xmlText) {
       });
     }
   }
-  // Groupes 3CX : heures de bureau et pause (le groupe __DEFAULT__ porte celles de la société).
-  for (const g of all(T(tenant, 'Groups'), 'Group')) {
-    const open = hoursOf(T(g, 'Hours')); const brk = hoursOf(T(g, 'BreakTime'));
-    m.groups.push({ name: txt(g, 'Name'), members: all(T(g, 'Members'), 'Member').map((y) => y.getAttribute('DN')), hours: open, breakTime: brk, effective: open.type === 'AllHours' ? [] : openMinusBreak(open.periods, brk.periods) });
-  }
   const today = new Date(); today.setHours(0, 0, 0, 0);
-  for (const h of all(T(tenant, 'OfficeHolidays'), 'OfficeHoliday')) {
+  const holidayOf = (h) => {
     const rec = txt(h, 'IsRecurrent') === 'True';
     const y = Number(txt(h, 'Year')); const ye = Number(txt(h, 'YearEnd')) || y;
     const end = new Date(ye || today.getFullYear(), Number(txt(h, 'MonthEnd')) - 1, Number(txt(h, 'DayEnd')));
     const x = { name: txt(h, 'Name'), recurrent: rec, day: Number(txt(h, 'Day')), month: Number(txt(h, 'Month')), year: y, dayEnd: Number(txt(h, 'DayEnd')), monthEnd: Number(txt(h, 'MonthEnd')), yearEnd: ye, from: txt(h, 'TimeOfStartDate').slice(0, 5), to: txt(h, 'TimeOfEndDate').slice(0, 5), prompt: txt(h, 'HolidayPrompt') };
     x.past = !rec && end < today;
     if (!x.past) addPrompt(x.prompt);
-    m.holidays.push(x);
+    return x;
+  };
+  // Groupes 3CX = départements en v20 (groupes de filtrage en v16-v18) : heures de
+  // bureau, pause, jours fériés propres ; le groupe __DEFAULT__ porte la société.
+  // Lu dans deux sauvegardes v20.0.9 (pas dans une doc 3CX) : Member DN, IsPrimary,
+  // role ; Number GRPxxxx ; GLOBALLY_VISIBLE (présence visible hors du département).
+  // Les groupes ___FAVORITES___<poste> sont les favoris d'un utilisateur.
+  for (const g of all(T(tenant, 'Groups'), 'Group')) {
+    const open = hoursOf(T(g, 'Hours')); const brk = hoursOf(T(g, 'BreakTime'));
+    const name = txt(g, 'Name');
+    const prop = (n) => { const p = all(T(g, 'Properties'), 'DNProperty').find((x) => txt(x, 'Name') === n); return p ? txt(p, 'Value') : ''; };
+    m.groups.push({
+      name, number: txt(g, 'Number'), favorites: name.startsWith('___FAVORITES___'),
+      members: all(T(g, 'Members'), 'Member').map((y) => y.getAttribute('DN')),
+      roles: all(T(g, 'Members'), 'Member').map((y) => ({ dn: y.getAttribute('DN'), primary: y.getAttribute('IsPrimary') === 'true', role: T(y, 'role')?.getAttribute('name') || '' })),
+      hours: open, breakTime: brk, effective: open.type === 'AllHours' ? [] : openMinusBreak(open.periods, brk.periods),
+      holidays: all(T(g, 'OfficeHolidays'), 'OfficeHoliday').map(holidayOf), visible: prop('GLOBALLY_VISIBLE') !== '0', language: prop('LANGUAGE_OVERRIDE'),
+    });
   }
+  for (const h of all(T(tenant, 'OfficeHolidays'), 'OfficeHoliday')) m.holidays.push(holidayOf(h));
   for (const r of all(T(tenant, 'OutboundRules'), 'OutboundRule')) {
     m.outbound.push({ name: txt(r, 'Name'), prefix: txt(r, 'Prefix'), priority: Number(txt(r, 'Priority')) || 0, routes: all(T(r, 'OutboundRoutes'), 'OutboundRoute').map((o) => ({ gateway: txt(o, 'Gateway'), strip: Number(txt(o, 'StripDigits')) || 0, prepend: txt(o, 'Prepend') })).filter((o) => o.gateway), groups: all(T(r, 'DNGroups'), 'Group').map((g) => g.textContent.trim()) });
   }

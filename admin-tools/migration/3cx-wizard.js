@@ -6,14 +6,19 @@
 // Parcours : 1 Préparer (relecture du tenant, prérequis) → 2 Plan (ordonné par
 // l'outil, par phases) → 3 Pertes et écarts (à accepter) → 4 Appliquer par
 // phase (sauvegarde, journal, annulation) → 5 Contrôle final (à venir).
-// Écritures disponibles : phase Fondations (pays, conservation, numéros,
-// appels sortants ; lues dans le code, testées sur faux tenant). Les phases
+// Écritures disponibles : phase Fondations (contextes du client selon le site
+// choisi, 3cx-sites.js ; plages, pays, conservation, numéros, règle sortante
+// de l'assistant France de Call Flow ; lues dans le code, testées sur faux tenant). Les phases
 // Personnes, Routage et Finitions sont planifiées (lecture seule) ; leur
 // écriture arrive aux lots 5b-5d.
-import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.32';
-import { I, sameTenant } from './inventory.js?v=0.40.32';
-import { buildExport, exportFileName } from './export.js?v=0.40.32';
-import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText } from './3cx-draft.js?v=0.40.32';
+import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.33';
+import { I, sameTenant } from './inventory.js?v=0.40.33';
+import { buildExport, exportFileName } from './export.js?v=0.40.33';
+import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText } from './3cx-draft.js?v=0.40.33';
+import {
+  SITE_MODES, FR_FAMILIES, FR_FORMATS, BLOCK_118, defaultSite, defaultOut, clientPatterns, occupancy, placements, unitLabels, unitCfg, futureOf, siteChecks, routeText, newRanges, multi as multiSites,
+} from './3cx-sites.js?v=0.40.33';
+import { unitList, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.33';
 
 const W = { d: null, m: null, t: null, busy: false, msg: null, at: null };
 export function setWizard(d, m) { W.d = d; W.m = m; W.t = null; W.msg = null; ensureState(); }
@@ -22,11 +27,12 @@ function ensureState() {
   const d = W.d;
   // Brouillon de la 0.40.29 (étapes) : on garde l'ID client et les durées, on repart pour les phases.
   const old = d.write || {};
-  if (old.version === 2) return;
+  if (old.version === 2) { old.site ||= defaultSite(); old.out ||= defaultOut(); return; }
   const m = String(d.company || '').match(/^\s*(\d{3,})\s*[-–]\s*(.+)$/);
   d.write = {
     version: 2, clientId: old.clientId ?? (m ? m[1] : ''), clientName: old.clientName ?? (m ? m[2].trim() : (d.company || '')),
     cdrDays: old.cdrDays ?? 90, recordingDays: old.recordingDays ?? 90, trunkId: old.trunkId ?? '', ackLosses: false, keepProfiles: true, phases: {},
+    site: defaultSite(), out: defaultOut(),
   };
 }
 const ph = (id) => (W.d.write.phases[id] ||= { status: 'todo', log: [], undo: [] });
@@ -56,12 +62,12 @@ const soft = async (fn, fallback) => { try { return await fn(); } catch (e) { re
 // ---------------------------------------------------------------------------
 async function readTenant() {
   const list = (p) => soft(() => listAll(p), (e) => ({ error: e.message, items: [] }));
-  const [contexts, extensions, trunks, outcalls, users, voicemails, devices, groups, queues, ivrs, schedules, incalls, phones] = await Promise.all(
-    ['/contexts', '/extensions', '/trunks', '/outcalls', '/users', '/voicemails', '/devices', '/groups', '/queues', '/ivr', '/schedules', '/incalls', '/phone-numbers'].map(list));
+  const [contexts, extensions, trunks, outcalls, users, voicemails, devices, groups, queues, ivrs, schedules, incalls, phones, perms] = await Promise.all(
+    ['/contexts', '/extensions', '/trunks', '/outcalls', '/users', '/voicemails', '/devices', '/groups', '/queues', '/ivr', '/schedules', '/incalls', '/phone-numbers', '/callpermissions'].map(list));
   const unwrap = (x) => (Array.isArray(x) ? x : []);
   const t = {
     at: new Date(), contexts: unwrap(contexts), extensions: unwrap(extensions), trunks: unwrap(trunks), outcalls: unwrap(outcalls), users: unwrap(users), voicemails: unwrap(voicemails),
-    devices: unwrap(devices), groups: unwrap(groups), queues: unwrap(queues), ivrs: unwrap(ivrs), schedules: unwrap(schedules), incalls: unwrap(incalls), phones: unwrap(phones),
+    devices: unwrap(devices), groups: unwrap(groups), queues: unwrap(queues), ivrs: unwrap(ivrs), schedules: unwrap(schedules), incalls: unwrap(incalls), phones: unwrap(phones), perms: unwrap(perms),
     phonesError: phones?.error || null,
   };
   t.localization = await soft(() => tapi('GET', '/localization'), (e) => ({ error: e.message }));
@@ -76,11 +82,28 @@ async function readTenant() {
   t.sipTpl = { global: ten?.global_sip_template_uuid || tpls.find((x) => x.label === 'global')?.uuid || null, webrtc: ten?.webrtc_sip_template_uuid || tpls.find((x) => x.label === 'webrtc')?.uuid || null, from: ten ? 'tenant' : 'libellés' };
   return t;
 }
-// Contextes cibles : ceux choisis dans Exports (gardés dans le brouillon), sinon le premier du type.
+// Contextes cibles, selon le site choisi et les départements (3cx-sites.js) :
+// une entrée par jeu de contextes (unité), avec son contexte interne existant ou
+// à créer (objet virtuel, plages calculées, tant qu'il n'est pas créé) et son
+// sortant. `internal` / `outcall` : ceux de la première unité (une seule unité :
+// le contexte du client), ou un contexte virtuel couvrant tout le client pour
+// les contrôles du brouillon. Entrant : celui choisi dans Exports, sinon le premier.
 function contextsOf(t) {
   const pick = (cur, type) => t.contexts.find((c) => c.name === cur && c.type === type) || t.contexts.find((c) => c.type === type) || null;
-  return { internal: pick(W.d.ctx, 'internal'), incall: pick(W.d.incallCtx, 'incall'), outcall: t.contexts.find((c) => c.type === 'outcall') || null };
+  const many = multiSites(W.d);
+  const units = placements(t, W.d).map((p) => {
+    const L = unitLabels(W.d, p);
+    const ctx = p.newCtx ? { id: null, name: p.ctx, label: `${L.ctx} (à créer)`, type: 'internal', virtual: true, ...newRanges(W.d, many ? p.key : null) } : t.contexts.find((c) => c.name === p.ctx) || null;
+    const out = p.newOut ? { id: null, name: p.out, label: `${L.out} (à créer)`, type: 'outcall', virtual: true } : t.contexts.find((c) => c.name === p.out) || null;
+    return { ...p, L, ctxObj: ctx, outObj: out };
+  });
+  const internal = many ? { id: null, name: '@client', label: 'contextes du client', type: 'internal', virtual: true, ...newRanges(W.d) } : units[0]?.ctxObj || null;
+  return { internal, incall: pick(W.d.incallCtx, 'incall'), outcall: units[0]?.outObj || null, units, many };
 }
+const trunkLabel = (t, id) => { const x = t.trunks.find((y) => String(y.id) === String(id)); return x ? (x.endpoint_sip?.label || x.endpoint_sip?.name || `trunk ${id}`) : `trunk ${id}`; };
+const RANGE_NAMES = { user_ranges: 'postes', group_ranges: 'groupes', queue_ranges: 'files' };
+const rangesTxt = (r) => Object.entries(r).map(([k, v]) => `${RANGE_NAMES[k]} ${v.map(rangeTxt).join(', ')}`).join(' ; ');
+const ocNameOf = (u, many) => `${W.d.write.clientName || 'Client'}${many ? ` - ${u.label}` : ''} - Appels sortants`;
 
 // ---------------------------------------------------------------------------
 // Plages du contexte interne (demande de Brice, 03/11/2026) : les numéros 3CX
@@ -135,8 +158,9 @@ function prerequisites(t) {
   const add = (sev, title, text, phases = []) => out.push({ sev, title, text, phases });
   if (!c.internal) add('error', 'Contexte interne', 'aucun contexte interne dans le tenant.', ['people', 'routing']);
   if (!c.incall) add('error', 'Contexte entrant', 'aucun contexte entrant : les SDA ne pourront pas être créées.', ['routing']);
-  if (!c.outcall) add('error', 'Contexte sortant', 'aucun contexte sortant : pas de règle d\'appels sortants possible.', ['found']);
-  const tIss = c.internal ? tenantIssues(W.d, { ctx: c.internal.name, incallCtx: c.incall?.name }, { contexts: t.contexts, extensions: t.extensions, users: t.users, voicemails: t.voicemails }) : [];
+  // Site Wazo, contextes et appels simulés (bloquant pour tout : les numéros en dépendent).
+  for (const x of siteChecks(t, W.d, (id) => trunkLabel(t, id)).issues) add(x.sev === 'info' ? 'remind' : x.sev, x.title, x.text, x.sev === 'error' ? ['found', 'people', 'routing'] : []);
+  const tIss = c.internal ? tenantIssues(W.d, { ctx: c.internal.name, incallCtx: c.incall?.name }, { contexts: c.internal.virtual ? [...t.contexts, c.internal] : t.contexts, extensions: t.extensions, users: t.users, voicemails: t.voicemails }) : [];
   // Numéros hors des plages : corrigés par la phase Fondations (ajout des plages), pas une erreur à régler à la main.
   for (const x of tIss.filter((y) => y.sev === 'error' && !/hors des plages/.test(y.text))) add('error', x.area, x.text, ['people']);
   const fixes = rangeFixes(c.internal);
@@ -168,8 +192,17 @@ function buildPlan(t) {
   const d = W.d; const c = contextsOf(t);
   const P = { found: [], people: [], routing: [], finish: [] };
   const add = (k, status, label, detail = '') => P[k].push({ status, label, detail });
+  // Fondations : d'abord les contextes du client (site partagé, départements).
+  for (const u of c.units) {
+    if (u.newCtx) {
+      add('found', 'create', `Contexte interne « ${u.L.ctx} »`, `plages ${rangesTxt(newRanges(d, c.many ? u.key : null))}`);
+      add('found', 'create', `Contexte sortant « ${u.L.out} »`, `inclus par « ${u.L.ctx} » en premier`);
+      if (c.many && d.write.site.interUnits) add('found', 'create', `Inclusions de « ${u.L.ctx} »`, `les ${c.units.length - 1} autre(s) département(s), pour les appels internes entre eux`);
+      for (const peer of u.peers) { const x = t.contexts.find((y) => y.name === peer); add('found', 'update', `Inclusions de « ${x?.label || peer} »`, `« ${u.L.ctx} » ajouté en fin de liste (appels vers lui), et inclus par lui (appels depuis lui)`); }
+    } else if (u.newOut && u.ctxObj) add('found', 'create', `Contexte sortant « ${u.L.out} »`, `inclus en tête par « ${u.ctxObj.label || u.ctxObj.name} »`);
+  }
   // Fondations : d'abord les plages du contexte interne (les numéros en dépendent).
-  for (const f of rangeFixes(c.internal)) add('found', 'update', `Plages ${f.label} du contexte ${c.internal.label || c.internal.name}`, `ajouter ${f.add.map(rangeTxt).join(', ')} (actuelles : ${f.current.map(rangeTxt).join(', ') || 'aucune'} ; ${f.missing.length} numéro(s) hors plages)`);
+  if (!c.many) for (const f of rangeFixes(c.internal)) add('found', 'update', `Plages ${f.label} du contexte ${c.internal.label || c.internal.name}`, `ajouter ${f.add.map(rangeTxt).join(', ')} (actuelles : ${f.current.map(rangeTxt).join(', ') || 'aucune'} ; ${f.missing.length} numéro(s) hors plages)`);
   if (t.localization?.error) add('found', 'conflict', 'Pays', `lecture impossible : ${t.localization.error}`);
   else add('found', t.localization?.country === 'FR' ? 'exists' : 'update', 'Pays France', t.localization?.country === 'FR' ? 'déjà réglé' : `${t.localization?.country || 'aucun'} → FR`);
   if (t.retention?.error) add('found', 'conflict', 'Conservation des données', `lecture impossible (call-logd) : ${t.retention.error}`);
@@ -186,15 +219,19 @@ function buildPlan(t) {
     const main = e164(W.m?.trunks?.[0]?.mainNumber);
     if (main) add('found', t.phones.find((p) => p.number === main)?.main ? 'exists' : 'update', `Numéro principal ${main}`);
   }
-  const ocName = `${d.write.clientName || 'Client'} - Appels sortants`;
-  if (t.outcalls.some((o) => o.name === ocName)) add('found', 'exists', `Règle « ${ocName} »`);
-  else if (!t.trunks.length) add('found', 'conflict', `Règle « ${ocName} » (_X.)`, 'aucun trunk : à créer d\'abord dans le Portal');
-  else if (t.outcalls.some((o) => (o.extensions || []).some((e) => e.exten === '_X.'))) add('found', 'conflict', `Règle « ${ocName} » (_X.)`, `une règle prend déjà tous les numéros : « ${t.outcalls.find((o) => (o.extensions || []).some((e) => e.exten === '_X.')).name} »`);
-  else add('found', 'create', `Règle « ${ocName} » (_X.) vers le trunk`);
+  const pats = clientPatterns(d.write.out); const { skipped } = futureOf(t, d);
+  for (const u of c.units) {
+    const ocName = ocNameOf(u, c.many); const sk = skipped.filter((x) => x.unit === u.key).length;
+    const patTxt = `${pats.length - sk} motif(s) de l'assistant France (format ${FR_FORMATS[d.write.out.fmt]})${sk ? `, ${sk} déjà pris par une autre règle` : ''}${d.write.out.block118 ? ', 118 bloqués' : ''}`;
+    if (t.outcalls.some((o) => o.name === ocName)) add('found', 'exists', `Règle « ${ocName} »`);
+    else if (!u.trunkId) add('found', 'conflict', `Règle « ${ocName} »`, 'aucun trunk choisi : à créer d\'abord dans le Portal');
+    else add('found', 'create', `Règle « ${ocName} » vers ${trunkLabel(t, u.trunkId)}`, `${patTxt}, dans ${u.outObj?.label || u.outObj?.name || '?'}`);
+  }
   // Personnes
-  const vmIn = new Set(t.voicemails.filter((v) => v.context === c.internal?.name).map((v) => String(v.number)));
+  const unitCtx = new Set(c.units.map((u) => u.ctx));
+  const vmIn = new Set(t.voicemails.filter((v) => unitCtx.has(v.context)).map((v) => String(v.number)));
   for (const u of d.users.filter((x) => x.mode === 'voicemail')) add('people', vmIn.has(u.n) ? 'exists' : 'create', `Messagerie commune ${u.n} ${userName(u)}`, vmIn.has(u.n) ? 'déjà présente' : '');
-  const extIn = new Set(t.extensions.filter((e) => e.context === c.internal?.name).map((e) => e.exten));
+  const extIn = new Set(t.extensions.filter((e) => unitCtx.has(e.context)).map((e) => e.exten));
   for (const u of imported(d)) {
     const lic = u.sub == null ? 'licence à choisir' : LICENCES[u.sub];
     add('people', extIn.has(u.n) ? 'conflict' : u.sub == null ? 'conflict' : 'create', `Utilisateur ${u.n} ${userName(u)}`, extIn.has(u.n) ? 'numéro déjà pris dans le contexte' : `${lic}, ligne${linesOf(u).length > 1 ? 's' : ''} ${linesText(u)}${u.vm ? ', messagerie' : ''}${u.checked ? '' : ' · non vérifié'}`);
@@ -257,6 +294,19 @@ function losses() {
       p ? `Dans 3CX : appels externes → ${sideTxt(p.external)}, internes → ${sideTxt(p.internal)}${p.noRingGroups ? ' ; retiré des groupes' : ''}${p.queueLogout ? ' ; déconnecté des files' : ''}. Wazo n'a qu'un renvoi immédiat, sans distinguer appels internes et externes.` : 'profil illisible dans la sauvegarde.',
       d.write.keepProfiles ? `Repris en renvoi immédiat vers ${p?.external?.all && p.external.all.to !== 'None' ? destLabel(d, convert(p.external.all)) : 'la destination des appels externes'} (option ci-dessous, phase Finitions) : internes et externes seront renvoyés ; à désactiver quand la personne revient.` : 'Non repris : le poste sonnera normalement.');
   }
+  // Départements 3CX : fusions avec des horaires différents, numéro principal unique dans Wazo.
+  for (const x of (d.depts || []).filter((y) => y.mode === 'merge')) {
+    const to = deptBy(d, x.into); const o = deptObjects(d, x.key);
+    // Département sans objet repris (ex. __DEFAULT__ qui ne garde que l'administrateur) : rien à perdre.
+    if (!o.users.some((u) => u.mode !== 'skip') && !o.hunts.some((h) => h.target !== 'skip') && !o.ivrs.some((v) => v.import) && !o.dids.some((r) => r.import)) continue;
+    if (to && x.hours && x.hours !== to.hours) add('warn', `Département ${deptLabel(x.key)} fusionné dans ${deptLabel(to.key)}`, `horaires différents dans 3CX (${x.hours} contre ${to.hours || 'non précisés'}) ; ses SDA gardent l'horaire de leur règle 3CX.`, 'Garder un jeu de contextes propre, ou vérifier les horaires des SDA concernées.');
+    if (to && x.holidays) add('info', `Jours fériés du département ${deptLabel(x.key)}`, `${x.holidays} jour(s) férié(s) propres à ce département dans 3CX.`, 'À reprendre dans les horaires Wazo du jeu de contextes (lot Routage).');
+  }
+  const units = unitList(d);
+  if (units.length > 1) {
+    const mains = m.trunks.filter((x) => x.mainNumber).map((x) => `${x.mainNumber} (${x.name})`);
+    if (mains.length > 1) add('info', 'Numéro principal', `Wazo n'a qu'un numéro principal par site Wazo ; 3CX en avait un par trunk : ${mains.join(', ')}. Le premier est retenu.`, 'Numéro présenté de chaque département : réglé par ses utilisateurs et sa règle sortante, à vérifier après la phase Personnes.');
+  }
   const others = m.extensions.reduce((s, e) => s + Object.keys(e.profiles || {}).length, 0);
   if (others) add('info', `${others} profil(s) 3CX Absent / Hors du bureau / Personnalisés configurés`, 'Wazo n\'a pas de profils commutables : seuls le profil « Disponible » (débordements) et le profil courant (option) sont repris.', 'Les personnes régleront leur renvoi dans l\'application Wazo ou avec les codes de service.');
   // Files converties en groupes.
@@ -289,7 +339,59 @@ function losses() {
 // ---------------------------------------------------------------------------
 async function foundationOps(t) {
   const d = W.d; const c = contextsOf(t); const ops = [];
-  if (c.internal && rangeFixes(c.internal).length) {
+  const s = d.write.site;
+  const incl = (ids) => ({ contexts: ids.map((id) => ({ id })) });
+  const includesOf = async (id) => ((await tapi('GET', `/contexts/${id}`)).contexts || []).map((x) => x.id);
+  // Sortant de chaque unité, connu après sa création (op suivante).
+  const outName = Object.fromEntries(c.units.map((u) => [u.key, u.outObj?.virtual ? null : u.outObj?.name]));
+  // Lu dans confd (19/10/2026, bascule multisite) : POST /contexts {label, type, plages}, nom technique
+  // généré ; PUT /contexts/{id}/contexts remplace la liste des inclusions, dans l'ordre.
+  const fresh = c.units.filter((u) => u.newCtx);
+  if (fresh.length) {
+    ops.push({ label: `Contextes ${fresh.map((u) => `« ${u.L.ctx} » et « ${u.L.out} »`).join(', ')}, inclusions${c.many && s.interUnits ? ' entre départements' : ''}${fresh[0].peers.length ? ` et avec ${fresh[0].peers.length} établissement(s)` : ''} (POST /contexts, PUT /contexts/…/contexts)`, run: async () => {
+      const undo = []; const made = {};
+      try {
+        // 1. Tous les contextes d'abord (les unités s'incluent entre elles).
+        for (const u of fresh) {
+          const oc = await tapi('POST', '/contexts', { label: u.L.out, type: 'outcall' });
+          undo.unshift({ method: 'DELETE', path: `/contexts/${oc.id}` });
+          const ic = await tapi('POST', '/contexts', { label: u.L.ctx, type: 'internal', ...newRanges(d, c.many ? u.key : null) });
+          undo.unshift({ method: 'DELETE', path: `/contexts/${ic.id}` });
+          made[u.key] = { oc, ic };
+        }
+        // 2. Inclusions de chaque unité : son sortant, les autres unités, les établissements existants.
+        const peers = fresh[0].peers.map((n) => t.contexts.find((x) => x.name === n)).filter(Boolean);
+        for (const u of fresh) {
+          const others = c.many && s.interUnits ? fresh.filter((x) => x !== u).map((x) => made[x.key].ic.id) : [];
+          await tapi('PUT', `/contexts/${made[u.key].ic.id}/contexts`, incl([made[u.key].oc.id, ...others, ...peers.map((x) => x.id)]));
+        }
+        // 3. Chez les établissements existants : relu juste avant, les unités ajoutées en fin de liste.
+        for (const x of peers) {
+          const cur = await includesOf(x.id); const add = fresh.map((u) => made[u.key].ic.id);
+          await tapi('PUT', `/contexts/${x.id}/contexts`, incl([...cur.filter((id) => !add.includes(id)), ...add]));
+          undo.unshift({ method: 'PUT', path: `/contexts/${x.id}/contexts`, body: incl(cur) });
+        }
+      } catch (e) { for (const u of undo) { try { await runUndo(u); } catch { /* signalé par l'erreur d'origine */ } } throw e; }
+      for (const u of fresh) {
+        const cr = { ctxId: made[u.key].ic.id, ctxName: made[u.key].ic.name, outId: made[u.key].oc.id, outName: made[u.key].oc.name, peers: u.peers };
+        // Trunk proposé gardé : il ne change plus si les trunks du tenant changent ensuite.
+        if (c.many) { const cfg = unitCfg(d, u.key); cfg.created = cr; if (!cfg.trunkId) cfg.trunkId = u.trunkId; } else { s.created = { ...cr, prevCtx: d.ctx || '' }; d.ctx = cr.ctxName; }
+        outName[u.key] = cr.outName;
+      }
+      return { created: fresh.map((u) => `${made[u.key].ic.name}, ${made[u.key].oc.name}`).join(' ; '), undo: { seq: [...undo, { local: 'site', units: c.many ? fresh.map((u) => u.key) : null }] } };
+    } });
+  }
+  for (const u of c.units.filter((x) => !x.newCtx && x.newOut && x.ctxObj)) {
+    const id = u.ctxObj.id;
+    ops.push({ label: `Contexte sortant « ${u.L.out} », inclus en tête par « ${u.ctxObj.label || u.ctxObj.name} »`, run: async () => {
+      const oc = await tapi('POST', '/contexts', { label: u.L.out, type: 'outcall' });
+      const cur = await includesOf(id);
+      try { await tapi('PUT', `/contexts/${id}/contexts`, incl([oc.id, ...cur])); } catch (e) { await tapi('DELETE', `/contexts/${oc.id}`).catch(() => {}); throw e; }
+      outName[u.key] = oc.name;
+      return { created: oc.name, undo: { seq: [{ method: 'PUT', path: `/contexts/${id}/contexts`, body: incl(cur) }, { method: 'DELETE', path: `/contexts/${oc.id}` }] } };
+    } });
+  }
+  if (c.internal && !c.internal.virtual && rangeFixes(c.internal).length) {
     const id = c.internal.id;
     ops.push({ label: `Plages du contexte ${c.internal.label || c.internal.name} : ${rangeFixes(c.internal).map((f) => `${f.label} + ${f.add.map(rangeTxt).join(', ')}`).join(' ; ')} (PUT /contexts/${id})`, run: async () => {
       // Relu juste avant : on renvoie les plages actuelles + les nouvelles, par type (PUT partiel, liste remplacée).
@@ -329,24 +431,41 @@ async function foundationOps(t) {
       } });
     }
   }
-  const ocName = `${d.write.clientName || 'Client'} - Appels sortants`;
-  const catchAll = t.outcalls.some((o) => (o.extensions || []).some((e) => e.exten === '_X.'));
-  if (t.trunks.length && c.outcall && !catchAll && !t.outcalls.some((o) => o.name === ocName)) {
-    const trunkId = Number(d.write.trunkId || t.trunks[0].id);
-    // Comme Call Flow Manager (audité le 21/10/2026) : règle, extension _X. dans le contexte sortant, association, trunk ; retour arrière si une écriture échoue.
-    ops.push({ label: `Règle « ${ocName} » : _X. vers le trunk ${trunkId}`, run: async () => {
+  // Une règle par unité ; l'autorisation « interdit-118 » est partagée (créée une seule fois).
+  const perm118 = { p: t.perms.find((x) => x.mode === 'deny' && x.enabled !== false && (x.extensions || []).includes(BLOCK_118)) || null };
+  const { skipped } = futureOf(t, d);
+  for (const u of c.units.filter((x) => x.trunkId && x.outObj)) {
+    const ocName = ocNameOf(u, c.many); const trunkId = u.trunkId;
+    if (t.outcalls.some((o) => o.name === ocName)) continue;
+    // Motifs de l'assistant France de Call Flow, sauf ceux déjà pris dans ce contexte sortant (confd refuse le doublon).
+    const pats = clientPatterns(d.write.out).filter((p) => !skipped.some((x) => x.unit === u.key && x.exten === p.exten));
+    // Comme Call Flow Manager (audité le 21/10/2026) : règle, un numéro par motif dans le contexte
+    // sortant, association avec sa transformation, trunk ; autorisation « interdit-118 » (refus de
+    // _118XXX) reprise si elle existe, sinon créée, puis associée (PUT /outcalls/{id}/callpermissions/{id}).
+    // Retour arrière si une écriture échoue.
+    ops.push({ label: `Règle « ${ocName} » : ${pats.length} motif(s) vers ${trunkLabel(t, trunkId)}${d.write.out.block118 ? ', 118 bloqués' : ''}`, run: async () => {
+      const ctxOut = outName[u.key];
+      if (!ctxOut) throw new Error(`contexte sortant de « ${u.L.ctx} » introuvable`);
+      const undo = [];
       const o = await tapi('POST', '/outcalls', { name: ocName });
-      let ext = null;
+      undo.unshift({ method: 'DELETE', path: `/outcalls/${o.id}` });
       try {
-        ext = await tapi('POST', '/extensions', { exten: '_X.', context: c.outcall.name });
-        await tapi('PUT', `/outcalls/${o.id}/extensions/${ext.id}`, { strip_digits: 0, external_prefix: null, prefix: null, caller_id: null });
+        for (const p of pats) {
+          const ext = await tapi('POST', '/extensions', { exten: p.exten, context: ctxOut });
+          undo.unshift({ method: 'DELETE', path: `/extensions/${ext.id}` });
+          await tapi('PUT', `/outcalls/${o.id}/extensions/${ext.id}`, { strip_digits: p.strip_digits || 0, external_prefix: p.external_prefix || null, prefix: null, caller_id: null });
+          undo.unshift({ method: 'DELETE', path: `/outcalls/${o.id}/extensions/${ext.id}` });
+        }
         await tapi('PUT', `/outcalls/${o.id}/trunks`, { trunks: [{ id: trunkId }] });
-      } catch (e) {
-        try { if (ext) { await tapi('DELETE', `/outcalls/${o.id}/extensions/${ext.id}`).catch(() => {}); await tapi('DELETE', `/extensions/${ext.id}`); } } catch { /* */ }
-        try { await tapi('DELETE', `/outcalls/${o.id}`); } catch { /* */ }
-        throw e;
-      }
-      return { created: `règle ${o.id}`, undo: { seq: [{ method: 'DELETE', path: `/outcalls/${o.id}/extensions/${ext.id}` }, { method: 'DELETE', path: `/extensions/${ext.id}` }, { method: 'DELETE', path: `/outcalls/${o.id}` }] } };
+        if (d.write.out.block118) {
+          if (!perm118.p) {
+            perm118.p = await tapi('POST', '/callpermissions', { name: 'interdit-118', mode: 'deny', enabled: true, extensions: [BLOCK_118], description: 'Renseignements 118 XXX surtaxés (Migration Assistant)' });
+            undo.push({ method: 'DELETE', path: `/callpermissions/${perm118.p.id}` });
+          }
+          await tapi('PUT', `/outcalls/${o.id}/callpermissions/${perm118.p.id}`);
+        }
+      } catch (e) { for (const x of undo) { try { await runUndo(x); } catch { /* signalé par l'erreur d'origine */ } } throw e; }
+      return { created: `règle ${o.id}`, undo: { seq: undo } };
     } });
   }
   return ops;
@@ -354,6 +473,11 @@ async function foundationOps(t) {
 async function runUndo(u) {
   if (!u) return;
   if (u.seq) { for (const x of u.seq) { try { await runUndo(x); } catch (e) { if (e.status !== 404) throw e; } } return; }
+  // Contextes du client supprimés : le brouillon revient au contexte d'avant.
+  if (u.local === 'site') {
+    if (u.units) { for (const k of u.units) unitCfg(W.d, k).created = null; return; }
+    const s = W.d.write.site; if (s.created) { W.d.ctx = s.created.prevCtx; s.created = null; } return;
+  }
   if (u.api === 'logd') return logd(u.method, u.path, u.body);
   return tapi(u.method, u.path, u.body);
 }
@@ -376,7 +500,8 @@ export function wizardTab() {
     const pre = prerequisites(W.t);
     html += `<p class="small muted">Lu à ${esc(W.t.at.toLocaleTimeString('fr-FR'))}.</p>${pre.map((p) => `<div class="${p.sev === 'error' ? 'compat blocking' : ['manual', 'warn', 'fix'].includes(p.sev) ? 'warn' : 'x3w-remind small'}"><strong>${esc(p.title)}</strong> : ${esc(p.text)}</div>`).join('')}`;
     if (!W.t.trunks.length) html += trunkHelp();
-    else html += `<label class="small">Trunk des appels sortants <select data-w="trunkId">${W.t.trunks.map((t) => `<option value="${t.id}" ${String(w.trunkId) === String(t.id) ? 'selected' : ''}>${esc(t.endpoint_sip?.label || t.endpoint_sip?.name || `Trunk ${t.id}`)}</option>`).join('')}</select></label>`;
+    else if (!multiSites(W.d)) html += `<label class="small">Trunk des appels sortants <select data-w="trunkId">${W.t.trunks.map((t) => `<option value="${t.id}" ${String(w.trunkId) === String(t.id) ? 'selected' : ''}>${esc(t.endpoint_sip?.label || t.endpoint_sip?.name || `Trunk ${t.id}`)}</option>`).join('')}</select></label>`;
+    html += siteBlock(W.t);
     html += '</div>';
     // 2. Plan
     const plan = buildPlan(W.t); const blocked = blockedPhases(pre);
@@ -396,6 +521,49 @@ export function wizardTab() {
     html += '<div class="card x3w-step later"><div class="x3w-head"><span class="x3w-n">5</span><strong>Contrôle final</strong><span class="spacer"></span><span class="x3w-badge">À venir</span></div><p class="small muted">Après les phases Routage et Finitions : comparaison du parcours de chaque SDA, 3CX ↔ Wazo (ouvert, fermé, férié), et vérifications du paramétrage.</p></div>';
   }
   return html;
+}
+// Où installer le client, règle sortante (assistant France de Call Flow) et
+// simulation des appels depuis son contexte, avant toute écriture.
+const SITE_HELP = 'Le Portal découpe en tenant puis sites Wazo. Établissements qui s\'appellent en interne, chacun avec son trunk : même site Wazo, un contexte interne par établissement. Établissements qui ne s\'appellent pas (franchise) : un site Wazo chacun, créé dans le Portal. « Nouveau contexte » crée le contexte interne du client (plages calculées) et son contexte sortant, inclus en premier ; les autres établissements cochés sont inclus après, et incluent le client en fin de liste, pour ne rien changer à leurs appels actuels. La simulation cherche chaque numéro comme Asterisk (moteur de Call Flow Manager) : extensions du contexte, puis contextes inclus dans l\'ordre. Elle montre où partiraient les appels, pour le client et pour chaque autre contexte interne, avant / après.';
+function siteBlock(t) {
+  const w = W.d.write; const s = w.site; const o = w.out; const c = contextsOf(t);
+  const occ = occupancy(t); const internals = t.contexts.filter((x) => x.type === 'internal');
+  const opt = (v, l, cur) => `<option value="${esc(v)}" ${String(cur) === String(v) ? 'selected' : ''}>${esc(l)}</option>`;
+  const lbl = (n) => t.contexts.find((x) => x.name === n)?.label || n;
+  const peersBox = () => (s.inter ? `<div class="small">${occ.map((x) => `<label class="inline"><input type="checkbox" data-w="site.peer" data-id="${esc(x.name)}" ${(s.peers ?? occ.map((y) => y.name)).includes(x.name) ? 'checked' : ''}> ${esc(x.label)}</label>`).join(' ') || '<span class="muted">aucun autre établissement</span>'}</div>` : '');
+  let h = `<div class="x3w-site"><div class="titlerow"><strong>Site Wazo et contextes</strong>${helpButton('x3w-site-h', 'Aide : site et contextes')}</div>${helpBox('x3w-site-h', SITE_HELP)}
+    <p class="small muted">${occ.length ? `Ce site Wazo contient déjà des postes : ${occ.map((x) => `${esc(x.label)} (${x.n})`).join(', ')}.` : 'Ce site Wazo ne contient encore aucun poste.'}</p>`;
+  if (c.many) {
+    // Départements 3CX en jeux de contextes propres (onglet Départements) : un nouveau jeu chacun.
+    h += `<p class="small">${c.units.length} jeux de contextes, un par département 3CX (onglet Départements) : chacun son contexte interne, son contexte sortant et son trunk.</p>
+      <table class="diff x3-edit"><thead><tr><th>Département</th><th>Contexte interne</th><th>Contexte sortant</th><th>Trunk Wazo</th></tr></thead><tbody>${c.units.map((u) => {
+      const cfg = unitCfg(W.d, u.key);
+      if (u.created) return `<tr><td>${esc(u.label)}</td><td>${esc(lbl(u.ctx))}</td><td>${esc(lbl(u.out))}</td><td>${esc(trunkLabel(t, u.trunkId))} <span class="muted small">(créés)</span></td></tr>`;
+      return `<tr><td>${esc(u.label)}${u.trunk ? `<div class="muted small">3CX : ${esc(u.trunk)}</div>` : ''}</td><td><input data-w="unit.newLabel" data-id="${esc(u.key)}" value="${esc(cfg.newLabel)}" placeholder="${esc(u.L.ctx)}" class="x3-mail"></td><td><input data-w="unit.outLabel" data-id="${esc(u.key)}" value="${esc(cfg.outLabel)}" placeholder="${esc(u.L.out)}" class="x3-mail"></td>
+        <td><select data-w="unit.trunkId" data-id="${esc(u.key)}">${u.trunkId ? '' : opt('', 'À choisir', '')}${t.trunks.map((x) => opt(x.id, trunkLabel(t, x.id), u.trunkId)).join('')}</select></td></tr>`;
+    }).join('')}</tbody></table>
+      <label class="inline small"><input type="checkbox" data-w="site.interUnits" ${s.interUnits ? 'checked' : ''}> Appels internes entre départements</label>
+      <label class="inline small"><input type="checkbox" data-w="site.inter" ${s.inter ? 'checked' : ''}> Appels internes avec les établissements déjà présents</label>${peersBox()}`;
+  } else if (s.created) h += `<p class="small">Contextes du client créés : « ${esc(lbl(s.created.ctxName))} », « ${esc(lbl(s.created.outName))} » (annulables avec la phase Fondations).</p>`;
+  else {
+    const u = c.units[0]; const L = u.L;
+    h += `<label class="small">Installation <select data-w="site.mode">${s.mode ? '' : opt('', 'À choisir', '')}${Object.entries(SITE_MODES).map(([k, l]) => opt(k, l, s.mode)).join('')}</select></label>`;
+    if (s.mode === 'dedicated' || s.mode === 'existing') h += ` <label class="small">Contexte interne <select data-w="draft.ctx">${internals.map((x) => opt(x.name, `${x.label || x.name}${occ.find((y) => y.name === x.name) ? ` (${occ.find((y) => y.name === x.name).n} postes)` : ''}`, u.ctx)).join('')}</select></label>`;
+    if (s.mode === 'new') {
+      h += `<div class="ms-tools"><label class="small">Contexte interne <input data-w="site.newLabel" value="${esc(s.newLabel)}" placeholder="${esc(L.ctx)}" class="x3-mail"></label><label class="small">Contexte sortant <input data-w="site.outLabel" value="${esc(s.outLabel)}" placeholder="${esc(L.out)}" class="x3-mail"></label></div>
+        <label class="inline small"><input type="checkbox" data-w="site.inter" ${s.inter ? 'checked' : ''}> Appels internes avec les autres établissements</label>${peersBox()}`;
+    }
+  }
+  // Règle sortante du client : assistant France de Call Flow Manager.
+  h += `<div class="x3w-out"><strong class="small">Règle sortante du client</strong> <span class="small muted">assistant France de Call Flow Manager ; l'ordre d'essai est celui d'Asterisk (le plus précis d'abord)</span>
+    <div class="small">${FR_FAMILIES.map((f) => `<label class="inline"><input type="checkbox" data-w="out.fam" data-id="${f.id}" ${o.fams.includes(f.id) ? 'checked' : ''}> ${esc(f.label)} <code>${esc(f.note || f.pats.join(', '))}</code></label>`).join(' ')}</div>
+    <div class="ms-tools small"><label>Format attendu par l'opérateur <select data-w="out.fmt">${Object.entries(FR_FORMATS).map(([k, l]) => opt(k, l, o.fmt)).join('')}</select></label>
+      <label class="inline"><input type="checkbox" data-w="out.block118" ${o.block118 ? 'checked' : ''}> Bloquer les 118 XXX (autorisation « interdit-118 »)</label>
+      <label class="inline" title="Prend tout numéro qu'aucun autre motif ne prend. Incompatible avec les appels internes entre établissements : la simulation le montre."><input type="checkbox" data-w="out.catchAll" ${o.catchAll ? 'checked' : ''}> Attrape-tout _X.</label></div></div>`;
+  // Simulation depuis chaque jeu de contextes.
+  const chk = siteChecks(t, W.d, (id) => trunkLabel(t, id));
+  for (const { p, rows } of chk.tables) h += `<details class="small x3w-sim"${chk.issues.some((x) => x.sev === 'error') ? ' open' : ''}><summary>Simulation : appels depuis ${esc(c.many ? `« ${p.label} »` : 'le client')}</summary><table class="diff x3-edit"><thead><tr><th>Numéro</th><th>Type</th><th>Résultat</th></tr></thead><tbody>${rows.map((x) => `<tr class="${(x.r.kind === 'out' && x.r.trunks.includes(Number(p.trunkId))) || x.n.startsWith('118') ? '' : 'x3-warn'}"><td>${esc(x.n)}</td><td>${esc(x.what)}</td><td>${esc(routeText(chk.w, x.r, (id) => trunkLabel(t, id)))}${x.n.startsWith('118') && x.r.mine && o.block118 ? ' · bloqué par « interdit-118 »' : ''}</td></tr>`).join('')}</tbody></table></details>`;
+  return `${h}</div>`;
 }
 function trunkHelp() {
   const t = W.m?.trunks?.[0]; const w = W.d.write;
@@ -422,8 +590,14 @@ function applyRow(p, blocked) {
 // ---------------------------------------------------------------------------
 export async function wizardChange(t) {
   if (!t.dataset.w) return false;
-  const k = t.dataset.w;
-  W.d.write[k] = t.type === 'checkbox' ? t.checked : t.type === 'number' ? Number(t.value) : t.value.trim();
+  const k = t.dataset.w; const w = W.d.write;
+  const v = t.type === 'checkbox' ? t.checked : t.type === 'number' ? Number(t.value) : t.value.trim();
+  if (k === 'out.fam') { const f = new Set(w.out.fams); v ? f.add(t.dataset.id) : f.delete(t.dataset.id); w.out.fams = FR_FAMILIES.map((x) => x.id).filter((x) => f.has(x)); }
+  else if (k === 'site.peer') { const occ = W.t ? occupancy(W.t).map((x) => x.name) : []; const f = new Set(w.site.peers ?? occ); v ? f.add(t.dataset.id) : f.delete(t.dataset.id); w.site.peers = [...f]; }
+  else if (k === 'draft.ctx') W.d.ctx = v;
+  else if (k.startsWith('unit.')) unitCfg(W.d, t.dataset.id)[k.slice(5)] = v;
+  else if (k.includes('.')) { const [a, b] = k.split('.'); w[a][b] = v; }
+  else w[k] = v;
   // L'option des profils change la liste des pertes : il faut la relire.
   if (k === 'keepProfiles') W.d.write.ackLosses = false;
   save();
@@ -433,7 +607,11 @@ export async function wizardClick(b, rerender) {
   const act = b.dataset.wact;
   if (act === 'read') {
     W.busy = true; rerender();
-    try { W.t = await readTenant(); W.msg = null; } catch (e) { toast(`Lecture du tenant impossible : ${e.message}`, 8000); }
+    try {
+      W.t = await readTenant(); W.msg = null;
+      // Site Wazo vide : dédié au client par défaut ; sinon le choix est demandé.
+      if (!W.d.write.site.mode && !occupancy(W.t).length) { W.d.write.site.mode = 'dedicated'; save(); }
+    } catch (e) { toast(`Lecture du tenant impossible : ${e.message}`, 8000); }
     W.busy = false; return rerender();
   }
   const id = b.dataset.p; const p = PHASES.find((x) => x.id === id); if (!p) return;

@@ -2,20 +2,21 @@
 // Modèle et règles : 3cx-draft.js. Chaque modification est enregistrée dans le
 // navigateur (brouillon par fichier et date de sauvegarde) ; rien n'est écrit
 // dans Wazo depuis ces tableaux.
-import { $, esc, toast, helpButton, helpBox, confirmModal, downloadJson } from '../common/core.js?v=0.40.32';
-import { I } from './inventory.js?v=0.40.32';
+import { $, esc, toast, helpButton, helpBox, confirmModal, downloadJson } from '../common/core.js?v=0.40.33';
+import { I } from './inventory.js?v=0.40.33';
 import {
   GROUP_STRATEGIES, MODES, HUNT_TARGETS, LICENCES, AUTH_METHODS, effectiveUsername, upgradeDraft, saveDraft, clearDraft, buildDraft, acceptDraft, userBy, userName, imported,
   destLabel, destProblem, draftIssues, usersCsv, blfRows, devicesCsv, deviceDesc, macWazo, macValid, tenantIssues,
   LINE_MODES, linesOf, VM_LANGS, vmEmail, upperName,
-} from './3cx-draft.js?v=0.40.32';
-import { setWizard, wizardTab, wizardChange, wizardClick, wizardDone, wizardTotal } from './3cx-wizard.js?v=0.40.32';
+} from './3cx-draft.js?v=0.40.33';
+import { setWizard, wizardTab, wizardChange, wizardClick, wizardDone, wizardTotal } from './3cx-wizard.js?v=0.40.33';
+import { DEPT_MODES, deptLabel, ensureDepts, deptObjects, unitOf, unitList, setDeptMode, moveObject } from './3cx-depts.js?v=0.40.33';
 
 const E = { d: null, m: null, file: '', tab: 'users', sel: { users: new Set(), dids: new Set(), vms: new Set() }, q: '', onReset: null };
 export const TABS = [
-  ['fiche', 'Fiche 3CX'], ['users', 'Utilisateurs'], ['vms', 'Messageries'], ['devices', 'Appareils'], ['hunts', 'Groupes et files'], ['ivrs', 'SVI'], ['dids', 'SDA'], ['scheds', 'Horaires'], ['checks', 'Contrôles'], ['exports', 'Exports'], ['write', 'Écriture'],
+  ['fiche', 'Fiche 3CX'], ['depts', 'Départements'], ['users', 'Utilisateurs'], ['vms', 'Messageries'], ['devices', 'Appareils'], ['hunts', 'Groupes et files'], ['ivrs', 'SVI'], ['dids', 'SDA'], ['scheds', 'Horaires'], ['checks', 'Contrôles'], ['exports', 'Exports'], ['write', 'Écriture'],
 ];
-export function setDraft(d, m, file, onReset) { E.d = upgradeDraft(d); E.m = m; E.file = file; E.onReset = onReset; E.sel.users.clear(); E.sel.dids.clear(); E.sel.vms.clear(); E.review = null; setWizard(E.d, m); }
+export function setDraft(d, m, file, onReset) { E.d = ensureDepts(upgradeDraft(d), m); E.m = m; E.file = file; E.onReset = onReset; E.sel.users.clear(); E.sel.dids.clear(); E.sel.vms.clear(); E.review = null; setWizard(E.d, m); }
 export const draft = () => E.d;
 // Contextes cibles (choisis dans Exports, gardés dans le brouillon) : ceux du
 // tenant ouvert ; à défaut, le premier interne / entrant du tenant.
@@ -28,7 +29,7 @@ const tenantChecks = () => tenantIssues(E.d, tenantCtx(), { contexts: I.lists.co
 export function tabCounts() {
   const d = E.d; if (!d) return {};
   const iss = [...draftIssues(d), ...tenantChecks()];
-  return { users: imported(d).length, vms: d.users.filter((u) => u.mode !== 'skip' && u.vm).length, devices: (d.devices || []).filter((x) => x.import).length, hunts: d.hunts.filter((h) => h.target !== 'skip').length, ivrs: d.ivrs.filter((v) => v.import).length, dids: d.dids.filter((r) => r.import).length, scheds: d.schedules.length, checks: iss.filter((x) => x.sev !== 'info').length, write: `${wizardDone()}/${wizardTotal()}` };
+  return { depts: unitList(d).filter((u) => u.key !== '_').length || undefined, users: imported(d).length, vms: d.users.filter((u) => u.mode !== 'skip' && u.vm).length, devices: (d.devices || []).filter((x) => x.import).length, hunts: d.hunts.filter((h) => h.target !== 'skip').length, ivrs: d.ivrs.filter((v) => v.import).length, dids: d.dids.filter((r) => r.import).length, scheds: d.schedules.length, checks: iss.filter((x) => x.sev !== 'info').length, write: `${wizardDone()}/${wizardTotal()}` };
 }
 
 // ---------------------------------------------------------------------------
@@ -75,7 +76,7 @@ export function renderTab(root, tab) {
   const wb = document.getElementById('workbench'); const keepWb = wb ? [wb.scrollTop, wb.scrollLeft] : null;
   const keep = [...root.querySelectorAll('.x3-edit-wrap')].map((w) => [w.scrollTop, w.scrollLeft]);
   const opts = destOptions();
-  const html = { users: usersTab, vms: vmsTab, devices: devicesTab, hunts: huntsTab, ivrs: ivrsTab, dids: didsTab, scheds: schedsTab, checks: checksTab, exports: exportsTab, write: wizardTab }[tab]?.(opts) || '';
+  const html = { depts: deptsTab, users: usersTab, vms: vmsTab, devices: devicesTab, hunts: huntsTab, ivrs: ivrsTab, dids: didsTab, scheds: schedsTab, checks: checksTab, exports: exportsTab, write: wizardTab }[tab]?.(opts) || '';
   root.innerHTML = html;
   // Listes à valeur posée après rendu (utilisateur d'un appareil).
   for (const s of root.querySelectorAll('select[data-p][data-val]')) {
@@ -182,6 +183,42 @@ function reviewPanel(opts) {
     </div>
     <div class="btnrow"><button data-act="review-prev" ${k ? '' : 'disabled'}>Précédent</button><button data-act="review-next">Suivant sans valider</button><span class="spacer"></span><button data-act="review-ok" class="primary">Valider et suivant</button></div>
   </div>`;
+}
+
+// ---------------------------------------------------------------------------
+// Départements 3CX (demande de Brice, 04/11/2026) : jeu de contextes propre,
+// fusion dans un autre, ou site Wazo séparé. Règles : 3cx-depts.js.
+// ---------------------------------------------------------------------------
+const DEPT_HELP = 'Un département 3CX (groupe en v16-v18) correspond souvent à un établissement. Jeu de contextes propre : contexte interne, contexte sortant et trunk à lui dans Wazo, sur le même site Wazo que les autres (appels internes entre eux en option, onglet Écriture). Fusionné : ses objets vont dans le jeu de contextes d\'un autre département (un seul jeu pour tous). Site Wazo séparé : ses objets ne sont pas importés ici ; ouvrir son site Wazo dans le Portal et refaire l\'import avec la même sauvegarde, en gardant seulement ce département. Rattachement : le département réel de chaque objet (hors __DEFAULT__, département principal de presque tous les postes dans 3CX) ; un objet seul dans __DEFAULT__ suit les SDA qui le visent. Il se corrige objet par objet ci-dessous.';
+const DEPT_BY = { SDA: 'd\'après les SDA qui le visent', nom: 'd\'après son nom', manuel: 'modifié à la main' };
+function deptsTab() {
+  const d = E.d; const q = E.q.trim().toLowerCase();
+  if (!d.depts?.length) return `${intro('depts', 'Départements', DEPT_HELP)}<p class="muted">Aucun département dans cette sauvegarde.</p>`;
+  const units = unitList(d);
+  const opt = (v, l, cur) => `<option value="${esc(v)}" ${v === cur ? 'selected' : ''}>${esc(l)}</option>`;
+  const count = (k) => { const o = deptObjects(d, k); return [`${o.users.filter((u) => u.mode === 'user').length} postes`, `${o.hunts.length} groupes / files`, `${o.ivrs.length} SVI`, `${o.dids.length} SDA`].join(', '); };
+  const rows = d.depts.map((x) => `<tr class="${x.mode === 'skip' ? 'x3-off' : ''}">
+    <td><strong>${esc(deptLabel(x.key))}</strong><div class="muted small">${esc(x.number || '')}</div></td>
+    <td class="small">${esc(x.trunk || 'aucune règle sortante')}</td>
+    <td class="small">${esc(x.hours || 'non précisés')}${x.holidays ? `<div class="muted">${x.holidays} jour(s) férié(s) à venir</div>` : ''}</td>
+    <td class="x3-c small">${x.visible ? 'oui' : 'non'}</td>
+    <td class="small">${esc(count(x.key))}</td>
+    <td><select data-dept-mode="${esc(x.key)}">${Object.entries(DEPT_MODES).map(([k, l]) => opt(k, l, x.mode)).join('')}</select>
+      ${x.mode === 'merge' ? `<select data-dept-into="${esc(x.key)}">${d.depts.filter((y) => y.key !== x.key && y.mode === 'own').map((y) => opt(y.key, `dans ${deptLabel(y.key)}`, x.into)).join('') || '<option value="">aucun département « propre »</option>'}</select>` : ''}</td>
+  </tr>`).join('');
+  const deptSel = (kind, n, cur) => `<select data-move="${kind}|${esc(n)}">${d.depts.map((y) => opt(y.key, deptLabel(y.key), cur)).join('')}</select>`;
+  const objs = [
+    ...d.users.filter((u) => u.mode !== 'skip' || u.deptPrev).map((u) => ['user', u.n, `${u.n} ${userName(u)}`, MODES[u.deptPrev || u.mode], u]),
+    ...d.hunts.map((h) => ['hunt', h.n, `${h.n} ${h.name}`, h.src === 'Queue' ? 'File 3CX' : 'Groupe 3CX', h]),
+    ...d.ivrs.map((v) => ['ivr', v.n, `${v.n} ${v.name}`, 'SVI', v]),
+    ...d.dids.filter((r) => r.import || 'deptPrev' in r).map((r) => ['did', r.did, `${r.did} ${r.name || ''}`, 'SDA', r]),
+  ].filter(([, , l]) => !q || l.toLowerCase().includes(q));
+  const orows = objs.map(([kind, n, l, type, o]) => { const u = unitOf(d, o); return `<tr class="${u ? '' : 'x3-off'}"><td>${esc(l)}</td><td class="small">${esc(type)}</td><td>${deptSel(kind, n, o.dept)}${o.deptAlso ? `<div class="x3-warn small">aussi dans ${esc(o.deptAlso.join(', '))} (3CX)</div>` : ''}${o.deptBy ? `<div class="muted small">${DEPT_BY[o.deptBy]}</div>` : ''}</td><td class="small">${u ? esc(u === '_' ? 'jeu unique' : deptLabel(u)) : '<span class="muted">non importé ici</span>'}</td></tr>`; }).join('');
+  return `${intro('depts', 'Départements', DEPT_HELP, `<input id="x3e-q" type="search" placeholder="Filtrer les objets" value="${esc(E.q)}" class="x3-q">`)}
+    <p class="small">${units.length > 1 ? `${units.length} jeux de contextes Wazo : ${units.map((u) => esc(u.label)).join(', ')}.` : 'Un seul jeu de contextes Wazo pour tout le client.'}</p>
+    <div class="x3-edit-wrap"><table class="diff x3-edit">${head([['Département'], ['Trunk 3CX', 'Passerelle de la règle sortante qui vise ce département'], ['Horaires'], ['Présence visible', 'GLOBALLY_VISIBLE : présence visible hors du département'], ['Objets rattachés'], ['Dans Wazo']])}<tbody>${rows}</tbody></table></div>
+    <h4 class="x3-h">Rattachement des objets</h4>
+    <div class="x3-edit-wrap"><table class="diff x3-edit">${head([['Objet'], ['Type'], ['Département'], ['Jeu de contextes Wazo']])}<tbody>${orows || '<tr><td colspan="4" class="muted">Aucun objet.</td></tr>'}</tbody></table></div>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -425,6 +462,9 @@ function onChange(e, root) {
     for (const i of shown) (t.checked ? s.add(i) : s.delete(i));
     return renderTab(root, E.tab);
   }
+  if (t.dataset.deptMode) { setDeptMode(E.d, t.dataset.deptMode, t.value); return changed(root); }
+  if (t.dataset.deptInto) { setDeptMode(E.d, t.dataset.deptInto, 'merge', t.value); return changed(root); }
+  if (t.dataset.move) { const [kind, n] = t.dataset.move.split('|'); moveObject(E.d, kind, n, t.value); return changed(root); }
   if (t.dataset.act === 'add-member' && t.value) { const h = E.d.hunts[Number(t.dataset.i)]; h.members.push(t.value); return changed(root); }
   if (t.dataset.dest) { const cur = get(t.dataset.dest); set(t.dataset.dest, parseDest(t.value, cur?.num)); return changed(root); }
   if (t.dataset.destnum) { const cur = get(t.dataset.destnum); set(t.dataset.destnum, { ...cur, num: t.value.trim() }); return changed(root); }
@@ -477,7 +517,7 @@ function onClick(e, root) {
     case 'csv-blf': return exportBlf();
     case 'csv-devices': return download(`astrea-3cx-appareils-${base()}.csv`, devicesCsv(d));
     case 'draft-dl': return downloadJson(`astrea-3cx-brouillon-${(E.file || '3cx').replace(/\.xml$/i, '')}.json`, d);
-    case 'draft-reset': return confirmModal('<h3>Réinitialiser le brouillon ?</h3><p>Toutes les modifications sont perdues ; le brouillon repart de la sauvegarde 3CX.</p>', () => { clearDraft(d); E.d = buildDraft(E.m, E.file); saveDraft(E.d); setWizard(E.d, E.m); E.onReset?.(E.d); renderTab(root, E.tab); E.onChange?.(); }, 'Réinitialiser');
+    case 'draft-reset': return confirmModal('<h3>Réinitialiser le brouillon ?</h3><p>Toutes les modifications sont perdues ; le brouillon repart de la sauvegarde 3CX.</p>', () => { clearDraft(d); E.d = ensureDepts(buildDraft(E.m, E.file), E.m); saveDraft(E.d); setWizard(E.d, E.m); E.onReset?.(E.d); renderTab(root, E.tab); E.onChange?.(); }, 'Réinitialiser');
     default:
   }
 }
@@ -525,11 +565,19 @@ function download(name, text) {
 const base = () => (E.file || '3cx').replace(/\.xml$/i, '');
 function exportUsers() {
   const { ctx, incallCtx } = tenantCtx();
-  if (!ctx) return toast('Choisissez le contexte interne (tenant Wazo à ouvrir dans le portail).', 6000);
+  // Plusieurs départements en jeux de contextes propres : contexte de chaque utilisateur = celui
+  // de son département, créé par la phase Fondations (onglet Écriture).
+  let ctxOf = null;
+  if (unitList(E.d).length > 1) {
+    const by = Object.fromEntries(unitList(E.d).map((u) => [u.key, E.d.write?.units?.[u.key]?.created?.ctxName]));
+    if (Object.values(by).some((x) => !x)) return toast('Plusieurs départements : créez d\'abord leurs contextes (onglet Écriture, phase Fondations), le CSV en dépend.', 7000);
+    ctxOf = (u) => by[unitOf(E.d, u)];
+  }
+  if (!ctx && !ctxOf) return toast('Choisissez le contexte interne (tenant Wazo à ouvrir dans le portail).', 6000);
   const needIn = E.d.dids.some((r) => r.import && r.viaCsv && r.dest.t === 'user');
   if (needIn && !incallCtx) return toast('Aucun contexte entrant : décochez « CSV » dans l\'onglet SDA, ou ouvrez le bon tenant.', 6000);
   const pins = Object.fromEntries(E.m.extensions.map((e) => [e.number, e.vm.pin]));
-  const go = () => download(`wazo-import-utilisateurs-${base()}.csv`, usersCsv(E.d, { ctx, incallCtx, pins }));
+  const go = () => download(`wazo-import-utilisateurs-${base()}.csv`, usersCsv(E.d, { ctx, incallCtx, pins, ctxOf }));
   const errs = [...tenantChecks(), ...draftIssues(E.d).filter((x) => x.area.startsWith('Utilisateur '))].filter((x) => x.sev === 'error');
   const unchecked = imported(E.d).filter((u) => !u.checked).length;
   if (!errs.length && !unchecked) return go();
@@ -548,7 +596,7 @@ function loadDraftFile(input, root) {
   if (!f) return;
   const r = new FileReader();
   r.onload = () => {
-    try { E.d = upgradeDraft(acceptDraft(JSON.parse(r.result), E.file, E.d.sourceDate)); saveDraft(E.d); setWizard(E.d, E.m); E.onReset?.(E.d); toast('Brouillon chargé.'); renderTab(root, E.tab); E.onChange?.(); }
+    try { E.d = ensureDepts(upgradeDraft(acceptDraft(JSON.parse(r.result), E.file, E.d.sourceDate)), E.m); saveDraft(E.d); setWizard(E.d, E.m); E.onReset?.(E.d); toast('Brouillon chargé.'); renderTab(root, E.tab); E.onChange?.(); }
     catch (err) { toast(`Brouillon refusé : ${err.message}`, 7000); }
   };
   r.readAsText(f);

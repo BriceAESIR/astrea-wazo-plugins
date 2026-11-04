@@ -10,12 +10,12 @@
 //  - trunks : PUT /outcalls/{id}/trunks {trunks:[{id}]}, ordre = priorité.
 // wazo-agid (outgoingfeatures.py) : seuls strip_digits et external_prefix
 // changent le numéro envoyé ; « prefix » est lu mais pas appliqué.
-import { $, esc, confirmModal, helpButton, helpBox, canWrite } from '../common/core.js?v=0.40.32';
+import { $, esc, confirmModal, helpButton, helpBox, canWrite } from '../common/core.js?v=0.40.33';
 // Création de l'autorisation « interdit-118 » liée au tenant des données chargées (tapi, model.js).
-import { M, listOf, nodeInfo, tapi as api } from './model.js?v=0.40.32';
-import { sec, field, check, setSums, openSec } from './ed-ui.js?v=0.40.32';
-import { bindNewSchedule, schedValue } from './create.js?v=0.40.32';
-import { describePattern, comparePatterns, dialedNumber, matches, famLabel } from './dialsim.js?v=0.40.32';
+import { M, listOf, nodeInfo, tapi as api } from './model.js?v=0.40.33';
+import { sec, field, check, setSums, openSec } from './ed-ui.js?v=0.40.33';
+import { bindNewSchedule, schedValue } from './create.js?v=0.40.33';
+import { describePattern, comparePatterns, dialedNumber, matches, famLabel } from './dialsim.js?v=0.40.33';
 
 export const OUTCALL_FIELDS = ['name', 'description', 'enabled', 'ring_time', 'internal_caller_id', 'preprocess_subroutine'];
 const DP = ['exten', 'strip_digits', 'external_prefix', 'prefix', 'caller_id'];
@@ -43,8 +43,10 @@ const trunkName = (id) => nodeInfo(`trunk:${id}`).title || `trunk #${id}`;
 // accepté par l'opérateur, à vérifier). Les 118 XXX ne sont pas routés et sont
 // bloqués par une autorisation d'appel en refus (« interdit-118 ») : sans elle,
 // un motif large comme _X. les ferait sortir. Les 08 restent autorisés.
+// Exportés pour Migration Assistant (import 3CX, règle sortante du client) :
+// même jeu de motifs, même transformation.
 // ---------------------------------------------------------------------------
-const FR_FAMILIES = [
+export const FR_FAMILIES = [
   { id: 'urg', label: 'Urgences', note: '15, 17, 18, 112, 114, 115, 119, 116 XXX', pats: ['15', '17', '18', '112', '114', '115', '119', '_116XXX'], kind: 'keep' },
   { id: 'fix', label: 'Fixes (01 à 05)', pats: ['_0[1-5]XXXXXXXX'], kind: 'nat' },
   { id: 'mob', label: 'Mobiles (06, 07)', pats: ['_0[67]XXXXXXXX'], kind: 'nat' },
@@ -53,9 +55,9 @@ const FR_FAMILIES = [
   { id: 'court', label: 'Courts (3 XXX)', pats: ['_3XXX'], kind: 'keep' },
   { id: 'intl', label: 'International (00…, +…)', pats: ['_00Z.', '_+Z.'], kind: 'intl' },
 ];
-const FR_FORMATS = { 33: 'E.164 sans + (33…)', '+33': 'E.164 avec + (+33…)', nat: 'National, tel que composé (0…)' };
+export const FR_FORMATS = { 33: 'E.164 sans + (33…)', '+33': 'E.164 avec + (+33…)', nat: 'National, tel que composé (0…)' };
 // Transformation d'un motif de l'assistant selon le format attendu par l'opérateur.
-function frTransform(kind, pat, fmt) {
+export function frTransform(kind, pat, fmt) {
   if (kind === 'keep') return { strip_digits: 0, external_prefix: '' };
   if (kind === 'nat') return fmt === 'nat' ? { strip_digits: 0, external_prefix: '' } : { strip_digits: 1, external_prefix: fmt };
   if (pat === '_00Z.') return fmt === '33' ? { strip_digits: 2, external_prefix: '' } : fmt === '+33' ? { strip_digits: 2, external_prefix: '+' } : { strip_digits: 0, external_prefix: '' };
@@ -63,7 +65,7 @@ function frTransform(kind, pat, fmt) {
 }
 // Motif attrape-tout (prend tout ce que les autres ne prennent pas).
 const isCatchAll = (p) => /^_(X|Z|N|)[.!]$/i.test(String(p || ''));
-const BLOCK_118 = '_118XXX';
+export const BLOCK_118 = '_118XXX';
 
 // onSave({ cfg, schedule })
 export function openOutcallEditor(o, onSave) {
