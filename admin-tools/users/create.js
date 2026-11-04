@@ -17,8 +17,8 @@
 // identifiant 2-254 caractères `^[a-zA-Z0-9-._~!$&'()*+,;=%@]+$` ; mot de
 // passe 4-64 caractères `^[a-zA-Z0-9-._~!$&'()*+,;=%]+$`.
 // Non testé en réel.
-import { S, $, esc, toast, api, fullName, canWrite, confirmModal, helpButton, helpBox } from '../common/core.js?v=0.40.44';
-import { settingById, same, LANG, SUBS, subLabel, authApi, IDX, readLines, newLineBody, normDest, LINES } from './settings.js?v=0.40.44';
+import { S, $, esc, toast, api, fullName, canWrite, confirmModal, helpButton, helpBox } from '../common/core.js?v=0.40.45';
+import { settingById, same, LANG, SUBS, subLabel, authApi, IDX, readLines, newLineBody, normDest, LINES } from './settings.js?v=0.40.45';
 
 const opts = (items, sel) => items.map(([v, t]) => `<option value="${esc(v)}"${String(v) === String(sel) ? ' selected' : ''}>${esc(t)}</option>`).join('');
 const $v = (id) => document.getElementById(id)?.value ?? '';
@@ -56,32 +56,37 @@ export function openCreate(src, deps) {
   const help = 'Crée l\'utilisateur comme le portail : utilisateur et lignes en une requête, puis compte des applications, puis associations. Si le compte des applications ne peut pas être créé, l\'utilisateur est supprimé (rien à moitié créé). Les boîtes vocales se créent dans Messageries vocales : ici, seulement l\'association à une boîte libre.';
   confirmModal(`<div class="titlerow"><h3>${src ? `Nouvel utilisateur à partir de ${esc(fullName(src))}` : 'Nouvel utilisateur'}</h3>${helpButton('m-help', 'Que fait cette création ?')}</div>${helpBox('m-help', help)}
     <div id="m-form" class="createform">
-      <label>Modèle (utilisateur de référence) <select id="c-src">${opts([['', 'Aucun'], ...A.users.map((u) => [u.uuid, fullName(u) + (readLines(u)[0]?.exten ? ` (${readLines(u)[0].exten})` : '')])], src?.uuid || '')}</select></label>
-      <p class="muted small">Avec un modèle : licence, type de ligne et contexte repris, réglages à copier au choix (en bas).</p>
-      <h4 class="side-title">Utilisateur</h4>
-      <label>Prénom <input id="c-fn" maxlength="128"></label>
-      <label>Nom <input id="c-ln" maxlength="128"></label>
-      <label>E-mail (annuaire) <input id="c-mail" maxlength="254" spellcheck="false"></label>
-      <label>Licence <select id="c-sub">${opts(Object.entries(SUBS), src?.subscription_type ?? 1)}</select></label>
-      <h4 class="side-title">Ligne</h4>
-      <label>Type <select id="c-lt">${opts([['', 'Aucune (pas d\'appel ni de groupe possible)'], ...LINES.LTYPES_NEW], lt)}</select></label>
-      <div data-cl><label>Contexte <select id="c-cx">${opts(ictx.map((x) => [x.name, LINES.ctxText(x)]), cx0)}</select></label>
-        <label>Numéro <input id="c-num" inputmode="numeric" size="8" value="${esc(num0(cx0))}"></label>
-        <label>Appareil (ligne SIP) <select id="c-dev">${opts([['', 'Aucun'], ...LINES.freeDevices().map((d) => [d.id, [d.vendor, d.model].filter(Boolean).join(' ') + (d.mac ? ` · ${d.mac}` : '')])], '')}</select></label></div>
-      <label>Boîte vocale <select id="c-vm">${opts([['', 'Aucune'], ...freeVm.map((v) => [v.id, `${v.number}${v.name ? ` (${v.name})` : ''}`])], '')}</select></label>
-      <p class="muted small">Boîtes proposées : non globales et associées à personne.</p>
-      <h4 class="side-title">Compte des applications</h4>
-      <label>Identifiant de connexion <input id="c-login" maxlength="254" spellcheck="false" placeholder="par défaut : l'e-mail"></label>
-      <label>Mot de passe <input id="c-pw" maxlength="64" spellcheck="false" autocomplete="new-password"></label>
-      <div class="btnrow"><button type="button" id="c-pwgen">Générer</button></div>
-      <label class="inline"><input type="checkbox" id="c-en" checked> Autorisé à utiliser les applications</label>
-      ${src ? `<h4 class="side-title">Copier depuis ${esc(fullName(src))}</h4>${COPY.map((x) => `<label class="inline"><input type="checkbox" id="c-cp-${x.k}"${x.def ? ' checked' : ''}> ${esc(x.label)}</label>`).join('')}
-        <p class="muted small">Jamais copiés : nom, e-mail, numéro, appareil, boîte vocale, compte, SDA.</p>` : ''}
-      <h4 class="side-title">Contacts personnels (facultatif)</h4>
-      <label>Fichier CSV (format d'import Wazo, ex. Migration Assistant) <input type="file" id="c-csv" accept=".csv,text/csv"></label>
-      <p class="muted small">Importés avec le mot de passe ci-dessus, juste après la création (jeton de l'utilisateur, révoqué ensuite ; rien n'est stocké).</p>
-      <h4 class="side-title">Ensuite</h4>
-      <label class="inline"><input type="checkbox" id="c-next" checked> Régler les autres paramètres du nouvel utilisateur (assistant pas à pas : services, renvois, débordements, numéro présenté, droits, groupes, horaire…)</label>
+      <section class="csec"><div class="cgrid">
+        <label class="span2">Modèle (utilisateur de référence) <select id="c-src">${opts([['', 'Aucun'], ...A.users.map((u) => [u.uuid, fullName(u) + (readLines(u)[0]?.exten ? ` (${readLines(u)[0].exten})` : '')])], src?.uuid || '')}</select></label>
+      </div><p class="muted small">Avec un modèle : licence, type de ligne et contexte repris ; réglages à copier au choix plus bas.</p></section>
+      <section class="csec"><h4>Utilisateur</h4><div class="cgrid">
+        <label>Prénom <input id="c-fn" maxlength="128"></label>
+        <label>Nom <input id="c-ln" maxlength="128"></label>
+        <label>E-mail (annuaire) <input id="c-mail" maxlength="254" spellcheck="false"></label>
+        <label>Licence <select id="c-sub">${opts(Object.entries(SUBS), src?.subscription_type ?? 1)}</select></label>
+      </div></section>
+      <section class="csec"><h4>Ligne et messagerie</h4><div class="cgrid">
+        <label class="span2">Type de ligne <select id="c-lt">${opts([['', 'Aucune (pas d\'appel ni de groupe possible)'], ...LINES.LTYPES_NEW], lt)}</select></label>
+        <label data-cl>Contexte <select id="c-cx">${opts(ictx.map((x) => [x.name, LINES.ctxText(x)]), cx0)}</select></label>
+        <label data-cl>Numéro <input id="c-num" inputmode="numeric" value="${esc(num0(cx0))}"></label>
+        <label data-cl>Appareil (ligne SIP) <select id="c-dev">${opts([['', 'Aucun'], ...LINES.freeDevices().map((d) => [d.id, [d.vendor, d.model].filter(Boolean).join(' ') + (d.mac ? ` · ${d.mac}` : '')])], '')}</select></label>
+        <label>Boîte vocale <select id="c-vm">${opts([['', 'Aucune'], ...freeVm.map((v) => [v.id, `${v.number}${v.name ? ` (${v.name})` : ''}`])], '')}</select></label>
+      </div><p class="muted small">Boîtes vocales proposées : non globales, associées à personne.</p></section>
+      <section class="csec"><h4>Compte des applications</h4>
+        <div data-acct><div class="cgrid">
+          <label>Identifiant de connexion <input id="c-login" maxlength="254" spellcheck="false" placeholder="par défaut : l'e-mail"></label>
+          <label>Mot de passe <span class="pwrow"><input id="c-pw" maxlength="64" spellcheck="false" autocomplete="new-password"><button type="button" id="c-pwgen">Générer</button></span></label>
+        </div>
+        <label class="inline cline"><input type="checkbox" id="c-en" checked> Autorisé à utiliser les applications</label></div>
+        <p class="muted small" data-noacct>Licence Voix : pas d'accès aux applications Wazo, rien à saisir. Le compte est créé fermé, comme le portail le fait pour chaque utilisateur : il servira si la licence change.</p>
+      </section>
+      ${src ? `<section class="csec"><h4>Copier depuis ${esc(fullName(src))}</h4><div class="clist">${COPY.map((x) => `<label class="inline cline"><input type="checkbox" id="c-cp-${x.k}"${x.def ? ' checked' : ''}> ${esc(x.label)}</label>`).join('')}</div>
+        <p class="muted small">Jamais copiés : nom, e-mail, numéro, appareil, boîte vocale, compte, SDA.</p></section>` : ''}
+      <section class="csec" data-acct><h4>Contacts personnels (facultatif)</h4>
+        <label>Fichier CSV au format d'import Wazo (ex. Migration Assistant) <input type="file" id="c-csv" accept=".csv,text/csv"></label>
+        <p class="muted small">Importés juste après la création avec le mot de passe ci-dessus (jeton de l'utilisateur, révoqué ensuite ; rien n'est stocké).</p></section>
+      <section class="csec"><h4>Ensuite</h4>
+        <label class="inline cline"><input type="checkbox" id="c-next" checked> Ouvrir l'assistant pour régler les autres paramètres (services, renvois, débordements, numéro présenté, droits, groupes, horaire…)</label></section>
     </div>
     <div id="m-prev" class="mprev"></div>`, async () => {
     let spec;
@@ -90,8 +95,11 @@ export function openCreate(src, deps) {
   }, 'Créer');
   $('c-pw').value = randomPw();
   $('c-pwgen').onclick = () => { $('c-pw').value = randomPw(); };
-  const showLine = () => { document.querySelector('[data-cl]').hidden = !$v('c-lt'); };
+  const showLine = () => { document.querySelectorAll('[data-cl]').forEach((x) => (x.hidden = !$v('c-lt'))); };
   $('c-lt').onchange = showLine; showLine();
+  // Licence Voix : ni accès aux applications ni contacts (connexion refusée par les applications).
+  const showAcct = () => { const voix = $v('c-sub') === '0'; document.querySelectorAll('[data-acct]').forEach((x) => (x.hidden = voix)); document.querySelector('[data-noacct]').hidden = !voix; };
+  $('c-sub').addEventListener('change', showAcct); showAcct();
   $('c-cx').onchange = () => { $('c-num').value = num0($v('c-cx')); };
   // Changer de modèle : dialogue rouvert avec ce modèle, saisie gardée.
   $('c-src').onchange = () => {
@@ -110,15 +118,17 @@ const randomPw = () => {
 async function readForm() {
   const fn = $v('c-fn').trim(), ln = $v('c-ln').trim(), mail = $v('c-mail').trim();
   const sub = Number($v('c-sub')), lt = $v('c-lt'), cx = $v('c-cx'), num = $v('c-num').trim();
-  const login = $v('c-login').trim() || mail, pw = $v('c-pw');
+  const voix = Number($v('c-sub')) === 0;
+  // Voix : compte fermé, identifiant = e-mail (sinon uuid, comme le portail), mot de passe aléatoire non affiché.
+  const login = voix ? mail : $v('c-login').trim() || mail, pw = voix ? randomPw() : $v('c-pw');
   if (!fn) throw new Error('Prénom obligatoire.');
   if (mail && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(mail)) throw new Error('E-mail (annuaire) invalide.');
   if ((sub === 1 || sub === 3) && !mail) throw new Error(`E-mail obligatoire pour la licence ${subLabel(sub)} (règle du portail).`);
   if (sub === 0 && (lt === 'webrtc' || lt === 'both')) throw new Error('Licence Voix : pas de ligne WebRTC (règle du portail).');
-  if (!login) throw new Error('Identifiant de connexion obligatoire (ou un e-mail).');
-  if (!USERNAME_RE.test(login)) throw new Error('Identifiant : 2 à 254 caractères, lettres, chiffres et - . _ ~ ! $ & \' ( ) * + , ; = % @.');
+  if (!voix && !login) throw new Error('Identifiant de connexion obligatoire (ou un e-mail).');
+  if (login && !USERNAME_RE.test(login)) throw new Error('Identifiant : 2 à 254 caractères, lettres, chiffres et - . _ ~ ! $ & \' ( ) * + , ; = % @.');
   if (!PASSWORD_RE.test(pw)) throw new Error('Mot de passe : 4 à 64 caractères, lettres, chiffres et - . _ ~ ! $ & \' ( ) * + , ; = %.');
-  if (A_users().some((u) => u._auth?.username?.toLowerCase() === login.toLowerCase())) throw new Error(`Identifiant ${login} déjà utilisé.`);
+  if (login && A_users().some((u) => u._auth?.username?.toLowerCase() === login.toLowerCase())) throw new Error(`Identifiant ${login} déjà utilisé.`);
   if (mail && A_users().some((u) => (u.email || '').toLowerCase() === mail.toLowerCase())) throw new Error(`E-mail ${mail} déjà utilisé par un autre utilisateur du tenant (unique sur tout le serveur).`);
   const lines = [];
   if (lt) {
@@ -134,9 +144,9 @@ async function readForm() {
     }
   }
   const f = document.getElementById('c-csv')?.files?.[0];
-  const csv = f ? await f.text() : '';
+  const csv = f && !voix ? await f.text() : '';
   const copy = Object.fromEntries(COPY.map((x) => [x.k, document.getElementById(`c-cp-${x.k}`)?.checked === true]));
-  return { next: document.getElementById('c-next')?.checked === true, fn, ln, mail, sub, lines, dev: $v('c-dev') || null, vm: Number($v('c-vm')) || null, login, pw, enabled: document.getElementById('c-en').checked, copy, csv, csvName: f?.name || '' };
+  return { next: document.getElementById('c-next')?.checked === true, fn, ln, mail, sub, lines, dev: $v('c-dev') || null, vm: Number($v('c-vm')) || null, login, pw, enabled: !voix && document.getElementById('c-en').checked, voix, copy, csv, csvName: f?.name || '' };
 }
 let A_users = () => [];
 
@@ -154,8 +164,8 @@ async function runCreate(spec, src, { A, reload, report, after }) {
   } catch (e) { report(`<div class="massres bad"><strong>Création refusée</strong> : ${esc(e.message)}. Rien n'a été créé.<button class="icon" data-close title="Fermer">×</button></div>`); toast('Création refusée.', 6000); return; }
   // 2. Compte des applications (comme le portail : createAuthUser).
   try {
-    await authApi('POST', '/users', { uuid: user.uuid, firstname: spec.fn, lastname: spec.ln || null, username: spec.login, password: spec.pw, email_address: spec.mail || null, enabled: spec.enabled, emails: [] });
-    steps.push(`compte des applications (identifiant ${spec.login})`);
+    await authApi('POST', '/users', { uuid: user.uuid, firstname: spec.fn, lastname: spec.ln || null, username: spec.login || user.uuid, password: spec.pw, email_address: spec.mail || null, enabled: spec.enabled, emails: [] });
+    steps.push(spec.voix ? 'compte des applications fermé (licence Voix)' : `compte des applications (identifiant ${spec.login})`);
   } catch (e) {
     let undo = '';
     try { await api('DELETE', `/users/${user.uuid}?recursive=true`); undo = 'L\'utilisateur créé a été supprimé : rien n\'est resté.'; } catch (e2) { undo = `ATTENTION : l'utilisateur ${esc(fullName(user))} est resté sans compte (suppression impossible : ${esc(e2.message)}).`; }

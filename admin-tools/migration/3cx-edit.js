@@ -2,19 +2,19 @@
 // Modèle et règles : 3cx-draft.js. Chaque modification est enregistrée dans le
 // navigateur (brouillon par fichier et date de sauvegarde) ; rien n'est écrit
 // dans Wazo depuis ces tableaux.
-import { $, esc, toast, helpButton, helpBox, confirmModal, downloadJson } from '../common/core.js?v=0.40.44';
-import { I } from './inventory.js?v=0.40.44';
+import { $, esc, toast, helpButton, helpBox, confirmModal, downloadJson } from '../common/core.js?v=0.40.45';
+import { I } from './inventory.js?v=0.40.45';
 import {
   GROUP_STRATEGIES, MODES, HUNT_TARGETS, LICENCES, AUTH_METHODS, effectiveUsername, upgradeDraft, saveDraft, clearDraft, buildDraft, acceptDraft, userBy, userName, imported,
   destLabel, destProblem, draftIssues, usersCsv, blfRows, devicesCsv, deviceDesc, macWazo, macValid, tenantIssues,
   LINE_MODES, linesOf, VM_LANGS, vmEmail, upperName, upgradeSchedules, pastHolidays, didWazo,
-} from './3cx-draft.js?v=0.40.44';
-import { setWizard, wizardTab, wizardChange, wizardClick, wizardDone, wizardTotal } from './3cx-wizard.js?v=0.40.44';
-import { unitCfg, unitLabels, autoRanges, RANGE_KEYS, rangeIssues } from './3cx-sites.js?v=0.40.44';
-import { rangesText } from './multisite.js?v=0.40.44';
-import { WAZO_FIELDS, tagsOf, tagLabel, tagChecked, ensurePhonebook, phonebookName, phonebookIssues, companyContacts, personalCsv, toWazoContact } from './3cx-phonebook.js?v=0.40.44';
-import { SORTS, CATEGORY_RE, soundUsages, ensureSounds, mohLabel, soundCategory, FILES, keyOf, loaded, addFiles, addFileAs, wazoName } from './3cx-sounds.js?v=0.40.44';
-import { DEPT_MODES, deptLabel, ensureDepts, deptObjects, unitOf, unitList, setDeptMode, moveObject } from './3cx-depts.js?v=0.40.44';
+} from './3cx-draft.js?v=0.40.45';
+import { setWizard, wizardTab, wizardChange, wizardClick, wizardDone, wizardTotal } from './3cx-wizard.js?v=0.40.45';
+import { unitCfg, unitLabels, autoRanges, RANGE_KEYS, rangeIssues } from './3cx-sites.js?v=0.40.45';
+import { rangesText } from './multisite.js?v=0.40.45';
+import { WAZO_FIELDS, tagsOf, tagLabel, tagChecked, ensurePhonebook, phonebookName, phonebookIssues, companyContacts, personalCsv, toWazoContact, csvKeys } from './3cx-phonebook.js?v=0.40.45';
+import { SORTS, CATEGORY_RE, soundUsages, ensureSounds, mohLabel, soundCategory, FILES, keyOf, loaded, addFiles, addFileAs, wazoName } from './3cx-sounds.js?v=0.40.45';
+import { DEPT_MODES, deptLabel, ensureDepts, deptObjects, unitOf, unitList, setDeptMode, moveObject } from './3cx-depts.js?v=0.40.45';
 
 const E = { d: null, m: null, file: '', tab: 'users', sel: { users: new Set(), dids: new Set(), vms: new Set() }, q: '', onReset: null };
 export const TABS = [
@@ -728,7 +728,7 @@ function onClick(e, root) {
     case 'pb-csv': return download(`contacts-personnels-${b.dataset.o}-${base()}.csv`, personalCsv(d, b.dataset.o));
     case 'pb-csv-all': {
       const rows = d.phonebook.personal.filter((c) => c.import).map((c) => ({ poste: c.owner, ...toWazoContact(d, c) }));
-      const keys = ['poste', ...Object.keys(WAZO_FIELDS).filter((k) => rows.some((r) => r[k]))];
+      const keys = ['poste', ...csvKeys(rows)];
       const qq = (s) => `"${String(s ?? '').replace(/"/g, '""')}"`;
       return download(`contacts-personnels-${base()}.csv`, '﻿' + [keys.join(','), ...rows.map((r) => keys.map((k) => qq(r[k])).join(','))].join('\r\n'));
     }

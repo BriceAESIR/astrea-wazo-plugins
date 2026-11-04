@@ -76,3 +76,21 @@ label.inline.batch input { margin-top: 2px; flex: none; }
 .memb label.inline { display: flex; margin: 4px 0; }
 .diff.memb select { height: 28px; font-size: .8125rem; }
 .diff.memb td { vertical-align: middle; padding-top: 4px; padding-bottom: 4px; }
+
+/* Création d'utilisateur : sections encadrées, champs sur deux colonnes,
+   une case par ligne (retour de Brice : « trop condensé, pas lisible »). */
+.modal-box:has(.createform) { max-width: 760px; }
+.createform .csec { border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 16px 8px; margin: 0 0 16px; }
+.createform .csec h4 { margin: 0 0 12px; font-size: .75rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .08333em; }
+.createform .cgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 20px; }
+.createform .cgrid .span2 { grid-column: 1 / -1; }
+.createform .cgrid label, .createform .csec > label:not(.inline) { margin: 0 0 8px; }
+.createform .cgrid select, .createform .cgrid input { width: 100%; }
+.createform .clist { display: grid; gap: 2px; }
+.createform label.inline.cline { display: flex; align-items: flex-start; gap: 8px; margin: 6px 0; line-height: 1.4; }
+.createform label.inline.cline input { margin-top: 3px; flex: none; }
+.createform .pwrow { display: flex; gap: 8px; align-items: center; }
+.createform .pwrow input { flex: 1; min-width: 0; }
+.createform .csec > p.small { margin: 4px 0 8px; }
+.createform [hidden] { display: none !important; }
+@media (max-width: 560px) { .createform .cgrid { grid-template-columns: 1fr; } }

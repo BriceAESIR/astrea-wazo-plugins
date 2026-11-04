@@ -19,7 +19,7 @@
 //    d'utilisateur : impossible avec le jeton de l'admin. D'où l'export CSV par
 //    poste, à importer par l'utilisateur (ou un plugin d'appli Wazo avec son jeton).
 // Supposé : profil du site nommé « default » ; colonnes affichées par les postes.
-import { S, ApiError } from '../common/core.js?v=0.40.44';
+import { S, ApiError } from '../common/core.js?v=0.40.45';
 
 // Champs Wazo proposés (clés des contacts dird).
 export const WAZO_FIELDS = {
@@ -59,10 +59,35 @@ export const phonebookName = (d) => d.phonebook?.name || `${d.write?.clientId ||
 // Contact Wazo d'après la correspondance ; numéro principal à défaut : bureau, domicile, mobile.
 export function toWazoContact(d, c) {
   const out = {};
-  for (const [tag, v] of Object.entries(c.raw || {})) { const k = d.phonebook.map[tag]; if (!k || !v) continue; const val = NUMERIC.has(k) ? num(v) : v.trim(); if (val && !out[k]) out[k] = val; }
-  if (!out.number) out.number = out.business || out.home || out.mobile || out.mobile2 || '';
-  if (!out.number) delete out.number;
+  // Rien n'est perdu (demande de Brice, 04/11/2026) : deux champs 3CX vers le même champ Wazo →
+  // le second va dans « champ_2 », « champ_3 »…
+  for (const [tag, v] of Object.entries(c.raw || {})) {
+    // Balise absente de la correspondance (contact ajouté ou modifié) : champ connu, sinon son nom 3CX.
+    const k = tag in d.phonebook.map ? d.phonebook.map[tag] : (KNOWN[tag]?.[1] || tag); if (!k || !v) continue;
+    const val = NUMERIC.has(k) ? num(v) : v.trim(); if (!val) continue;
+    let key = k; for (let n = 2; out[key] && out[key] !== val; n++) key = `${k}_${n}`;
+    out[key] = val;
+  }
+  // Source « personal » créée par Wazo pour chaque tenant (wazo-dird config_service, lu le
+  // 04/11/2026) : recherche sur firstname, lastname, number, mobile, fax ; affichage {number},
+  // {mobile} ; identification de l'appelant sur number et mobile. Les champs cherchés vides sont
+  // remplis à partir des autres numéros (copie : l'original reste enregistré sous son nom).
+  if (!out.number) out.number = out.business || out.home || out.business2 || out.other || '';
+  if (!out.mobile) out.mobile = out.mobile2 || '';
+  if (!out.fax) out.fax = out.homefax || '';
+  for (const k of ['number', 'mobile', 'fax']) if (!out[k]) delete out[k];
   return out;
+}
+// Colonnes d'une source d'annuaire : celles de la source modèle du site, plus tous les champs
+// numéros du carnet, pour que chacun soit cherché et identifié à l'appel.
+export function sourceColumns(model) {
+  const all = Object.keys(WAZO_FIELDS).filter((k) => NUMERIC.has(k));
+  const uniq = (l) => [...new Set(l)];
+  return {
+    searched_columns: uniq([...(model?.searched_columns || []), ...DEFAULT_COLUMNS.searched_columns, ...all]),
+    first_matched_columns: uniq([...(model?.first_matched_columns || []), ...all.filter((k) => !['fax', 'homefax', 'pager'].includes(k))]),
+    format_columns: { ...DEFAULT_COLUMNS.format_columns, ...(model?.format_columns || {}) },
+  };
 }
 // Contacts écrits dans le carnet de la société (et personnels si l'option est cochée), sans doublon.
 export function companyContacts(d) {
@@ -79,13 +104,15 @@ export function phonebookIssues(d) {
     for (const k of Object.keys(c).filter((x) => NUMERIC.has(x))) if (!/^\+?\d{2,}$/.test(c[k])) out.push({ sev: 'warn', text: `${who} : ${WAZO_FIELDS[k]} « ${c[k]} » inhabituel.` });
   }
   const by = {}; for (const [t, k] of Object.entries(d.phonebook.map)) if (k) (by[k] ||= []).push(t);
-  for (const [k, tags] of Object.entries(by)) if (tags.length > 1) out.push({ sev: 'warn', text: `${WAZO_FIELDS[k]} reçoit plusieurs champs 3CX (${tags.map(tagLabel).join(', ')}) : seul le premier rempli est gardé.` });
+  for (const [k, tags] of Object.entries(by)) if (tags.length > 1) out.push({ sev: 'warn', text: `${WAZO_FIELDS[k]} reçoit plusieurs champs 3CX (${tags.map(tagLabel).join(', ')}) : les suivants vont dans « ${k}_2 », « ${k}_3 » (rien n'est perdu, mais seuls les champs Wazo habituels sont cherchés).` });
   return out;
 }
+// Colonnes d'un CSV : champs Wazo connus dans l'ordre, puis les autres (« mobile_2 »…).
+export const csvKeys = (rows) => { const seen = new Set(rows.flatMap((r) => Object.keys(r))); return [...Object.keys(WAZO_FIELDS).filter((k) => seen.has(k)), ...[...seen].filter((k) => !WAZO_FIELDS[k] && k !== 'poste').sort()]; };
 // CSV au format de POST /personal/import de wazo-dird : en-tête = clés, « , », guillemets, CRLF.
 export function personalCsv(d, owner = null) {
   const rows = d.phonebook.personal.filter((c) => c.import && (owner == null || c.owner === owner)).map((c) => toWazoContact(d, c)).filter((w) => Object.keys(w).length);
-  const keys = Object.keys(WAZO_FIELDS).filter((k) => rows.some((r) => r[k]));
+  const keys = csvKeys(rows);
   const q = (s) => `"${String(s ?? '').replace(/"/g, '""')}"`;
   return [keys.join(','), ...rows.map((r) => keys.map((k) => q(r[k])).join(','))].join('\r\n');
 }

@@ -12,13 +12,13 @@
 // Toujours : relire juste avant d'écrire, ne rien écrire si c'est identique,
 // une seule écriture par objet.
 // Appels liés au tenant des données chargées (tapi, model.js : arrêt si le portail change de tenant).
-import { M, tapi as api } from './model.js?v=0.40.44';
-import { groupCfgOf, applyGroupCfg, GROUP_FIELDS } from './group-editor.js?v=0.40.44';
-import { queueCfgOf, applyQueueCfg, QUEUE_FIELDS, optionsList } from './queue-editor.js?v=0.40.44';
-import { ivrCfgOf, applyIvrCfg, IVR_FIELDS } from './ivr-editor.js?v=0.40.44';
-import { sbCfgOf, applySbCfg, SB_FIELDS } from './sb-editor.js?v=0.40.44';
-import { incallCfgOf, applyIncallCfg, INCALL_FIELDS, userCfgOf, applyUserCfg, USER_FIELDS, vmCfgOf, applyVmCfg, VM_FIELDS, confCfgOf, applyConfCfg, CONF_FIELDS, schedCfgOf, applySchedCfg, SCHED_FIELDS } from './obj-editors.js?v=0.40.44';
-import { outcallCfgOf, applyOutcallCfg, OUTCALL_FIELDS } from './outcall-editor.js?v=0.40.44';
+import { M, tapi as api } from './model.js?v=0.40.45';
+import { groupCfgOf, applyGroupCfg, GROUP_FIELDS } from './group-editor.js?v=0.40.45';
+import { queueCfgOf, applyQueueCfg, QUEUE_FIELDS, optionsList } from './queue-editor.js?v=0.40.45';
+import { ivrCfgOf, applyIvrCfg, IVR_FIELDS } from './ivr-editor.js?v=0.40.45';
+import { sbCfgOf, applySbCfg, SB_FIELDS } from './sb-editor.js?v=0.40.45';
+import { incallCfgOf, applyIncallCfg, INCALL_FIELDS, userCfgOf, applyUserCfg, USER_FIELDS, vmCfgOf, applyVmCfg, VM_FIELDS, confCfgOf, applyConfCfg, CONF_FIELDS, schedCfgOf, applySchedCfg, SCHED_FIELDS } from './obj-editors.js?v=0.40.45';
+import { outcallCfgOf, applyOutcallCfg, OUTCALL_FIELDS } from './outcall-editor.js?v=0.40.45';
 
 // Réglages « simples » (obj-editors.js) : un PUT partiel des champs modifiés.
 const SIMPLE = {

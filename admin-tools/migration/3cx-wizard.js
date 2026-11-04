@@ -11,16 +11,16 @@
 // de l'assistant France de Call Flow ; lues dans le code, testées sur faux tenant). Les phases
 // Personnes, Routage et Finitions sont planifiées (lecture seule) ; leur
 // écriture arrive aux lots 5b-5d.
-import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.44';
-import { I, sameTenant } from './inventory.js?v=0.40.44';
-import { buildExport, exportFileName } from './export.js?v=0.40.44';
-import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText, didWazo } from './3cx-draft.js?v=0.40.44';
+import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.45';
+import { I, sameTenant } from './inventory.js?v=0.40.45';
+import { buildExport, exportFileName } from './export.js?v=0.40.45';
+import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText, didWazo } from './3cx-draft.js?v=0.40.45';
 import {
   SITE_MODES, FR_FAMILIES, FR_FORMATS, BLOCK_118, defaultSite, defaultOut, clientPatterns, unitDids, rangeIssues, occupancy, placements, unitLabels, unitCfg, futureOf, siteChecks, routeText, newRanges, multi as multiSites,
-} from './3cx-sites.js?v=0.40.44';
-import { unitList, unitOf, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.44';
-import { mohLabel, soundCategory, loaded, wazoName, putBinary, CATEGORY_RE } from './3cx-sounds.js?v=0.40.44';
-import { phonebookName, companyContacts, DEFAULT_COLUMNS, dird } from './3cx-phonebook.js?v=0.40.44';
+} from './3cx-sites.js?v=0.40.45';
+import { unitList, unitOf, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.45';
+import { mohLabel, soundCategory, loaded, wazoName, putBinary, CATEGORY_RE } from './3cx-sounds.js?v=0.40.45';
+import { phonebookName, companyContacts, sourceColumns, dird } from './3cx-phonebook.js?v=0.40.45';
 
 const W = { d: null, m: null, t: null, busy: false, msg: null, at: null };
 export function setWizard(d, m) { W.d = d; W.m = m; W.t = null; W.msg = null; ensureState(); }
@@ -583,7 +583,7 @@ async function foundationOps(t) {
         undo.unshift({ api: 'dird', method: 'DELETE', path: `/phonebooks/${pb.uuid}` });
         for (const c of contacts) { guard(); await dird('POST', `/phonebooks/${pb.uuid}/contacts`, c); }
         const model = ((await dird('GET', '/backends/phonebook/sources'))?.items || [])[0];
-        const cols = model ? { searched_columns: model.searched_columns || [], first_matched_columns: model.first_matched_columns || [], format_columns: model.format_columns || {} } : DEFAULT_COLUMNS;
+        const cols = sourceColumns(model);
         const src = await dird('POST', '/backends/phonebook/sources', { name, phonebook_uuid: pb.uuid, ...cols });
         undo.unshift({ api: 'dird', method: 'DELETE', path: `/backends/phonebook/sources/${src.uuid}` });
         const profs = (await dird('GET', '/profiles'))?.items || [];
