@@ -229,6 +229,11 @@ export function parse3cx(xmlText) {
   const param = (n) => { const p = [...root.querySelectorAll(':scope > Parameters > Parameter')].find((x) => txt(x, 'Name') === n); return p ? txt(p, 'Value') : ''; };
   m.moh = param('MUSICONHOLDFILE').split('/').pop();
   addPrompt(m.moh);
+  // Autres musiques des paramètres généraux (lues dans deux sauvegardes v20) : liste
+  // MUSICONHOLDFILE1-9, appels parqués, conférences, transferts depuis un SVI.
+  const MOH_PARAMS = [...Array.from({ length: 9 }, (_, i) => [`MUSICONHOLDFILE${i + 1}`, `musique d'attente n° ${i + 2} de 3CX`]), ['PARK_MOH_SOURCE', 'musique des appels parqués'], ['CONFPLACE_MOH_SOURCE', 'musique d\'attente des conférences'], ['IVR_MOH_SOURCE', 'musique pendant un transfert depuis un SVI']];
+  m.mohSources = MOH_PARAMS.map(([k, what]) => ({ file: param(k).split('/').pop(), what })).filter((x) => x.file);
+  for (const x of m.mohSources) addPrompt(x.file);
   for (const o of [...m.ringGroups, ...m.queues, ...m.ivrs]) for (const r of Object.values(o.routes)) addPrompt(r.prompt);
   m.prompts = [...m.prompts].sort();
   m.defaultGroup = m.groups.find((g) => g.name === '__DEFAULT__') || null;

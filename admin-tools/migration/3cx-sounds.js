@@ -15,18 +15,20 @@
 //    (sound/storage.py) ; DELETE /sounds/{catégorie} supprime ses fichiers.
 // Musique d'attente par défaut : option moh_suggest du modèle SIP global, comme
 // le Wizard de déploiement de Wazo (lu dans son code) ; effet exact supposé.
-import { S, ApiError } from '../common/core.js?v=0.40.38';
+import { S, ApiError } from '../common/core.js?v=0.40.39';
 
 export const CATEGORY_RE = /^[a-zA-Z0-9][-_.a-zA-Z0-9]+$/;
 export const SORTS = { alphabetical: 'Ordre alphabétique', random: 'Aléatoire', random_start: 'Départ aléatoire' };
 const base = (f) => String(f || '').split('/').pop().replace(/\.(wav|mp3)$/i, '');
 export const wazoName = (f) => base(f).normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-zA-Z0-9_-]+/g, '_').replace(/^_+|_+$/g, '') || 'son';
 
+export const SYSTEM_3CX = /^onhold\.wav$/i;
 const ROUTE_FR = { closed: 'fermé', holiday: 'férié', break: 'pause' };
 // Où chaque fichier 3CX sert : [{ file, uses: [{ kind: moh|sound, what }] }].
 export function soundUsages(m) {
   const by = new Map(); const use = (f, kind, what) => { if (!f) return; const k = String(f).split('/').pop(); if (!/\.(wav|mp3)$/i.test(k)) return; if (!by.has(k)) by.set(k, []); by.get(k).push({ kind, what }); };
   use(m.moh, 'moh', 'musique d\'attente par défaut de 3CX');
+  for (const x of m.mohSources || []) use(x.file, 'moh', x.what);
   for (const q of m.queues) { use(q.onHold, 'moh', `musique de la file ${q.number} ${q.name}`); use(q.intro, 'sound', `message d'intro de la file ${q.number}`); }
   for (const v of m.ivrs.filter((x) => !x.system)) use(v.prompt, 'sound', `message du SVI ${v.number} ${v.name}`);
   for (const o of [...m.ringGroups, ...m.queues, ...m.ivrs]) for (const [k, r] of Object.entries(o.routes || {})) if (r?.prompt) use(r.prompt, 'sound', `message ${ROUTE_FR[k] || k} de ${o.number} ${o.name}`);
@@ -37,12 +39,15 @@ export function soundUsages(m) {
 // Réglages du brouillon : deux musiques d'attente (procédure de Brice : Attente,
 // Prédécroché), une catégorie de sons, un choix par fichier.
 export function ensureSounds(d, m) {
-  if (d.sounds) return d;
-  const files = {};
-  // Musique dont le nom dit « prédécroché » : dans la musique Prédécroché, sinon dans Attente.
-  const pre = (f) => /pr[eé]d[eé]croch/i.test(String(f).normalize('NFD').replace(/[̀-ͯ]/g, ''));
-  for (const x of soundUsages(m)) files[x.file] = { to: x.uses.some((u) => u.kind === 'moh') ? (pre(x.file) ? 'moh:predecroche' : 'moh:attente') : 'sound' };
-  d.sounds = { moh: [{ key: 'attente', label: '', sort: 'alphabetical' }, { key: 'predecroche', label: '', sort: 'alphabetical' }], defaultMoh: 'attente', category: '', files };
+  // Musique dont le nom dit « prédécroché » (« Predecroche », « PRE_DECROCHE », « PRE_DEC ») :
+  // dans la musique Prédécroché, sinon dans Attente. Lettres seules, sans accent, comparées.
+  const pre = (f) => /predec/i.test(String(f).normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z]/gi, ''));
+  // onhold.wav : fichier fourni par 3CX lui-même, pas par le client : non repris par défaut.
+  const to = (x) => (SYSTEM_3CX.test(x.file) ? 'skip' : x.uses.some((u) => u.kind === 'moh') ? (pre(x.file) ? 'moh:predecroche' : 'moh:attente') : 'sound');
+  d.sounds ||= { moh: [{ key: 'attente', label: '', sort: 'alphabetical' }, { key: 'predecroche', label: '', sort: 'alphabetical' }], defaultMoh: 'attente', category: '', files: {} };
+  // Fichiers cités par la sauvegarde et pas encore dans le brouillon (brouillon d'une version
+  // précédente) : ajoutés avec leur rangement par défaut, sans toucher aux choix déjà faits.
+  for (const x of soundUsages(m)) d.sounds.files[x.file] ||= { to: to(x) };
   return d;
 }
 const DEFAULT_MOH_LABEL = { attente: 'Attente', predecroche: 'Prédécroché' };
