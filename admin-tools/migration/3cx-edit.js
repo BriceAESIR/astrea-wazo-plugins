@@ -2,21 +2,22 @@
 // Modèle et règles : 3cx-draft.js. Chaque modification est enregistrée dans le
 // navigateur (brouillon par fichier et date de sauvegarde) ; rien n'est écrit
 // dans Wazo depuis ces tableaux.
-import { $, esc, toast, helpButton, helpBox, confirmModal, downloadJson } from '../common/core.js?v=0.40.33';
-import { I } from './inventory.js?v=0.40.33';
+import { $, esc, toast, helpButton, helpBox, confirmModal, downloadJson } from '../common/core.js?v=0.40.34';
+import { I } from './inventory.js?v=0.40.34';
 import {
   GROUP_STRATEGIES, MODES, HUNT_TARGETS, LICENCES, AUTH_METHODS, effectiveUsername, upgradeDraft, saveDraft, clearDraft, buildDraft, acceptDraft, userBy, userName, imported,
   destLabel, destProblem, draftIssues, usersCsv, blfRows, devicesCsv, deviceDesc, macWazo, macValid, tenantIssues,
-  LINE_MODES, linesOf, VM_LANGS, vmEmail, upperName,
-} from './3cx-draft.js?v=0.40.33';
-import { setWizard, wizardTab, wizardChange, wizardClick, wizardDone, wizardTotal } from './3cx-wizard.js?v=0.40.33';
-import { DEPT_MODES, deptLabel, ensureDepts, deptObjects, unitOf, unitList, setDeptMode, moveObject } from './3cx-depts.js?v=0.40.33';
+  LINE_MODES, linesOf, VM_LANGS, vmEmail, upperName, upgradeSchedules, pastHolidays, didWazo,
+} from './3cx-draft.js?v=0.40.34';
+import { setWizard, wizardTab, wizardChange, wizardClick, wizardDone, wizardTotal } from './3cx-wizard.js?v=0.40.34';
+import { unitCfg, unitLabels } from './3cx-sites.js?v=0.40.34';
+import { DEPT_MODES, deptLabel, ensureDepts, deptObjects, unitOf, unitList, setDeptMode, moveObject } from './3cx-depts.js?v=0.40.34';
 
 const E = { d: null, m: null, file: '', tab: 'users', sel: { users: new Set(), dids: new Set(), vms: new Set() }, q: '', onReset: null };
 export const TABS = [
   ['fiche', 'Fiche 3CX'], ['depts', 'Départements'], ['users', 'Utilisateurs'], ['vms', 'Messageries'], ['devices', 'Appareils'], ['hunts', 'Groupes et files'], ['ivrs', 'SVI'], ['dids', 'SDA'], ['scheds', 'Horaires'], ['checks', 'Contrôles'], ['exports', 'Exports'], ['write', 'Écriture'],
 ];
-export function setDraft(d, m, file, onReset) { E.d = ensureDepts(upgradeDraft(d), m); E.m = m; E.file = file; E.onReset = onReset; E.sel.users.clear(); E.sel.dids.clear(); E.sel.vms.clear(); E.review = null; setWizard(E.d, m); }
+export function setDraft(d, m, file, onReset) { E.d = ensureDepts(upgradeSchedules(upgradeDraft(d), m), m); E.m = m; E.file = file; E.onReset = onReset; E.sel.users.clear(); E.sel.dids.clear(); E.sel.vms.clear(); E.review = null; setWizard(E.d, m); }
 export const draft = () => E.d;
 // Contextes cibles (choisis dans Exports, gardés dans le brouillon) : ceux du
 // tenant ouvert ; à défaut, le premier interne / entrant du tenant.
@@ -74,7 +75,7 @@ export function renderTab(root, tab) {
   E.tab = tab;
   // Un seul défilement : celui de la page (#workbench), gardé d'un rendu à l'autre.
   const wb = document.getElementById('workbench'); const keepWb = wb ? [wb.scrollTop, wb.scrollLeft] : null;
-  const keep = [...root.querySelectorAll('.x3-edit-wrap')].map((w) => [w.scrollTop, w.scrollLeft]);
+  const keep = [...root.querySelectorAll('.x3-edit-wrap')].map((w) => w.x3left || 0);
   const opts = destOptions();
   const html = { depts: deptsTab, users: usersTab, vms: vmsTab, devices: devicesTab, hunts: huntsTab, ivrs: ivrsTab, dids: didsTab, scheds: schedsTab, checks: checksTab, exports: exportsTab, write: wizardTab }[tab]?.(opts) || '';
   root.innerHTML = html;
@@ -88,11 +89,42 @@ export function renderTab(root, tab) {
     if (![...s.options].some((o) => o.value === s.dataset.val)) s.insertAdjacentHTML('beforeend', `<option value="${esc(s.dataset.val)}">${esc(s.dataset.label)}</option>`);
     s.value = s.dataset.val;
   }
-  root.querySelectorAll('.x3-edit-wrap').forEach((w, i) => { if (keep[i]) [w.scrollTop, w.scrollLeft] = keep[i]; });
+  root.querySelectorAll('.x3-edit-wrap').forEach((w, i) => hscroll(w, keep[i] || 0));
   if (keepWb) [wb.scrollTop, wb.scrollLeft] = keepWb;
   root.onchange = (e) => onChange(e, root);
   root.onclick = (e) => onClick(e, root);
   root.oninput = (e) => { if (e.target.id === 'x3e-q') { E.q = e.target.value; renderTab(root, tab); const q = $('x3e-q'); q.focus(); q.setSelectionRange(q.value.length, q.value.length); } };
+}
+
+// Tableau plus large que l'écran (retour de Brice, 04/11/2026 : en demi-écran, la
+// barre horizontale n'était qu'en bas de la page) : le tableau est coupé à la
+// largeur de la page (overflow: clip, qui ne crée pas de zone de défilement :
+// l'en-tête reste collé en haut), décalé par translateX, et piloté par sa propre
+// barre collée en bas de l'écran. Molette avec Maj, ou glissement horizontal,
+// et champ qui prend le focus : la barre suit.
+function hscroll(wrap, left = 0) {
+  const table = wrap.querySelector('table'); if (!table) return;
+  const bar = document.createElement('div'); bar.className = 'x3-hbar'; bar.innerHTML = '<div></div>';
+  wrap.after(bar);
+  const fit = () => {
+    const over = table.offsetWidth - wrap.clientWidth;
+    bar.hidden = over <= 1; bar.firstChild.style.width = `${table.offsetWidth}px`;
+    if (over <= 1) { bar.scrollLeft = 0; table.style.transform = ''; wrap.x3left = 0; }
+  };
+  const move = () => { wrap.x3left = bar.scrollLeft; table.style.transform = bar.scrollLeft ? `translateX(${-bar.scrollLeft}px)` : ''; };
+  bar.addEventListener('scroll', move);
+  wrap.addEventListener('wheel', (e) => {
+    if (bar.hidden) return;
+    const dx = e.shiftKey ? (e.deltaX || e.deltaY) : (Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : 0);
+    if (!dx) return; e.preventDefault(); bar.scrollLeft += dx;
+  }, { passive: false });
+  wrap.addEventListener('focusin', (e) => {
+    if (bar.hidden) return;
+    const r = e.target.getBoundingClientRect(); const w = wrap.getBoundingClientRect();
+    if (r.right > w.right) bar.scrollLeft += r.right - w.right + 24; else if (r.left < w.left) bar.scrollLeft -= w.left - r.left + 24;
+  });
+  new ResizeObserver(fit).observe(wrap);
+  fit(); bar.scrollLeft = left; move();
 }
 
 const USER_HELP = 'Une ligne par poste 3CX. « Vérifier un par un » ouvre la fiche de chaque utilisateur (nom, e-mail, licence, connexion, renvois, appareil) avec ses problèmes : « Valider et suivant » le marque vérifié. Licence : à choisir pour chacun (aucune valeur par défaut : les licences sont décomptées par le portail). Identifiant de connexion : vide = l\'e-mail, comme l\'import Wazo. Méthode de connexion et accès aux applications ne passent pas par le CSV : à régler après l\'import. Reprise : utilisateur Wazo (ligne SIP + numéro), messagerie seule (boîte vocale sans utilisateur, pour les répondeurs) ou non repris. Les noms en italique sont déduits de l\'e-mail. Sonnerie : durée avant le débordement « pas de réponse » (ring_seconds). Renvois du profil 3CX « Disponible » → débordements de l\'utilisateur Wazo (pas de réponse, occupé, indisponible). « corrigé » : un renvoi vers un numéro du client a été remplacé par sa destination. Touches : reprendre les BLF de ce poste. Lignes (fiche « Vérifier un par un » ou action groupée) : en Auto, une ligne SIP pour le téléphone et, si les applications sont autorisées hors licence Voix, une ligne WebRTC au même numéro ; identifiant d\'authentification de chaque ligne = nom de son endpoint, comme l\'import de Wazo. Messagerie : réglages dans l\'onglet Messageries. Cochez des lignes pour une modification groupée.';
@@ -196,6 +228,17 @@ function deptsTab() {
   if (!d.depts?.length) return `${intro('depts', 'Départements', DEPT_HELP)}<p class="muted">Aucun département dans cette sauvegarde.</p>`;
   const units = unitList(d);
   const opt = (v, l, cur) => `<option value="${esc(v)}" ${v === cur ? 'selected' : ''}>${esc(l)}</option>`;
+  // Noms des futurs contextes (demande de Brice, 04/11/2026), mêmes réglages que l'onglet Écriture :
+  // un jeu par département « propre » (plusieurs), ou celui du client (un seul, mode « nouveau contexte »).
+  const many = units.length > 1;
+  const ctxNames = (k) => {
+    const u = units.find((y) => y.key === k); if (!u || (!many && k !== units[0].key)) return '<span class="muted small">—</span>';
+    const cfg = many ? unitCfg(d, k) : d.write?.site; if (!cfg) return '';
+    const L = unitLabels(d, { key: k, label: u.label });
+    if (cfg.created) return `<span class="small">créés : ${esc(cfg.created.ctxName)}, ${esc(cfg.created.outName)}</span>`;
+    return `<input data-ctxname="${esc(k)}|newLabel" value="${esc(cfg.newLabel || '')}" placeholder="${esc(L.ctx)}" class="x3-mail" title="Contexte interne">
+      <input data-ctxname="${esc(k)}|outLabel" value="${esc(cfg.outLabel || '')}" placeholder="${esc(L.out)}" class="x3-mail" title="Contexte sortant">${many ? '' : '<div class="muted small">si « nouveau contexte » (onglet Écriture)</div>'}`;
+  };
   const count = (k) => { const o = deptObjects(d, k); return [`${o.users.filter((u) => u.mode === 'user').length} postes`, `${o.hunts.length} groupes / files`, `${o.ivrs.length} SVI`, `${o.dids.length} SDA`].join(', '); };
   const rows = d.depts.map((x) => `<tr class="${x.mode === 'skip' ? 'x3-off' : ''}">
     <td><strong>${esc(deptLabel(x.key))}</strong><div class="muted small">${esc(x.number || '')}</div></td>
@@ -205,6 +248,7 @@ function deptsTab() {
     <td class="small">${esc(count(x.key))}</td>
     <td><select data-dept-mode="${esc(x.key)}">${Object.entries(DEPT_MODES).map(([k, l]) => opt(k, l, x.mode)).join('')}</select>
       ${x.mode === 'merge' ? `<select data-dept-into="${esc(x.key)}">${d.depts.filter((y) => y.key !== x.key && y.mode === 'own').map((y) => opt(y.key, `dans ${deptLabel(y.key)}`, x.into)).join('') || '<option value="">aucun département « propre »</option>'}</select>` : ''}</td>
+    <td>${ctxNames(x.key)}</td>
   </tr>`).join('');
   const deptSel = (kind, n, cur) => `<select data-move="${kind}|${esc(n)}">${d.depts.map((y) => opt(y.key, deptLabel(y.key), cur)).join('')}</select>`;
   const objs = [
@@ -216,7 +260,7 @@ function deptsTab() {
   const orows = objs.map(([kind, n, l, type, o]) => { const u = unitOf(d, o); return `<tr class="${u ? '' : 'x3-off'}"><td>${esc(l)}</td><td class="small">${esc(type)}</td><td>${deptSel(kind, n, o.dept)}${o.deptAlso ? `<div class="x3-warn small">aussi dans ${esc(o.deptAlso.join(', '))} (3CX)</div>` : ''}${o.deptBy ? `<div class="muted small">${DEPT_BY[o.deptBy]}</div>` : ''}</td><td class="small">${u ? esc(u === '_' ? 'jeu unique' : deptLabel(u)) : '<span class="muted">non importé ici</span>'}</td></tr>`; }).join('');
   return `${intro('depts', 'Départements', DEPT_HELP, `<input id="x3e-q" type="search" placeholder="Filtrer les objets" value="${esc(E.q)}" class="x3-q">`)}
     <p class="small">${units.length > 1 ? `${units.length} jeux de contextes Wazo : ${units.map((u) => esc(u.label)).join(', ')}.` : 'Un seul jeu de contextes Wazo pour tout le client.'}</p>
-    <div class="x3-edit-wrap"><table class="diff x3-edit">${head([['Département'], ['Trunk 3CX', 'Passerelle de la règle sortante qui vise ce département'], ['Horaires'], ['Présence visible', 'GLOBALLY_VISIBLE : présence visible hors du département'], ['Objets rattachés'], ['Dans Wazo']])}<tbody>${rows}</tbody></table></div>
+    <div class="x3-edit-wrap"><table class="diff x3-edit">${head([['Département'], ['Trunk 3CX', 'Passerelle de la règle sortante qui vise ce département'], ['Horaires'], ['Présence visible', 'GLOBALLY_VISIBLE : présence visible hors du département'], ['Objets rattachés'], ['Dans Wazo'], ['Futurs contextes', 'Nom du contexte interne et du contexte sortant créés pour ce jeu (vide : nom proposé, en gris)']])}<tbody>${rows}</tbody></table></div>
     <h4 class="x3-h">Rattachement des objets</h4>
     <div class="x3-edit-wrap"><table class="diff x3-edit">${head([['Objet'], ['Type'], ['Département'], ['Jeu de contextes Wazo']])}<tbody>${orows || '<tr><td colspan="4" class="muted">Aucun objet.</td></tr>'}</tbody></table></div>`;
 }
@@ -358,7 +402,7 @@ function didsTab(opts) {
     const p = `dids.${i}`;
     return `<tr class="${r.import ? '' : 'x3-off'}${E.sel.dids.has(i) ? ' sel' : ''}">
       <td><input type="checkbox" data-sel="dids" data-i="${i}" ${E.sel.dids.has(i) ? 'checked' : ''}></td>
-      <td>${esc(r.did)}<div class="muted small">${esc(r.name || '')}</div></td><td class="x3-c">${check(`${p}.import`, 'Reprendre')}</td>
+      <td>${esc(didWazo(r.did))}<div class="muted small">${didWazo(r.did) !== r.did ? `${esc(r.did)} dans 3CX` : ''}${r.name ? `${didWazo(r.did) !== r.did ? ' · ' : ''}${esc(r.name)}` : ''}</div></td><td class="x3-c">${check(`${p}.import`, 'Reprendre')}</td>
       <td>${destCell(`${p}.dest`, opts)}</td>
       <td><select data-p="${p}.schedule">${schedOpts(r.schedule)}</select></td>
       <td>${r.schedule ? destCell(`${p}.closed`, opts) : '<span class="muted">—</span>'}</td>
@@ -380,10 +424,12 @@ function didsTab(opts) {
 function schedsTab() {
   const d = E.d;
   const used = (k) => d.dids.filter((r) => r.import && r.schedule === k).length;
-  return `${intro('scheds', 'Horaires', 'Horaires Wazo à créer, déduits des règles 3CX (heures de bureau moins la pause, ou plages propres d\'une règle). Le nom est modifiable ; les plages se modifieront dans Call Flow Manager après création. Fermetures exceptionnelles : ajoutées à chaque horaire si cochées. Les jours fériés légaux français autres que ceux de la sauvegarde sont à ajouter.')}
-    <div class="x3-edit-wrap"><table class="diff x3-edit">${head([['Nom'], ['Plages'], ['SDA']])}<tbody>${d.schedules.map((s, i) => `<tr><td>${input(`schedules.${i}.name`)}</td><td>${esc(s.text)}</td><td>${used(s.key)}</td></tr>`).join('') || '<tr><td colspan="3" class="muted">Aucun horaire.</td></tr>'}</tbody></table></div>
-    <h3 class="x3-h">Fermetures exceptionnelles</h3>
-    <div class="x3-edit-wrap"><table class="diff x3-edit">${head([['Reprise'], ['Nom'], ['Dates'], ['Heures']])}<tbody>${d.holidays.map((h, i) => `<tr class="${h.include ? '' : 'x3-off'}"><td class="x3-c">${check(`holidays.${i}.include`)}</td><td>${input(`holidays.${i}.name`)}</td><td>${h.day}/${h.month}${h.recurrent ? ' (tous les ans)' : `/${h.year}`}${h.dayEnd !== h.day || h.monthEnd !== h.month ? ` → ${h.dayEnd}/${h.monthEnd}` : ''}</td><td>${esc(h.from)}-${esc(h.to)}</td></tr>`).join('') || '<tr><td colspan="4" class="muted">Aucune.</td></tr>'}</tbody></table></div>`;
+  const past = pastHolidays(E.m);
+  const where = (h) => (h.depts || ['tenant']).map((k) => (k === 'tenant' ? 'tous' : deptLabel(k))).join(', ');
+  return `${intro('scheds', 'Horaires', 'Horaires Wazo à créer, déduits des règles entrantes 3CX. Une règle « heures de bureau » prend celles du département de sa SDA (heures de bureau moins la pause) ; une règle à plages propres garde les siennes. Le nom est modifiable ; les plages se modifieront dans Call Flow Manager après création. Fermetures exceptionnelles : celles de 3CX pour tous les départements et celles d\'un département, ajoutées aux horaires concernés si cochées ; les fermetures passées ne sont pas reprises. Les jours fériés légaux français autres que ceux de la sauvegarde sont à ajouter.')}
+    <div class="x3-edit-wrap"><table class="diff x3-edit">${head([['Nom'], ['Département', 'Département 3CX dont l\'horaire reprend les heures de bureau'], ['Plages'], ['SDA']])}<tbody>${d.schedules.map((s, i) => `<tr><td>${input(`schedules.${i}.name`)}</td><td class="small">${s.dept ? esc(deptLabel(s.dept)) : '<span class="muted">plages propres de la règle</span>'}</td><td>${esc(s.text)}</td><td>${used(s.key)}</td></tr>`).join('') || '<tr><td colspan="4" class="muted">Aucun horaire.</td></tr>'}</tbody></table></div>
+    <h3 class="x3-h">Fermetures exceptionnelles</h3>${past ? `<p class="small muted">${past} fermeture(s) passée(s) dans la sauvegarde, non reprises.</p>` : ''}
+    <div class="x3-edit-wrap"><table class="diff x3-edit">${head([['Reprise'], ['Nom'], ['Départements'], ['Dates'], ['Heures']])}<tbody>${d.holidays.map((h, i) => `<tr class="${h.include ? '' : 'x3-off'}"><td class="x3-c">${check(`holidays.${i}.include`)}</td><td>${input(`holidays.${i}.name`)}</td><td class="small">${esc(where(h))}</td><td>${h.day}/${h.month}${h.recurrent ? ' (tous les ans)' : `/${h.year}`}${h.dayEnd !== h.day || h.monthEnd !== h.month ? ` → ${h.dayEnd}/${h.monthEnd}` : ''}</td><td>${esc(h.from)}-${esc(h.to)}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">Aucune à venir.</td></tr>'}</tbody></table></div>`;
 }
 
 const SEV_FR = { error: 'Erreur', warn: 'À vérifier', info: 'Info' };
@@ -461,6 +507,11 @@ function onChange(e, root) {
     const shown = [...root.querySelectorAll(`input[data-sel="${t.dataset.selall}"]`)].map((x) => Number(x.dataset.i));
     for (const i of shown) (t.checked ? s.add(i) : s.delete(i));
     return renderTab(root, E.tab);
+  }
+  if (t.dataset.ctxname) {
+    const [k, f] = t.dataset.ctxname.split('|');
+    const cfg = unitList(E.d).length > 1 ? unitCfg(E.d, k) : E.d.write.site; cfg[f] = t.value.trim();
+    return changed(root);
   }
   if (t.dataset.deptMode) { setDeptMode(E.d, t.dataset.deptMode, t.value); return changed(root); }
   if (t.dataset.deptInto) { setDeptMode(E.d, t.dataset.deptInto, 'merge', t.value); return changed(root); }
@@ -573,11 +624,13 @@ function exportUsers() {
     if (Object.values(by).some((x) => !x)) return toast('Plusieurs départements : créez d\'abord leurs contextes (onglet Écriture, phase Fondations), le CSV en dépend.', 7000);
     ctxOf = (u) => by[unitOf(E.d, u)];
   }
+  // SDA : contexte entrant du trunk de son département (champ context du trunk), sinon celui d'Exports.
+  const incallOf = ctxOf ? (u) => { const k = unitOf(E.d, u); const tr = (I.lists.trunk || []).find((x) => String(x.id) === String(E.d.write?.units?.[k]?.trunkId)); return tr?.context || incallCtx; } : null;
   if (!ctx && !ctxOf) return toast('Choisissez le contexte interne (tenant Wazo à ouvrir dans le portail).', 6000);
   const needIn = E.d.dids.some((r) => r.import && r.viaCsv && r.dest.t === 'user');
   if (needIn && !incallCtx) return toast('Aucun contexte entrant : décochez « CSV » dans l\'onglet SDA, ou ouvrez le bon tenant.', 6000);
   const pins = Object.fromEntries(E.m.extensions.map((e) => [e.number, e.vm.pin]));
-  const go = () => download(`wazo-import-utilisateurs-${base()}.csv`, usersCsv(E.d, { ctx, incallCtx, pins, ctxOf }));
+  const go = () => download(`wazo-import-utilisateurs-${base()}.csv`, usersCsv(E.d, { ctx, incallCtx, pins, ctxOf, incallOf }));
   const errs = [...tenantChecks(), ...draftIssues(E.d).filter((x) => x.area.startsWith('Utilisateur '))].filter((x) => x.sev === 'error');
   const unchecked = imported(E.d).filter((u) => !u.checked).length;
   if (!errs.length && !unchecked) return go();
@@ -596,7 +649,7 @@ function loadDraftFile(input, root) {
   if (!f) return;
   const r = new FileReader();
   r.onload = () => {
-    try { E.d = ensureDepts(upgradeDraft(acceptDraft(JSON.parse(r.result), E.file, E.d.sourceDate)), E.m); saveDraft(E.d); setWizard(E.d, E.m); E.onReset?.(E.d); toast('Brouillon chargé.'); renderTab(root, E.tab); E.onChange?.(); }
+    try { E.d = ensureDepts(upgradeSchedules(upgradeDraft(acceptDraft(JSON.parse(r.result), E.file, E.d.sourceDate)), E.m), E.m); saveDraft(E.d); setWizard(E.d, E.m); E.onReset?.(E.d); toast('Brouillon chargé.'); renderTab(root, E.tab); E.onChange?.(); }
     catch (err) { toast(`Brouillon refusé : ${err.message}`, 7000); }
   };
   r.readAsText(f);

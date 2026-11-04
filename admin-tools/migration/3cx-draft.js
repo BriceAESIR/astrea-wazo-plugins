@@ -13,7 +13,7 @@
 // Les objets Wazo correspondants (destinations confd user_id, group_id…) ne
 // sont résolus qu'à l'écriture : convertir une file en groupe ne demande donc
 // aucune reprise des destinations qui la visent.
-import { nameOf, schedulesOf, STRATEGY } from './3cx.js?v=0.40.33';
+import { nameOf, schedulesOf, STRATEGY } from './3cx.js?v=0.40.34';
 
 export const DRAFT_FORMAT = 'astrea-3cx-draft';
 const KEY = 'astrea-migration-3cx-draft-v1';
@@ -57,6 +57,16 @@ export const defaultVmo = () => ({ notify: true, email: null, attach: true, del:
 export const vmEmail = (u) => (u.vmo?.notify === false ? '' : (u.vmo?.email ?? u.email ?? ''));
 // NOM en majuscules (demande de Brice, 03/11/2026) : « Tessier » → « TESSIER ».
 export const upperName = (s) => String(s || '').toLocaleUpperCase('fr-FR');
+// SDA dans le contexte entrant Wazo : E.164 français sans « + » (demande de
+// Brice, 04/11/2026) : 0240000000 → 33240000000 ; +33… et 0033… → 33… ; un
+// numéro déjà international sans 0 de tête est gardé tel quel.
+export function didWazo(n) {
+  const s = String(n || '').replace(/[^\d+]/g, '');
+  if (s.startsWith('+')) return s.slice(1);
+  if (s.startsWith('00')) return s.slice(2);
+  if (/^0\d{9}$/.test(s)) return `33${s.slice(1)}`;
+  return s;
+}
 
 // ---------------------------------------------------------------------------
 // Construction
@@ -83,7 +93,6 @@ const FWD = { NoAnswer: 'noanswer', Busy: 'busy', NotRegistered: 'fail' };
 
 export function buildDraft(m, file) {
   const scheds = schedulesOf(m); // pose aussi r.scheduleKey sur chaque règle
-  const keyOf = (p) => p.map((x) => `${x.day}:${x.from}-${x.to}`).join('|');
   const users = m.extensions.map((e) => {
     const n = nameOf(e);
     const mode = !e.enabled ? 'skip' : e.devices.length ? 'user' : e.vm.enabled ? 'voicemail' : 'skip';
@@ -105,7 +114,7 @@ export function buildDraft(m, file) {
     choices: v.choices.map((c) => ({ key: c.key, dest: convertDest(m, c) })),
     timeoutDest: v.timeoutDest.to === 'EndCall' ? { t: 'hangup' } : convertDest(m, v.timeoutDest),
   }));
-  const schedules = scheds.map((s) => ({ key: keyOf(s.periods), name: s.name, text: s.text, periods: s.periods }));
+  const { schedules, holidays } = schedulesFrom(m, scheds);
   const dids = m.inbound.filter((r) => r.did).map((r) => {
     const open = convertDest(m, r.open);
     return { did: r.did, import: true, name: r.name, dest: open, schedule: r.scheduleKey || '', closed: convertDest(m, r.closed), holiday: convertDest(m, r.holiday), viaCsv: open.t === 'user' };
@@ -113,8 +122,36 @@ export function buildDraft(m, file) {
   // SDA du trunk sans règle propre : rejet par défaut dans 3CX, reprises « non affectées ».
   const ruled = new Set(dids.map((d) => d.did));
   for (const t of m.trunks) for (const did of t.dids) if (!ruled.has(did)) dids.push({ did, import: false, name: '(sans règle 3CX)', dest: { t: 'none' }, schedule: '', closed: { t: 'none' }, holiday: { t: 'none' }, viaCsv: false });
-  const holidays = m.holidays.filter((h) => !h.past).map((h) => ({ ...h, include: true }));
-  return { format: DRAFT_FORMAT, version: 1, file, sourceDate: m.date, company: m.company, createdAt: new Date().toISOString(), users, devices: buildDevices(m, users), hunts, ivrs, dids, schedules, holidays, blfOffset: 1, upperLast: false };
+  return { format: DRAFT_FORMAT, version: 1, file, sourceDate: m.date, company: m.company, createdAt: new Date().toISOString(), users, devices: buildDevices(m, users), hunts, ivrs, dids, schedules, holidays, blfOffset: 1, upperLast: false, schedVersion: SCHED_VERSION };
+}
+// Horaires et fermetures du brouillon. Version 2 (04/11/2026) : heures de bureau
+// du département de chaque règle (et non plus de __DEFAULT__), fermetures des
+// départements en plus de celles du tenant, chacune avec ses départements.
+const SCHED_VERSION = 2;
+const keyOfPeriods = (p) => p.map((x) => `${x.day}:${x.from}-${x.to}`).join('|');
+function schedulesFrom(m, scheds = schedulesOf(m)) {
+  const schedules = scheds.map((s) => ({ key: keyOfPeriods(s.periods), name: s.name, text: s.text, periods: s.periods, dept: s.dept || '' }));
+  const hk = (h) => `${h.day}/${h.month}/${h.year}-${h.dayEnd}/${h.monthEnd}|${h.from}-${h.to}`;
+  const by = new Map();
+  const addH = (h, where) => { if (h.past) return; const k = hk(h); if (!by.has(k)) by.set(k, { ...h, include: true, depts: [] }); if (!by.get(k).depts.includes(where)) by.get(k).depts.push(where); };
+  for (const h of m.holidays) addH(h, 'tenant');
+  for (const g of m.groups.filter((x) => !x.favorites)) for (const h of g.holidays || []) addH(h, g.name);
+  const past = m.holidays.filter((h) => h.past).length + m.groups.filter((x) => !x.favorites).reduce((a, g) => a + (g.holidays || []).filter((h) => h.past).length, 0);
+  return { schedules, holidays: [...by.values()], past };
+}
+export const pastHolidays = (m) => schedulesFrom(m).past;
+// Brouillon d'avant la version 2 : horaires et fermetures recalculés depuis la
+// sauvegarde (noms gardés pour un même jeu de plages), horaire de chaque SDA
+// reprise de sa règle 3CX.
+export function upgradeSchedules(d, m) {
+  if (d.schedVersion === SCHED_VERSION) return d;
+  const scheds = schedulesOf(m); const { schedules, holidays } = schedulesFrom(m, scheds);
+  const oldName = new Map((d.schedules || []).map((s) => [s.key, s.name]));
+  for (const s of schedules) if (oldName.has(s.key) && !/^(Heures de bureau|Horaire \d+)$/.test(oldName.get(s.key))) s.name = oldName.get(s.key);
+  d.schedules = schedules; d.holidays = holidays;
+  for (const r of d.dids) { const rule = m.inbound.find((x) => x.did === r.did); if (rule) r.schedule = rule.scheduleKey || ''; }
+  d.schedVersion = SCHED_VERSION;
+  return d;
 }
 // Appareils (demande de Brice, 19/10/2026) : MAC, modèle, utilisateur associé et
 // description « Prénom Nom ». confd (device/schema.py, lu) : mac au format
@@ -325,7 +362,7 @@ export function tenantIssues(d, { ctx, incallCtx }, t) {
   if (taken.length) add('error', `Contexte ${c.label || c.name}`, `numéro(s) déjà utilisés dans ce contexte : ${taken.join(', ')}.`);
   if (incallCtx) {
     const inc = new Set((t.extensions || []).filter((e) => e.context === incallCtx).map((e) => e.exten));
-    const dids = d.dids.filter((r) => r.import && r.viaCsv && r.dest.t === 'user' && inc.has(r.did)).map((r) => r.did);
+    const dids = d.dids.filter((r) => r.import && r.viaCsv && r.dest.t === 'user' && (inc.has(didWazo(r.did)) || inc.has(r.did))).map((r) => didWazo(r.did));
     if (dids.length) add('error', 'SDA', `SDA déjà présentes dans le contexte entrant : ${dids.join(', ')}. Décochez « CSV » dans l'onglet SDA pour celles-ci.`);
   }
   const vms = new Set((t.voicemails || []).filter((v) => v.context === ctx).map((v) => v.number));
@@ -350,7 +387,7 @@ export function tenantIssues(d, { ctx, incallCtx }, t) {
 // dans le brouillon (navigateur, fichier partageable) : `pins` est lu dans la
 // sauvegarde 3CX au moment de l'export ({ numéro: code }).
 // ctxOf(u) : contexte propre à chaque utilisateur (départements en jeux de contextes séparés).
-export function usersCsv(d, { ctx, incallCtx, pins = {}, ctxOf = null }) {
+export function usersCsv(d, { ctx, incallCtx, pins = {}, ctxOf = null, incallOf = null }) {
   // subscription_type : IntRule de USER_RULES ; username : WAZO_USER_RULES (vide
   // → Wazo prend l'e-mail). Ni méthode de connexion ni accès aux applications
   // dans le CSV (WazoUserSchema) : à poser après l'import.
@@ -359,7 +396,7 @@ export function usersCsv(d, { ctx, incallCtx, pins = {}, ctxOf = null }) {
   // par l'écriture guidée.
   const cols = ['firstname', 'lastname', 'email', 'mobile_phone_number', 'enabled', 'subscription_type', 'ring_seconds', 'context', 'line_protocol', 'exten', 'voicemail_name', 'voicemail_number', 'voicemail_context', 'voicemail_password', 'voicemail_email', 'voicemail_attach_audio', 'voicemail_delete_messages', 'voicemail_ask_password', 'incall_exten', 'incall_context', 'username'];
   const did = new Map();
-  for (const r of d.dids) if (r.import && r.viaCsv && r.dest.t === 'user' && !did.has(r.dest.ref)) did.set(r.dest.ref, r.did);
+  for (const r of d.dids) if (r.import && r.viaCsv && r.dest.t === 'user' && !did.has(r.dest.ref)) did.set(r.dest.ref, didWazo(r.did));
   const q = (s) => (/[",\n]/.test(String(s ?? '')) ? `"${String(s).replace(/"/g, '""')}"` : String(s ?? ''));
   const rows = imported(d).map((u) => {
     const pin = u.vm && u.vmPin && /^\d+$/.test(pins[u.n] || '') ? pins[u.n] : '';
@@ -367,7 +404,7 @@ export function usersCsv(d, { ctx, incallCtx, pins = {}, ctxOf = null }) {
     const v = {
       firstname: u.first || (u.last ? '' : `Poste ${u.n}`), lastname: u.last, email: u.email, mobile_phone_number: u.mobile, enabled: '1', subscription_type: u.sub ?? '', ring_seconds: u.ring, context: c, line_protocol: linesOf(u)[0], exten: u.n,
       voicemail_name: u.vm ? userName(u) : '', voicemail_number: u.vm ? u.n : '', voicemail_context: u.vm ? c : '', voicemail_password: pin,
-      voicemail_email: mail, voicemail_attach_audio: mail ? (o.attach ? '1' : '0') : '', voicemail_delete_messages: u.vm ? (o.del && mail && o.attach ? '1' : '0') : '', voicemail_ask_password: u.vm ? (o.ask ? '1' : '0') : '', incall_exten: did.get(u.n) || '', incall_context: did.has(u.n) ? incallCtx : '', username: u.username || '',
+      voicemail_email: mail, voicemail_attach_audio: mail ? (o.attach ? '1' : '0') : '', voicemail_delete_messages: u.vm ? (o.del && mail && o.attach ? '1' : '0') : '', voicemail_ask_password: u.vm ? (o.ask ? '1' : '0') : '', incall_exten: did.get(u.n) || '', incall_context: did.has(u.n) ? (incallOf ? incallOf(u) : incallCtx) : '', username: u.username || '',
     };
     return cols.map((c) => q(v[c])).join(',');
   });

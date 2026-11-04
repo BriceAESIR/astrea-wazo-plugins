@@ -315,27 +315,50 @@ export function issuesOf(m) {
   return out;
 }
 
+// Département 3CX d'une règle entrante : celui (hors __DEFAULT__) de sa
+// destination, sinon celui dont la règle sortante utilise son trunk, sinon
+// __DEFAULT__. Supposé (lu dans une sauvegarde v20 à 3 départements, pas dans
+// une doc 3CX) : une règle « OfficeHours » prend les heures de ce département.
+export function ruleDept(m, r) {
+  const real = m.groups.filter((g) => !g.favorites && g.name !== '__DEFAULT__');
+  const dn = r.open?.dn;
+  const byDest = dn && real.find((g) => g.members.includes(dn));
+  if (byDest) return byDest;
+  const byTrunk = [...m.outbound].sort((a, b) => a.priority - b.priority).find((o) => o.routes.some((x) => x.gateway === r.trunk));
+  return (byTrunk && real.find((g) => byTrunk.groups.includes(g.name))) || m.defaultGroup;
+}
 // Horaires Wazo à créer : un par jeu de plages distinct (dédoublonné).
-// Une règle « OfficeHours » prend les heures du groupe __DEFAULT__ (heures de
-// bureau moins la pause) ; « Specific… » ses propres plages ; AllHours : aucun horaire.
+// Une règle « OfficeHours » prend les heures de bureau de son département moins
+// la pause (__DEFAULT__ s'il n'y en a qu'un) ; « Specific… » ses propres plages ;
+// AllHours : aucun horaire. Fermetures : celles du tenant et celles du
+// département (union, supposée), passées exclues.
 export function schedulesOf(m) {
   const map = new Map();
   const key = (p) => p.map((x) => `${x.day}:${x.from}-${x.to}`).join('|');
-  const use = (periods, who) => {
+  const use = (periods, who, g, own) => {
     if (!periods.length) return null;
     const k = key(periods);
-    if (!map.has(k)) map.set(k, { periods, users: [] });
-    map.get(k).users.push(who);
+    if (!map.has(k)) map.set(k, { periods, users: [], dept: own ? '' : (g?.name || ''), own });
+    // Mêmes plages qu'un département : l'horaire porte le nom du département.
+    const s = map.get(k); if (!own && s.own) { s.own = false; s.dept = g?.name || ''; }
+    s.users.push(who);
     return k;
   };
   for (const r of m.inbound) {
-    const t = r.hours.type;
-    const p = t === 'OfficeHours' ? (m.defaultGroup?.effective || []) : t === 'AllHours' ? [] : r.hours.periods;
-    r.scheduleKey = use(p, `SDA ${r.did || 'par défaut'}`);
+    const t = r.hours.type; const g = ruleDept(m, r); r.dept = g?.name || '';
+    const own = t !== 'OfficeHours';
+    const p = !own ? (g?.effective || []) : t === 'AllHours' ? [] : r.hours.periods;
+    r.scheduleKey = use(p, `SDA ${r.did || 'par défaut'}`, g, own);
   }
-  const holidays = m.holidays.filter((h) => !h.past);
-  return [...map.values()].map((s, i) => ({ ...s, name: i === 0 ? 'Heures de bureau' : `Horaire ${i + 1}`, text: periodsText(s.periods), holidays }));
+  const holidaysOf = (dept) => dedupHolidays([...m.holidays, ...((m.groups.find((g) => g.name === dept)?.holidays) || [])].filter((h) => !h.past));
+  let n = 0;
+  return [...map.values()].map((s) => ({
+    ...s, name: s.own ? `Horaire ${++n}` : `Heures de bureau${s.dept && s.dept !== '__DEFAULT__' ? ` - ${s.dept}` : ''}`,
+    text: periodsText(s.periods), holidays: holidaysOf(s.dept || '__DEFAULT__'),
+  }));
 }
+// Même fermeture déclarée au tenant et au département : gardée une fois.
+const dedupHolidays = (l) => { const seen = new Set(); return l.filter((h) => { const k = `${h.day}/${h.month}/${h.year}-${h.dayEnd}/${h.monthEnd}|${h.from}-${h.to}`; if (seen.has(k)) return false; seen.add(k); return true; }); };
 
 // CSV d'import utilisateurs de Wazo (colonnes de confd user_import/csvparse.py,
 // séparateur virgule, booléens 1/0). `ctx` = nom technique du contexte interne,

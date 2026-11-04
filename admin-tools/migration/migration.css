@@ -116,10 +116,19 @@ input.short { width: 110px !important; }
 #x3-body h3 { margin: 0; }
 .x3-q { width: 200px !important; margin-left: auto; }
 .x3-h { margin: 20px 0 8px !important; }
-/* Pas de défilement propre au tableau (retour de Brice, 03/11/2026) : la page
-   (#workbench) défile seule, en hauteur comme en largeur ; l'en-tête reste collé
-   en haut de la page. */
-.x3-edit-wrap { width: max-content; min-width: 100%; box-sizing: border-box; border: 1px solid var(--line); border-radius: var(--radius); }
+/* Pas de défilement vertical propre au tableau (retour de Brice, 03/11/2026) :
+   la page défile seule en hauteur, l'en-tête reste collé en haut. En largeur
+   (04/11/2026) : tableau coupé à la largeur de la page (clip ne crée pas de zone
+   de défilement, l'en-tête collé marche toujours), décalé par sa barre .x3-hbar
+   collée en bas de l'écran (3cx-edit.js, hscroll). */
+/* #workbench (style commun) est en overflow: auto sans hauteur fixe : il ne
+   défile jamais en hauteur, porte la barre horizontale en bas du contenu et
+   empêche tout élément collé (sticky) de coller. Ici seulement : page qui défile,
+   colonne qui ne s'élargit pas (min-width: 0). */
+#workbench { overflow: visible; min-width: 0; }
+.x3-edit-wrap { max-width: 100%; box-sizing: border-box; overflow-x: clip; border: 1px solid var(--line); border-radius: var(--radius); }
+.x3-hbar { position: sticky; bottom: 0; z-index: 3; overflow-x: auto; overflow-y: hidden; height: 16px; margin-top: -1px; background: var(--panel); border: 1px solid var(--line); border-top: 0; border-radius: 0 0 var(--radius) var(--radius); }
+.x3-hbar > div { height: 1px; }
 .x3-edit { width: 100%; margin: 0; font-size: .8125rem; border-collapse: separate; border-spacing: 0; }
 .x3-edit thead th { position: sticky; top: 0; z-index: 2; background: var(--panel); box-shadow: inset 0 -1px 0 var(--line); white-space: nowrap; }
 .x3-edit td { vertical-align: top; padding: 4px 6px; border-bottom: 1px solid var(--line); }

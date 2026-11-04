@@ -11,14 +11,14 @@
 // de l'assistant France de Call Flow ; lues dans le code, testées sur faux tenant). Les phases
 // Personnes, Routage et Finitions sont planifiées (lecture seule) ; leur
 // écriture arrive aux lots 5b-5d.
-import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.33';
-import { I, sameTenant } from './inventory.js?v=0.40.33';
-import { buildExport, exportFileName } from './export.js?v=0.40.33';
-import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText } from './3cx-draft.js?v=0.40.33';
+import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.34';
+import { I, sameTenant } from './inventory.js?v=0.40.34';
+import { buildExport, exportFileName } from './export.js?v=0.40.34';
+import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText, didWazo } from './3cx-draft.js?v=0.40.34';
 import {
   SITE_MODES, FR_FAMILIES, FR_FORMATS, BLOCK_118, defaultSite, defaultOut, clientPatterns, occupancy, placements, unitLabels, unitCfg, futureOf, siteChecks, routeText, newRanges, multi as multiSites,
-} from './3cx-sites.js?v=0.40.33';
-import { unitList, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.33';
+} from './3cx-sites.js?v=0.40.34';
+import { unitList, unitOf, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.34';
 
 const W = { d: null, m: null, t: null, busy: false, msg: null, at: null };
 export function setWizard(d, m) { W.d = d; W.m = m; W.t = null; W.msg = null; ensureState(); }
@@ -98,7 +98,15 @@ function contextsOf(t) {
     return { ...p, L, ctxObj: ctx, outObj: out };
   });
   const internal = many ? { id: null, name: '@client', label: 'contextes du client', type: 'internal', virtual: true, ...newRanges(W.d) } : units[0]?.ctxObj || null;
-  return { internal, incall: pick(W.d.incallCtx, 'incall'), outcall: units[0]?.outObj || null, units, many };
+  const incall = pick(W.d.incallCtx, 'incall');
+  // Contexte entrant d'une SDA : celui du trunk de son jeu de contextes (champ context du trunk confd),
+  // sinon celui choisi dans Exports (demande de Brice, 04/11/2026 : « dans le contexte entrant assigné »).
+  const incallOf = (r) => {
+    const u = many ? units.find((x) => x.key === unitOf(W.d, r)) : units[0];
+    const tc = t.trunks.find((x) => String(x.id) === String(u?.trunkId))?.context;
+    return t.contexts.find((x) => x.name === tc && x.type === 'incall') || incall;
+  };
+  return { internal, incall, outcall: units[0]?.outObj || null, units, many, incallOf };
 }
 const trunkLabel = (t, id) => { const x = t.trunks.find((y) => String(y.id) === String(id)); return x ? (x.endpoint_sip?.label || x.endpoint_sip?.name || `trunk ${id}`) : `trunk ${id}`; };
 const RANGE_NAMES = { user_ranges: 'postes', group_ranges: 'groupes', queue_ranges: 'files' };
@@ -248,8 +256,12 @@ function buildPlan(t) {
     add('routing', taken ? 'conflict' : 'create', `${kind} ${h.n} ${h.name}`, taken ? 'numéro déjà pris' : `${members} membre(s)${h.src === 'Queue' && h.target === 'group' ? ' · file 3CX convertie en groupe' : ''}`);
   }
   for (const v of d.ivrs.filter((x) => x.import)) add('routing', 'create', `SVI ${v.n} ${v.name}`, `${v.choices.length} touche(s) · message ${v.prompt || 'aucun'}`);
-  const incIn = new Set(t.extensions.filter((e) => e.context === c.incall?.name).map((e) => e.exten));
-  for (const r of d.dids.filter((x) => x.import)) add('routing', incIn.has(r.did) ? 'exists' : r.dest.t === 'none' && r.dest.todo ? 'conflict' : 'create', `SDA ${r.did}`, `${incIn.has(r.did) ? 'déjà présente · ' : ''}${destLabel(d, r.dest)}${r.schedule ? ' · avec horaire' : ''}`);
+  const incIn = new Set(t.extensions.map((e) => `${e.exten}@${e.context}`));
+  // SDA déclarées en E.164 français sans « + » dans le contexte entrant (33251712525).
+  for (const r of d.dids.filter((x) => x.import)) {
+    const n = didWazo(r.did); const ic = c.incallOf(r); const has = ic && (incIn.has(`${n}@${ic.name}`) || incIn.has(`${r.did}@${ic.name}`));
+    add('routing', !ic ? 'conflict' : has ? 'exists' : r.dest.t === 'none' && r.dest.todo ? 'conflict' : 'create', `SDA ${n}`, `${ic ? `dans « ${ic.label || ic.name} »` : 'aucun contexte entrant'} · ${has ? 'déjà présente · ' : ''}${n !== r.did ? `${r.did} dans 3CX · ` : ''}${destLabel(d, r.dest)}${r.schedule ? ' · avec horaire' : ''}`);
+  }
   // Finitions
   const fbUsers = imported(d).filter((u) => Object.values(u.fb).some((x) => x && x.t !== 'none')).length;
   add('finish', fbUsers ? 'create' : 'skip', `Débordements de ${fbUsers} utilisateur(s)`);
