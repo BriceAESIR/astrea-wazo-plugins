@@ -26,10 +26,10 @@
 // (_X.) inclus avant un autre établissement prend aussi ses numéros internes ;
 // inclus après, les numéros externes passent par l'établissement inclus, donc
 // par son trunk. Les écarts sont montrés avant écriture.
-import { matches, comparePatterns, dialedNumber } from '../callflow/dialsim.js?v=0.40.34';
-import { FR_FAMILIES, FR_FORMATS, frTransform, BLOCK_118 } from '../callflow/outcall-editor.js?v=0.40.34';
-import { imported } from './3cx-draft.js?v=0.40.34';
-import { unitList, unitOf } from './3cx-depts.js?v=0.40.34';
+import { matches, comparePatterns, dialedNumber } from '../callflow/dialsim.js?v=0.40.35';
+import { FR_FAMILIES, FR_FORMATS, frTransform, BLOCK_118 } from '../callflow/outcall-editor.js?v=0.40.35';
+import { imported, didWazo } from './3cx-draft.js?v=0.40.35';
+import { unitList, unitOf } from './3cx-depts.js?v=0.40.35';
 
 export { FR_FAMILIES, FR_FORMATS, BLOCK_118 };
 export const SITE_MODES = {
@@ -43,6 +43,7 @@ export const defaultSite = () => ({ mode: null, newLabel: '', outLabel: '', inte
 export const defaultOut = () => ({ fams: FR_FAMILIES.map((f) => f.id), fmt: 'nat', block118: true, catchAll: false });
 const NEW_CTX = (k) => `@nouveau-interne:${k}`;
 const NEW_OUT = (k) => `@nouveau-sortant:${k}`;
+const NEW_INC = (k) => `@nouveau-entrant:${k}`;
 export const isVirtual = (name) => String(name || '').startsWith('@');
 
 // Numéros qu'une unité apporte (postes, groupes, files) avec leur type de plage.
@@ -54,6 +55,8 @@ export function clientNumbers(d, unit = null) {
     ...d.hunts.filter((h) => h.target === 'queue' && mine(h)).map((h) => ({ n: h.n, key: 'queue_ranges' })),
   ].filter((x) => /^\d+$/.test(x.n));
 }
+// SDA reprises d'une unité, au format du contexte entrant Wazo (33…).
+export const unitDids = (d, unit = null) => [...new Set(d.dids.filter((r) => r.import && (unit == null || unitOf(d, r) === unit)).map((r) => didWazo(r.did)).filter((n) => /^\d+$/.test(n)))];
 // Motifs de la règle sortante (assistant France + attrape-tout en option).
 export function clientPatterns(out) {
   const o = out || defaultOut(); const pats = [];
@@ -106,7 +109,7 @@ export const outOf = (w, name) => (w.ctx.get(name)?.includes || []).find((x) => 
 // Réglages d'une unité : d.write.site / trunkId pour une seule unité, d.write.units[clé] sinon.
 export function unitCfg(d, key) {
   if (!d.write.units) d.write.units = {};
-  if (!d.write.units[key]) d.write.units[key] = { newLabel: '', outLabel: '', trunkId: '', created: null };
+  if (!d.write.units[key]) d.write.units[key] = { newLabel: '', incLabel: '', outLabel: '', trunkId: '', created: null };
   return d.write.units[key];
 }
 // Trunk Wazo proposé pour une unité : celui dont le nom contient le département ou la passerelle 3CX.
@@ -125,25 +128,29 @@ export function placements(t, d) {
   if (units.length > 1) {
     return units.map((u) => {
       const c = unitCfg(d, u.key);
-      if (c.created) return { key: u.key, label: u.label, ctx: c.created.ctxName, out: c.created.outName, newCtx: false, newOut: false, peers: c.created.peers || [], trunkId: Number(c.trunkId || guessTrunk(t, u) || 0), created: true };
-      return { key: u.key, label: u.label, ctx: NEW_CTX(u.key), out: NEW_OUT(u.key), newCtx: true, newOut: true, peers: existingPeers, trunkId: Number(c.trunkId || guessTrunk(t, u) || 0) };
+      if (c.created) return { key: u.key, label: u.label, ctx: c.created.ctxName, out: c.created.outName, inc: c.created.incName || null, newCtx: false, newOut: false, peers: c.created.peers || [], trunkId: Number(c.trunkId || guessTrunk(t, u) || 0), created: true };
+      return { key: u.key, label: u.label, ctx: NEW_CTX(u.key), out: NEW_OUT(u.key), inc: NEW_INC(u.key), newCtx: true, newOut: true, peers: existingPeers, trunkId: Number(c.trunkId || guessTrunk(t, u) || 0) };
     });
   }
   const u = units[0]; const trunkId = Number(d.write.trunkId || t.trunks[0]?.id || 0);
   if (s.mode === 'new') {
-    if (s.created) return [{ key: u.key, label: u.label, ctx: s.created.ctxName, out: s.created.outName, newCtx: false, newOut: false, peers: s.created.peers || [], trunkId, created: true }];
-    return [{ key: u.key, label: u.label, ctx: NEW_CTX(u.key), out: NEW_OUT(u.key), newCtx: true, newOut: true, peers: existingPeers, trunkId }];
+    if (s.created) return [{ key: u.key, label: u.label, ctx: s.created.ctxName, out: s.created.outName, inc: s.created.incName || null, newCtx: false, newOut: false, peers: s.created.peers || [], trunkId, created: true }];
+    return [{ key: u.key, label: u.label, ctx: NEW_CTX(u.key), out: NEW_OUT(u.key), inc: NEW_INC(u.key), newCtx: true, newOut: true, peers: existingPeers, trunkId }];
   }
   const internal = t.contexts.find((c) => c.name === d.ctx && c.type === 'internal') || t.contexts.find((c) => c.type === 'internal');
   if (!internal) return [{ key: u.key, label: u.label, ctx: null, out: null, peers: [], trunkId }];
   const out = outOf(w, internal.name);
-  return [{ key: u.key, label: u.label, ctx: internal.name, out: out || NEW_OUT(u.key), newCtx: false, newOut: !out, peers: [], trunkId }];
+  return [{ key: u.key, label: u.label, ctx: internal.name, out: out || NEW_OUT(u.key), inc: null, newCtx: false, newOut: !out, peers: [], trunkId }];
 }
-// Libellés des contextes à créer pour une unité.
+// Libellés des contextes à créer pour une unité. Nommage de Brice (04/11/2026) :
+// <ID client>-<site>-<type>, site en minuscules sans accent ni espace, types du
+// Portal (internal, from-extern, to-extern) : 44000-nantes-internal.
+export const siteSlug = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'site';
 export function unitLabels(d, p) {
   const w = d.write; const id = w.clientId || '<ID>';
-  if (multi(d)) { const c = unitCfg(d, p.key); return { ctx: c.newLabel || `${id} - ${p.label}`, out: c.outLabel || `${id} - ${p.label} - Sortant` }; }
-  return { ctx: w.site.newLabel || `${id} - ${w.clientName || 'Client'}`, out: w.site.outLabel || `${id} - Sortant` };
+  const c = multi(d) ? unitCfg(d, p.key) : w.site;
+  const site = siteSlug(multi(d) || (p.label && p.key !== '__DEFAULT__' && p.key !== '_') ? p.label : w.clientName);
+  return { ctx: c.newLabel || `${id}-${site}-internal`, inc: c.incLabel || `${id}-${site}-from-extern`, out: c.outLabel || `${id}-${site}-to-extern` };
 }
 export function futureOf(t, d) {
   const w = worldOf(t); const ps = placements(t, d); const s = d.write.site;

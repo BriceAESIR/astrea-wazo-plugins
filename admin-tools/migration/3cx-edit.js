@@ -2,16 +2,16 @@
 // Modèle et règles : 3cx-draft.js. Chaque modification est enregistrée dans le
 // navigateur (brouillon par fichier et date de sauvegarde) ; rien n'est écrit
 // dans Wazo depuis ces tableaux.
-import { $, esc, toast, helpButton, helpBox, confirmModal, downloadJson } from '../common/core.js?v=0.40.34';
-import { I } from './inventory.js?v=0.40.34';
+import { $, esc, toast, helpButton, helpBox, confirmModal, downloadJson } from '../common/core.js?v=0.40.35';
+import { I } from './inventory.js?v=0.40.35';
 import {
   GROUP_STRATEGIES, MODES, HUNT_TARGETS, LICENCES, AUTH_METHODS, effectiveUsername, upgradeDraft, saveDraft, clearDraft, buildDraft, acceptDraft, userBy, userName, imported,
   destLabel, destProblem, draftIssues, usersCsv, blfRows, devicesCsv, deviceDesc, macWazo, macValid, tenantIssues,
   LINE_MODES, linesOf, VM_LANGS, vmEmail, upperName, upgradeSchedules, pastHolidays, didWazo,
-} from './3cx-draft.js?v=0.40.34';
-import { setWizard, wizardTab, wizardChange, wizardClick, wizardDone, wizardTotal } from './3cx-wizard.js?v=0.40.34';
-import { unitCfg, unitLabels } from './3cx-sites.js?v=0.40.34';
-import { DEPT_MODES, deptLabel, ensureDepts, deptObjects, unitOf, unitList, setDeptMode, moveObject } from './3cx-depts.js?v=0.40.34';
+} from './3cx-draft.js?v=0.40.35';
+import { setWizard, wizardTab, wizardChange, wizardClick, wizardDone, wizardTotal } from './3cx-wizard.js?v=0.40.35';
+import { unitCfg, unitLabels } from './3cx-sites.js?v=0.40.35';
+import { DEPT_MODES, deptLabel, ensureDepts, deptObjects, unitOf, unitList, setDeptMode, moveObject } from './3cx-depts.js?v=0.40.35';
 
 const E = { d: null, m: null, file: '', tab: 'users', sel: { users: new Set(), dids: new Set(), vms: new Set() }, q: '', onReset: null };
 export const TABS = [
@@ -235,8 +235,9 @@ function deptsTab() {
     const u = units.find((y) => y.key === k); if (!u || (!many && k !== units[0].key)) return '<span class="muted small">—</span>';
     const cfg = many ? unitCfg(d, k) : d.write?.site; if (!cfg) return '';
     const L = unitLabels(d, { key: k, label: u.label });
-    if (cfg.created) return `<span class="small">créés : ${esc(cfg.created.ctxName)}, ${esc(cfg.created.outName)}</span>`;
+    if (cfg.created) return `<span class="small">créés : ${[cfg.created.ctxName, cfg.created.incName, cfg.created.outName].filter(Boolean).map(esc).join(', ')}</span>`;
     return `<input data-ctxname="${esc(k)}|newLabel" value="${esc(cfg.newLabel || '')}" placeholder="${esc(L.ctx)}" class="x3-mail" title="Contexte interne">
+      <input data-ctxname="${esc(k)}|incLabel" value="${esc(cfg.incLabel || '')}" placeholder="${esc(L.inc)}" class="x3-mail" title="Contexte entrant (le trunk du jeu y est pointé)">
       <input data-ctxname="${esc(k)}|outLabel" value="${esc(cfg.outLabel || '')}" placeholder="${esc(L.out)}" class="x3-mail" title="Contexte sortant">${many ? '' : '<div class="muted small">si « nouveau contexte » (onglet Écriture)</div>'}`;
   };
   const count = (k) => { const o = deptObjects(d, k); return [`${o.users.filter((u) => u.mode === 'user').length} postes`, `${o.hunts.length} groupes / files`, `${o.ivrs.length} SVI`, `${o.dids.length} SDA`].join(', '); };

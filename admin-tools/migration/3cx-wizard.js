@@ -11,14 +11,14 @@
 // de l'assistant France de Call Flow ; lues dans le code, testées sur faux tenant). Les phases
 // Personnes, Routage et Finitions sont planifiées (lecture seule) ; leur
 // écriture arrive aux lots 5b-5d.
-import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.34';
-import { I, sameTenant } from './inventory.js?v=0.40.34';
-import { buildExport, exportFileName } from './export.js?v=0.40.34';
-import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText, didWazo } from './3cx-draft.js?v=0.40.34';
+import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.35';
+import { I, sameTenant } from './inventory.js?v=0.40.35';
+import { buildExport, exportFileName } from './export.js?v=0.40.35';
+import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText, didWazo } from './3cx-draft.js?v=0.40.35';
 import {
-  SITE_MODES, FR_FAMILIES, FR_FORMATS, BLOCK_118, defaultSite, defaultOut, clientPatterns, occupancy, placements, unitLabels, unitCfg, futureOf, siteChecks, routeText, newRanges, multi as multiSites,
-} from './3cx-sites.js?v=0.40.34';
-import { unitList, unitOf, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.34';
+  SITE_MODES, FR_FAMILIES, FR_FORMATS, BLOCK_118, defaultSite, defaultOut, clientPatterns, unitDids, occupancy, placements, unitLabels, unitCfg, futureOf, siteChecks, routeText, newRanges, multi as multiSites,
+} from './3cx-sites.js?v=0.40.35';
+import { unitList, unitOf, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.35';
 
 const W = { d: null, m: null, t: null, busy: false, msg: null, at: null };
 export function setWizard(d, m) { W.d = d; W.m = m; W.t = null; W.msg = null; ensureState(); }
@@ -95,7 +95,9 @@ function contextsOf(t) {
     const L = unitLabels(W.d, p);
     const ctx = p.newCtx ? { id: null, name: p.ctx, label: `${L.ctx} (à créer)`, type: 'internal', virtual: true, ...newRanges(W.d, many ? p.key : null) } : t.contexts.find((c) => c.name === p.ctx) || null;
     const out = p.newOut ? { id: null, name: p.out, label: `${L.out} (à créer)`, type: 'outcall', virtual: true } : t.contexts.find((c) => c.name === p.out) || null;
-    return { ...p, L, ctxObj: ctx, outObj: out };
+    // Contexte entrant propre au jeu (à créer, ou créé) ; null : celui du trunk.
+    const inc = !p.inc ? null : p.newCtx ? { id: null, name: p.inc, label: `${L.inc} (à créer)`, type: 'incall', virtual: true } : t.contexts.find((c) => c.name === p.inc) || null;
+    return { ...p, L, ctxObj: ctx, outObj: out, incObj: inc };
   });
   const internal = many ? { id: null, name: '@client', label: 'contextes du client', type: 'internal', virtual: true, ...newRanges(W.d) } : units[0]?.ctxObj || null;
   const incall = pick(W.d.incallCtx, 'incall');
@@ -103,6 +105,7 @@ function contextsOf(t) {
   // sinon celui choisi dans Exports (demande de Brice, 04/11/2026 : « dans le contexte entrant assigné »).
   const incallOf = (r) => {
     const u = many ? units.find((x) => x.key === unitOf(W.d, r)) : units[0];
+    if (u?.incObj) return u.incObj;
     const tc = t.trunks.find((x) => String(x.id) === String(u?.trunkId))?.context;
     return t.contexts.find((x) => x.name === tc && x.type === 'incall') || incall;
   };
@@ -167,6 +170,15 @@ function prerequisites(t) {
   if (!c.internal) add('error', 'Contexte interne', 'aucun contexte interne dans le tenant.', ['people', 'routing']);
   if (!c.incall) add('error', 'Contexte entrant', 'aucun contexte entrant : les SDA ne pourront pas être créées.', ['routing']);
   // Site Wazo, contextes et appels simulés (bloquant pour tout : les numéros en dépendent).
+  // Trunk repointé sur le nouveau contexte entrant : les SDA qu'il recevait ailleurs (autre client,
+  // autre établissement) ne seraient plus routées. Bloquant ; celles du client seront recréées.
+  for (const u of c.units.filter((x) => x.newCtx && x.trunkId)) {
+    const tr = t.trunks.find((x) => String(x.id) === String(u.trunkId)); const cur = tr?.context;
+    if (!cur) continue;
+    const mine = new Set(unitDids(W.d, c.many ? u.key : null));
+    const foreign = t.incalls.flatMap((x) => x.extensions || []).filter((e) => e.context === cur && !mine.has(e.exten)).map((e) => e.exten);
+    if (foreign.length) add('error', `Trunk ${trunkLabel(t, u.trunkId)}`, `il reçoit déjà ${foreign.length} SDA dans « ${t.contexts.find((x) => x.name === cur)?.label || cur} » qui ne sont pas à ${c.many ? `« ${u.label} »` : 'ce client'} (${foreign.slice(0, 5).join(', ')}${foreign.length > 5 ? '…' : ''}) : le pointer sur « ${u.L.inc} » les couperait. Choisir un trunk propre à ${c.many ? 'ce département' : 'ce client'}.`, ['found', 'routing']);
+  }
   for (const x of siteChecks(t, W.d, (id) => trunkLabel(t, id)).issues) add(x.sev === 'info' ? 'remind' : x.sev, x.title, x.text, x.sev === 'error' ? ['found', 'people', 'routing'] : []);
   const tIss = c.internal ? tenantIssues(W.d, { ctx: c.internal.name, incallCtx: c.incall?.name }, { contexts: c.internal.virtual ? [...t.contexts, c.internal] : t.contexts, extensions: t.extensions, users: t.users, voicemails: t.voicemails }) : [];
   // Numéros hors des plages : corrigés par la phase Fondations (ajout des plages), pas une erreur à régler à la main.
@@ -205,6 +217,9 @@ function buildPlan(t) {
     if (u.newCtx) {
       add('found', 'create', `Contexte interne « ${u.L.ctx} »`, `plages ${rangesTxt(newRanges(d, c.many ? u.key : null))}`);
       add('found', 'create', `Contexte sortant « ${u.L.out} »`, `inclus par « ${u.L.ctx} » en premier`);
+      const dids = unitDids(d, c.many ? u.key : null);
+      add('found', 'create', `Contexte entrant « ${u.L.inc} »`, `${dids.length} SDA déclarées dans ses plages (${dids.slice(0, 3).join(', ')}${dids.length > 3 ? '…' : ''})`);
+      if (u.trunkId) { const tr = t.trunks.find((x) => String(x.id) === String(u.trunkId)); add('found', 'update', `Trunk ${trunkLabel(t, u.trunkId)}`, `contexte entrant : ${t.contexts.find((x) => x.name === tr?.context)?.label || tr?.context || 'aucun'} → « ${u.L.inc} »`); }
       if (c.many && d.write.site.interUnits) add('found', 'create', `Inclusions de « ${u.L.ctx} »`, `les ${c.units.length - 1} autre(s) département(s), pour les appels internes entre eux`);
       for (const peer of u.peers) { const x = t.contexts.find((y) => y.name === peer); add('found', 'update', `Inclusions de « ${x?.label || peer} »`, `« ${u.L.ctx} » ajouté en fin de liste (appels vers lui), et inclus par lui (appels depuis lui)`); }
     } else if (u.newOut && u.ctxObj) add('found', 'create', `Contexte sortant « ${u.L.out} »`, `inclus en tête par « ${u.ctxObj.label || u.ctxObj.name} »`);
@@ -360,16 +375,19 @@ async function foundationOps(t) {
   // généré ; PUT /contexts/{id}/contexts remplace la liste des inclusions, dans l'ordre.
   const fresh = c.units.filter((u) => u.newCtx);
   if (fresh.length) {
-    ops.push({ label: `Contextes ${fresh.map((u) => `« ${u.L.ctx} » et « ${u.L.out} »`).join(', ')}, inclusions${c.many && s.interUnits ? ' entre départements' : ''}${fresh[0].peers.length ? ` et avec ${fresh[0].peers.length} établissement(s)` : ''} (POST /contexts, PUT /contexts/…/contexts)`, run: async () => {
+    ops.push({ label: `Contextes ${fresh.map((u) => `« ${u.L.ctx} », « ${u.L.inc} » et « ${u.L.out} »`).join(', ')}, inclusions${c.many && s.interUnits ? ' entre départements' : ''}${fresh[0].peers.length ? ` et avec ${fresh[0].peers.length} établissement(s)` : ''}, trunk${fresh.length > 1 ? 's' : ''} sur ${fresh.length > 1 ? 'leur' : 'son'} contexte entrant (POST /contexts, PUT /contexts/…/contexts, PUT /trunks/…)`, run: async () => {
       const undo = []; const made = {};
       try {
-        // 1. Tous les contextes d'abord (les unités s'incluent entre elles).
+        // 1. Tous les contextes d'abord (les unités s'incluent entre elles). Entrant : ses SDA dans
+        //    incall_ranges, une plage par SDA, comme le Portal (IncallRangeSchema, context/schema.py, lu).
         for (const u of fresh) {
           const oc = await tapi('POST', '/contexts', { label: u.L.out, type: 'outcall' });
           undo.unshift({ method: 'DELETE', path: `/contexts/${oc.id}` });
           const ic = await tapi('POST', '/contexts', { label: u.L.ctx, type: 'internal', ...newRanges(d, c.many ? u.key : null) });
           undo.unshift({ method: 'DELETE', path: `/contexts/${ic.id}` });
-          made[u.key] = { oc, ic };
+          const inc = await tapi('POST', '/contexts', { label: u.L.inc, type: 'incall', incall_ranges: unitDids(d, c.many ? u.key : null).map((n) => ({ start: n, end: n })) });
+          undo.unshift({ method: 'DELETE', path: `/contexts/${inc.id}` });
+          made[u.key] = { oc, ic, inc };
         }
         // 2. Inclusions de chaque unité : son sortant, les autres unités, les établissements existants.
         const peers = fresh[0].peers.map((n) => t.contexts.find((x) => x.name === n)).filter(Boolean);
@@ -383,14 +401,22 @@ async function foundationOps(t) {
           await tapi('PUT', `/contexts/${x.id}/contexts`, incl([...cur.filter((id) => !add.includes(id)), ...add]));
           undo.unshift({ method: 'PUT', path: `/contexts/${x.id}/contexts`, body: incl(cur) });
         }
+        // 4. Trunk de chaque unité sur son contexte entrant, relu juste avant (confd trunk : context
+        //    modifiable, même tenant exigé, « module reload res_pjsip.so » à l'écriture ; lu le 04/11/2026).
+        for (const u of fresh.filter((x) => x.trunkId)) {
+          const tr = await tapi('GET', `/trunks/${u.trunkId}`);
+          if (tr.context === made[u.key].inc.name) continue;
+          await tapi('PUT', `/trunks/${u.trunkId}`, { context: made[u.key].inc.name });
+          undo.unshift({ method: 'PUT', path: `/trunks/${u.trunkId}`, body: { context: tr.context ?? null } });
+        }
       } catch (e) { for (const u of undo) { try { await runUndo(u); } catch { /* signalé par l'erreur d'origine */ } } throw e; }
       for (const u of fresh) {
-        const cr = { ctxId: made[u.key].ic.id, ctxName: made[u.key].ic.name, outId: made[u.key].oc.id, outName: made[u.key].oc.name, peers: u.peers };
+        const cr = { ctxId: made[u.key].ic.id, ctxName: made[u.key].ic.name, outId: made[u.key].oc.id, outName: made[u.key].oc.name, incId: made[u.key].inc.id, incName: made[u.key].inc.name, peers: u.peers };
         // Trunk proposé gardé : il ne change plus si les trunks du tenant changent ensuite.
         if (c.many) { const cfg = unitCfg(d, u.key); cfg.created = cr; if (!cfg.trunkId) cfg.trunkId = u.trunkId; } else { s.created = { ...cr, prevCtx: d.ctx || '' }; d.ctx = cr.ctxName; }
         outName[u.key] = cr.outName;
       }
-      return { created: fresh.map((u) => `${made[u.key].ic.name}, ${made[u.key].oc.name}`).join(' ; '), undo: { seq: [...undo, { local: 'site', units: c.many ? fresh.map((u) => u.key) : null }] } };
+      return { created: fresh.map((u) => `${made[u.key].ic.name}, ${made[u.key].inc.name}, ${made[u.key].oc.name}`).join(' ; '), undo: { seq: [...undo, { local: 'site', units: c.many ? fresh.map((u) => u.key) : null }] } };
     } });
   }
   for (const u of c.units.filter((x) => !x.newCtx && x.newOut && x.ctxObj)) {
@@ -547,22 +573,22 @@ function siteBlock(t) {
     <p class="small muted">${occ.length ? `Ce site Wazo contient déjà des postes : ${occ.map((x) => `${esc(x.label)} (${x.n})`).join(', ')}.` : 'Ce site Wazo ne contient encore aucun poste.'}</p>`;
   if (c.many) {
     // Départements 3CX en jeux de contextes propres (onglet Départements) : un nouveau jeu chacun.
-    h += `<p class="small">${c.units.length} jeux de contextes, un par département 3CX (onglet Départements) : chacun son contexte interne, son contexte sortant et son trunk.</p>
-      <table class="diff x3-edit"><thead><tr><th>Département</th><th>Contexte interne</th><th>Contexte sortant</th><th>Trunk Wazo</th></tr></thead><tbody>${c.units.map((u) => {
+    h += `<p class="small">${c.units.length} jeux de contextes, un par département 3CX (onglet Départements) : chacun son contexte interne, son contexte entrant (son trunk y est pointé), son contexte sortant et son trunk. Noms : &lt;ID client&gt;-&lt;site&gt;-&lt;type&gt;.</p>
+      <table class="diff x3-edit"><thead><tr><th>Département</th><th>Contexte interne</th><th>Contexte entrant</th><th>Contexte sortant</th><th>Trunk Wazo</th></tr></thead><tbody>${c.units.map((u) => {
       const cfg = unitCfg(W.d, u.key);
-      if (u.created) return `<tr><td>${esc(u.label)}</td><td>${esc(lbl(u.ctx))}</td><td>${esc(lbl(u.out))}</td><td>${esc(trunkLabel(t, u.trunkId))} <span class="muted small">(créés)</span></td></tr>`;
-      return `<tr><td>${esc(u.label)}${u.trunk ? `<div class="muted small">3CX : ${esc(u.trunk)}</div>` : ''}</td><td><input data-w="unit.newLabel" data-id="${esc(u.key)}" value="${esc(cfg.newLabel)}" placeholder="${esc(u.L.ctx)}" class="x3-mail"></td><td><input data-w="unit.outLabel" data-id="${esc(u.key)}" value="${esc(cfg.outLabel)}" placeholder="${esc(u.L.out)}" class="x3-mail"></td>
+      if (u.created) return `<tr><td>${esc(u.label)}</td><td>${esc(lbl(u.ctx))}</td><td>${esc(lbl(u.inc || ''))}</td><td>${esc(lbl(u.out))}</td><td>${esc(trunkLabel(t, u.trunkId))} <span class="muted small">(créés)</span></td></tr>`;
+      return `<tr><td>${esc(u.label)}${u.trunk ? `<div class="muted small">3CX : ${esc(u.trunk)}</div>` : ''}</td><td><input data-w="unit.newLabel" data-id="${esc(u.key)}" value="${esc(cfg.newLabel)}" placeholder="${esc(u.L.ctx)}" class="x3-mail"></td><td><input data-w="unit.incLabel" data-id="${esc(u.key)}" value="${esc(cfg.incLabel || '')}" placeholder="${esc(u.L.inc)}" class="x3-mail"></td><td><input data-w="unit.outLabel" data-id="${esc(u.key)}" value="${esc(cfg.outLabel)}" placeholder="${esc(u.L.out)}" class="x3-mail"></td>
         <td><select data-w="unit.trunkId" data-id="${esc(u.key)}">${u.trunkId ? '' : opt('', 'À choisir', '')}${t.trunks.map((x) => opt(x.id, trunkLabel(t, x.id), u.trunkId)).join('')}</select></td></tr>`;
     }).join('')}</tbody></table>
       <label class="inline small"><input type="checkbox" data-w="site.interUnits" ${s.interUnits ? 'checked' : ''}> Appels internes entre départements</label>
       <label class="inline small"><input type="checkbox" data-w="site.inter" ${s.inter ? 'checked' : ''}> Appels internes avec les établissements déjà présents</label>${peersBox()}`;
-  } else if (s.created) h += `<p class="small">Contextes du client créés : « ${esc(lbl(s.created.ctxName))} », « ${esc(lbl(s.created.outName))} » (annulables avec la phase Fondations).</p>`;
+  } else if (s.created) h += `<p class="small">Contextes du client créés : « ${esc(lbl(s.created.ctxName))} »${s.created.incName ? `, « ${esc(lbl(s.created.incName))} »` : ''}, « ${esc(lbl(s.created.outName))} » (annulables avec la phase Fondations).</p>`;
   else {
     const u = c.units[0]; const L = u.L;
     h += `<label class="small">Installation <select data-w="site.mode">${s.mode ? '' : opt('', 'À choisir', '')}${Object.entries(SITE_MODES).map(([k, l]) => opt(k, l, s.mode)).join('')}</select></label>`;
     if (s.mode === 'dedicated' || s.mode === 'existing') h += ` <label class="small">Contexte interne <select data-w="draft.ctx">${internals.map((x) => opt(x.name, `${x.label || x.name}${occ.find((y) => y.name === x.name) ? ` (${occ.find((y) => y.name === x.name).n} postes)` : ''}`, u.ctx)).join('')}</select></label>`;
     if (s.mode === 'new') {
-      h += `<div class="ms-tools"><label class="small">Contexte interne <input data-w="site.newLabel" value="${esc(s.newLabel)}" placeholder="${esc(L.ctx)}" class="x3-mail"></label><label class="small">Contexte sortant <input data-w="site.outLabel" value="${esc(s.outLabel)}" placeholder="${esc(L.out)}" class="x3-mail"></label></div>
+      h += `<div class="ms-tools"><label class="small">Contexte interne <input data-w="site.newLabel" value="${esc(s.newLabel)}" placeholder="${esc(L.ctx)}" class="x3-mail"></label><label class="small">Contexte entrant <input data-w="site.incLabel" value="${esc(s.incLabel || '')}" placeholder="${esc(L.inc)}" class="x3-mail" title="Le trunk choisi y sera pointé ; les SDA du client y sont déclarées"></label><label class="small">Contexte sortant <input data-w="site.outLabel" value="${esc(s.outLabel)}" placeholder="${esc(L.out)}" class="x3-mail"></label></div>
         <label class="inline small"><input type="checkbox" data-w="site.inter" ${s.inter ? 'checked' : ''}> Appels internes avec les autres établissements</label>${peersBox()}`;
     }
   }
