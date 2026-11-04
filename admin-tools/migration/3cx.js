@@ -133,7 +133,7 @@ export function parse3cx(xmlText) {
       number, first: txt(e, 'FirstName'), last: txt(e, 'LastName'), email: txt(e, 'EmailAddress'),
       enabled: txt(e, 'Enabled') !== 'False', mobile: /^\+?\d{6,}$/.test(mobile) ? mobile : '',
       vm: { enabled: txt(e, 'VMEnabled') === 'True', pin: txt(e, 'VMPIN') }, recordCalls: txt(e, 'RecordCalls') === 'True',
-      authId: txt(e, 'AuthID'), devices, blfs, fwd, currentProfile: txt(e, 'CurrentProfile') || 'Available', profiles,
+      authId: txt(e, 'AuthID'), callerId: txt(e, 'OutboundCallerID'), devices, blfs, fwd, currentProfile: txt(e, 'CurrentProfile') || 'Available', profiles,
     };
     m.extensions.push(x); reg('Extension', number, [x.first, x.last].filter(Boolean).join(' '), x);
   }

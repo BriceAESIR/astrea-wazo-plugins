@@ -2,25 +2,25 @@
 // Modèle et règles : 3cx-draft.js. Chaque modification est enregistrée dans le
 // navigateur (brouillon par fichier et date de sauvegarde) ; rien n'est écrit
 // dans Wazo depuis ces tableaux.
-import { $, esc, toast, helpButton, helpBox, confirmModal, downloadJson } from '../common/core.js?v=0.40.46';
-import { I } from './inventory.js?v=0.40.46';
+import { $, esc, toast, helpButton, helpBox, confirmModal, downloadJson } from '../common/core.js?v=0.40.47';
+import { I } from './inventory.js?v=0.40.47';
 import {
-  GROUP_STRATEGIES, MODES, HUNT_TARGETS, LICENCES, AUTH_METHODS, effectiveUsername, isVoix, applyLicence, upgradeDraft, saveDraft, clearDraft, buildDraft, acceptDraft, userBy, userName, imported,
+  GROUP_STRATEGIES, MODES, HUNT_TARGETS, LICENCES, AUTH_METHODS, effectiveUsername, isVoix, applyLicence, fillCallerIds, callerIdWazo, upgradeDraft, saveDraft, clearDraft, buildDraft, acceptDraft, userBy, userName, imported,
   destLabel, destProblem, draftIssues, usersCsv, blfRows, devicesCsv, deviceDesc, macWazo, macValid, tenantIssues,
   LINE_MODES, linesOf, VM_LANGS, vmEmail, upperName, upgradeSchedules, pastHolidays, didWazo,
-} from './3cx-draft.js?v=0.40.46';
-import { setWizard, wizardTab, wizardChange, wizardClick, wizardDone, wizardTotal } from './3cx-wizard.js?v=0.40.46';
-import { unitCfg, unitLabels, autoRanges, RANGE_KEYS, rangeIssues } from './3cx-sites.js?v=0.40.46';
-import { rangesText } from './multisite.js?v=0.40.46';
-import { WAZO_FIELDS, tagsOf, tagLabel, tagChecked, ensurePhonebook, phonebookName, phonebookIssues, companyContacts, personalCsv, toWazoContact, csvKeys } from './3cx-phonebook.js?v=0.40.46';
-import { SORTS, CATEGORY_RE, soundUsages, ensureSounds, mohLabel, soundCategory, FILES, keyOf, loaded, addFiles, addFileAs, wazoName } from './3cx-sounds.js?v=0.40.46';
-import { DEPT_MODES, deptLabel, ensureDepts, deptObjects, unitOf, unitList, setDeptMode, moveObject } from './3cx-depts.js?v=0.40.46';
+} from './3cx-draft.js?v=0.40.47';
+import { setWizard, wizardTab, wizardChange, wizardClick, wizardDone, wizardTotal } from './3cx-wizard.js?v=0.40.47';
+import { unitCfg, unitLabels, autoRanges, RANGE_KEYS, rangeIssues } from './3cx-sites.js?v=0.40.47';
+import { rangesText } from './multisite.js?v=0.40.47';
+import { WAZO_FIELDS, tagsOf, tagLabel, tagChecked, ensurePhonebook, phonebookName, phonebookIssues, companyContacts, personalCsv, toWazoContact, csvKeys } from './3cx-phonebook.js?v=0.40.47';
+import { SORTS, CATEGORY_RE, soundUsages, ensureSounds, mohLabel, soundCategory, FILES, keyOf, loaded, addFiles, addFileAs, wazoName } from './3cx-sounds.js?v=0.40.47';
+import { DEPT_MODES, deptLabel, ensureDepts, deptObjects, unitOf, unitList, setDeptMode, moveObject } from './3cx-depts.js?v=0.40.47';
 
 const E = { d: null, m: null, file: '', tab: 'users', sel: { users: new Set(), dids: new Set(), vms: new Set() }, q: '', onReset: null };
 export const TABS = [
   ['fiche', 'Fiche 3CX'], ['depts', 'Départements'], ['users', 'Utilisateurs'], ['vms', 'Messageries'], ['devices', 'Appareils'], ['hunts', 'Groupes et files'], ['ivrs', 'SVI'], ['dids', 'SDA'], ['scheds', 'Horaires'], ['sounds', 'Sons'], ['phonebook', 'Annuaire'], ['checks', 'Contrôles'], ['exports', 'Exports'], ['write', 'Écriture'],
 ];
-export function setDraft(d, m, file, onReset) { E.d = ensurePhonebook(ensureSounds(ensureDepts(upgradeSchedules(upgradeDraft(d), m), m), m), m); E.m = m; E.file = file; E.onReset = onReset; E.sel.users.clear(); E.sel.dids.clear(); E.sel.vms.clear(); E.review = null; setWizard(E.d, m); }
+export function setDraft(d, m, file, onReset) { E.d = ensurePhonebook(ensureSounds(ensureDepts(upgradeSchedules(fillCallerIds(upgradeDraft(d), m), m), m), m), m); E.m = m; E.file = file; E.onReset = onReset; E.sel.users.clear(); E.sel.dids.clear(); E.sel.vms.clear(); E.review = null; setWizard(E.d, m); }
 export const draft = () => E.d;
 // Contextes cibles (choisis dans Exports, gardés dans le brouillon) : ceux du
 // tenant ouvert ; à défaut, le premier interne / entrant du tenant.
@@ -148,6 +148,9 @@ function hscroll(wrap, left = 0) {
 }
 
 const USER_HELP = 'Une ligne par poste 3CX. « Vérifier un par un » ouvre la fiche de chaque utilisateur (nom, e-mail, licence, connexion, renvois, appareil) avec ses problèmes : « Valider et suivant » le marque vérifié. Licence : à choisir pour chacun (aucune valeur par défaut : les licences sont décomptées par le portail). Identifiant de connexion : vide = l\'e-mail, comme l\'import Wazo. Licence Voix : ni identifiant, ni méthode, ni accès aux applications (rien à saisir, comme User Manager). Méthode de connexion et accès aux applications ne passent pas par le CSV : à régler après l\'import. Reprise : utilisateur Wazo (ligne SIP + numéro), messagerie seule (boîte vocale sans utilisateur, pour les répondeurs) ou non repris. Les noms en italique sont déduits de l\'e-mail. Sonnerie : durée avant le débordement « pas de réponse » (ring_seconds). Renvois du profil 3CX « Disponible » → débordements de l\'utilisateur Wazo (pas de réponse, occupé, indisponible). « corrigé » : un renvoi vers un numéro du client a été remplacé par sa destination. Touches : reprendre les BLF de ce poste. Lignes (fiche « Vérifier un par un » ou action groupée) : en Auto, une ligne SIP pour le téléphone et, si les applications sont autorisées hors licence Voix, une ligne WebRTC au même numéro ; identifiant d\'authentification de chaque ligne = nom de son endpoint, comme l\'import de Wazo. Messagerie : réglages dans l\'onglet Messageries. Cochez des lignes pour une modification groupée.';
+// Numéro présenté : saisie libre, SDA du client proposées (liste x3-cids, posée par usersTab).
+const cidInput = (path) => input(path, 'class="x3-num" list="x3-cids" placeholder="défaut" title="Vide : défaut (numéro du trunk) ; anonymous : masqué"');
+const cidList = (d) => `<datalist id="x3-cids">${[...new Set((d.dids || []).map((r) => callerIdWazo(r.did)).filter(Boolean))].map((n) => `<option value="${esc(n)}">`).join('')}<option value="anonymous"></datalist>`;
 const VOIX_NOTE = 'Licence Voix : pas d\'accès aux applications Wazo, rien à saisir (identifiant, méthode, accès), comme dans User Manager. Le CSV laisse l\'identifiant vide : Wazo prend l\'e-mail, sinon l\'identifiant interne. Aucun mot de passe généré.';
 function usersTab(opts) {
   const d = E.d; const q = E.q.trim().toLowerCase();
@@ -167,6 +170,7 @@ function usersTab(opts) {
       <td>${on ? sel(`${p}.authMethod`, AUTH_METHODS) : ''}</td>
       <td class="x3-c">${on ? check(`${p}.appAccess`, 'Autorisé à utiliser les applications Wazo') : ''}</td>`}
       <td>${input(`${p}.mobile`, 'class="x3-num"')}</td>
+      <td>${on ? cidInput(`${p}.callerId`) : ''}</td>
       <td class="x3-c">${check(`${p}.vm`, 'Messagerie')}${u.vm ? `<button class="x3-link x3-mini" data-act="goto-vms" title="Réglages de la messagerie (onglet Messageries)">${esc(vmSummary(u))}</button>` : ''}</td>
       <td>${on ? num(`${p}.ring`, 5, 300) : ''}</td>
       <td>${on ? destCell(`${p}.fb.noanswer`, opts) : ''}</td>
@@ -179,6 +183,7 @@ function usersTab(opts) {
   const n = E.sel.users.size;
   const imp = imported(d); const done = imp.filter((u) => u.checked).length;
   return `${intro('users', 'Utilisateurs', USER_HELP, `<label class="inline small" title="Met le nom de tous les utilisateurs en majuscules, et ceux saisis ensuite (Tessier → TESSIER). Décocher ne rétablit pas l'ancienne casse.">${check('upperLast')} NOM en majuscules</label><button data-act="review-start" class="${done < imp.length ? 'primary' : ''}">Vérifier un par un (${done}/${imp.length})</button><input id="x3e-q" type="search" placeholder="Filtrer" value="${esc(E.q)}" class="x3-q">`)}
+    ${cidList(d)}
     ${E.review != null ? reviewPanel(opts) : ''}
     ${n ? '' : '<p class="x3-bulk-hint muted small">Cochez des lignes pour les modifier en groupe (reprise, licence, connexion, lignes, nom en majuscules, sonnerie, renvois, messagerie).</p>'}
     <div class="x3-bulk"${n ? '' : ' hidden'}>
@@ -189,6 +194,7 @@ function usersTab(opts) {
       <label>Applications <select id="xb-app"><option value="">inchangé</option><option value="1">autorisées</option><option value="0">refusées</option></select></label>
       <label>Lignes <select id="xb-lines"><option value="">inchangées</option>${Object.entries(LINE_MODES).map(([k, l]) => `<option value="${k}">${esc(l)}</option>`).join('')}</select></label>
       <label>Nom <select id="xb-last"><option value="">inchangé</option><option value="upper">en MAJUSCULES</option></select></label>
+      <label>Numéro présenté <input id="xb-cid" list="x3-cids" placeholder="inchangé ; - = défaut" class="x3-num"></label>
       <label>Sonnerie <input id="xb-ring" type="number" min="5" max="300" placeholder="s" class="x3-short"></label>
       <label>Renvoi <select id="xb-fbk"><option value="all">tous</option><option value="noanswer">pas de réponse</option><option value="busy">occupé</option><option value="fail">indisponible</option></select></label>
       <label>vers <select id="xb-dest"><option value="keep">inchangé</option>${opts}</select></label>
@@ -196,7 +202,7 @@ function usersTab(opts) {
       <label>Messagerie <select id="xb-vmset"><option value="">inchangée</option><option value="1">activer</option><option value="0">désactiver</option></select></label>
       <button data-act="bulk-users" ${n ? '' : 'disabled'}>Appliquer</button>
     </div>
-    <div class="x3-edit-wrap"><table class="diff x3-edit">${head([['[all:users]'], ['Vérifié', 'Utilisateur contrôlé (fiche « Vérifier un par un » ou case)'], ['N°'], ['Reprise', 'Utilisateur, messagerie seule ou non repris'], ['Licence', 'subscription_type : Voix, Communication unifiée, Relation client'], ['Prénom'], ['Nom'], ['E-mail'], ['Identifiant', 'Identifiant de connexion aux applications ; vide = e-mail'], ['Méthode', 'Méthode de connexion du compte des applications (non portée par le CSV)'], ['Applis', 'Accès aux applications Wazo (non porté par le CSV)'], ['Mobile'], ['Messagerie'], ['Sonnerie', 'Secondes avant « pas de réponse »'], ['Pas de réponse'], ['Occupé'], ['Indisponible', 'Poste non enregistré ou injoignable (chanunavail)'], ['Touches'], ['Appareil']])}<tbody>${rows}</tbody></table></div>`;
+    <div class="x3-edit-wrap"><table class="diff x3-edit">${head([['[all:users]'], ['Vérifié', 'Utilisateur contrôlé (fiche « Vérifier un par un » ou case)'], ['N°'], ['Reprise', 'Utilisateur, messagerie seule ou non repris'], ['Licence', 'subscription_type : Voix, Communication unifiée, Relation client'], ['Prénom'], ['Nom'], ['E-mail'], ['Identifiant', 'Identifiant de connexion aux applications ; vide = e-mail'], ['Méthode', 'Méthode de connexion du compte des applications (non portée par le CSV)'], ['Applis', 'Accès aux applications Wazo (non porté par le CSV)'], ['Mobile'], ['Numéro présenté', 'OutboundCallerID du poste 3CX → outgoing_caller_id ; vide = défaut (numéro du trunk) ; anonymous = masqué'], ['Messagerie'], ['Sonnerie', 'Secondes avant « pas de réponse »'], ['Pas de réponse'], ['Occupé'], ['Indisponible', 'Poste non enregistré ou injoignable (chanunavail)'], ['Touches'], ['Appareil']])}<tbody>${rows}</tbody></table></div>`;
 }
 
 // Fiche de vérification d'un utilisateur (retour terrain du 20/10 : rien ne
@@ -221,6 +227,7 @@ function reviewPanel(opts) {
       ${f('Nom', input(`${p}.last`))}
       ${f('E-mail', input(`${p}.email`, 'type="email"'), 'Unique sur tout le serveur ; obligatoire pour Communication unifiée et Relation client.')}
       ${f('Mobile', input(`${p}.mobile`))}
+      ${f('Numéro présenté', cidInput(`${p}.callerId`), `Dans 3CX : ${E.m?.extensions?.find((e) => e.number === u.n)?.callerId || 'vide'}. Vide = défaut (numéro du trunk) ; anonymous = masqué. Écrit en +33…, comme les numéros créés dans Wazo.`)}
       ${f('Licence', licSel(`${p}.sub`), 'Voix : téléphonie seule. Communication unifiée : applications Wazo. Relation client : Support Center et POPC en plus.')}
       ${isVoix(u) ? f('Compte des applications', '<span class="small">rien à saisir</span>', VOIX_NOTE) : `${f('Identifiant de connexion', input(`${p}.username`, `placeholder="${esc(u.email || '')}"`), `Vide : ${effectiveUsername(u) ? `« ${effectiveUsername(u)} » (e-mail)` : 'identifiant interne'}.`)}
       ${f('Méthode de connexion', sel(`${p}.authMethod`, AUTH_METHODS), 'Non portée par le CSV : à régler après l\'import.')}
@@ -690,6 +697,7 @@ function onChange(e, root) {
     if (t.dataset.type === 'nullstr') v = v === '' ? null : v;
     if (t.dataset.type === 'nullint') v = t.value === '' ? null : Math.max(0, Math.round(Number(t.value)) || 0);
     if (E.d.upperLast && /^users\.\d+\.last$/.test(t.dataset.p)) v = upperName(v);
+    if (/^users\.\d+\.callerId$/.test(t.dataset.p)) v = callerIdWazo(v);
     const ms = t.dataset.p.match(/^users\.(\d+)\.sub$/); const prevSub = ms ? E.d.users[Number(ms[1])].sub : undefined;
     set(t.dataset.p, v);
     if (ms) applyLicence(E.d.users[Number(ms[1])], prevSub);
@@ -766,7 +774,7 @@ async function loadSounds(list, root) {
 function bulkUsers(root) {
   const d = E.d; const ids = [...E.sel.users];
   const mode = $('xb-mode').value; const ring = Number($('xb-ring').value); const fbk = $('xb-fbk').value; const dv = $('xb-dest').value; const vmset = $('xb-vmset').value;
-  const sub = $('xb-sub').value; const auth = $('xb-auth').value; const app = $('xb-app').value; const lines = $('xb-lines').value; const last = $('xb-last').value;
+  const sub = $('xb-sub').value; const auth = $('xb-auth').value; const app = $('xb-app').value; const lines = $('xb-lines').value; const last = $('xb-last').value; const cid = $('xb-cid').value.trim();
   const dest = dv === 'keep' ? null : parseDest(dv, $('xb-num').value.trim());
   for (const i of ids) {
     const u = d.users[i];
@@ -781,6 +789,7 @@ function bulkUsers(root) {
     applyLicence(u, prev);
     if (lines) u.lines = lines;
     if (last === 'upper') u.last = upperName(u.last);
+    if (cid) u.callerId = cid === '-' ? '' : callerIdWazo(cid);
   }
   toast(`${ids.length} utilisateur(s) modifié(s).`);
   changed(root);

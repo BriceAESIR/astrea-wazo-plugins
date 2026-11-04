@@ -13,7 +13,7 @@
 // Les objets Wazo correspondants (destinations confd user_id, group_id…) ne
 // sont résolus qu'à l'écriture : convertir une file en groupe ne demande donc
 // aucune reprise des destinations qui la visent.
-import { nameOf, schedulesOf, STRATEGY } from './3cx.js?v=0.40.46';
+import { nameOf, schedulesOf, STRATEGY } from './3cx.js?v=0.40.47';
 
 export const DRAFT_FORMAT = 'astrea-3cx-draft';
 const KEY = 'astrea-migration-3cx-draft-v1';
@@ -101,7 +101,7 @@ export function buildDraft(m, file) {
     return {
       n: e.number, mode, first: n.first || (n.last ? '' : (e.devices.length ? `Poste ${e.number}` : '')), last: n.last, guessed: n.guessed,
       email: e.email, mobile: e.mobile, vm: e.vm.enabled, vmPin: false, ring: e.fwd.timeout || 30, fb, blf: true,
-      sub: null, username: '', authMethod: 'default', appAccess: true, checked: false, lines: 'auto', vmo: defaultVmo(),
+      sub: null, username: '', authMethod: 'default', appAccess: true, checked: false, lines: 'auto', vmo: defaultVmo(), callerId: callerIdWazo(e.callerId),
       devices: e.devices, src: { first: e.first, last: e.last, enabled: e.enabled },
     };
   });
@@ -194,6 +194,22 @@ export function upgradeDraft(d) {
   if (!('upperLast' in d)) d.upperLast = false;
   return d;
 }
+// Numéro présenté (OutboundCallerID du poste 3CX) → outgoing_caller_id de l'utilisateur
+// Wazo (colonne de l'import CSV, csvparse.py ; validé par xivo.caller_id.parse_caller_id :
+// numéro seul accepté, « + » compris ; vide = défaut, « anonymous » = masqué). Écrit en
+// +33… comme les numéros que l'outil crée (POST /phone-numbers), pour que Wazo le
+// retrouve dans les numéros présentables (user_callerid, same_phone_number).
+export const CALLER_ID_RE = /^\+?\d{2,}$/;
+export function callerIdWazo(n) { const s = String(n || '').trim(); if (!s) return ''; if (/^anonymous$/i.test(s)) return 'anonymous'; const w = didWazo(s); return /^\d+$/.test(w) ? `+${w}` : s; }
+// SDA du client, comparées sur les 9 derniers chiffres (3CX les note parfois sans le 0).
+const last9 = (s) => String(s || '').replace(/\D/g, '').slice(-9);
+export const clientCids = (d) => new Set((d.dids || []).map((r) => last9(r.did)).filter(Boolean));
+export const isClientCid = (d, cid) => clientCids(d).has(last9(cid));
+// Brouillon d'avant la reprise du numéro présenté : repris de la sauvegarde, sans toucher au reste.
+export function fillCallerIds(d, m) {
+  for (const u of d.users) if (!('callerId' in u)) u.callerId = callerIdWazo(m?.extensions?.find((e) => e.number === u.n)?.callerId);
+  return d;
+}
 // Licence Voix : pas de compte des applications à remplir, comme User Manager
 // (et le portail) : ni identifiant, ni méthode, ni accès. Retour à une autre
 // licence : accès rétabli (valeur par défaut du brouillon).
@@ -277,6 +293,8 @@ export function draftIssues(d) {
     if (!isVoix(u) && linesOf(u).includes('webrtc') && !u.appAccess) add('warn', w, 'ligne WebRTC sans accès aux applications : elle ne servira pas.');
     if (!linesOf(u).includes('sip') && (d.devices || []).some((x) => x.import && x.owner === u.n)) add('error', w, 'appareil associé mais pas de ligne SIP (une ligne WebRTC ne se met pas sur un téléphone).');
     if (u.username && !USERNAME_RE.test(u.username)) add('error', w, `identifiant « ${u.username} » refusé par Wazo (2 à 254 caractères : lettres, chiffres, - . _ ~ ! $ & ' ( ) * + , ; = % @).`);
+    if (u.callerId && u.callerId !== 'anonymous' && !CALLER_ID_RE.test(u.callerId)) add('error', w, `numéro présenté « ${u.callerId} » refusé par Wazo (chiffres, « + » au début ; vide = défaut ; anonymous = masqué).`);
+    else if (u.callerId && u.callerId !== 'anonymous' && !isClientCid(d, u.callerId)) add('warn', w, `numéro présenté ${u.callerId} : pas une SDA du client, l'opérateur peut le refuser (supposé).`);
     if (!isVoix(u) && !effectiveUsername(u)) add('warn', w, 'ni identifiant ni e-mail : Wazo prendra l\'identifiant interne (uuid) comme identifiant de connexion.');
     for (const [k, l] of [['noanswer', 'pas de réponse'], ['busy', 'occupé'], ['fail', 'indisponible']]) { const p = destProblem(d, u.fb[k]); if (p) add('warn', `${w} renvoi ${l}`, u.fb[k]?.t === 'none' ? `${p}.` : `${destLabel(d, u.fb[k])} : ${p}.`); }
   }
@@ -402,7 +420,7 @@ export function usersCsv(d, { ctx, incallCtx, pins = {}, ctxOf = null, incallOf 
   // Une seule ligne par utilisateur dans le CSV (SIP, ou WebRTC si c'est la
   // seule demandée) : la seconde ligne d'un « SIP + WebRTC » n'est créée que
   // par l'écriture guidée.
-  const cols = ['firstname', 'lastname', 'email', 'mobile_phone_number', 'enabled', 'subscription_type', 'ring_seconds', 'context', 'line_protocol', 'exten', 'voicemail_name', 'voicemail_number', 'voicemail_context', 'voicemail_password', 'voicemail_email', 'voicemail_attach_audio', 'voicemail_delete_messages', 'voicemail_ask_password', 'incall_exten', 'incall_context', 'username'];
+  const cols = ['firstname', 'lastname', 'email', 'mobile_phone_number', 'outgoing_caller_id', 'enabled', 'subscription_type', 'ring_seconds', 'context', 'line_protocol', 'exten', 'voicemail_name', 'voicemail_number', 'voicemail_context', 'voicemail_password', 'voicemail_email', 'voicemail_attach_audio', 'voicemail_delete_messages', 'voicemail_ask_password', 'incall_exten', 'incall_context', 'username'];
   const did = new Map();
   for (const r of d.dids) if (r.import && r.viaCsv && r.dest.t === 'user' && !did.has(r.dest.ref)) did.set(r.dest.ref, didWazo(r.did));
   const q = (s) => (/[",\n]/.test(String(s ?? '')) ? `"${String(s).replace(/"/g, '""')}"` : String(s ?? ''));
@@ -410,7 +428,7 @@ export function usersCsv(d, { ctx, incallCtx, pins = {}, ctxOf = null, incallOf 
     const pin = u.vm && u.vmPin && /^\d+$/.test(pins[u.n] || '') ? pins[u.n] : '';
     const o = u.vmo || defaultVmo(); const mail = u.vm ? vmEmail(u) : ''; const c = ctxOf ? ctxOf(u) : ctx;
     const v = {
-      firstname: u.first || (u.last ? '' : `Poste ${u.n}`), lastname: u.last, email: u.email, mobile_phone_number: u.mobile, enabled: '1', subscription_type: u.sub ?? '', ring_seconds: u.ring, context: c, line_protocol: linesOf(u)[0], exten: u.n,
+      firstname: u.first || (u.last ? '' : `Poste ${u.n}`), lastname: u.last, email: u.email, mobile_phone_number: u.mobile, outgoing_caller_id: u.callerId || '', enabled: '1', subscription_type: u.sub ?? '', ring_seconds: u.ring, context: c, line_protocol: linesOf(u)[0], exten: u.n,
       voicemail_name: u.vm ? userName(u) : '', voicemail_number: u.vm ? u.n : '', voicemail_context: u.vm ? c : '', voicemail_password: pin,
       voicemail_email: mail, voicemail_attach_audio: mail ? (o.attach ? '1' : '0') : '', voicemail_delete_messages: u.vm ? (o.del && mail && o.attach ? '1' : '0') : '', voicemail_ask_password: u.vm ? (o.ask ? '1' : '0') : '', incall_exten: did.get(u.n) || '', incall_context: did.has(u.n) ? (incallOf ? incallOf(u) : incallCtx) : '', username: isVoix(u) ? '' : u.username || '',
     };
