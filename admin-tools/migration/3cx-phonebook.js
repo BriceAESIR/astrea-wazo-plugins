@@ -19,7 +19,7 @@
 //    d'utilisateur : impossible avec le jeton de l'admin. D'où l'export CSV par
 //    poste, à importer par l'utilisateur (ou un plugin d'appli Wazo avec son jeton).
 // Supposé : profil du site nommé « default » ; colonnes affichées par les postes.
-import { S, ApiError } from '../common/core.js?v=0.40.45';
+import { S, ApiError } from '../common/core.js?v=0.40.46';
 
 // Champs Wazo proposés (clés des contacts dird).
 export const WAZO_FIELDS = {
@@ -108,13 +108,22 @@ export function phonebookIssues(d) {
   return out;
 }
 // Colonnes d'un CSV : champs Wazo connus dans l'ordre, puis les autres (« mobile_2 »…).
-export const csvKeys = (rows) => { const seen = new Set(rows.flatMap((r) => Object.keys(r))); return [...Object.keys(WAZO_FIELDS).filter((k) => seen.has(k)), ...[...seen].filter((k) => !WAZO_FIELDS[k] && k !== 'poste').sort()]; };
+// Colonnes du propriétaire (demande de Brice, 04/11/2026) : ID client du brouillon, poste,
+// prénom et nom de l'utilisateur à qui appartiennent les contacts. wazo-dird garde toute
+// colonne comme champ du contact (contacts libres) : elles restent visibles dans Wazo.
+export const OWNER_KEYS = ['id_client', 'proprietaire_poste', 'proprietaire_prenom', 'proprietaire_nom'];
+const ownerCols = (d, owner) => {
+  const u = (d.users || []).find((x) => x.n === owner);
+  return { id_client: d.write?.clientId || '', proprietaire_poste: owner || '', proprietaire_prenom: u?.first || '', proprietaire_nom: u?.last || '' };
+};
+export const csvKeys = (rows) => { const seen = new Set(rows.flatMap((r) => Object.keys(r))); return [...OWNER_KEYS.filter((k) => seen.has(k)), ...Object.keys(WAZO_FIELDS).filter((k) => seen.has(k)), ...[...seen].filter((k) => !WAZO_FIELDS[k] && !OWNER_KEYS.includes(k)).sort()]; };
 // CSV au format de POST /personal/import de wazo-dird : en-tête = clés, « , », guillemets, CRLF.
-export function personalCsv(d, owner = null) {
-  const rows = d.phonebook.personal.filter((c) => c.import && (owner == null || c.owner === owner)).map((c) => toWazoContact(d, c)).filter((w) => Object.keys(w).length);
+// owner null : tous les postes (fichier de contrôle, avec BOM pour Excel).
+export function personalCsv(d, owner = null, { bom = false } = {}) {
+  const rows = d.phonebook.personal.filter((c) => c.import && (owner == null || c.owner === owner)).map((c) => [c, toWazoContact(d, c)]).filter(([, w]) => Object.keys(w).length).map(([c, w]) => ({ ...ownerCols(d, c.owner), ...w }));
   const keys = csvKeys(rows);
   const q = (s) => `"${String(s ?? '').replace(/"/g, '""')}"`;
-  return [keys.join(','), ...rows.map((r) => keys.map((k) => q(r[k])).join(','))].join('\r\n');
+  return (bom ? '﻿' : '') + [keys.join(','), ...rows.map((r) => keys.map((k) => q(r[k])).join(','))].join('\r\n');
 }
 export const DEFAULT_COLUMNS = {
   searched_columns: ['firstname', 'lastname', 'company', 'number', 'mobile', 'business', 'home'],

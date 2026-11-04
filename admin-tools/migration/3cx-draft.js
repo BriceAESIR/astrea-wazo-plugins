@@ -13,7 +13,7 @@
 // Les objets Wazo correspondants (destinations confd user_id, group_id…) ne
 // sont résolus qu'à l'écriture : convertir une file en groupe ne demande donc
 // aucune reprise des destinations qui la visent.
-import { nameOf, schedulesOf, STRATEGY } from './3cx.js?v=0.40.45';
+import { nameOf, schedulesOf, STRATEGY } from './3cx.js?v=0.40.46';
 
 export const DRAFT_FORMAT = 'astrea-3cx-draft';
 const KEY = 'astrea-migration-3cx-draft-v1';
@@ -189,9 +189,18 @@ export function upgradeDraft(d) {
     if (!('checked' in u)) u.checked = false;
     if (!('lines' in u)) u.lines = 'auto';
     if (!u.vmo) u.vmo = defaultVmo();
+    applyLicence(u);
   }
   if (!('upperLast' in d)) d.upperLast = false;
   return d;
+}
+// Licence Voix : pas de compte des applications à remplir, comme User Manager
+// (et le portail) : ni identifiant, ni méthode, ni accès. Retour à une autre
+// licence : accès rétabli (valeur par défaut du brouillon).
+export const isVoix = (u) => u.sub === 0;
+export function applyLicence(u, prev) {
+  if (isVoix(u)) { u.username = ''; u.authMethod = 'default'; u.appAccess = false; }
+  else if (prev === 0 && u.sub != null) u.appAccess = true;
 }
 // Identifiant effectif : celui saisi, sinon l'e-mail (comme l'import Wazo :
 // wazo_user_service.py, username or email_address or uuid).
@@ -264,12 +273,11 @@ export function draftIssues(d) {
     if (!(u.ring >= 5 && u.ring <= 300)) add('warn', w, `durée de sonnerie ${u.ring} s inhabituelle.`);
     if (u.sub == null) add('error', w, 'licence non choisie (Voix, Communication unifiée ou Relation client).');
     if ((u.sub === 1 || u.sub === 3) && !u.email) add('error', w, `e-mail obligatoire pour la licence ${LICENCES[u.sub]} (règle du portail).`);
-    if (u.sub === 0 && u.appAccess) add('info', w, 'licence Voix : les applications Wazo refuseront la connexion, même avec l\'accès autorisé (vérifié par User Manager) ; pas de ligne WebRTC en mode Auto.');
     if (u.sub === 0 && linesOf(u).includes('webrtc')) add('error', w, 'ligne WebRTC demandée en licence Voix : refusée par le portail (choisir SIP seule ou une autre licence).');
-    if (linesOf(u).includes('webrtc') && !u.appAccess) add('warn', w, 'ligne WebRTC sans accès aux applications : elle ne servira pas.');
+    if (!isVoix(u) && linesOf(u).includes('webrtc') && !u.appAccess) add('warn', w, 'ligne WebRTC sans accès aux applications : elle ne servira pas.');
     if (!linesOf(u).includes('sip') && (d.devices || []).some((x) => x.import && x.owner === u.n)) add('error', w, 'appareil associé mais pas de ligne SIP (une ligne WebRTC ne se met pas sur un téléphone).');
     if (u.username && !USERNAME_RE.test(u.username)) add('error', w, `identifiant « ${u.username} » refusé par Wazo (2 à 254 caractères : lettres, chiffres, - . _ ~ ! $ & ' ( ) * + , ; = % @).`);
-    if (!effectiveUsername(u)) add('warn', w, 'ni identifiant ni e-mail : Wazo prendra l\'identifiant interne (uuid) comme identifiant de connexion.');
+    if (!isVoix(u) && !effectiveUsername(u)) add('warn', w, 'ni identifiant ni e-mail : Wazo prendra l\'identifiant interne (uuid) comme identifiant de connexion.');
     for (const [k, l] of [['noanswer', 'pas de réponse'], ['busy', 'occupé'], ['fail', 'indisponible']]) { const p = destProblem(d, u.fb[k]); if (p) add('warn', `${w} renvoi ${l}`, u.fb[k]?.t === 'none' ? `${p}.` : `${destLabel(d, u.fb[k])} : ${p}.`); }
   }
   // Identifiants de connexion uniques sur tout le serveur : au moins entre eux.
@@ -404,7 +412,7 @@ export function usersCsv(d, { ctx, incallCtx, pins = {}, ctxOf = null, incallOf 
     const v = {
       firstname: u.first || (u.last ? '' : `Poste ${u.n}`), lastname: u.last, email: u.email, mobile_phone_number: u.mobile, enabled: '1', subscription_type: u.sub ?? '', ring_seconds: u.ring, context: c, line_protocol: linesOf(u)[0], exten: u.n,
       voicemail_name: u.vm ? userName(u) : '', voicemail_number: u.vm ? u.n : '', voicemail_context: u.vm ? c : '', voicemail_password: pin,
-      voicemail_email: mail, voicemail_attach_audio: mail ? (o.attach ? '1' : '0') : '', voicemail_delete_messages: u.vm ? (o.del && mail && o.attach ? '1' : '0') : '', voicemail_ask_password: u.vm ? (o.ask ? '1' : '0') : '', incall_exten: did.get(u.n) || '', incall_context: did.has(u.n) ? (incallOf ? incallOf(u) : incallCtx) : '', username: u.username || '',
+      voicemail_email: mail, voicemail_attach_audio: mail ? (o.attach ? '1' : '0') : '', voicemail_delete_messages: u.vm ? (o.del && mail && o.attach ? '1' : '0') : '', voicemail_ask_password: u.vm ? (o.ask ? '1' : '0') : '', incall_exten: did.get(u.n) || '', incall_context: did.has(u.n) ? (incallOf ? incallOf(u) : incallCtx) : '', username: isVoix(u) ? '' : u.username || '',
     };
     return cols.map((c) => q(v[c])).join(',');
   });

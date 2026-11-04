@@ -2,19 +2,19 @@
 // Modèle et règles : 3cx-draft.js. Chaque modification est enregistrée dans le
 // navigateur (brouillon par fichier et date de sauvegarde) ; rien n'est écrit
 // dans Wazo depuis ces tableaux.
-import { $, esc, toast, helpButton, helpBox, confirmModal, downloadJson } from '../common/core.js?v=0.40.45';
-import { I } from './inventory.js?v=0.40.45';
+import { $, esc, toast, helpButton, helpBox, confirmModal, downloadJson } from '../common/core.js?v=0.40.46';
+import { I } from './inventory.js?v=0.40.46';
 import {
-  GROUP_STRATEGIES, MODES, HUNT_TARGETS, LICENCES, AUTH_METHODS, effectiveUsername, upgradeDraft, saveDraft, clearDraft, buildDraft, acceptDraft, userBy, userName, imported,
+  GROUP_STRATEGIES, MODES, HUNT_TARGETS, LICENCES, AUTH_METHODS, effectiveUsername, isVoix, applyLicence, upgradeDraft, saveDraft, clearDraft, buildDraft, acceptDraft, userBy, userName, imported,
   destLabel, destProblem, draftIssues, usersCsv, blfRows, devicesCsv, deviceDesc, macWazo, macValid, tenantIssues,
   LINE_MODES, linesOf, VM_LANGS, vmEmail, upperName, upgradeSchedules, pastHolidays, didWazo,
-} from './3cx-draft.js?v=0.40.45';
-import { setWizard, wizardTab, wizardChange, wizardClick, wizardDone, wizardTotal } from './3cx-wizard.js?v=0.40.45';
-import { unitCfg, unitLabels, autoRanges, RANGE_KEYS, rangeIssues } from './3cx-sites.js?v=0.40.45';
-import { rangesText } from './multisite.js?v=0.40.45';
-import { WAZO_FIELDS, tagsOf, tagLabel, tagChecked, ensurePhonebook, phonebookName, phonebookIssues, companyContacts, personalCsv, toWazoContact, csvKeys } from './3cx-phonebook.js?v=0.40.45';
-import { SORTS, CATEGORY_RE, soundUsages, ensureSounds, mohLabel, soundCategory, FILES, keyOf, loaded, addFiles, addFileAs, wazoName } from './3cx-sounds.js?v=0.40.45';
-import { DEPT_MODES, deptLabel, ensureDepts, deptObjects, unitOf, unitList, setDeptMode, moveObject } from './3cx-depts.js?v=0.40.45';
+} from './3cx-draft.js?v=0.40.46';
+import { setWizard, wizardTab, wizardChange, wizardClick, wizardDone, wizardTotal } from './3cx-wizard.js?v=0.40.46';
+import { unitCfg, unitLabels, autoRanges, RANGE_KEYS, rangeIssues } from './3cx-sites.js?v=0.40.46';
+import { rangesText } from './multisite.js?v=0.40.46';
+import { WAZO_FIELDS, tagsOf, tagLabel, tagChecked, ensurePhonebook, phonebookName, phonebookIssues, companyContacts, personalCsv, toWazoContact, csvKeys } from './3cx-phonebook.js?v=0.40.46';
+import { SORTS, CATEGORY_RE, soundUsages, ensureSounds, mohLabel, soundCategory, FILES, keyOf, loaded, addFiles, addFileAs, wazoName } from './3cx-sounds.js?v=0.40.46';
+import { DEPT_MODES, deptLabel, ensureDepts, deptObjects, unitOf, unitList, setDeptMode, moveObject } from './3cx-depts.js?v=0.40.46';
 
 const E = { d: null, m: null, file: '', tab: 'users', sel: { users: new Set(), dids: new Set(), vms: new Set() }, q: '', onReset: null };
 export const TABS = [
@@ -147,7 +147,8 @@ function hscroll(wrap, left = 0) {
   fit(); bar.scrollLeft = left; move();
 }
 
-const USER_HELP = 'Une ligne par poste 3CX. « Vérifier un par un » ouvre la fiche de chaque utilisateur (nom, e-mail, licence, connexion, renvois, appareil) avec ses problèmes : « Valider et suivant » le marque vérifié. Licence : à choisir pour chacun (aucune valeur par défaut : les licences sont décomptées par le portail). Identifiant de connexion : vide = l\'e-mail, comme l\'import Wazo. Méthode de connexion et accès aux applications ne passent pas par le CSV : à régler après l\'import. Reprise : utilisateur Wazo (ligne SIP + numéro), messagerie seule (boîte vocale sans utilisateur, pour les répondeurs) ou non repris. Les noms en italique sont déduits de l\'e-mail. Sonnerie : durée avant le débordement « pas de réponse » (ring_seconds). Renvois du profil 3CX « Disponible » → débordements de l\'utilisateur Wazo (pas de réponse, occupé, indisponible). « corrigé » : un renvoi vers un numéro du client a été remplacé par sa destination. Touches : reprendre les BLF de ce poste. Lignes (fiche « Vérifier un par un » ou action groupée) : en Auto, une ligne SIP pour le téléphone et, si les applications sont autorisées hors licence Voix, une ligne WebRTC au même numéro ; identifiant d\'authentification de chaque ligne = nom de son endpoint, comme l\'import de Wazo. Messagerie : réglages dans l\'onglet Messageries. Cochez des lignes pour une modification groupée.';
+const USER_HELP = 'Une ligne par poste 3CX. « Vérifier un par un » ouvre la fiche de chaque utilisateur (nom, e-mail, licence, connexion, renvois, appareil) avec ses problèmes : « Valider et suivant » le marque vérifié. Licence : à choisir pour chacun (aucune valeur par défaut : les licences sont décomptées par le portail). Identifiant de connexion : vide = l\'e-mail, comme l\'import Wazo. Licence Voix : ni identifiant, ni méthode, ni accès aux applications (rien à saisir, comme User Manager). Méthode de connexion et accès aux applications ne passent pas par le CSV : à régler après l\'import. Reprise : utilisateur Wazo (ligne SIP + numéro), messagerie seule (boîte vocale sans utilisateur, pour les répondeurs) ou non repris. Les noms en italique sont déduits de l\'e-mail. Sonnerie : durée avant le débordement « pas de réponse » (ring_seconds). Renvois du profil 3CX « Disponible » → débordements de l\'utilisateur Wazo (pas de réponse, occupé, indisponible). « corrigé » : un renvoi vers un numéro du client a été remplacé par sa destination. Touches : reprendre les BLF de ce poste. Lignes (fiche « Vérifier un par un » ou action groupée) : en Auto, une ligne SIP pour le téléphone et, si les applications sont autorisées hors licence Voix, une ligne WebRTC au même numéro ; identifiant d\'authentification de chaque ligne = nom de son endpoint, comme l\'import de Wazo. Messagerie : réglages dans l\'onglet Messageries. Cochez des lignes pour une modification groupée.';
+const VOIX_NOTE = 'Licence Voix : pas d\'accès aux applications Wazo, rien à saisir (identifiant, méthode, accès), comme dans User Manager. Le CSV laisse l\'identifiant vide : Wazo prend l\'e-mail, sinon l\'identifiant interne. Aucun mot de passe généré.';
 function usersTab(opts) {
   const d = E.d; const q = E.q.trim().toLowerCase();
   const list = d.users.map((u, i) => [u, i]).filter(([u]) => !q || `${u.n} ${userName(u)} ${u.email}`.toLowerCase().includes(q));
@@ -162,9 +163,9 @@ function usersTab(opts) {
       <td>${input(`${p}.first`, `class="${u.guessed ? 'x3-guess' : ''}" title="${esc(`Dans 3CX : ${[u.src.first, u.src.last].filter(Boolean).join(' ') || 'vide'}`)}"`)}</td>
       <td>${input(`${p}.last`)}</td>
       <td>${input(`${p}.email`, 'type="email" class="x3-mail"')}</td>
-      <td>${on ? input(`${p}.username`, `placeholder="${esc(u.email || 'identifiant')}" class="x3-mail" title="Vide : Wazo prend l'e-mail comme identifiant (comme l'import Wazo)"`) : ''}</td>
+      ${on && isVoix(u) ? `<td colspan="3" class="muted small" title="${esc(VOIX_NOTE)}">Licence Voix : pas d'accès aux applications</td>` : `<td>${on ? input(`${p}.username`, `placeholder="${esc(u.email || 'identifiant')}" class="x3-mail" title="Vide : Wazo prend l'e-mail comme identifiant (comme l'import Wazo)"`) : ''}</td>
       <td>${on ? sel(`${p}.authMethod`, AUTH_METHODS) : ''}</td>
-      <td class="x3-c">${on ? check(`${p}.appAccess`, 'Autorisé à utiliser les applications Wazo') : ''}</td>
+      <td class="x3-c">${on ? check(`${p}.appAccess`, 'Autorisé à utiliser les applications Wazo') : ''}</td>`}
       <td>${input(`${p}.mobile`, 'class="x3-num"')}</td>
       <td class="x3-c">${check(`${p}.vm`, 'Messagerie')}${u.vm ? `<button class="x3-link x3-mini" data-act="goto-vms" title="Réglages de la messagerie (onglet Messageries)">${esc(vmSummary(u))}</button>` : ''}</td>
       <td>${on ? num(`${p}.ring`, 5, 300) : ''}</td>
@@ -221,9 +222,9 @@ function reviewPanel(opts) {
       ${f('E-mail', input(`${p}.email`, 'type="email"'), 'Unique sur tout le serveur ; obligatoire pour Communication unifiée et Relation client.')}
       ${f('Mobile', input(`${p}.mobile`))}
       ${f('Licence', licSel(`${p}.sub`), 'Voix : téléphonie seule. Communication unifiée : applications Wazo. Relation client : Support Center et POPC en plus.')}
-      ${f('Identifiant de connexion', input(`${p}.username`, `placeholder="${esc(u.email || '')}"`), `Vide : ${effectiveUsername(u) ? `« ${effectiveUsername(u)} » (e-mail)` : 'identifiant interne'}.`)}
+      ${isVoix(u) ? f('Compte des applications', '<span class="small">rien à saisir</span>', VOIX_NOTE) : `${f('Identifiant de connexion', input(`${p}.username`, `placeholder="${esc(u.email || '')}"`), `Vide : ${effectiveUsername(u) ? `« ${effectiveUsername(u)} » (e-mail)` : 'identifiant interne'}.`)}
       ${f('Méthode de connexion', sel(`${p}.authMethod`, AUTH_METHODS), 'Non portée par le CSV : à régler après l\'import.')}
-      ${f('Applications Wazo', `<span>${check(`${p}.appAccess`)} autorisées</span>`, 'Non porté par le CSV.')}
+      ${f('Applications Wazo', `<span>${check(`${p}.appAccess`)} autorisées</span>`, 'Non porté par le CSV.')}`}
       ${f('Lignes', sel(`${p}.lines`, LINE_MODES), `Créées : ${linesOf(u).map((t) => `${t === 'sip' ? 'SIP' : 'WebRTC'} ${u.n}`).join(' + ')} (même numéro). Identifiant d'authentification = nom de l'endpoint, comme l'import de Wazo.`)}
       ${vmFields(p, u, f)}
       ${f('Sonnerie (s)', num(`${p}.ring`, 5, 300))}
@@ -588,7 +589,8 @@ function checksTab() {
 function afterImportNote(d) {
   const users = imported(d);
   const meth = users.filter((u) => u.authMethod && u.authMethod !== 'default');
-  const off = users.filter((u) => !u.appAccess);
+  // Voix : les applications refusent la connexion de toute façon (vérifié par User Manager).
+  const off = users.filter((u) => !u.appAccess && !isVoix(u));
   if (!meth.length && !off.length) return '<p class="small muted">Méthode de connexion « défaut de l\'organisation » et accès aux applications autorisé pour tous : rien à régler après l\'import.</p>';
   return `<div class="warn small"><strong>À régler après l'import</strong> (non porté par le CSV de Wazo ; User Manager, modification en masse) :
     ${meth.length ? `<div>Méthode de connexion : ${meth.map((u) => `${esc(u.n)} ${esc(AUTH_METHODS[u.authMethod])}`).join(', ')}.</div>` : ''}
@@ -688,7 +690,9 @@ function onChange(e, root) {
     if (t.dataset.type === 'nullstr') v = v === '' ? null : v;
     if (t.dataset.type === 'nullint') v = t.value === '' ? null : Math.max(0, Math.round(Number(t.value)) || 0);
     if (E.d.upperLast && /^users\.\d+\.last$/.test(t.dataset.p)) v = upperName(v);
+    const ms = t.dataset.p.match(/^users\.(\d+)\.sub$/); const prevSub = ms ? E.d.users[Number(ms[1])].sub : undefined;
     set(t.dataset.p, v);
+    if (ms) applyLicence(E.d.users[Number(ms[1])], prevSub);
     if (t.dataset.p === 'upperLast' && v) for (const u of E.d.users) u.last = upperName(u.last);
     // Description saisie à la main : elle ne suit plus le nom de l'utilisateur.
     const md = t.dataset.p.match(/^devices\.(\d+)\.(desc|descAuto)$/);
@@ -726,12 +730,7 @@ function onClick(e, root) {
     case 'pb-add': d.phonebook.contacts.unshift({ owner: null, raw: {}, import: true }); return changed(root);
     // Sans BOM : wazo-dird lirait « ﻿firstname » comme nom de la première colonne (supposé).
     case 'pb-csv': return download(`contacts-personnels-${b.dataset.o}-${base()}.csv`, personalCsv(d, b.dataset.o));
-    case 'pb-csv-all': {
-      const rows = d.phonebook.personal.filter((c) => c.import).map((c) => ({ poste: c.owner, ...toWazoContact(d, c) }));
-      const keys = ['poste', ...csvKeys(rows)];
-      const qq = (s) => `"${String(s ?? '').replace(/"/g, '""')}"`;
-      return download(`contacts-personnels-${base()}.csv`, '﻿' + [keys.join(','), ...rows.map((r) => keys.map((k) => qq(r[k])).join(','))].join('\r\n'));
-    }
+    case 'pb-csv-all': return download(`contacts-personnels-${base()}.csv`, personalCsv(d, null, { bom: true }));
     case 'pb-all': for (const c of d.phonebook.contacts) c.import = b.dataset.v === '1'; return changed(root);
     case 'moh-add': { const k = `moh${Date.now().toString(36)}`; d.sounds.moh.push({ key: k, label: '', sort: 'alphabetical' }); return changed(root); }
     case 'moh-del': {
@@ -775,9 +774,11 @@ function bulkUsers(root) {
     if (ring) u.ring = Math.max(5, Math.min(300, ring));
     if (dest) for (const k of fbk === 'all' ? ['noanswer', 'busy', 'fail'] : [fbk]) u.fb[k] = { ...dest };
     if (vmset) u.vm = vmset === '1';
+    const prev = u.sub;
     if (sub !== '') u.sub = Number(sub);
     if (auth) u.authMethod = auth;
     if (app) u.appAccess = app === '1';
+    applyLicence(u, prev);
     if (lines) u.lines = lines;
     if (last === 'upper') u.last = upperName(u.last);
   }
