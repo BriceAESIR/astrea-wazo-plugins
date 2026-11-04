@@ -2,22 +2,23 @@
 // Modèle et règles : 3cx-draft.js. Chaque modification est enregistrée dans le
 // navigateur (brouillon par fichier et date de sauvegarde) ; rien n'est écrit
 // dans Wazo depuis ces tableaux.
-import { $, esc, toast, helpButton, helpBox, confirmModal, downloadJson } from '../common/core.js?v=0.40.36';
-import { I } from './inventory.js?v=0.40.36';
+import { $, esc, toast, helpButton, helpBox, confirmModal, downloadJson } from '../common/core.js?v=0.40.37';
+import { I } from './inventory.js?v=0.40.37';
 import {
   GROUP_STRATEGIES, MODES, HUNT_TARGETS, LICENCES, AUTH_METHODS, effectiveUsername, upgradeDraft, saveDraft, clearDraft, buildDraft, acceptDraft, userBy, userName, imported,
   destLabel, destProblem, draftIssues, usersCsv, blfRows, devicesCsv, deviceDesc, macWazo, macValid, tenantIssues,
   LINE_MODES, linesOf, VM_LANGS, vmEmail, upperName, upgradeSchedules, pastHolidays, didWazo,
-} from './3cx-draft.js?v=0.40.36';
-import { setWizard, wizardTab, wizardChange, wizardClick, wizardDone, wizardTotal } from './3cx-wizard.js?v=0.40.36';
-import { unitCfg, unitLabels } from './3cx-sites.js?v=0.40.36';
-import { DEPT_MODES, deptLabel, ensureDepts, deptObjects, unitOf, unitList, setDeptMode, moveObject } from './3cx-depts.js?v=0.40.36';
+} from './3cx-draft.js?v=0.40.37';
+import { setWizard, wizardTab, wizardChange, wizardClick, wizardDone, wizardTotal } from './3cx-wizard.js?v=0.40.37';
+import { unitCfg, unitLabels } from './3cx-sites.js?v=0.40.37';
+import { SORTS, CATEGORY_RE, soundUsages, ensureSounds, mohLabel, soundCategory, FILES, keyOf, loaded, addFiles, wazoName } from './3cx-sounds.js?v=0.40.37';
+import { DEPT_MODES, deptLabel, ensureDepts, deptObjects, unitOf, unitList, setDeptMode, moveObject } from './3cx-depts.js?v=0.40.37';
 
 const E = { d: null, m: null, file: '', tab: 'users', sel: { users: new Set(), dids: new Set(), vms: new Set() }, q: '', onReset: null };
 export const TABS = [
-  ['fiche', 'Fiche 3CX'], ['depts', 'Départements'], ['users', 'Utilisateurs'], ['vms', 'Messageries'], ['devices', 'Appareils'], ['hunts', 'Groupes et files'], ['ivrs', 'SVI'], ['dids', 'SDA'], ['scheds', 'Horaires'], ['checks', 'Contrôles'], ['exports', 'Exports'], ['write', 'Écriture'],
+  ['fiche', 'Fiche 3CX'], ['depts', 'Départements'], ['users', 'Utilisateurs'], ['vms', 'Messageries'], ['devices', 'Appareils'], ['hunts', 'Groupes et files'], ['ivrs', 'SVI'], ['dids', 'SDA'], ['scheds', 'Horaires'], ['sounds', 'Sons'], ['checks', 'Contrôles'], ['exports', 'Exports'], ['write', 'Écriture'],
 ];
-export function setDraft(d, m, file, onReset) { E.d = ensureDepts(upgradeSchedules(upgradeDraft(d), m), m); E.m = m; E.file = file; E.onReset = onReset; E.sel.users.clear(); E.sel.dids.clear(); E.sel.vms.clear(); E.review = null; setWizard(E.d, m); }
+export function setDraft(d, m, file, onReset) { E.d = ensureSounds(ensureDepts(upgradeSchedules(upgradeDraft(d), m), m), m); E.m = m; E.file = file; E.onReset = onReset; E.sel.users.clear(); E.sel.dids.clear(); E.sel.vms.clear(); E.review = null; setWizard(E.d, m); }
 export const draft = () => E.d;
 // Contextes cibles (choisis dans Exports, gardés dans le brouillon) : ceux du
 // tenant ouvert ; à défaut, le premier interne / entrant du tenant.
@@ -30,7 +31,8 @@ const tenantChecks = () => tenantIssues(E.d, tenantCtx(), { contexts: I.lists.co
 export function tabCounts() {
   const d = E.d; if (!d) return {};
   const iss = [...draftIssues(d), ...tenantChecks()];
-  return { depts: unitList(d).filter((u) => u.key !== '_').length || undefined, users: imported(d).length, vms: d.users.filter((u) => u.mode !== 'skip' && u.vm).length, devices: (d.devices || []).filter((x) => x.import).length, hunts: d.hunts.filter((h) => h.target !== 'skip').length, ivrs: d.ivrs.filter((v) => v.import).length, dids: d.dids.filter((r) => r.import).length, scheds: d.schedules.length, checks: iss.filter((x) => x.sev !== 'info').length, write: `${wizardDone()}/${wizardTotal()}` };
+  const snd = Object.entries(d.sounds?.files || {}).filter(([, x]) => x.to !== 'skip');
+  return { depts: unitList(d).filter((u) => u.key !== '_').length || undefined, sounds: `${snd.filter(([f]) => loaded(f)).length}/${snd.length}`, users: imported(d).length, vms: d.users.filter((u) => u.mode !== 'skip' && u.vm).length, devices: (d.devices || []).filter((x) => x.import).length, hunts: d.hunts.filter((h) => h.target !== 'skip').length, ivrs: d.ivrs.filter((v) => v.import).length, dids: d.dids.filter((r) => r.import).length, scheds: d.schedules.length, checks: iss.filter((x) => x.sev !== 'info').length, write: `${wizardDone()}/${wizardTotal()}` };
 }
 
 // ---------------------------------------------------------------------------
@@ -77,7 +79,7 @@ export function renderTab(root, tab) {
   const wb = document.getElementById('workbench'); const keepWb = wb ? [wb.scrollTop, wb.scrollLeft] : null;
   const keep = [...root.querySelectorAll('.x3-edit-wrap')].map((w) => w.x3left || 0);
   const opts = destOptions();
-  const html = { depts: deptsTab, users: usersTab, vms: vmsTab, devices: devicesTab, hunts: huntsTab, ivrs: ivrsTab, dids: didsTab, scheds: schedsTab, checks: checksTab, exports: exportsTab, write: wizardTab }[tab]?.(opts) || '';
+  const html = { sounds: soundsTab, depts: deptsTab, users: usersTab, vms: vmsTab, devices: devicesTab, hunts: huntsTab, ivrs: ivrsTab, dids: didsTab, scheds: schedsTab, checks: checksTab, exports: exportsTab, write: wizardTab }[tab]?.(opts) || '';
   root.innerHTML = html;
   // Listes à valeur posée après rendu (utilisateur d'un appareil).
   for (const s of root.querySelectorAll('select[data-p][data-val]')) {
@@ -89,10 +91,20 @@ export function renderTab(root, tab) {
     if (![...s.options].some((o) => o.value === s.dataset.val)) s.insertAdjacentHTML('beforeend', `<option value="${esc(s.dataset.val)}">${esc(s.dataset.label)}</option>`);
     s.value = s.dataset.val;
   }
+  // Case « tout sélectionner » : cochée si toutes les lignes affichées le sont (sinon elle
+  // restait décochée après chaque rendu et un clic ne pouvait que recocher : retour de Brice).
+  for (const a of root.querySelectorAll('input[data-selall]')) {
+    const rows = [...root.querySelectorAll(`input[data-sel="${a.dataset.selall}"]`)];
+    const n = rows.filter((x) => x.checked).length;
+    a.checked = rows.length > 0 && n === rows.length; a.indeterminate = n > 0 && n < rows.length;
+  }
   root.querySelectorAll('.x3-edit-wrap').forEach((w, i) => hscroll(w, keep[i] || 0));
   if (keepWb) [wb.scrollTop, wb.scrollLeft] = keepWb;
   root.onchange = (e) => onChange(e, root);
   root.onclick = (e) => onClick(e, root);
+  // Glisser-déposer des fichiers son (onglet Sons).
+  root.ondragover = (e) => { if (e.target.closest?.('[data-drop]')) e.preventDefault(); };
+  root.ondrop = (e) => { if (!e.target.closest?.('[data-drop]')) return; e.preventDefault(); loadSounds([...(e.dataTransfer?.files || [])], root); };
   root.oninput = (e) => { if (e.target.id === 'x3e-q') { E.q = e.target.value; renderTab(root, tab); const q = $('x3e-q'); q.focus(); q.setSelectionRange(q.value.length, q.value.length); } };
 }
 
@@ -215,6 +227,46 @@ function reviewPanel(opts) {
     </div>
     <div class="btnrow"><button data-act="review-prev" ${k ? '' : 'disabled'}>Précédent</button><button data-act="review-next">Suivant sans valider</button><span class="spacer"></span><button data-act="review-ok" class="primary">Valider et suivant</button></div>
   </div>`;
+}
+
+// ---------------------------------------------------------------------------
+// Sons et musiques d'attente (demande de Brice, 04/11/2026). Règles et API :
+// 3cx-sounds.js. Les fichiers restent dans la mémoire de la page : à redéposer
+// après un rechargement.
+// ---------------------------------------------------------------------------
+const SOUNDS_HELP = 'La sauvegarde 3CX ne donne que le nom des fichiers son (répondeurs, SVI, messages de fermeture, musiques). Déposez ici les fichiers (récupérés dans la sauvegarde complète de 3CX, ou fournis par le client) : ils sont reconnus par leur nom, sans tenir compte de l\'extension, et convertis dans le navigateur en WAV 8 kHz mono 16 bits, le format exigé par Wazo pour une musique d\'attente. Ils restent dans la mémoire de la page (à redéposer après un rechargement) et sont envoyés par la phase Fondations (onglet Écriture). Pour chaque fichier : une musique d\'attente, la catégorie de sons du client (messages : SVI, fermetures…), ou ne pas reprendre. Musique d\'attente par défaut : réglée dans le modèle SIP global du site (option moh_suggest), comme le Wizard de déploiement de Wazo.';
+function soundsTab() {
+  const d = E.d; const s = d.sounds; const us = soundUsages(E.m);
+  const known = new Set(us.map((u) => keyOf(u.file)));
+  const rows = [...us, ...[...FILES.values()].filter((f) => !known.has(keyOf(f.name))).map((f) => ({ file: f.name, uses: [], extra: true }))];
+  for (const r of rows) s.files[r.file] ||= { to: 'sound' };
+  const opt = (v, l, cur) => `<option value="${esc(v)}" ${v === cur ? 'selected' : ''}>${esc(l)}</option>`;
+  const toSel = (f) => `<select data-snd-to="${esc(f)}">${s.moh.map((x) => opt(`moh:${x.key}`, `Musique d'attente « ${mohLabel(d, x)} »`, s.files[f].to)).join('')}${opt('sound', `Son « ${soundCategory(d)} »`, s.files[f].to)}${opt('skip', 'Ne pas reprendre', s.files[f].to)}</select>`;
+  const fileRows = rows.map((r) => {
+    const l = loaded(r.file); const to = s.files[r.file].to;
+    return `<tr class="${to === 'skip' ? 'x3-off' : ''}"><td>${esc(r.file)}<div class="muted small">${to === 'skip' ? '' : `Wazo : ${esc(wazoName(r.file))}.wav`}</div></td>
+      <td class="small">${r.uses.map((u) => esc(u.what)).join('<br>') || '<span class="muted">ajouté, non cité par 3CX</span>'}</td>
+      <td>${toSel(r.file)}</td>
+      <td class="small">${l ? `<audio controls preload="none" src="${esc(l.url)}"></audio><div class="muted">${l.seconds.toFixed(1)} s · ${esc(l.from)} → WAV 8 kHz mono 16 bits</div>` : (to === 'skip' ? '' : '<span class="x3-warn">à déposer</span>')}</td></tr>`;
+  }).join('');
+  const count = (k) => Object.entries(s.files).filter(([, x]) => x.to === `moh:${k}`).length;
+  const mohRows = s.moh.map((x, i) => `<tr><td class="x3-c"><input type="radio" name="x3-moh-def" data-moh-def="${esc(x.key)}" ${s.defaultMoh === x.key ? 'checked' : ''} title="Musique d'attente par défaut du site"></td>
+    <td><input data-moh="${i}|label" value="${esc(x.label)}" placeholder="${esc(mohLabel(d, { key: x.key }))}" class="x3-mail"></td>
+    <td><select data-moh="${i}|sort">${Object.entries(SORTS).map(([k, l]) => opt(k, l, x.sort)).join('')}</select></td>
+    <td class="small">${count(x.key)} fichier(s)</td>
+    <td>${s.moh.length > 1 ? `<button class="icon" data-act="moh-del" data-i="${i}" title="Retirer cette musique d'attente (ses fichiers ne sont plus repris)">×</button>` : ''}</td></tr>`).join('');
+  const cat = soundCategory(d); const catOk = CATEGORY_RE.test(cat);
+  const missing = rows.filter((r) => s.files[r.file].to !== 'skip' && !loaded(r.file)).length;
+  return `${intro('sounds', 'Sons et musiques d\'attente', SOUNDS_HELP)}
+    <div class="x3-drop" data-drop="1"><label class="filebtn"><input type="file" id="x3-snd-file" multiple accept="audio/*,.wav,.mp3" hidden><span>Déposer des fichiers son…</span></label>
+      <span class="muted small">ou glissez-les ici · ${FILES.size} chargé(s)${missing ? ` · <span class="x3-warn">${missing} à déposer</span>` : ''}</span></div>
+    <div class="x3-edit-wrap"><table class="diff x3-edit">${head([['Fichier 3CX'], ['Utilisé par'], ['Dans Wazo'], ['Fichier chargé']])}<tbody>${fileRows || '<tr><td colspan="4" class="muted">Aucun fichier son dans la sauvegarde.</td></tr>'}</tbody></table></div>
+    <h4 class="x3-h">Musiques d'attente à créer</h4>
+    <div class="x3-edit-wrap"><table class="diff x3-edit">${head([['Défaut', 'Musique d\'attente par défaut du site (modèle SIP global, moh_suggest)'], ['Nom'], ['Lecture', 'Ordre de lecture des fichiers'], ['Fichiers'], ['']])}<tbody>${mohRows}</tbody></table></div>
+    <div class="btnrow"><button data-act="moh-add">+ musique d'attente</button></div>
+    <h4 class="x3-h">Catégorie de sons</h4>
+    <label class="small">Nom <input data-snd-cat="1" value="${esc(s.category)}" placeholder="${esc(cat)}" class="x3-mail${catOk ? '' : ' bad'}"></label>
+    ${catOk ? '' : '<span class="x3-warn small"> lettres, chiffres, - _ . seulement, sans espace (règle de Wazo)</span>'}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -395,7 +447,23 @@ function ivrsTab(opts) {
   return `${intro('ivrs', 'SVI', IVR_HELP)}<div class="x3-edit-wrap"><table class="diff x3-edit">${head([['N°'], ['Reprise'], ['Nom'], ['Message'], ['Délai'], ['Touches'], ['Sans saisie']])}<tbody>${rows}</tbody></table></div>`;
 }
 
-const DID_HELP = 'Une ligne par SDA du trunk (les SDA sans règle 3CX sont décochées). Destination : en heures d\'ouverture, ou toujours si aucun horaire. Horaire : celui déduit de la règle 3CX, modifiable ; fermé et férié ne servent que s\'il y a un horaire. CSV : créer cette SDA avec l\'utilisateur par le CSV d\'import (destination utilisateur seulement, sans horaire : à associer ensuite).';
+const DID_HELP = 'Une ligne par SDA du trunk (les SDA sans règle 3CX sont décochées), au format Wazo 33… (numéro 3CX en dessous). Contexte entrant : celui où la SDA sera déclarée ; en multi-site, celui du département de la SDA (onglet Départements), dont le trunk est à régler sur ce contexte dans le Portal. Destination : en heures d\'ouverture, ou toujours si aucun horaire. Horaire : celui déduit de la règle 3CX, modifiable ; fermé et férié ne servent que s\'il y a un horaire. CSV : créer cette SDA avec l\'utilisateur par le CSV d\'import (destination utilisateur seulement, sans horaire : à associer ensuite).';
+// Contexte entrant où la SDA sera déclarée (demande de Brice, 04/11/2026), même règle que
+// l'écriture (3cx-wizard.js, incallOf) : celui du jeu de contextes de la SDA (créé ou à créer),
+// sinon celui du trunk choisi, sinon celui choisi dans Exports. → { label, note }
+function incallOfDid(r) {
+  const d = E.d; const units = unitList(d); const many = units.length > 1;
+  const lbl = (n) => (I.lists.context || []).find((c) => c.name === n)?.label || n;
+  const u = many ? units.find((x) => x.key === unitOf(d, r)) : units[0];
+  if (!u) return { label: '', note: 'non importée ici' };
+  const cfg = many ? unitCfg(d, u.key) : d.write?.site;
+  if (cfg?.created?.incName) return { label: lbl(cfg.created.incName), note: many ? u.label : '' };
+  if (many || d.write?.site?.mode === 'new') return { label: unitLabels(d, { key: u.key, label: u.label }).inc, note: `à créer${many ? ` · ${u.label}` : ''}` };
+  const tr = (I.lists.trunk || []).find((x) => String(x.id) === String(d.write?.trunkId || (I.lists.trunk || [])[0]?.id));
+  if (tr?.context) return { label: lbl(tr.context), note: 'contexte du trunk' };
+  const inc = tenantCtx().incallCtx;
+  return inc ? { label: lbl(inc), note: 'choisi dans Exports' } : { label: '', note: 'aucun contexte entrant lu' };
+}
 function didsTab(opts) {
   const d = E.d; const q = E.q.trim().toLowerCase();
   const schedOpts = (cur) => `<option value="">Toujours ouvert</option>${d.schedules.map((s) => `<option value="${esc(s.key)}" ${s.key === cur ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}`;
@@ -404,6 +472,7 @@ function didsTab(opts) {
     return `<tr class="${r.import ? '' : 'x3-off'}${E.sel.dids.has(i) ? ' sel' : ''}">
       <td><input type="checkbox" data-sel="dids" data-i="${i}" ${E.sel.dids.has(i) ? 'checked' : ''}></td>
       <td>${esc(didWazo(r.did))}<div class="muted small">${didWazo(r.did) !== r.did ? `${esc(r.did)} dans 3CX` : ''}${r.name ? `${didWazo(r.did) !== r.did ? ' · ' : ''}${esc(r.name)}` : ''}</div></td><td class="x3-c">${check(`${p}.import`, 'Reprendre')}</td>
+      <td class="small">${(() => { const x = incallOfDid(r); return `${x.label ? esc(x.label) : '<span class="x3-warn">aucun</span>'}${x.note ? `<div class="muted">${esc(x.note)}</div>` : ''}`; })()}</td>
       <td>${destCell(`${p}.dest`, opts)}</td>
       <td><select data-p="${p}.schedule">${schedOpts(r.schedule)}</select></td>
       <td>${r.schedule ? destCell(`${p}.closed`, opts) : '<span class="muted">—</span>'}</td>
@@ -419,7 +488,7 @@ function didsTab(opts) {
       <label>Destination <select id="xd-dest"><option value="keep">inchangée</option>${opts}</select></label><input id="xd-num" placeholder="numéro externe" class="x3-num">
       <label>Horaire <select id="xd-sched"><option value="keep">inchangé</option>${schedOpts('__')}</select></label>
       <button data-act="bulk-dids" ${n ? '' : 'disabled'}>Appliquer</button></div>
-    <div class="x3-edit-wrap"><table class="diff x3-edit">${head([['[all:dids]'], ['SDA'], ['Reprise'], ['Destination'], ['Horaire'], ['Fermé'], ['Férié'], ['CSV']])}<tbody>${rows}</tbody></table></div>`;
+    <div class="x3-edit-wrap"><table class="diff x3-edit">${head([['[all:dids]'], ['SDA'], ['Reprise'], ['Contexte entrant', 'Où la SDA sera déclarée : contexte entrant de son jeu de contextes (département en multi-site), sinon celui du trunk'], ['Destination'], ['Horaire'], ['Fermé'], ['Férié'], ['CSV']])}<tbody>${rows}</tbody></table></div>`;
 }
 
 function schedsTab() {
@@ -509,6 +578,11 @@ function onChange(e, root) {
     for (const i of shown) (t.checked ? s.add(i) : s.delete(i));
     return renderTab(root, E.tab);
   }
+  if (t.id === 'x3-snd-file') { const list = [...(t.files || [])]; t.value = ''; return loadSounds(list, root); }
+  if (t.dataset.sndTo) { E.d.sounds.files[t.dataset.sndTo].to = t.value; return changed(root); }
+  if (t.dataset.mohDef) { E.d.sounds.defaultMoh = t.dataset.mohDef; return changed(root); }
+  if (t.dataset.moh) { const [i, f] = t.dataset.moh.split('|'); E.d.sounds.moh[Number(i)][f] = t.value.trim(); return changed(root); }
+  if (t.dataset.sndCat) { E.d.sounds.category = t.value.trim(); return changed(root); }
   if (t.dataset.ctxname) {
     const [k, f] = t.dataset.ctxname.split('|');
     const cfg = unitList(E.d).length > 1 ? unitCfg(E.d, k) : E.d.write.site; cfg[f] = t.value.trim();
@@ -563,6 +637,13 @@ function onClick(e, root) {
     }
     case 'bulk-users': return bulkUsers(root);
     case 'bulk-vms': return bulkVms(root);
+    case 'moh-add': { const k = `moh${Date.now().toString(36)}`; d.sounds.moh.push({ key: k, label: '', sort: 'alphabetical' }); return changed(root); }
+    case 'moh-del': {
+      const [x] = d.sounds.moh.splice(Number(b.dataset.i), 1);
+      for (const f of Object.values(d.sounds.files)) if (f.to === `moh:${x.key}`) f.to = 'skip';
+      if (d.sounds.defaultMoh === x.key) d.sounds.defaultMoh = d.sounds.moh[0]?.key || '';
+      return changed(root);
+    }
     case 'goto-vms': return document.querySelector('#x3-tabs [data-tab="vms"]')?.click();
     case 'bulk-dids': return bulkDids(root);
     case 'csv-users': return exportUsers();
@@ -572,6 +653,15 @@ function onClick(e, root) {
     case 'draft-reset': return confirmModal('<h3>Réinitialiser le brouillon ?</h3><p>Toutes les modifications sont perdues ; le brouillon repart de la sauvegarde 3CX.</p>', () => { clearDraft(d); E.d = ensureDepts(buildDraft(E.m, E.file), E.m); saveDraft(E.d); setWizard(E.d, E.m); E.onReset?.(E.d); renderTab(root, E.tab); E.onChange?.(); }, 'Réinitialiser');
     default:
   }
+}
+// Fichiers déposés (bouton ou glisser-déposer) : convertis puis gardés en mémoire.
+async function loadSounds(list, root) {
+  if (!list.length) return;
+  toast(`Conversion de ${list.length} fichier(s)…`, 3000);
+  const res = await addFiles(list);
+  const bad = res.filter((x) => !x.ok);
+  toast(bad.length ? `${res.length - bad.length} fichier(s) chargé(s) ; illisibles : ${bad.map((x) => `${x.name} (${x.error})`).join(', ')}` : `${res.length} fichier(s) chargé(s) et converti(s).`, bad.length ? 9000 : 4000);
+  renderTab(root, E.tab); E.onChange?.();
 }
 function bulkUsers(root) {
   const d = E.d; const ids = [...E.sel.users];

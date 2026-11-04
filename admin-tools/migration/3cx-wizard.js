@@ -11,14 +11,15 @@
 // de l'assistant France de Call Flow ; lues dans le code, testées sur faux tenant). Les phases
 // Personnes, Routage et Finitions sont planifiées (lecture seule) ; leur
 // écriture arrive aux lots 5b-5d.
-import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.36';
-import { I, sameTenant } from './inventory.js?v=0.40.36';
-import { buildExport, exportFileName } from './export.js?v=0.40.36';
-import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText, didWazo } from './3cx-draft.js?v=0.40.36';
+import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.37';
+import { I, sameTenant } from './inventory.js?v=0.40.37';
+import { buildExport, exportFileName } from './export.js?v=0.40.37';
+import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText, didWazo } from './3cx-draft.js?v=0.40.37';
 import {
   SITE_MODES, FR_FAMILIES, FR_FORMATS, BLOCK_118, defaultSite, defaultOut, clientPatterns, unitDids, occupancy, placements, unitLabels, unitCfg, futureOf, siteChecks, routeText, newRanges, multi as multiSites,
-} from './3cx-sites.js?v=0.40.36';
-import { unitList, unitOf, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.36';
+} from './3cx-sites.js?v=0.40.37';
+import { unitList, unitOf, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.37';
+import { mohLabel, soundCategory, loaded, wazoName, putBinary, CATEGORY_RE } from './3cx-sounds.js?v=0.40.37';
 
 const W = { d: null, m: null, t: null, busy: false, msg: null, at: null };
 export function setWizard(d, m) { W.d = d; W.m = m; W.t = null; W.msg = null; ensureState(); }
@@ -62,12 +63,12 @@ const soft = async (fn, fallback) => { try { return await fn(); } catch (e) { re
 // ---------------------------------------------------------------------------
 async function readTenant() {
   const list = (p) => soft(() => listAll(p), (e) => ({ error: e.message, items: [] }));
-  const [contexts, extensions, trunks, outcalls, users, voicemails, devices, groups, queues, ivrs, schedules, incalls, phones, perms] = await Promise.all(
-    ['/contexts', '/extensions', '/trunks', '/outcalls', '/users', '/voicemails', '/devices', '/groups', '/queues', '/ivr', '/schedules', '/incalls', '/phone-numbers', '/callpermissions'].map(list));
+  const [contexts, extensions, trunks, outcalls, users, voicemails, devices, groups, queues, ivrs, schedules, incalls, phones, perms, moh, sounds] = await Promise.all(
+    ['/contexts', '/extensions', '/trunks', '/outcalls', '/users', '/voicemails', '/devices', '/groups', '/queues', '/ivr', '/schedules', '/incalls', '/phone-numbers', '/callpermissions', '/moh', '/sounds'].map(list));
   const unwrap = (x) => (Array.isArray(x) ? x : []);
   const t = {
     at: new Date(), contexts: unwrap(contexts), extensions: unwrap(extensions), trunks: unwrap(trunks), outcalls: unwrap(outcalls), users: unwrap(users), voicemails: unwrap(voicemails),
-    devices: unwrap(devices), groups: unwrap(groups), queues: unwrap(queues), ivrs: unwrap(ivrs), schedules: unwrap(schedules), incalls: unwrap(incalls), phones: unwrap(phones), perms: unwrap(perms),
+    devices: unwrap(devices), groups: unwrap(groups), queues: unwrap(queues), ivrs: unwrap(ivrs), schedules: unwrap(schedules), incalls: unwrap(incalls), phones: unwrap(phones), perms: unwrap(perms), moh: unwrap(moh), sounds: unwrap(sounds),
     phonesError: phones?.error || null,
   };
   t.localization = await soft(() => tapi('GET', '/localization'), (e) => ({ error: e.message }));
@@ -112,6 +113,15 @@ function contextsOf(t) {
   return { internal, incall, outcall: units[0]?.outObj || null, units, many, incallOf };
 }
 const trunkLabel = (t, id) => { const x = t.trunks.find((y) => String(y.id) === String(id)); return x ? (x.endpoint_sip?.label || x.endpoint_sip?.name || `trunk ${id}`) : `trunk ${id}`; };
+// Sons et musiques d'attente à envoyer (onglet Sons) : fichiers chargés et manquants.
+function soundPlan(d) {
+  const s = d.sounds; if (!s) return { mohs: [], cat: '', files: [], missing: [], def: null };
+  const of = (to) => Object.entries(s.files).filter(([, x]) => x.to === to).map(([f]) => f);
+  const mohs = s.moh.map((x) => ({ x, label: mohLabel(d, x), files: of(`moh:${x.key}`) }));
+  const files = of('sound');
+  const missing = [...mohs.flatMap((m) => m.files), ...files].filter((f) => !loaded(f));
+  return { mohs, cat: soundCategory(d), files, missing, def: mohs.find((m) => m.x.key === s.defaultMoh) || null };
+}
 const RANGE_NAMES = { user_ranges: 'postes', group_ranges: 'groupes', queue_ranges: 'files' };
 const rangesTxt = (r) => Object.entries(r).map(([k, v]) => `${RANGE_NAMES[k]} ${v.map(rangeTxt).join(', ')}`).join(' ; ');
 const ocNameOf = (u, many) => `${W.d.write.clientName || 'Client'}${many ? ` - ${u.label}` : ''} - Appels sortants`;
@@ -197,6 +207,10 @@ function prerequisites(t) {
   if (!t.trunks.length) add('manual', 'Trunk opérateur', 'aucun trunk dans le tenant. À créer dans le Portal avec le modèle de l\'opérateur (valeurs ci-dessous), puis « Relire le tenant ». Sans trunk : pas d\'appels sortants ni d\'appels entrants.', ['found']);
   add('remind', 'Applications de l\'organisation', 'réglage du Portal (Paramètres > Applications), hors de la stack : à vérifier selon le besoin du client.');
   add('remind', 'IP publique', 'postes fixes : autoriser l\'IP publique du client dans les paramètres globaux de la stack (tenant principal).');
+  // Sons : fichiers non déposés = non envoyés (pas bloquant : ils pourront l'être plus tard).
+  const sp = soundPlan(W.d);
+  if (sp.missing.length) add('warn', 'Fichiers son', `${sp.missing.length} fichier(s) prévus mais non déposés (onglet Sons) : ${sp.missing.slice(0, 5).join(', ')}${sp.missing.length > 5 ? '…' : ''}. Ils ne seront pas envoyés.`);
+  if (sp.files.length && !CATEGORY_RE.test(sp.cat)) add('error', 'Catégorie de sons', `« ${sp.cat} » refusée par Wazo (lettres, chiffres, - _ . sans espace) : à corriger dans l'onglet Sons.`, ['found']);
   return out;
 }
 const blockedPhases = (pre) => new Set(pre.filter((p) => ['error', 'manual', 'fix'].includes(p.sev)).flatMap((p) => p.phases));
@@ -253,6 +267,14 @@ function buildPlan(t) {
     else if (!u.trunkId) add('found', 'conflict', `Règle « ${ocName} »`, 'aucun trunk choisi : à créer d\'abord dans le Portal');
     else add('found', 'create', `Règle « ${ocName} » vers ${trunkLabel(t, u.trunkId)}`, `${patTxt}, dans ${u.outObj?.label || u.outObj?.name || '?'}`);
   }
+  // Sons et musiques d'attente (avant les files et SVI qui s'en servent).
+  const sp = soundPlan(d);
+  for (const m of sp.mohs.filter((x) => x.files.length)) {
+    const ok = m.files.filter((f) => loaded(f)).length; const ex = t.moh.find((x) => x.label === m.label);
+    add('found', ok ? (ex ? 'update' : 'create') : 'conflict', `Musique d'attente « ${m.label} »`, `${ok} fichier(s) sur ${m.files.length} déposés${ex ? ' · existe déjà : fichiers ajoutés' : ''}${sp.def === m ? ' · par défaut du site' : ''}`);
+  }
+  if (sp.files.length) { const ok = sp.files.filter((f) => loaded(f)).length; const ex = t.sounds.some((x) => x.name === sp.cat); add('found', ok ? 'create' : 'conflict', `Sons « ${sp.cat} »`, `${ok} fichier(s) sur ${sp.files.length} déposés${ex ? ' · catégorie déjà présente' : ''}`); }
+  if (sp.def) add('found', 'update', `Musique d'attente par défaut : « ${sp.def.label} »`, 'option moh_suggest du modèle SIP global (comme le Wizard de déploiement de Wazo), les autres options du modèle inchangées');
   // Personnes
   const unitCtx = new Set(c.units.map((u) => u.ctx));
   const vmIn = new Set(t.voicemails.filter((v) => unitCtx.has(v.context)).map((v) => String(v.number)));
@@ -502,6 +524,56 @@ async function foundationOps(t) {
         }
       } catch (e) { for (const x of undo) { try { await runUndo(x); } catch { /* signalé par l'erreur d'origine */ } } throw e; }
       return { created: `règle ${o.id}`, undo: { seq: undo } };
+    } });
+  }
+  // Sons et musiques d'attente (onglet Sons ; API lues dans confd, voir 3cx-sounds.js).
+  // Musique existante du même nom : fichiers ajoutés (annulation : ces fichiers seulement).
+  const sp = soundPlan(d); const mohName = {};
+  for (const m of sp.mohs) { const ex = t.moh.find((x) => x.label === m.label); if (ex) mohName[m.x.key] = ex.name; }
+  for (const m of sp.mohs) {
+    const files = m.files.filter((f) => loaded(f)); if (!files.length) continue;
+    ops.push({ label: `Musique d'attente « ${m.label} » : ${files.length} fichier(s) WAV 8 kHz (POST /moh, PUT /moh/…/files/…)`, run: async () => {
+      const undo = []; const cur = (await listAll('/moh')).find((x) => x.label === m.label);
+      const moh = cur || await tapi('POST', '/moh', { label: m.label, mode: 'files', sort: m.x.sort || 'alphabetical' });
+      if (!cur) undo.unshift({ method: 'DELETE', path: `/moh/${moh.uuid}` });
+      try {
+        for (const f of files) {
+          const fn = `${wazoName(f)}.wav`; guard();
+          await putBinary(`/moh/${moh.uuid}/files/${encodeURIComponent(fn)}`, loaded(f).blob);
+          if (cur) undo.unshift({ method: 'DELETE', path: `/moh/${moh.uuid}/files/${encodeURIComponent(fn)}` });
+        }
+      } catch (e) { for (const x of undo) { try { await runUndo(x); } catch { /* signalé par l'erreur d'origine */ } } throw e; }
+      mohName[m.x.key] = moh.name;
+      return { created: moh.name, undo: { seq: undo } };
+    } });
+  }
+  const sfiles = sp.files.filter((f) => loaded(f));
+  if (sfiles.length && CATEGORY_RE.test(sp.cat)) {
+    ops.push({ label: `Sons « ${sp.cat} » : ${sfiles.length} fichier(s) WAV 8 kHz, langue fr_FR (POST /sounds, PUT /sounds/…/files/…)`, run: async () => {
+      const undo = []; const ex = (await listAll('/sounds')).some((x) => x.name === sp.cat);
+      if (!ex) { await tapi('POST', '/sounds', { name: sp.cat }); undo.unshift({ method: 'DELETE', path: `/sounds/${sp.cat}` }); }
+      try {
+        for (const f of sfiles) {
+          const fn = encodeURIComponent(wazoName(f)); guard();
+          await putBinary(`/sounds/${sp.cat}/files/${fn}?format=wav&language=fr_FR`, loaded(f).blob);
+          if (ex) undo.unshift({ method: 'DELETE', path: `/sounds/${sp.cat}/files/${fn}?format=wav&language=fr_FR` });
+        }
+      } catch (e) { for (const x of undo) { try { await runUndo(x); } catch { /* signalé par l'erreur d'origine */ } } throw e; }
+      return { created: `${sfiles.length} fichier(s) dans ${sp.cat}`, undo: { seq: undo } };
+    } });
+  }
+  // Musique par défaut : moh_suggest du modèle SIP global (comme le Wizard de Wazo). PUT partiel
+  // (endpoint_sip/resource.py, lu) : la liste des options est relue puis renvoyée entière, seule
+  // moh_suggest change ; annulation = liste d'avant.
+  if (sp.def && t.sipTpl?.global) {
+    ops.push({ label: `Musique d'attente par défaut « ${sp.def.label} » (modèle SIP global, moh_suggest)`, run: async () => {
+      const name = mohName[sp.def.x.key] || (await listAll('/moh')).find((x) => x.label === sp.def.label)?.name;
+      if (!name) return { created: 'musique d\'attente absente : rien changé (déposer ses fichiers)' };
+      const tpl = await tapi('GET', `/endpoints/sip/templates/${t.sipTpl.global}`);
+      const prev = tpl.endpoint_section_options || [];
+      if (prev.some(([k, v]) => k === 'moh_suggest' && v === name)) return { created: 'déjà réglée' };
+      await tapi('PUT', `/endpoints/sip/templates/${t.sipTpl.global}`, { endpoint_section_options: [...prev.filter(([k]) => k !== 'moh_suggest'), ['moh_suggest', name]] });
+      return { created: name, undo: { method: 'PUT', path: `/endpoints/sip/templates/${t.sipTpl.global}`, body: { endpoint_section_options: prev } } };
     } });
   }
   return ops;

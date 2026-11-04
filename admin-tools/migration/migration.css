@@ -129,6 +129,9 @@ input.short { width: 110px !important; }
 .x3-edit-wrap { max-width: 100%; box-sizing: border-box; overflow-x: clip; border: 1px solid var(--line); border-radius: var(--radius); }
 .x3-hbar { position: sticky; bottom: 0; z-index: 3; overflow-x: auto; overflow-y: hidden; height: 16px; margin-top: -1px; background: var(--panel); border: 1px solid var(--line); border-top: 0; border-radius: 0 0 var(--radius) var(--radius); }
 .x3-hbar > div { height: 1px; }
+.x3-drop { display: flex; align-items: center; gap: 12px; margin: 0 0 12px; padding: 14px 16px; border: 1px dashed var(--line); border-radius: var(--radius); }
+.x3-edit audio { height: 28px; max-width: 240px; }
+.x3-edit input.bad, input.x3-mail.bad { color: var(--danger); box-shadow: inset 0 -1px 0 var(--danger); }
 .x3-edit { width: 100%; margin: 0; font-size: .8125rem; border-collapse: separate; border-spacing: 0; }
 .x3-edit thead th { position: sticky; top: 0; z-index: 2; background: var(--panel); box-shadow: inset 0 -1px 0 var(--line); white-space: nowrap; }
 .x3-edit td { vertical-align: top; padding: 4px 6px; border-bottom: 1px solid var(--line); }

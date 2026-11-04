@@ -26,10 +26,10 @@
 // (_X.) inclus avant un autre établissement prend aussi ses numéros internes ;
 // inclus après, les numéros externes passent par l'établissement inclus, donc
 // par son trunk. Les écarts sont montrés avant écriture.
-import { matches, comparePatterns, dialedNumber } from '../callflow/dialsim.js?v=0.40.36';
-import { FR_FAMILIES, FR_FORMATS, frTransform, BLOCK_118 } from '../callflow/outcall-editor.js?v=0.40.36';
-import { imported, didWazo } from './3cx-draft.js?v=0.40.36';
-import { unitList, unitOf } from './3cx-depts.js?v=0.40.36';
+import { matches, comparePatterns, dialedNumber } from '../callflow/dialsim.js?v=0.40.37';
+import { FR_FAMILIES, FR_FORMATS, frTransform, BLOCK_118 } from '../callflow/outcall-editor.js?v=0.40.37';
+import { imported, didWazo } from './3cx-draft.js?v=0.40.37';
+import { unitList, unitOf } from './3cx-depts.js?v=0.40.37';
 
 export { FR_FAMILIES, FR_FORMATS, BLOCK_118 };
 export const SITE_MODES = {
