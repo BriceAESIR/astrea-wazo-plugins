@@ -214,7 +214,18 @@ export function parse3cx(xmlText) {
   for (const r of all(T(tenant, 'OutboundRules'), 'OutboundRule')) {
     m.outbound.push({ name: txt(r, 'Name'), prefix: txt(r, 'Prefix'), priority: Number(txt(r, 'Priority')) || 0, routes: all(T(r, 'OutboundRoutes'), 'OutboundRoute').map((o) => ({ gateway: txt(o, 'Gateway'), strip: Number(txt(o, 'StripDigits')) || 0, prepend: txt(o, 'Prepend') })).filter((o) => o.gateway), groups: all(T(r, 'DNGroups'), 'Group').map((g) => g.textContent.trim()) });
   }
-  for (const p of all(T(tenant, 'PhoneBookEntries'), 'PhoneBookEntry')) m.phonebook.push({ first: txt(p, 'FirstName'), last: txt(p, 'LastName'), company: txt(p, 'CompanyName'), number: txt(p, 'PhoneNumber') || txt(p, 'Mobile') });
+  // Annuaire de la société. Lu dans deux sauvegardes v20 : FirstName, LastName, CompanyName,
+  // PhoneNumber, puis AddressNumberOrData0…N dont la signification n'est pas écrite (n° 5 :
+  // e-mails, n° 3 : un numéro). Classés d'après leur contenu (supposé) : « @ » → e-mail,
+  // 06 / 07 → mobile, autre numéro → autres numéros.
+  for (const p of all(T(tenant, 'PhoneBookEntries'), 'PhoneBookEntry')) {
+    const extra = [...p.children].filter((c) => /^AddressNumberOrData\d+$/.test(c.nodeName)).map((c) => c.textContent.trim()).filter(Boolean);
+    const num = (s) => s.replace(/[\s.()-]/g, '');
+    const email = extra.find((s) => s.includes('@')) || '';
+    const nums = extra.filter((s) => !s.includes('@') && /^\+?[\d\s.()-]{3,}$/.test(s)).map(num);
+    const mobile = nums.find((s) => /^(0[67]|\+33[67]|0033[67])/.test(s)) || '';
+    m.phonebook.push({ first: txt(p, 'FirstName'), last: txt(p, 'LastName'), company: txt(p, 'CompanyName'), number: num(txt(p, 'PhoneNumber') || txt(p, 'Mobile')), mobile, email, others: nums.filter((s) => s !== mobile) });
+  }
   const param = (n) => { const p = [...root.querySelectorAll(':scope > Parameters > Parameter')].find((x) => txt(x, 'Name') === n); return p ? txt(p, 'Value') : ''; };
   m.moh = param('MUSICONHOLDFILE').split('/').pop();
   addPrompt(m.moh);

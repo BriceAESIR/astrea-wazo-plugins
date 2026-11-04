@@ -26,10 +26,11 @@
 // (_X.) inclus avant un autre établissement prend aussi ses numéros internes ;
 // inclus après, les numéros externes passent par l'établissement inclus, donc
 // par son trunk. Les écarts sont montrés avant écriture.
-import { matches, comparePatterns, dialedNumber } from '../callflow/dialsim.js?v=0.40.37';
-import { FR_FAMILIES, FR_FORMATS, frTransform, BLOCK_118 } from '../callflow/outcall-editor.js?v=0.40.37';
-import { imported, didWazo } from './3cx-draft.js?v=0.40.37';
-import { unitList, unitOf } from './3cx-depts.js?v=0.40.37';
+import { matches, comparePatterns, dialedNumber } from '../callflow/dialsim.js?v=0.40.38';
+import { FR_FAMILIES, FR_FORMATS, frTransform, BLOCK_118 } from '../callflow/outcall-editor.js?v=0.40.38';
+import { imported, didWazo } from './3cx-draft.js?v=0.40.38';
+import { unitList, unitOf } from './3cx-depts.js?v=0.40.38';
+import { parseRanges, rangesText, inRanges } from './multisite.js?v=0.40.38';
 
 export { FR_FAMILIES, FR_FORMATS, BLOCK_118 };
 export const SITE_MODES = {
@@ -68,7 +69,7 @@ export function clientPatterns(out) {
 // par bloc de numéros, coupée aux trous de plus de 20 (site A 200-260 et 321,
 // au lieu de 200-321 qui déborderait sur le site B 300-320).
 const GAP = 20;
-export function newRanges(d, unit = null) {
+export function autoRanges(d, unit = null) {
   const out = {};
   for (const x of clientNumbers(d, unit)) (out[x.key] ||= []).push(x.n);
   for (const k of Object.keys(out)) {
@@ -78,6 +79,42 @@ export function newRanges(d, unit = null) {
       for (const n of l) { const last = r[r.length - 1]; if (last && Number(n) - Number(last.end) <= GAP) last.end = n; else r.push({ start: n, end: n }); }
       return r;
     });
+  }
+  return out;
+}
+// Plages saisies à la main (demande de Brice, 04/11/2026) : par jeu de contextes et
+// par type, texte « 200-260, 321 » ; vide = plages calculées, « - » = aucune.
+// Rangées dans d.write.units[clé].ranges (plusieurs jeux) ou d.write.site.ranges.
+export const RANGE_KEYS = [['user_ranges', 'postes'], ['group_ranges', 'groupes'], ['queue_ranges', 'files'], ['conference_room_ranges', 'conférences']];
+export const rangeCfg = (d, unit) => (unit != null && multi(d) ? unitCfg(d, unit) : d.write.site);
+export function newRanges(d, unit = null) {
+  const out = autoRanges(d, unit); const own = rangeCfg(d, unit)?.ranges || {};
+  for (const [k] of RANGE_KEYS) {
+    const txt = String(own[k] ?? '').trim(); if (!txt) continue;
+    if (txt === '-') { delete out[k]; continue; }
+    const { ranges, errors } = parseRanges(txt); if (!errors.length) out[k] = ranges;
+  }
+  return out;
+}
+// Contrôles des plages saisies : forme (règles de confd), numéros du client hors plages
+// (confd refuserait le numéro), chevauchement entre jeux de contextes.
+export function rangeIssues(d) {
+  const out = []; const units = unitList(d); const many = units.length > 1;
+  const all = [];
+  for (const u of units) {
+    const key = many ? u.key : null; const own = rangeCfg(d, key)?.ranges || {}; const r = newRanges(d, key);
+    const who = many ? `Plages de « ${u.label} »` : 'Plages du contexte';
+    for (const [k, l] of RANGE_KEYS) {
+      const txt = String(own[k] ?? '').trim();
+      if (txt && txt !== '-') for (const e of parseRanges(txt).errors) out.push({ sev: 'error', title: who, text: `${l} : ${e}.` });
+      const outside = clientNumbers(d, key).filter((x) => x.key === k && !inRanges(x.n, r[k])).map((x) => x.n);
+      if (outside.length) out.push({ sev: 'error', title: who, text: `${l} : ${outside.join(', ')} hors des plages (${rangesText(r[k]) || 'aucune'}) : Wazo refuserait ces numéros.` });
+      for (const x of r[k] || []) all.push({ u: u.label, k, l, x });
+    }
+  }
+  if (many) for (let i = 0; i < all.length; i++) for (let j = i + 1; j < all.length; j++) {
+    const a = all[i]; const b = all[j];
+    if (a.u !== b.u && a.k === b.k && a.x.start.length === b.x.start.length && Number(a.x.start) <= Number(b.x.end) && Number(b.x.start) <= Number(a.x.end)) out.push({ sev: 'warn', title: 'Plages qui se chevauchent', text: `${a.l} : « ${a.u} » ${rangesText([a.x])} et « ${b.u} » ${rangesText([b.x])}.` });
   }
   return out;
 }

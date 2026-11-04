@@ -11,15 +11,16 @@
 // de l'assistant France de Call Flow ; lues dans le code, testées sur faux tenant). Les phases
 // Personnes, Routage et Finitions sont planifiées (lecture seule) ; leur
 // écriture arrive aux lots 5b-5d.
-import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.37';
-import { I, sameTenant } from './inventory.js?v=0.40.37';
-import { buildExport, exportFileName } from './export.js?v=0.40.37';
-import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText, didWazo } from './3cx-draft.js?v=0.40.37';
+import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.38';
+import { I, sameTenant } from './inventory.js?v=0.40.38';
+import { buildExport, exportFileName } from './export.js?v=0.40.38';
+import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText, didWazo } from './3cx-draft.js?v=0.40.38';
 import {
-  SITE_MODES, FR_FAMILIES, FR_FORMATS, BLOCK_118, defaultSite, defaultOut, clientPatterns, unitDids, occupancy, placements, unitLabels, unitCfg, futureOf, siteChecks, routeText, newRanges, multi as multiSites,
-} from './3cx-sites.js?v=0.40.37';
-import { unitList, unitOf, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.37';
-import { mohLabel, soundCategory, loaded, wazoName, putBinary, CATEGORY_RE } from './3cx-sounds.js?v=0.40.37';
+  SITE_MODES, FR_FAMILIES, FR_FORMATS, BLOCK_118, defaultSite, defaultOut, clientPatterns, unitDids, rangeIssues, occupancy, placements, unitLabels, unitCfg, futureOf, siteChecks, routeText, newRanges, multi as multiSites,
+} from './3cx-sites.js?v=0.40.38';
+import { unitList, unitOf, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.38';
+import { mohLabel, soundCategory, loaded, wazoName, putBinary, CATEGORY_RE } from './3cx-sounds.js?v=0.40.38';
+import { phonebookName, toWazoContact, DEFAULT_COLUMNS, dird } from './3cx-phonebook.js?v=0.40.38';
 
 const W = { d: null, m: null, t: null, busy: false, msg: null, at: null };
 export function setWizard(d, m) { W.d = d; W.m = m; W.t = null; W.msg = null; ensureState(); }
@@ -122,7 +123,7 @@ function soundPlan(d) {
   const missing = [...mohs.flatMap((m) => m.files), ...files].filter((f) => !loaded(f));
   return { mohs, cat: soundCategory(d), files, missing, def: mohs.find((m) => m.x.key === s.defaultMoh) || null };
 }
-const RANGE_NAMES = { user_ranges: 'postes', group_ranges: 'groupes', queue_ranges: 'files' };
+const RANGE_NAMES = { user_ranges: 'postes', group_ranges: 'groupes', queue_ranges: 'files', conference_room_ranges: 'conférences' };
 const rangesTxt = (r) => Object.entries(r).map(([k, v]) => `${RANGE_NAMES[k]} ${v.map(rangeTxt).join(', ')}`).join(' ; ');
 const ocNameOf = (u, many) => `${W.d.write.clientName || 'Client'}${many ? ` - ${u.label}` : ''} - Appels sortants`;
 
@@ -192,6 +193,8 @@ function prerequisites(t) {
     if (foreign.length) add('warn', `Trunk ${trunkLabel(t, u.trunkId)}`, `il reçoit déjà ${foreign.length} SDA dans « ${curLabel} » qui ne sont pas à ${c.many ? `« ${u.label} »` : 'ce client'} (${foreign.slice(0, 5).join(', ')}${foreign.length > 5 ? '…' : ''}) : changer son contexte entrant les couperait. Prévoir un trunk propre à ${c.many ? 'ce département' : 'ce client'}.`);
     if (cur !== u.inc) add('manual', `Trunk ${trunkLabel(t, u.trunkId)}`, `non modifié par l'outil. ${u.incObj?.virtual ? 'Après la phase Fondations, dans' : 'Dans'} le Portal (Interconnexions > ${trunkLabel(t, u.trunkId)}), régler le contexte entrant sur « ${target} » (actuel : « ${curLabel} »), puis « Relire le tenant ». Le Routage (SDA) attend ce réglage.`, ['routing']);
   }
+  // Plages des contextes à créer (saisies dans l'onglet Départements, ou calculées).
+  if (c.units.some((u) => u.newCtx)) for (const x of rangeIssues(W.d)) add(x.sev, x.title, x.text, x.sev === 'error' ? ['found', 'people', 'routing'] : []);
   for (const x of siteChecks(t, W.d, (id) => trunkLabel(t, id)).issues) add(x.sev === 'info' ? 'remind' : x.sev, x.title, x.text, x.sev === 'error' ? ['found', 'people', 'routing'] : []);
   const tIss = c.internal ? tenantIssues(W.d, { ctx: c.internal.name, incallCtx: c.incall?.name }, { contexts: c.internal.virtual ? [...t.contexts, c.internal] : t.contexts, extensions: t.extensions, users: t.users, voicemails: t.voicemails }) : [];
   // Numéros hors des plages : corrigés par la phase Fondations (ajout des plages), pas une erreur à régler à la main.
@@ -274,6 +277,8 @@ function buildPlan(t) {
     add('found', ok ? (ex ? 'update' : 'create') : 'conflict', `Musique d'attente « ${m.label} »`, `${ok} fichier(s) sur ${m.files.length} déposés${ex ? ' · existe déjà : fichiers ajoutés' : ''}${sp.def === m ? ' · par défaut du site' : ''}`);
   }
   if (sp.files.length) { const ok = sp.files.filter((f) => loaded(f)).length; const ex = t.sounds.some((x) => x.name === sp.cat); add('found', ok ? 'create' : 'conflict', `Sons « ${sp.cat} »`, `${ok} fichier(s) sur ${sp.files.length} déposés${ex ? ' · catégorie déjà présente' : ''}`); }
+  const pbn = (d.phonebook?.contacts || []).filter((x) => x.import).length;
+  if (pbn) add('found', 'create', `Annuaire « ${phonebookName(d)} »`, `${pbn} contact(s) ; carnet, source d'annuaire et profil du site (wazo-dird)`);
   if (sp.def) add('found', 'update', `Musique d'attente par défaut : « ${sp.def.label} »`, 'option moh_suggest du modèle SIP global (comme le Wizard de déploiement de Wazo), les autres options du modèle inchangées');
   // Personnes
   const unitCtx = new Set(c.units.map((u) => u.ctx));
@@ -562,6 +567,42 @@ async function foundationOps(t) {
       return { created: `${sfiles.length} fichier(s) dans ${sp.cat}`, undo: { seq: undo } };
     } });
   }
+  // Annuaire (wazo-dird, lu le 04/11/2026, voir 3cx-phonebook.js) : carnet, contacts, source de
+  // type carnet (colonnes reprises d'une source carnet existante du site, sinon par défaut), ajout
+  // de la source aux services du profil du site. Annulation : profil d'avant, source, carnet.
+  const contacts = (d.phonebook?.contacts || []).filter((x) => x.import).map(toWazoContact).filter((x) => Object.keys(x).length);
+  if (contacts.length) {
+    const name = phonebookName(d);
+    ops.push({ label: `Annuaire « ${name} » : ${contacts.length} contact(s), source d'annuaire et profil du site (wazo-dird)`, run: async () => {
+      const undo = [];
+      try {
+        guard();
+        const pb = await dird('POST', '/phonebooks', { name, description: 'Import 3CX (Migration Assistant)' });
+        undo.unshift({ api: 'dird', method: 'DELETE', path: `/phonebooks/${pb.uuid}` });
+        for (const c of contacts) { guard(); await dird('POST', `/phonebooks/${pb.uuid}/contacts`, c); }
+        const model = ((await dird('GET', '/backends/phonebook/sources'))?.items || [])[0];
+        const cols = model ? { searched_columns: model.searched_columns || [], first_matched_columns: model.first_matched_columns || [], format_columns: model.format_columns || {} } : DEFAULT_COLUMNS;
+        const src = await dird('POST', '/backends/phonebook/sources', { name, phonebook_uuid: pb.uuid, ...cols });
+        undo.unshift({ api: 'dird', method: 'DELETE', path: `/backends/phonebook/sources/${src.uuid}` });
+        const profs = (await dird('GET', '/profiles'))?.items || [];
+        const prof = profs.find((x) => x.name === 'default') || profs[0];
+        let note = 'aucun profil d\'annuaire : source à ajouter à la main (Portal > Annuaire > Profils)';
+        if (prof) {
+          const full = await dird('GET', `/profiles/${prof.uuid}`);
+          const prev = JSON.parse(JSON.stringify(full));
+          const services = { ...(full.services || {}) };
+          for (const s of Object.keys(services).length ? Object.keys(services).filter((k) => ['lookup', 'reverse', 'favorites'].includes(k)) : ['lookup', 'reverse']) {
+            const cur = services[s] || { sources: [], options: {} };
+            if (!(cur.sources || []).some((x) => x.uuid === src.uuid)) services[s] = { ...cur, sources: [...(cur.sources || []), { uuid: src.uuid }] };
+          }
+          await dird('PUT', `/profiles/${prof.uuid}`, { name: full.name, display: full.display, services });
+          undo.unshift({ api: 'dird', method: 'PUT', path: `/profiles/${prof.uuid}`, body: { name: prev.name, display: prev.display, services: prev.services } });
+          note = `profil « ${full.name} »`;
+        }
+        return { created: `${pb.uuid} · ${contacts.length} contact(s) · ${note}`, undo: { seq: undo } };
+      } catch (e) { for (const x of undo) { try { await runUndo(x); } catch { /* signalé par l'erreur d'origine */ } } throw e; }
+    } });
+  }
   // Musique par défaut : moh_suggest du modèle SIP global (comme le Wizard de Wazo). PUT partiel
   // (endpoint_sip/resource.py, lu) : la liste des options est relue puis renvoyée entière, seule
   // moh_suggest change ; annulation = liste d'avant.
@@ -587,6 +628,7 @@ async function runUndo(u) {
     const s = W.d.write.site; if (s.created) { W.d.ctx = s.created.prevCtx; s.created = null; } return;
   }
   if (u.api === 'logd') return logd(u.method, u.path, u.body);
+  if (u.api === 'dird') { guard(); return dird(u.method, u.path, u.body); }
   return tapi(u.method, u.path, u.body);
 }
 

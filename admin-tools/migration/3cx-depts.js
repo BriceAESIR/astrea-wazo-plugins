@@ -13,7 +13,7 @@
 //    département des SDA qui le visent, s'il n'y en a qu'un, sinon à celui
 //    dont le nom figure dans le sien (« Fermeture exceptionnelle - Site B »).
 // Supposé : un poste dans deux départements réels (le premier est retenu, signalé).
-import { imported } from './3cx-draft.js?v=0.40.37';
+import { imported } from './3cx-draft.js?v=0.40.38';
 
 export const DEFAULT = '__DEFAULT__';
 export const DEPT_MODES = { own: 'Jeu de contextes propre', merge: 'Fusionné dans un autre', skip: 'Site Wazo séparé (non importé ici)' };

@@ -2,23 +2,25 @@
 // Modèle et règles : 3cx-draft.js. Chaque modification est enregistrée dans le
 // navigateur (brouillon par fichier et date de sauvegarde) ; rien n'est écrit
 // dans Wazo depuis ces tableaux.
-import { $, esc, toast, helpButton, helpBox, confirmModal, downloadJson } from '../common/core.js?v=0.40.37';
-import { I } from './inventory.js?v=0.40.37';
+import { $, esc, toast, helpButton, helpBox, confirmModal, downloadJson } from '../common/core.js?v=0.40.38';
+import { I } from './inventory.js?v=0.40.38';
 import {
   GROUP_STRATEGIES, MODES, HUNT_TARGETS, LICENCES, AUTH_METHODS, effectiveUsername, upgradeDraft, saveDraft, clearDraft, buildDraft, acceptDraft, userBy, userName, imported,
   destLabel, destProblem, draftIssues, usersCsv, blfRows, devicesCsv, deviceDesc, macWazo, macValid, tenantIssues,
   LINE_MODES, linesOf, VM_LANGS, vmEmail, upperName, upgradeSchedules, pastHolidays, didWazo,
-} from './3cx-draft.js?v=0.40.37';
-import { setWizard, wizardTab, wizardChange, wizardClick, wizardDone, wizardTotal } from './3cx-wizard.js?v=0.40.37';
-import { unitCfg, unitLabels } from './3cx-sites.js?v=0.40.37';
-import { SORTS, CATEGORY_RE, soundUsages, ensureSounds, mohLabel, soundCategory, FILES, keyOf, loaded, addFiles, wazoName } from './3cx-sounds.js?v=0.40.37';
-import { DEPT_MODES, deptLabel, ensureDepts, deptObjects, unitOf, unitList, setDeptMode, moveObject } from './3cx-depts.js?v=0.40.37';
+} from './3cx-draft.js?v=0.40.38';
+import { setWizard, wizardTab, wizardChange, wizardClick, wizardDone, wizardTotal } from './3cx-wizard.js?v=0.40.38';
+import { unitCfg, unitLabels, autoRanges, RANGE_KEYS, rangeIssues } from './3cx-sites.js?v=0.40.38';
+import { rangesText } from './multisite.js?v=0.40.38';
+import { CONTACT_FIELDS, ensurePhonebook, phonebookName, phonebookIssues } from './3cx-phonebook.js?v=0.40.38';
+import { SORTS, CATEGORY_RE, soundUsages, ensureSounds, mohLabel, soundCategory, FILES, keyOf, loaded, addFiles, wazoName } from './3cx-sounds.js?v=0.40.38';
+import { DEPT_MODES, deptLabel, ensureDepts, deptObjects, unitOf, unitList, setDeptMode, moveObject } from './3cx-depts.js?v=0.40.38';
 
 const E = { d: null, m: null, file: '', tab: 'users', sel: { users: new Set(), dids: new Set(), vms: new Set() }, q: '', onReset: null };
 export const TABS = [
-  ['fiche', 'Fiche 3CX'], ['depts', 'Départements'], ['users', 'Utilisateurs'], ['vms', 'Messageries'], ['devices', 'Appareils'], ['hunts', 'Groupes et files'], ['ivrs', 'SVI'], ['dids', 'SDA'], ['scheds', 'Horaires'], ['sounds', 'Sons'], ['checks', 'Contrôles'], ['exports', 'Exports'], ['write', 'Écriture'],
+  ['fiche', 'Fiche 3CX'], ['depts', 'Départements'], ['users', 'Utilisateurs'], ['vms', 'Messageries'], ['devices', 'Appareils'], ['hunts', 'Groupes et files'], ['ivrs', 'SVI'], ['dids', 'SDA'], ['scheds', 'Horaires'], ['sounds', 'Sons'], ['phonebook', 'Annuaire'], ['checks', 'Contrôles'], ['exports', 'Exports'], ['write', 'Écriture'],
 ];
-export function setDraft(d, m, file, onReset) { E.d = ensureSounds(ensureDepts(upgradeSchedules(upgradeDraft(d), m), m), m); E.m = m; E.file = file; E.onReset = onReset; E.sel.users.clear(); E.sel.dids.clear(); E.sel.vms.clear(); E.review = null; setWizard(E.d, m); }
+export function setDraft(d, m, file, onReset) { E.d = ensurePhonebook(ensureSounds(ensureDepts(upgradeSchedules(upgradeDraft(d), m), m), m), m); E.m = m; E.file = file; E.onReset = onReset; E.sel.users.clear(); E.sel.dids.clear(); E.sel.vms.clear(); E.review = null; setWizard(E.d, m); }
 export const draft = () => E.d;
 // Contextes cibles (choisis dans Exports, gardés dans le brouillon) : ceux du
 // tenant ouvert ; à défaut, le premier interne / entrant du tenant.
@@ -32,7 +34,7 @@ export function tabCounts() {
   const d = E.d; if (!d) return {};
   const iss = [...draftIssues(d), ...tenantChecks()];
   const snd = Object.entries(d.sounds?.files || {}).filter(([, x]) => x.to !== 'skip');
-  return { depts: unitList(d).filter((u) => u.key !== '_').length || undefined, sounds: `${snd.filter(([f]) => loaded(f)).length}/${snd.length}`, users: imported(d).length, vms: d.users.filter((u) => u.mode !== 'skip' && u.vm).length, devices: (d.devices || []).filter((x) => x.import).length, hunts: d.hunts.filter((h) => h.target !== 'skip').length, ivrs: d.ivrs.filter((v) => v.import).length, dids: d.dids.filter((r) => r.import).length, scheds: d.schedules.length, checks: iss.filter((x) => x.sev !== 'info').length, write: `${wizardDone()}/${wizardTotal()}` };
+  return { phonebook: (d.phonebook?.contacts || []).filter((c) => c.import).length, depts: unitList(d).filter((u) => u.key !== '_').length || undefined, sounds: `${snd.filter(([f]) => loaded(f)).length}/${snd.length}`, users: imported(d).length, vms: d.users.filter((u) => u.mode !== 'skip' && u.vm).length, devices: (d.devices || []).filter((x) => x.import).length, hunts: d.hunts.filter((h) => h.target !== 'skip').length, ivrs: d.ivrs.filter((v) => v.import).length, dids: d.dids.filter((r) => r.import).length, scheds: d.schedules.length, checks: iss.filter((x) => x.sev !== 'info').length, write: `${wizardDone()}/${wizardTotal()}` };
 }
 
 // ---------------------------------------------------------------------------
@@ -79,7 +81,7 @@ export function renderTab(root, tab) {
   const wb = document.getElementById('workbench'); const keepWb = wb ? [wb.scrollTop, wb.scrollLeft] : null;
   const keep = [...root.querySelectorAll('.x3-edit-wrap')].map((w) => w.x3left || 0);
   const opts = destOptions();
-  const html = { sounds: soundsTab, depts: deptsTab, users: usersTab, vms: vmsTab, devices: devicesTab, hunts: huntsTab, ivrs: ivrsTab, dids: didsTab, scheds: schedsTab, checks: checksTab, exports: exportsTab, write: wizardTab }[tab]?.(opts) || '';
+  const html = { phonebook: phonebookTab, sounds: soundsTab, depts: deptsTab, users: usersTab, vms: vmsTab, devices: devicesTab, hunts: huntsTab, ivrs: ivrsTab, dids: didsTab, scheds: schedsTab, checks: checksTab, exports: exportsTab, write: wizardTab }[tab]?.(opts) || '';
   root.innerHTML = html;
   // Listes à valeur posée après rendu (utilisateur d'un appareil).
   for (const s of root.querySelectorAll('select[data-p][data-val]')) {
@@ -230,6 +232,24 @@ function reviewPanel(opts) {
 }
 
 // ---------------------------------------------------------------------------
+// Annuaire de la société (demande de Brice, 04/11/2026). Règles et API : 3cx-phonebook.js.
+// ---------------------------------------------------------------------------
+const PB_HELP = 'Contacts de l\'annuaire de la société 3CX, modifiables avant import. Dans Wazo : un carnet d\'adresses (wazo-dird) à ce nom, rempli contact par contact, puis une source d\'annuaire de type carnet ajoutée au profil d\'annuaire du site, pour que les postes et les applications le consultent et affichent le nom à la réception d\'un appel. Envoyé par la phase Fondations (onglet Écriture). Dans 3CX, les autres numéros et l\'e-mail d\'un contact sont dans des champs numérotés sans signification écrite : ils sont classés d\'après leur contenu (e-mail, mobile 06 / 07) ; à vérifier ici.';
+function phonebookTab() {
+  const d = E.d; const pb = d.phonebook; const q = E.q.trim().toLowerCase();
+  const rows = pb.contacts.map((c, i) => [c, i]).filter(([c]) => !q || CONTACT_FIELDS.some(([k]) => String(c[k] || '').toLowerCase().includes(q))).map(([c, i]) => `<tr class="${c.import ? '' : 'x3-off'}">
+    <td class="x3-c">${check(`phonebook.contacts.${i}.import`, 'Reprendre ce contact')}</td>
+    ${CONTACT_FIELDS.map(([k]) => `<td>${input(`phonebook.contacts.${i}.${k}`, k === 'email' ? 'type="email" class="x3-mail"' : '')}</td>`).join('')}
+    <td><button class="icon" data-act="pb-del" data-i="${i}" title="Supprimer ce contact">×</button></td></tr>`).join('');
+  const iss = phonebookIssues(d);
+  return `${intro('phonebook', 'Annuaire', PB_HELP, `<input id="x3e-q" type="search" placeholder="Filtrer" value="${esc(E.q)}" class="x3-q">`)}
+    <div class="ms-tools small"><label>Carnet Wazo <input data-pb-name="1" value="${esc(pb.name)}" placeholder="${esc(phonebookName(d))}" class="x3-mail"></label>
+      <button data-act="pb-all" data-v="1">Tout reprendre</button><button data-act="pb-all" data-v="0">Ne rien reprendre</button><button data-act="pb-add">+ contact</button></div>
+    ${iss.length ? `<div class="small">${iss.slice(0, 8).map((x) => `<div class="warn">${esc(x.text)}</div>`).join('')}${iss.length > 8 ? `<div class="muted">… et ${iss.length - 8} autre(s)</div>` : ''}</div>` : ''}
+    <div class="x3-edit-wrap"><table class="diff x3-edit">${head([['Reprise'], ...CONTACT_FIELDS.map(([, , l]) => [l]), ['']])}<tbody>${rows || '<tr><td colspan="8" class="muted">Aucun contact dans la sauvegarde.</td></tr>'}</tbody></table></div>`;
+}
+
+// ---------------------------------------------------------------------------
 // Sons et musiques d'attente (demande de Brice, 04/11/2026). Règles et API :
 // 3cx-sounds.js. Les fichiers restent dans la mémoire de la page : à redéposer
 // après un rechargement.
@@ -290,7 +310,8 @@ function deptsTab() {
     if (cfg.created) return `<span class="small">créés : ${[cfg.created.ctxName, cfg.created.incName, cfg.created.outName].filter(Boolean).map(esc).join(', ')}</span>`;
     return `<input data-ctxname="${esc(k)}|newLabel" value="${esc(cfg.newLabel || '')}" placeholder="${esc(L.ctx)}" class="x3-mail" title="Contexte interne">
       <input data-ctxname="${esc(k)}|incLabel" value="${esc(cfg.incLabel || '')}" placeholder="${esc(L.inc)}" class="x3-mail" title="Contexte entrant (le trunk du jeu y est pointé)">
-      <input data-ctxname="${esc(k)}|outLabel" value="${esc(cfg.outLabel || '')}" placeholder="${esc(L.out)}" class="x3-mail" title="Contexte sortant">${many ? '' : '<div class="muted small">si « nouveau contexte » (onglet Écriture)</div>'}`;
+      <input data-ctxname="${esc(k)}|outLabel" value="${esc(cfg.outLabel || '')}" placeholder="${esc(L.out)}" class="x3-mail" title="Contexte sortant">${many ? '' : '<div class="muted small">si « nouveau contexte » (onglet Écriture)</div>'}
+      <div class="x3-ranges">${RANGE_KEYS.map(([rk, rl]) => { const auto = rangesText(autoRanges(d, many ? k : null)[rk]); return `<label class="small">${esc(rl)} <input data-ctxrange="${esc(k)}|${rk}" value="${esc(cfg.ranges?.[rk] || '')}" placeholder="${esc(auto || 'aucune')}" title="Plages du contexte interne, ex. 200-260, 321 ; vide : ${esc(auto || 'aucune')} (calculé) ; « - » : aucune"></label>`; }).join('')}</div>`;
   };
   const count = (k) => { const o = deptObjects(d, k); return [`${o.users.filter((u) => u.mode === 'user').length} postes`, `${o.hunts.length} groupes / files`, `${o.ivrs.length} SVI`, `${o.dids.length} SDA`].join(', '); };
   const rows = d.depts.map((x) => `<tr class="${x.mode === 'skip' ? 'x3-off' : ''}">
@@ -313,7 +334,10 @@ function deptsTab() {
   const orows = objs.map(([kind, n, l, type, o]) => { const u = unitOf(d, o); return `<tr class="${u ? '' : 'x3-off'}"><td>${esc(l)}</td><td class="small">${esc(type)}</td><td>${deptSel(kind, n, o.dept)}${o.deptAlso ? `<div class="x3-warn small">aussi dans ${esc(o.deptAlso.join(', '))} (3CX)</div>` : ''}${o.deptBy ? `<div class="muted small">${DEPT_BY[o.deptBy]}</div>` : ''}</td><td class="small">${u ? esc(u === '_' ? 'jeu unique' : deptLabel(u)) : '<span class="muted">non importé ici</span>'}</td></tr>`; }).join('');
   return `${intro('depts', 'Départements', DEPT_HELP, `<input id="x3e-q" type="search" placeholder="Filtrer les objets" value="${esc(E.q)}" class="x3-q">`)}
     <p class="small">${units.length > 1 ? `${units.length} jeux de contextes Wazo : ${units.map((u) => esc(u.label)).join(', ')}.` : 'Un seul jeu de contextes Wazo pour tout le client.'}</p>
-    <div class="x3-edit-wrap"><table class="diff x3-edit">${head([['Département'], ['Trunk 3CX', 'Passerelle de la règle sortante qui vise ce département'], ['Horaires'], ['Présence visible', 'GLOBALLY_VISIBLE : présence visible hors du département'], ['Objets rattachés'], ['Dans Wazo'], ['Futurs contextes', 'Nom du contexte interne et du contexte sortant créés pour ce jeu (vide : nom proposé, en gris)']])}<tbody>${rows}</tbody></table></div>
+    ${many ? `<div class="ms-tools small"><label class="inline" title="Chaque contexte interne inclut les autres : les postes des départements s'appellent par leur numéro interne"><input type="checkbox" data-w="site.interUnits" ${d.write.site.interUnits ? 'checked' : ''}> Appels internes entre départements</label>
+      <label class="inline" title="Inclusions avec les contextes internes déjà présents sur ce site Wazo (choix des établissements : onglet Écriture)"><input type="checkbox" data-w="site.inter" ${d.write.site.inter ? 'checked' : ''}> Appels internes avec les établissements déjà présents</label></div>` : ''}
+    <div class="x3-edit-wrap"><table class="diff x3-edit">${head([['Département'], ['Trunk 3CX', 'Passerelle de la règle sortante qui vise ce département'], ['Horaires'], ['Présence visible', 'GLOBALLY_VISIBLE : présence visible hors du département'], ['Objets rattachés'], ['Dans Wazo'], ['Futurs contextes', 'Noms des contextes interne, entrant et sortant créés pour ce jeu, et plages du contexte interne (vide : valeur proposée, en gris)']])}<tbody>${rows}</tbody></table></div>
+    ${(() => { const iss = rangeIssues(d); return iss.length ? `<div class="small">${iss.map((x) => `<div class="${x.sev === 'error' ? 'compat blocking' : 'warn'}"><strong>${esc(x.title)}</strong> : ${esc(x.text)}</div>`).join('')}</div>` : ''; })()}
     <h4 class="x3-h">Rattachement des objets</h4>
     <div class="x3-edit-wrap"><table class="diff x3-edit">${head([['Objet'], ['Type'], ['Département'], ['Jeu de contextes Wazo']])}<tbody>${orows || '<tr><td colspan="4" class="muted">Aucun objet.</td></tr>'}</tbody></table></div>`;
 }
@@ -582,7 +606,13 @@ function onChange(e, root) {
   if (t.dataset.sndTo) { E.d.sounds.files[t.dataset.sndTo].to = t.value; return changed(root); }
   if (t.dataset.mohDef) { E.d.sounds.defaultMoh = t.dataset.mohDef; return changed(root); }
   if (t.dataset.moh) { const [i, f] = t.dataset.moh.split('|'); E.d.sounds.moh[Number(i)][f] = t.value.trim(); return changed(root); }
+  if (t.dataset.pbName) { E.d.phonebook.name = t.value.trim(); return changed(root); }
   if (t.dataset.sndCat) { E.d.sounds.category = t.value.trim(); return changed(root); }
+  if (t.dataset.ctxrange) {
+    const [k, f] = t.dataset.ctxrange.split('|');
+    const cfg = unitList(E.d).length > 1 ? unitCfg(E.d, k) : E.d.write.site; cfg.ranges ||= {}; cfg.ranges[f] = t.value.trim();
+    return changed(root);
+  }
   if (t.dataset.ctxname) {
     const [k, f] = t.dataset.ctxname.split('|');
     const cfg = unitList(E.d).length > 1 ? unitCfg(E.d, k) : E.d.write.site; cfg[f] = t.value.trim();
@@ -637,6 +667,9 @@ function onClick(e, root) {
     }
     case 'bulk-users': return bulkUsers(root);
     case 'bulk-vms': return bulkVms(root);
+    case 'pb-del': d.phonebook.contacts.splice(Number(b.dataset.i), 1); return changed(root);
+    case 'pb-add': d.phonebook.contacts.unshift({ first: '', last: '', company: '', number: '', mobile: '', email: '', import: true }); return changed(root);
+    case 'pb-all': for (const c of d.phonebook.contacts) c.import = b.dataset.v === '1'; return changed(root);
     case 'moh-add': { const k = `moh${Date.now().toString(36)}`; d.sounds.moh.push({ key: k, label: '', sort: 'alphabetical' }); return changed(root); }
     case 'moh-del': {
       const [x] = d.sounds.moh.splice(Number(b.dataset.i), 1);
