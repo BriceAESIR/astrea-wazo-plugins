@@ -3,16 +3,16 @@
 // Résumé :
 //  - un seul PUT /extensions/{id} {context} par numéro : la ligne suit (xivo-dao
 //    LineFixes), le contexte PJSIP est généré depuis la ligne (confgend) ;
-//  - le commun inclut les sites en tête : les références numéro@commun
+//  - le commun inclut les sites en fin de liste : les références numéro@commun
 //    (SDA, destinations, membres de groupe) restent valables sans réécriture ;
 //  - live reload coupé pendant toute l'opération, réactivé AVANT le dernier
 //    déplacement (une écriture identique ne recharge rien, lu dans le notifier) ;
 //  - journal de chaque écriture, annulation depuis le journal.
-import { S, api, ApiError } from '../common/core.js?v=0.40.50';
-import { I, sameTenant, membersOf, objLabel } from './inventory.js?v=0.40.50';
-import { patternMatch, allDests } from './checks.js?v=0.40.50';
-import { worldOf, route, siteSlug } from './3cx-sites.js?v=0.40.50';
-import { userContext } from '../callflow/dialsim.js?v=0.40.50';
+import { S, api, ApiError } from '../common/core.js?v=0.40.51';
+import { I, sameTenant, membersOf, objLabel } from './inventory.js?v=0.40.51';
+import { patternMatch, allDests } from './checks.js?v=0.40.51';
+import { worldOf, route, siteSlug, clientPatterns, defaultOut, BLOCK_118 } from './3cx-sites.js?v=0.40.51';
+import { userContext } from '../callflow/dialsim.js?v=0.40.51';
 
 // ---------------------------------------------------------------------------
 // Jeu de contextes par site et cloisonnement (demande de Brice, 06/11/2026)
@@ -32,6 +32,34 @@ export const linkKey = (a, b) => [a, b].sort().join('|');
 export const partitionOf = (ms) => (PARTITIONS[ms.partition] ? ms.partition : 'mesh');
 export const linked = (ms, a, b) => a !== b && (partitionOf(ms) === 'mesh' || (partitionOf(ms) === 'pairs' && (ms.links || []).includes(linkKey(a, b))));
 export const commonIncludesSites = (ms) => partitionOf(ms) === 'mesh';
+// ---------------------------------------------------------------------------
+// Appels sortants et SDA par site (deuxième temps, 06/11/2026)
+// ---------------------------------------------------------------------------
+// Sortant : règle de l'assistant France de Call Flow (motifs de 3cx-sites.js, mêmes options que
+// l'import 3CX) dans le contexte -to-extern du site, vers le trunk du site ; « interdit-118 »
+// reprise ou créée une fois. Sans trunk : pas de règle, le site sort par le commun.
+// Entrant : -from-extern reçoit les SDA du site dans ses incall_ranges (une plage par SDA, comme
+// le Portal) et inclut les contextes entrants actuels de ces SDA : quand le trunk du site est
+// réglé dessus (dans le Portal, l'outil ne touche jamais aux trunks), toutes les SDA restent
+// trouvées par l'inclusion (supposé : inclusion entre contextes entrants acceptée par confd et
+// suivie par Asterisk, à vérifier en réel). Les SDA du site y sont ensuite déplacées
+// (« Déplacer les SDA »), seulement une fois le trunk réglé.
+export const outOf = (ms) => ms.out || defaultOut();
+export const ruleName = (ms, s) => `${String(ms.clientId || '').trim() || '<ID>'} - ${s.label} - Appels sortants`;
+// SDA du tenant : une ligne par numéro entrant (extension de l'incall).
+export function tenantDids() {
+  return (I.lists.incall || []).flatMap((i) => (i.extensions || []).map((e) => ({ incall: i, extId: e.id, exten: e.exten, context: e.context })));
+}
+// Site d'une SDA : choix explicite, sinon celui de l'utilisateur visé (numéro déplacé), sinon aucun.
+export function didSite(ms, d) {
+  if (ms.didAssign && Object.prototype.hasOwnProperty.call(ms.didAssign, d.extId)) return ms.didAssign[d.extId] || null;
+  const dest = d.incall.destination;
+  if (dest?.type !== 'user') return null;
+  const u = (I.lists.user || []).find((x) => x.id === dest.user_id); const e = u?.lines?.[0]?.extensions?.[0];
+  const ext = e && (I.lists.extension || []).find((x) => x.exten === e.exten && x.context === e.context);
+  return ext ? ms.assign.get(ext.id) || null : null;
+}
+const didOf = (n) => String(n || '').replace(/\D/g, '');
 export function siteNames(ms, s) {
   const id = String(ms.clientId || '').trim() || '<ID>'; const slug = siteSlug(s.label);
   return { ctx: s.ctxLabel || `${id}-${slug}-internal`, out: s.outLabel || `${id}-${slug}-to-extern`, inc: s.incLabel || `${id}-${slug}-from-extern` };
@@ -131,8 +159,21 @@ export function buildPlan(ms) {
     const out = moved.filter((e) => !inRanges(e.exten, ranges));
     if (out.length) err(`Site « ${label} » : ${out.map((e) => e.exten).join(', ')} hors de ses plages. Ajoutez-les aux plages, ou utilisez « Calculer les plages ».`);
     if (!moved.length) warn(`Site « ${label || '?'} » : aucun numéro affecté ; ses contextes seront créés vides.`);
-    return { ...s, label, ranges, moved, names };
+    // Sortant du site.
+    const trunk = (I.lists.trunk || []).find((t) => String(t.id) === String(s.trunkId)) || null;
+    const pats = trunk ? clientPatterns(outOf(ms)) : [];
+    const rule = trunk ? ruleName(ms, { label }) : null;
+    if (!trunk) warn(`Site « ${label || '?'} » : aucun trunk choisi, pas de règle sortante ; il sortira par le commun.`);
+    else if ((I.lists.outcall || []).some((o) => (o.label || o.name) === rule)) err(`Une règle sortante « ${rule} » existe déjà.`);
+    // SDA du site : contextes entrants actuels (inclus en repli), numéros (plages de l'entrant).
+    const dids = tenantDids().filter((d) => didSite(ms, d) === s.key);
+    const bad = dids.filter((d) => !/^\d+$/.test(didOf(d.exten)) || didOf(d.exten) !== d.exten);
+    if (bad.length) warn(`Site « ${label} » : SDA ${bad.map((d) => d.exten).join(', ')} non numériques (motif ?) : ni plage ni déplacement.`);
+    const incFrom = [...new Set([...dids.map((d) => d.context), ...(trunk?.context ? [trunk.context] : [])])].filter((c) => I.by.context?.get(String(c))?.type === 'incall');
+    return { ...s, label, ranges, moved, names, trunk, pats, rule, dids: dids.filter((d) => !bad.includes(d)), incFrom };
   });
+  // Autorisation « interdit-118 » existante (reprise), sinon créée à la première règle.
+  const perm118 = outOf(ms).block118 ? (I.lists.callpermission || []).find((x) => x.mode === 'deny' && x.enabled !== false && (x.extensions || []).includes(BLOCK_118)) || null : null;
   if (!sites.length) err('Ajoutez au moins un site.');
   // Plages qui se chevauchent entre sites : accepté par Wazo, mais confus.
   for (let i = 0; i < sites.length; i++) for (let j = i + 1; j < sites.length; j++) {
@@ -142,13 +183,16 @@ export function buildPlan(ms) {
   problems.push(...sim.issues);
   // Écritures, dans l'ordre d'exécution.
   const steps = [];
-  for (const s of sites) steps.push({ phase: 'ctx', site: s.key, text: `Créer les contextes « ${s.names.ctx} » (interne, plages ${rangesText(s.ranges) || 'aucune'}), « ${s.names.out} » (sortant, vide : il sort par le commun tant qu'il n'a pas de règle) et « ${s.names.inc} » (entrant, vide)` });
+  for (const s of sites) steps.push({ phase: 'ctx', site: s.key, text: `Créer les contextes « ${s.names.ctx} » (interne, plages ${rangesText(s.ranges) || 'aucune'}), « ${s.names.out} » (sortant) et « ${s.names.inc} » (entrant, ${s.dids.length} SDA dans ses plages, inclut ${s.incFrom.map((c) => `« ${I.by.context.get(String(c))?.label || c} »`).join(', ') || 'rien'})` });
+  for (const s of sites.filter((x) => x.trunk)) steps.push({ phase: 'rule', site: s.key, text: `Règle « ${s.rule} » : ${s.pats.length} motif(s) de l'assistant France dans « ${s.names.out} », vers ${objLabel('trunk', s.trunk)}${outOf(ms).block118 ? `, 118 bloqués (« interdit-118 » ${perm118 ? 'reprise' : 'créée'})` : ''}` });
   const lbl = (s, k) => (k === 'common' ? `commun « ${common.label || common.name} »` : k === 'out' ? `« ${s.names.out} »` : `« ${s.names.ctx} »`);
   for (const s of sites) steps.push({ phase: 'inc', site: s.key, text: `Inclusions de « ${s.names.ctx} » : ${siteIncludes(ms, sites, s, lbl).join(', ')}` });
-  if (commonIncludesSites(ms)) steps.push({ phase: 'common', text: `Inclusions du commun « ${common.label || common.name} » : ${sites.map((s) => `« ${s.names.ctx} »`).join(', ')} en tête, puis ${(common.contexts || []).map((c) => `« ${c.label || c.name} »`).join(', ') || 'rien'} (inchangées)` });
+  // Sites en FIN de liste du commun (06/11/2026) : en tête, les appels externes du commun
+  // traversaient le premier site et sortaient par son trunk (vu dans la simulation).
+  if (commonIncludesSites(ms)) steps.push({ phase: 'common', text: `Inclusions du commun « ${common.label || common.name} » : ${(common.contexts || []).map((c) => `« ${c.label || c.name} »`).join(', ') || 'rien'} (inchangées), puis ${sites.map((s) => `« ${s.names.ctx} »`).join(', ')} en fin de liste` });
   for (const s of sites) for (const e of s.moved) steps.push({ phase: 'move', site: s.key, extId: e.id, exten: e.exten, text: `${e.exten} (${e.label}) → « ${s.names.ctx} »` });
   const moves = steps.filter((x) => x.phase === 'move').length;
-  return { problems, steps, sites, common, moves, sim, ok: !problems.some((p) => p.sev === 'error') && moves > 0 };
+  return { problems, steps, sites, common, moves, sim, perm118, ok: !problems.some((p) => p.sev === 'error') && moves > 0 };
 }
 
 // ---------------------------------------------------------------------------
@@ -161,12 +205,14 @@ function futureWorld(ms, sites, common) {
   const f = { ctx: new Map([...w.ctx].map(([k, v]) => [k, { ...v, includes: [...v.includes] }])), exts: new Map(w.exts), outs: new Map([...w.outs].map(([k, v]) => [k, [...v]])) };
   const nm = (s, k) => (k === 'common' ? common.name : vname(s, k));
   for (const s of sites) {
+    // Motifs de la règle du site : la simulation montre la sortie par le trunk du site.
+    if (s.trunk) f.outs.set(vname(s, 'out'), s.pats.map((p) => ({ exten: p.exten, dp: p, rule: s.rule, trunks: [Number(s.trunk.id)], mine: true })));
     f.ctx.set(vname(s, 'out'), { name: vname(s, 'out'), label: s.names.out, type: 'outcall', includes: [] });
     f.ctx.set(vname(s, 'inc'), { name: vname(s, 'inc'), label: s.names.inc, type: 'incall', includes: [] });
     f.ctx.set(vname(s, 'ctx'), { name: vname(s, 'ctx'), label: s.names.ctx, type: 'internal', includes: siteIncludes(ms, sites, s, nm) });
     for (const e of s.moved) { const k = `${e.exten}@${common.name}`; const x = f.exts.get(k); f.exts.delete(k); f.exts.set(`${e.exten}@${vname(s, 'ctx')}`, { ...(x || { users: 1 }), ctx: vname(s, 'ctx') }); }
   }
-  if (commonIncludesSites(ms)) f.ctx.get(common.name).includes = [...sites.map((s) => vname(s, 'ctx')), ...f.ctx.get(common.name).includes.filter((x) => !x.startsWith('@site:'))];
+  if (commonIncludesSites(ms)) f.ctx.get(common.name).includes = [...f.ctx.get(common.name).includes.filter((x) => !x.startsWith('@site:')), ...sites.map((s) => vname(s, 'ctx'))];
   return { before: w, after: f };
 }
 const SIM_EXT = [['15', 'SAMU'], ['112', 'urgences'], ['0240000000', 'fixe'], ['0612345678', 'mobile'], ['0033123456789', 'international']];
@@ -193,7 +239,10 @@ export function simulate(ms, sites, common) {
       let want = null;
       if (c.site) want = fr.site ? (fr.site === c.site || linked(ms, fr.site.key, c.site.key)) : commonIncludesSites(ms);
       else if (c.common) want = true;
-      const ok = want == null ? a.kind === 'out' || a.kind === b.kind : want ? a.kind === 'internal' && (!c.site || a.ctx === vname(c.site, 'ctx')) : a.kind !== 'internal';
+      // Extérieur depuis le commun : rien ne doit changer (même règle qu'avant la bascule).
+      const same = simText(before, b) === simText(after, a);
+      const ok = want == null ? (fr.common ? same : a.kind === 'out' || a.kind === b.kind) : want ? a.kind === 'internal' && (!c.site || a.ctx === vname(c.site, 'ctx')) : a.kind !== 'internal';
+      if (fr.common && c.ext && !same) want = 'same';
       return { before: simText(before, b), after: simText(after, a), ok, want };
     });
     rows.push({ from: fr.label, cells });
@@ -201,6 +250,8 @@ export function simulate(ms, sites, common) {
       if (x.ok) return; const c = cols[i];
       if (x.want === false) issues.push({ sev: 'error', text: `Cloisonnement : depuis « ${fr.label} », ${c.n} (${c.what}) reste joignable (${x.after}).` });
       else if (x.want === true) issues.push({ sev: 'error', text: `Depuis « ${fr.label} », ${c.n} (${c.what}) n'est plus joignable en interne : ${x.after}.` });
+      // Appel qui sortait déjà : changer de trunk est une erreur. Appel non routé qui sortirait par un site : avertissement.
+      else if (x.want === 'same') issues.push({ sev: x.before === 'non routé' ? 'warn' : 'error', text: `Depuis le commun, ${c.n} (${c.what}) : ${x.before} avant, ${x.after} après${x.before === 'non routé' ? ' (par l\'inclusion du site, en fin de liste)' : ''}.` });
       // Extérieur : visible dans le tableau ; les urgences ont leur propre contrôle ci-dessous.
     });
   }
@@ -273,12 +324,34 @@ async function withGroupedReload(nWrites, body, last) {
   return note;
 }
 // Déplace un numéro, relu juste avant (arrêt s'il a changé depuis la lecture).
-async function moveOne(m, log) {
+async function moveOne(m, log, op = 'move') {
   const cur = await tapi('GET', `/extensions/${m.extId}`);
-  if (cur?.context === m.to) { log({ op: 'move', ...m, skipped: 'déjà dans le contexte cible' }); return; }
+  if (cur?.context === m.to) { log({ op, ...m, skipped: 'déjà dans le contexte cible' }); return; }
   if (cur?.context !== m.from || cur?.exten !== m.exten) throw new Error(`${m.exten} a changé depuis la lecture (maintenant ${cur?.exten}@${cur?.context}) : arrêt.`);
   await tapi('PUT', `/extensions/${m.extId}`, { context: m.to });
-  log({ op: 'move', ...m });
+  log({ op, ...m });
+}
+
+// SDA d'un site : déplacées dans son entrant, seulement si son trunk y arrive déjà (relu juste
+// avant ; l'outil ne règle jamais le trunk). Avant ce réglage, les déplacer couperait ces SDA.
+export function didsReady(j, key) {
+  const s = (j?.sites || []).find((x) => x.site === key); if (!s) return { ok: false, why: 'site inconnu du journal' };
+  const left = s.dids.filter((d) => !(j.entries || []).some((e) => e.op === 'move_did' && e.extId === d.extId && !e.undone));
+  if (!left.length) return { ok: false, done: true, why: 'SDA déjà déplacées' };
+  const tr = (I.lists.trunk || []).find((t) => String(t.id) === String(s.trunkId));
+  if (!tr) return { ok: false, why: 'aucun trunk choisi pour ce site' };
+  if (tr.context !== s.inc.name) return { ok: false, why: `trunk ${objLabel('trunk', tr)} encore sur « ${I.by.context?.get(String(tr.context))?.label || tr.context || 'aucun'} » : le régler sur « ${s.inc.label} » dans le Portal, puis relire` };
+  return { ok: true, s, left, tr };
+}
+export async function moveDids(j, key, onProgress = () => {}) {
+  const r = didsReady(j, key); if (!r.ok) throw new Error(r.why);
+  const fresh = await tapi('GET', `/trunks/${r.tr.id}`);
+  if (fresh?.context !== r.s.inc.name) throw new Error(`le trunk n'arrive plus sur « ${r.s.inc.label} » (relu à l'instant) : rien n'est déplacé.`);
+  const log = (e) => { j.entries.push({ at: new Date().toISOString(), ...e }); saveJournal(j); };
+  const ms = r.left.map((d) => ({ extId: d.extId, exten: d.exten, from: d.from, to: r.s.inc.name }));
+  return withGroupedReload(ms.length, async (grouped) => {
+    for (const [i, m] of ms.slice(0, -1).entries()) { onProgress(`SDA : ${i + 1} / ${ms.length}`); await moveOne(m, log, 'move_did'); if (!grouped) await sleep(300); }
+  }, async () => { onProgress(`SDA : ${ms.length} / ${ms.length}`); await moveOne(ms[ms.length - 1], log, 'move_did'); });
 }
 
 export async function executePlan(plan, ms, onProgress = () => {}) {
@@ -293,7 +366,7 @@ export async function executePlan(plan, ms, onProgress = () => {}) {
   const byKey = new Map(); // clé du site → { ctx, out, inc } (contextes créés)
   let moves = [];
   const withCommon = commonIncludesSites(ms);
-  const nWrites = plan.sites.length * 4 + (withCommon ? 1 : 0) + plan.moves;
+  const nWrites = plan.sites.length * 5 + plan.sites.reduce((a, s) => a + (s.trunk ? s.pats.length * 2 + 3 : 0), 0) + (withCommon ? 1 : 0) + plan.moves;
   j.partition = partitionOf(ms);
   try {
     j.note = await withGroupedReload(nWrites, async (grouped) => {
@@ -302,7 +375,8 @@ export async function executePlan(plan, ms, onProgress = () => {}) {
       for (const s of plan.sites) {
         onProgress(`Création des contextes de « ${s.label} »`);
         const made = {};
-        for (const [role, body] of [['out', { label: s.names.out, type: 'outcall' }], ['inc', { label: s.names.inc, type: 'incall' }], ['ctx', { label: s.names.ctx, type: 'internal', user_ranges: s.ranges }]]) {
+        const incRanges = s.dids.map((d) => ({ start: d.exten, end: d.exten }));
+        for (const [role, body] of [['out', { label: s.names.out, type: 'outcall' }], ['inc', { label: s.names.inc, type: 'incall', incall_ranges: incRanges }], ['ctx', { label: s.names.ctx, type: 'internal', user_ranges: s.ranges }]]) {
           const c = await tapi('POST', '/contexts', { ...body, description: desc });
           if (!c?.id || !c?.name) throw new Error('POST /contexts : réponse sans id ni nom');
           made[role] = c;
@@ -317,7 +391,37 @@ export async function executePlan(plan, ms, onProgress = () => {}) {
         const ids = siteIncludes(ms, plan.sites, s, idOf);
         await tapi('PUT', `/contexts/${byKey.get(s.key).ctx.id}/contexts`, { contexts: ids.map((id) => ({ id })) });
         log({ op: 'site_includes', id: byKey.get(s.key).ctx.id, contexts: ids });
+        // Entrant du site : repli sur les contextes entrants actuels de ses SDA (et de son trunk).
+        const incIds = s.incFrom.map((n) => I.by.context.get(String(n))?.id).filter(Boolean);
+        if (incIds.length) {
+          await tapi('PUT', `/contexts/${byKey.get(s.key).inc.id}/contexts`, { contexts: incIds.map((id) => ({ id })) });
+          log({ op: 'site_includes', id: byKey.get(s.key).inc.id, contexts: incIds });
+        }
       }
+      // 2b. Règle sortante de chaque site qui a un trunk (comme Call Flow Manager et l'import 3CX) :
+      //     un numéro par motif dans le sortant du site, association avec sa transformation, trunk,
+      //     puis l'autorisation « interdit-118 » (reprise si elle existe, créée une fois sinon).
+      let perm118 = plan.perm118;
+      for (const s of plan.sites.filter((x) => x.trunk)) {
+        onProgress(`Règle sortante de « ${s.label} »`);
+        const o = await tapi('POST', '/outcalls', { name: s.rule });
+        log({ op: 'create_outcall', id: o.id, name: s.rule });
+        for (const p of s.pats) {
+          const ext = await tapi('POST', '/extensions', { exten: p.exten, context: byKey.get(s.key).out.name });
+          log({ op: 'create_extension', id: ext.id, exten: p.exten, outcall: o.id });
+          await tapi('PUT', `/outcalls/${o.id}/extensions/${ext.id}`, { strip_digits: p.strip_digits || 0, external_prefix: p.external_prefix || null, prefix: null, caller_id: null });
+        }
+        await tapi('PUT', `/outcalls/${o.id}/trunks`, { trunks: [{ id: Number(s.trunk.id) }] });
+        if (outOf(ms).block118) {
+          if (!perm118) {
+            perm118 = await tapi('POST', '/callpermissions', { name: 'interdit-118', mode: 'deny', enabled: true, extensions: [BLOCK_118], description: `Renseignements 118 XXX surtaxés (${MARK})` });
+            log({ op: 'create_perm', id: perm118.id });
+          }
+          await tapi('PUT', `/outcalls/${o.id}/callpermissions/${perm118.id}`);
+        }
+      }
+      // SDA à déplacer plus tard (une fois le trunk réglé sur l'entrant du site, dans le Portal).
+      j.sites = plan.sites.map((s) => ({ site: s.key, label: s.label, inc: { id: byKey.get(s.key).inc.id, name: byKey.get(s.key).inc.name, label: s.names.inc }, trunkId: s.trunk?.id ?? null, dids: s.dids.map((d) => ({ extId: d.extId, exten: d.exten, from: d.context })) }));
       // 3. Inclusions du commun (relues juste avant), seulement si tous les sites s'appellent :
       //    sinon le commun ouvrirait les sites les uns aux autres.
       if (withCommon) {
@@ -325,7 +429,7 @@ export async function executePlan(plan, ms, onProgress = () => {}) {
         const before = (fresh?.contexts || []).map((c) => c.id);
         j.common_includes_before = before;
         const siteIds = plan.sites.map((s) => byKey.get(s.key).ctx.id);
-        const after = [...siteIds, ...before.filter((id) => !siteIds.includes(id))];
+        const after = [...before.filter((id) => !siteIds.includes(id)), ...siteIds];
         await tapi('PUT', `/contexts/${plan.common.id}/contexts`, { contexts: after.map((id) => ({ id })) });
         log({ op: 'common_includes', id: plan.common.id, before, after });
       }
@@ -360,7 +464,25 @@ export async function undoJournal(j, onProgress = () => {}) {
   if (j.host !== S.base || j.tenant !== I.tenant) throw new Error('Ce journal concerne un autre serveur ou un autre tenant.');
   const report = [];
   const log = (e) => report.push(e);
-  const back = j.entries.filter((e) => e.op === 'move' && !e.skipped).reverse().map((m) => ({ extId: m.extId, exten: m.exten, from: m.to, to: m.from }));
+  // Numéros puis SDA, dans l'ordre inverse (les SDA, déplacées en dernier, reviennent d'abord).
+  const back = j.entries.filter((e) => (e.op === 'move' || e.op === 'move_did') && !e.skipped && !e.undone).reverse().map((m) => ({ extId: m.extId, exten: m.exten, from: m.to, to: m.from }));
+  // Règles sortantes des sites : règles, puis leurs numéros, puis « interdit-118 » si l'outil l'a
+  // créée et qu'aucune autre règle ne s'en sert (relu). Avant les contextes, qui doivent être vides.
+  const delRules = async () => {
+    const ours = new Set(j.entries.filter((e) => e.op === 'create_outcall').map((e) => e.id));
+    for (const e of [...j.entries].reverse()) {
+      try {
+        if (e.op === 'create_outcall') { onProgress(`Suppression de la règle « ${e.name} »`); await tapi('DELETE', `/outcalls/${e.id}`); log({ op: 'delete_outcall', id: e.id }); }
+        else if (e.op === 'create_extension') { await tapi('DELETE', `/extensions/${e.id}`); log({ op: 'delete_extension', id: e.id }); }
+        else if (e.op === 'create_perm') {
+          const p = await tapi('GET', `/callpermissions/${e.id}`);
+          const others = (p?.outcalls || []).filter((x) => !ours.has(x.id));
+          if (others.length) log({ op: 'keep_perm', id: e.id, error: `« interdit-118 » gardée : utilisée par ${others.length} autre(s) règle(s)` });
+          else { await tapi('DELETE', `/callpermissions/${e.id}`); log({ op: 'delete_perm', id: e.id }); }
+        }
+      } catch (x) { if (x.status !== 404) log({ op: e.op.replace('create', 'delete'), id: e.id, error: x.message }); }
+    }
+  };
   const restoreIncludes = async () => {
     if (!Array.isArray(j.common_includes_before)) return;
     onProgress('Inclusions du commun');
@@ -381,7 +503,8 @@ export async function undoJournal(j, onProgress = () => {}) {
   // son site, qui ne pouvaient pas être supprimés avant (un rechargement chacun, trois au plus).
   const lastSite = back.length ? j.created.find((c) => c.name === back[back.length - 1].from)?.site : null;
   const early = dels.filter((c) => c.site !== lastSite); const late = dels.filter((c) => c.site === lastSite);
-  const nWrites = back.length + (Array.isArray(j.common_includes_before) ? 1 : 0) + early.length;
+  const nRules = j.entries.filter((e) => ['create_outcall', 'create_extension', 'create_perm'].includes(e.op)).length;
+  const nWrites = back.length + (Array.isArray(j.common_includes_before) ? 1 : 0) + early.length + nRules;
   const note = await withGroupedReload(nWrites, async (grouped) => {
     if (back.length) await restoreIncludes();
     for (const [i, m] of back.slice(0, -1).entries()) {
@@ -389,6 +512,7 @@ export async function undoJournal(j, onProgress = () => {}) {
       await moveOne(m, log);
       if (!grouped) await sleep(300);
     }
+    await delRules();
     if (back.length) for (const c of early) await del(c);
   }, async () => {
     if (back.length) { onProgress(`Retour des numéros : ${back.length} / ${back.length}`); await moveOne(back[back.length - 1], log); } else await restoreIncludes();

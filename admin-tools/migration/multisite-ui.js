@@ -1,10 +1,11 @@
 // Migration Assistant — interface de la bascule multisite (lot 2).
 // Moteur : multisite.js. Brouillon (sites, affectations) gardé dans le
 // navigateur par serveur et tenant (confort seulement).
-import { S, $, esc, toast, canWrite, confirmModal, downloadJson, helpButton, helpBox } from '../common/core.js?v=0.40.50';
-import { I } from './inventory.js?v=0.40.50';
-import { buildExport, exportFileName } from './export.js?v=0.40.50';
-import { sourceContexts, movableExtensions, buildPlan, executePlan, undoJournal, compactRanges, rangesText, parseRanges, liveReload, enableLiveReload, lrMarkedByUs, loadSavedJournal, clearSavedJournal, JOURNAL_FORMAT, PARTITIONS, partitionOf, linkKey, siteNames } from './multisite.js?v=0.40.50';
+import { S, $, esc, toast, canWrite, confirmModal, downloadJson, helpButton, helpBox } from '../common/core.js?v=0.40.51';
+import { I } from './inventory.js?v=0.40.51';
+import { buildExport, exportFileName } from './export.js?v=0.40.51';
+import { sourceContexts, movableExtensions, buildPlan, executePlan, undoJournal, compactRanges, rangesText, parseRanges, liveReload, enableLiveReload, lrMarkedByUs, loadSavedJournal, clearSavedJournal, JOURNAL_FORMAT, PARTITIONS, partitionOf, linkKey, siteNames, tenantDids, didSite, outOf, didsReady, moveDids } from './multisite.js?v=0.40.51';
+import { FR_FAMILIES, FR_FORMATS } from './3cx-sites.js?v=0.40.51';
 
 const DRAFT_KEY = 'astrea-migration-ms-draft-v1';
 const U = { ms: null, scope: null, q: '', sel: new Set(), busy: false, reload: null, lr: null, result: null };
@@ -13,7 +14,7 @@ const newSite = (label = '') => ({ key: `s${Date.now().toString(36)}${seq++}`, l
 
 function draftKey() { return `${DRAFT_KEY}|${S.base}|${I.tenant}`; }
 function saveDraft() {
-  try { localStorage.setItem(draftKey(), JSON.stringify({ source: U.ms.source, sites: U.ms.sites, assign: [...U.ms.assign], clientId: U.ms.clientId, partition: U.ms.partition, links: U.ms.links })); } catch { /* */ }
+  try { localStorage.setItem(draftKey(), JSON.stringify({ source: U.ms.source, sites: U.ms.sites, assign: [...U.ms.assign], clientId: U.ms.clientId, partition: U.ms.partition, links: U.ms.links, out: U.ms.out, didAssign: U.ms.didAssign })); } catch { /* */ }
 }
 function loadDraft() { try { return JSON.parse(localStorage.getItem(draftKey()) || 'null'); } catch { return null; } }
 
@@ -26,9 +27,10 @@ export async function renderMultisite() {
     U.scope = scope; U.sel.clear(); U.result = null;
     const d = loadDraft();
     const srcs = sourceContexts();
-    U.ms = { source: srcs[0]?.name || null, sites: [], assign: new Map(), clientId: '', partition: 'mesh', links: [] };
+    U.ms = { source: srcs[0]?.name || null, sites: [], assign: new Map(), clientId: '', partition: 'mesh', links: [], out: null, didAssign: {} };
     // Brouillon d'avant (interSite) : « tous les sites s'appellent », comme le faisait le commun.
-    if (d && srcs.some((s) => s.name === d.source)) U.ms = { source: d.source, sites: d.sites || [], assign: new Map(d.assign || []), clientId: d.clientId || '', partition: d.partition || 'mesh', links: d.links || [] };
+    if (d && srcs.some((s) => s.name === d.source)) U.ms = { source: d.source, sites: d.sites || [], assign: new Map(d.assign || []), clientId: d.clientId || '', partition: d.partition || 'mesh', links: d.links || [], out: d.out || null, didAssign: d.didAssign || {} };
+    U.ms.out = outOf(U.ms);
   }
   // Affectations vers des numéros qui n'existent plus (relecture) : retirées.
   const ids = new Set(movableExtensions(U.ms.source).map((e) => e.id));
@@ -52,7 +54,7 @@ function draw() {
     ${U.result ? `<div class="mg-allok ${U.result.bad ? 'bad' : ''}">${U.result.html}</div>` : ''}
     <div class="card mg-card wide">
       <div class="titlerow"><h3>1. Contexte commun</h3>${helpButton('ms-h1', 'Aide : contexte commun')}</div>
-      ${helpBox('ms-h1', 'Contexte interne actuel, partagé par tout le tenant. Il reste en place et devient le « commun » : il garde groupes, files, conférences, messageries et les utilisateurs non affectés à un site. Chaque site l\'inclut (groupes, files et utilisateurs restés y sont joignables). Si tous les sites s\'appellent, il inclut aussi les sites en tête : tout ce qui l\'utilise (SDA, groupes, destinations « numéro ») trouve alors toujours les numéros déplacés, sans rien réécrire.')}
+      ${helpBox('ms-h1', 'Contexte interne actuel, partagé par tout le tenant. Il reste en place et devient le « commun » : il garde groupes, files, conférences, messageries et les utilisateurs non affectés à un site. Chaque site l\'inclut (groupes, files et utilisateurs restés y sont joignables). Si tous les sites s\'appellent, il inclut aussi les sites, en fin de liste (après son sortant : sinon ses appels externes sortiraient par le trunk d\'un site) : tout ce qui l\'utilise (SDA, groupes, destinations « numéro ») trouve alors toujours les numéros déplacés, sans rien réécrire.')}
       <div class="ms-tools"><label>Contexte <select id="ms-src">${srcs.map((s) => `<option value="${esc(s.name)}" ${s.name === U.ms.source ? 'selected' : ''}>${esc(s.ctx.label || s.name)} (${esc(s.name)}) · ${s.lines} ligne(s)</option>`).join('')}</select></label>
       <label>ID client <input id="ms-client" value="${esc(U.ms.clientId || '')}" placeholder="44150" class="short"></label></div>
     </div>
@@ -67,6 +69,15 @@ function draw() {
       ${helpBox('ms-h2b', 'Asterisk suit les inclusions en cascade : un contexte inclus apporte ses propres inclusions. « Tous les sites s\'appellent » : chaque site inclut les autres, et le commun inclut les sites. « Liens choisis » et « Sites isolés » : chaque site n\'inclut que les sites cochés, puis le commun ; le commun n\'inclut plus les sites, sinon ils se joindraient par lui. Conséquence : les utilisateurs restés dans le commun ne joignent plus les sites, et les références « numéro@commun » vers un numéro déplacé cassent (relevées dans l\'aperçu). La simulation montre le résultat avant d\'écrire.')}
       <label>Mode <select id="ms-part">${Object.entries(PARTITIONS).map(([k, l]) => `<option value="${k}" ${partitionOf(U.ms) === k ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>
       ${partitionOf(U.ms) === 'pairs' ? linksBox() : ''}
+    </div>
+    <div class="card mg-card wide">
+      <div class="titlerow"><h3>Appels sortants et SDA des sites</h3>${helpButton('ms-h2c', 'Aide : sortants et SDA')}</div>
+      ${helpBox('ms-h2c', 'Sortant : pour chaque site qui a un trunk (choisi sur la ligne du site), une règle « <ID> - <site> - Appels sortants » avec les motifs de l\'assistant France de Call Flow, dans le contexte sortant du site, inclus en premier par son interne. Le site sort donc par son trunk ; ce que sa règle ne prend pas part par le commun. SDA : chaque SDA cochée pour un site est déclarée dans les plages de l\'entrant du site, qui inclut aussi les entrants actuels (repli : rien ne se perd quand le trunk change de contexte). Les trunks ne sont jamais modifiés par l\'outil : après la bascule, régler dans le Portal le contexte entrant du trunk du site, relire, puis « Déplacer les SDA ». Par défaut, une SDA suit l\'utilisateur qu\'elle vise.')}
+      <div class="small">${FR_FAMILIES.map((f) => `<label class="inline"><input type="checkbox" data-out="fam" data-id="${f.id}" ${U.ms.out.fams.includes(f.id) ? 'checked' : ''}> ${esc(f.label)}</label>`).join(' ')}</div>
+      <div class="ms-tools small"><label>Format attendu par l'opérateur <select data-out="fmt">${Object.entries(FR_FORMATS).map(([k, l]) => `<option value="${k}" ${U.ms.out.fmt === k ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>
+        <label class="inline"><input type="checkbox" data-out="block118" ${U.ms.out.block118 ? 'checked' : ''}> Bloquer les 118 XXX</label>
+        <label class="inline" title="Prend tout numéro qu'aucun autre motif ne prend : capte les numéros des sites mal inclus (la simulation le montre)."><input type="checkbox" data-out="catchAll" ${U.ms.out.catchAll ? 'checked' : ''}> Attrape-tout _X.</label></div>
+      ${didTable()}
     </div>
     <div class="card mg-card wide">
       <div class="titlerow"><h3>4. Affectation des numéros</h3>${helpButton('ms-h3', 'Aide : affectation')}</div>
@@ -89,11 +100,20 @@ function siteRow(s) {
     <button data-act="calc" title="Plages les plus courtes couvrant les numéros affectés">Calculer</button>
     <button class="icon" data-act="del" title="Retirer ce site">×</button>
     <div class="ms-names small">
+      <label>Trunk du site <select data-f="trunkId"><option value="">aucun (sort par le commun)</option>${(I.lists.trunk || []).map((t) => `<option value="${t.id}" ${String(s.trunkId) === String(t.id) ? 'selected' : ''}>${esc(t.endpoint_sip?.label || t.endpoint_sip?.name || `Trunk ${t.id}`)}</option>`).join('')}</select></label>
       <label>Interne <input data-f="ctxLabel" value="${esc(s.ctxLabel || '')}" placeholder="${esc(def.ctx)}"></label>
       <label>Sortant <input data-f="outLabel" value="${esc(s.outLabel || '')}" placeholder="${esc(def.out)}"></label>
       <label>Entrant <input data-f="incLabel" value="${esc(s.incLabel || '')}" placeholder="${esc(def.inc)}"></label>
     </div>
   </div>`;
+}
+// SDA du tenant et leur site (par défaut : celui de l'utilisateur visé).
+function didTable() {
+  const dids = tenantDids(); if (!dids.length) return '<p class="muted small">Aucune SDA dans ce tenant.</p>';
+  const dest = (d) => { const x = d.incall.destination; if (x?.type === 'user') { const u = (I.lists.user || []).find((y) => y.id === x.user_id); return `utilisateur ${[u?.firstname, u?.lastname].filter(Boolean).join(' ') || x.user_id}`; } return x?.type || 'aucune'; };
+  const opts = (cur) => `<option value="">aucun (reste où elle est)</option>${U.ms.sites.map((s) => `<option value="${esc(s.key)}" ${s.key === cur ? 'selected' : ''}>${esc(s.label || '(sans nom)')}</option>`).join('')}`;
+  return `<details class="small" open><summary>SDA (${dids.length})</summary><div class="tablewrap"><table class="diff small"><thead><tr><th>SDA</th><th>Contexte actuel</th><th>Destination</th><th>Site</th></tr></thead><tbody>
+    ${dids.map((d) => `<tr><td>${esc(d.exten)}</td><td>${esc(I.by.context?.get(String(d.context))?.label || d.context)}</td><td>${esc(dest(d))}</td><td><select data-did="${d.extId}">${opts(didSite(U.ms, d))}</select></td></tr>`).join('')}</tbody></table></div></details>`;
 }
 // Liens entre sites (mode « Liens choisis ») : une case par paire, appels dans les deux sens.
 function linksBox() {
@@ -157,6 +177,7 @@ function journalBox(j) {
   return `<div class="card mg-card wide ms-journal">
     <div class="titlerow"><h3>Dernière bascule</h3></div>
     <p class="small">${esc(new Date(j.started_at).toLocaleString('fr-FR'))} · statut : <strong>${esc(j.status)}</strong> · ${j.created.length} contexte(s) créé(s), ${moved} numéro(s) déplacé(s)${j.error ? ` · erreur : ${esc(j.error)}` : ''}</p>
+    ${(j.sites || []).filter((s) => s.dids.length).map((s) => { const r = didsReady(j, s.site); return `<div class="small ms-dids"><strong>${esc(s.label)}</strong> : ${s.dids.length} SDA pour « ${esc(s.inc.label)} ». ${r.done ? 'Déplacées.' : r.ok ? 'Trunk réglé sur l\'entrant du site.' : esc(r.why) + '.'} ${r.ok ? `<button data-movedids="${esc(s.site)}">Déplacer les SDA (${r.left.length})</button>` : ''}</div>`; }).join('')}
     <div class="btnrow"><button id="ms-j-dl">Télécharger le journal</button><button id="ms-j-undo" class="danger">Annuler cette bascule…</button><button id="ms-j-forget">Oublier</button></div>
   </div>`;
 }
@@ -177,6 +198,14 @@ function bind() {
   $('ms-add').onclick = () => { U.ms.sites.push(newSite()); saveDraft(); draw(); };
   $('ms-client').oninput = (e) => { U.ms.clientId = e.target.value.trim(); saveDraft(); refreshPlan(); refreshNames(); };
   $('ms-part').onchange = (e) => { U.ms.partition = e.target.value; saveDraft(); draw(); };
+  for (const c of document.querySelectorAll('[data-did]')) c.onchange = (e) => { U.ms.didAssign = { ...(U.ms.didAssign || {}), [e.target.dataset.did]: e.target.value }; saveDraft(); refreshPlan(); };
+  for (const c of document.querySelectorAll('[data-out]')) c.onchange = (e) => {
+    const t = e.target; const o = U.ms.out;
+    if (t.dataset.out === 'fam') { const f = new Set(o.fams); t.checked ? f.add(t.dataset.id) : f.delete(t.dataset.id); o.fams = FR_FAMILIES.map((x) => x.id).filter((x) => f.has(x)); }
+    else if (t.dataset.out === 'fmt') o.fmt = t.value; else o[t.dataset.out] = t.checked;
+    saveDraft(); refreshPlan();
+  };
+  for (const b of document.querySelectorAll('[data-movedids]')) b.onclick = () => openMoveDids(b.dataset.movedids);
   for (const c of document.querySelectorAll('[data-link]')) c.onchange = (e) => { const k = e.target.dataset.link; const l = new Set(U.ms.links || []); e.target.checked ? l.add(k) : l.delete(k); U.ms.links = [...l]; saveDraft(); refreshPlan(); };
   $('ms-sites').addEventListener('input', (e) => {
     const row = e.target.closest('.ms-site'); const f = e.target.dataset.f; if (!row || !f) return;
@@ -249,7 +278,7 @@ async function run(p) {
     const j = await executePlan(p, U.ms, prog);
     downloadJson(journalName(j), j);
     U.result = { html: `Bascule terminée : ${j.created.length} contexte(s) créé(s), ${j.entries.filter((e) => e.op === 'move' && !e.skipped).length} numéro(s) déplacé(s). ${esc(j.note || '')} Journal téléchargé. Testez un appel depuis chaque site.` };
-    U.ms.assign.clear(); U.ms.sites = []; saveDraft();
+    U.ms.assign.clear(); U.ms.sites = []; U.ms.didAssign = {}; saveDraft();
   } catch (e) {
     if (e.journal) downloadJson(journalName(e.journal), e.journal);
     U.result = { bad: true, html: `Bascule interrompue : ${esc(e.message)}. ${e.journal ? 'Journal téléchargé ; « Annuler cette bascule » remet en place ce qui a été fait.' : 'Rien n\'a été écrit.'}` };
@@ -259,8 +288,23 @@ async function run(p) {
     await U.reload();
   }
 }
+// SDA d'un site déplacées dans son entrant (trunk déjà réglé, relu avant).
+function openMoveDids(key) {
+  if (!canWrite()) return;
+  const j = loadSavedJournal(); const r = didsReady(j, key); if (!r.ok) return toast(r.why, 6000);
+  confirmModal(`<h3>Déplacer ${r.left.length} SDA dans « ${esc(r.s.inc.label)} » ?</h3><p class="small">${r.left.map((d) => esc(d.exten)).join(', ')}. Le trunk ${esc(r.tr.endpoint_sip?.label || r.tr.id)} arrive déjà sur cet entrant (relu juste avant l'écriture). Notées dans le journal de la bascule : l'annulation les remet en place.</p>`, async () => {
+    U.busy = true;
+    try { const note = await moveDids(j, key, (t) => toast(t, 2000)); U.result = { html: `SDA de « ${esc(r.s.label)} » déplacées. ${esc(note || '')}` }; }
+    catch (e) { U.result = { bad: true, html: `Déplacement des SDA interrompu : ${esc(e.message)}` }; }
+    finally { U.busy = false; await U.reload(); }
+  }, 'Déplacer');
+}
 function openUndo(j) {
   if (!canWrite() || !j) return;
+  // Un trunk réglé sur un entrant créé : l'annulation le supprimerait. Le remettre d'abord ailleurs.
+  const incs = new Set(j.created.filter((c) => c.role === 'inc').map((c) => c.name));
+  const tr = (I.lists.trunk || []).filter((t) => incs.has(t.context));
+  if (tr.length) return toast(`Annulation impossible : ${tr.map((t) => t.endpoint_sip?.label || t.id).join(', ')} arrive sur un entrant créé par la bascule. Le remettre sur son ancien contexte dans le Portal, relire, puis annuler.`, 10000);
   const moved = j.entries.filter((e) => e.op === 'move' && !e.skipped).length;
   confirmModal(`<h3>Annuler la bascule du ${esc(new Date(j.started_at).toLocaleString('fr-FR'))} ?</h3>
     <ul class="small"><li>${moved} numéro(s) remis dans le commun (chacun relu avant ; arrêt s'il a changé depuis).</li>
