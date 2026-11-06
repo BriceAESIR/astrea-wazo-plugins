@@ -1,10 +1,10 @@
 // Migration Assistant — interface de la bascule multisite (lot 2).
 // Moteur : multisite.js. Brouillon (sites, affectations) gardé dans le
 // navigateur par serveur et tenant (confort seulement).
-import { S, $, esc, toast, canWrite, confirmModal, downloadJson, helpButton, helpBox } from '../common/core.js?v=0.40.49';
-import { I } from './inventory.js?v=0.40.49';
-import { buildExport, exportFileName } from './export.js?v=0.40.49';
-import { sourceContexts, movableExtensions, buildPlan, executePlan, undoJournal, compactRanges, rangesText, parseRanges, liveReload, enableLiveReload, lrMarkedByUs, loadSavedJournal, clearSavedJournal, JOURNAL_FORMAT } from './multisite.js?v=0.40.49';
+import { S, $, esc, toast, canWrite, confirmModal, downloadJson, helpButton, helpBox } from '../common/core.js?v=0.40.50';
+import { I } from './inventory.js?v=0.40.50';
+import { buildExport, exportFileName } from './export.js?v=0.40.50';
+import { sourceContexts, movableExtensions, buildPlan, executePlan, undoJournal, compactRanges, rangesText, parseRanges, liveReload, enableLiveReload, lrMarkedByUs, loadSavedJournal, clearSavedJournal, JOURNAL_FORMAT, PARTITIONS, partitionOf, linkKey, siteNames } from './multisite.js?v=0.40.50';
 
 const DRAFT_KEY = 'astrea-migration-ms-draft-v1';
 const U = { ms: null, scope: null, q: '', sel: new Set(), busy: false, reload: null, lr: null, result: null };
@@ -13,7 +13,7 @@ const newSite = (label = '') => ({ key: `s${Date.now().toString(36)}${seq++}`, l
 
 function draftKey() { return `${DRAFT_KEY}|${S.base}|${I.tenant}`; }
 function saveDraft() {
-  try { localStorage.setItem(draftKey(), JSON.stringify({ source: U.ms.source, sites: U.ms.sites, assign: [...U.ms.assign], interSite: U.ms.interSite })); } catch { /* */ }
+  try { localStorage.setItem(draftKey(), JSON.stringify({ source: U.ms.source, sites: U.ms.sites, assign: [...U.ms.assign], clientId: U.ms.clientId, partition: U.ms.partition, links: U.ms.links })); } catch { /* */ }
 }
 function loadDraft() { try { return JSON.parse(localStorage.getItem(draftKey()) || 'null'); } catch { return null; } }
 
@@ -26,8 +26,9 @@ export async function renderMultisite() {
     U.scope = scope; U.sel.clear(); U.result = null;
     const d = loadDraft();
     const srcs = sourceContexts();
-    U.ms = { source: srcs[0]?.name || null, sites: [], assign: new Map(), interSite: true };
-    if (d && srcs.some((s) => s.name === d.source)) U.ms = { source: d.source, sites: d.sites || [], assign: new Map(d.assign || []), interSite: d.interSite !== false };
+    U.ms = { source: srcs[0]?.name || null, sites: [], assign: new Map(), clientId: '', partition: 'mesh', links: [] };
+    // Brouillon d'avant (interSite) : « tous les sites s'appellent », comme le faisait le commun.
+    if (d && srcs.some((s) => s.name === d.source)) U.ms = { source: d.source, sites: d.sites || [], assign: new Map(d.assign || []), clientId: d.clientId || '', partition: d.partition || 'mesh', links: d.links || [] };
   }
   // Affectations vers des numéros qui n'existent plus (relecture) : retirées.
   const ids = new Set(movableExtensions(U.ms.source).map((e) => e.id));
@@ -51,18 +52,24 @@ function draw() {
     ${U.result ? `<div class="mg-allok ${U.result.bad ? 'bad' : ''}">${U.result.html}</div>` : ''}
     <div class="card mg-card wide">
       <div class="titlerow"><h3>1. Contexte commun</h3>${helpButton('ms-h1', 'Aide : contexte commun')}</div>
-      ${helpBox('ms-h1', 'Contexte interne actuel, partagé par tout le tenant. Il reste en place et devient le « commun » : il garde groupes, files, conférences, messageries et les utilisateurs non affectés à un site. Il inclura les sites en tête, pour que tout ce qui l\'utilise (SDA, groupes, destinations « numéro ») trouve toujours les numéros déplacés, sans rien réécrire.')}
-      <label>Contexte <select id="ms-src">${srcs.map((s) => `<option value="${esc(s.name)}" ${s.name === U.ms.source ? 'selected' : ''}>${esc(s.ctx.label || s.name)} (${esc(s.name)}) · ${s.lines} ligne(s)</option>`).join('')}</select></label>
+      ${helpBox('ms-h1', 'Contexte interne actuel, partagé par tout le tenant. Il reste en place et devient le « commun » : il garde groupes, files, conférences, messageries et les utilisateurs non affectés à un site. Chaque site l\'inclut (groupes, files et utilisateurs restés y sont joignables). Si tous les sites s\'appellent, il inclut aussi les sites en tête : tout ce qui l\'utilise (SDA, groupes, destinations « numéro ») trouve alors toujours les numéros déplacés, sans rien réécrire.')}
+      <div class="ms-tools"><label>Contexte <select id="ms-src">${srcs.map((s) => `<option value="${esc(s.name)}" ${s.name === U.ms.source ? 'selected' : ''}>${esc(s.ctx.label || s.name)} (${esc(s.name)}) · ${s.lines} ligne(s)</option>`).join('')}</select></label>
+      <label>ID client <input id="ms-client" value="${esc(U.ms.clientId || '')}" placeholder="44150" class="short"></label></div>
     </div>
     <div class="card mg-card wide">
       <div class="titlerow"><h3>2. Sites</h3>${helpButton('ms-h2', 'Aide : sites')}</div>
-      ${helpBox('ms-h2', 'Un contexte interne est créé par site. Plages : numéros de poste autorisés dans ce contexte ; confd refuse de déplacer un numéro hors des plages du site. « Calculer » propose les plages les plus courtes qui couvrent les numéros affectés. Les sites s\'appellent entre eux : chaque site inclut les autres (sinon, un site ne joint les autres qu\'en passant par le commun, ce qui marche aussi puisque le commun les inclut).')}
+      ${helpBox('ms-h2', 'Trois contextes par site, nommés comme dans l\'import 3CX : <ID client>-<site>-internal (postes du site, avec ses plages), -to-extern (sortant, inclus en premier par l\'interne ; vide pour l\'instant, le site sort donc par le sortant du commun) et -from-extern (entrant, vide : ses SDA et son trunk au lot suivant). Noms modifiables. Plages : numéros de poste autorisés dans le site ; confd refuse de déplacer un numéro hors des plages. « Calculer » propose les plages les plus courtes qui couvrent les numéros affectés.')}
       <div id="ms-sites">${U.ms.sites.map(siteRow).join('') || '<p class="muted small">Aucun site.</p>'}</div>
       <div class="btnrow"><button id="ms-add">Ajouter un site</button></div>
-      <label class="inline"><input type="checkbox" id="ms-inter" ${U.ms.interSite ? 'checked' : ''}> Les sites s'incluent entre eux</label>
     </div>
     <div class="card mg-card wide">
-      <div class="titlerow"><h3>3. Affectation des numéros</h3>${helpButton('ms-h3', 'Aide : affectation')}</div>
+      <div class="titlerow"><h3>3. Appels internes entre sites</h3>${helpButton('ms-h2b', 'Aide : cloisonnement')}</div>
+      ${helpBox('ms-h2b', 'Asterisk suit les inclusions en cascade : un contexte inclus apporte ses propres inclusions. « Tous les sites s\'appellent » : chaque site inclut les autres, et le commun inclut les sites. « Liens choisis » et « Sites isolés » : chaque site n\'inclut que les sites cochés, puis le commun ; le commun n\'inclut plus les sites, sinon ils se joindraient par lui. Conséquence : les utilisateurs restés dans le commun ne joignent plus les sites, et les références « numéro@commun » vers un numéro déplacé cassent (relevées dans l\'aperçu). La simulation montre le résultat avant d\'écrire.')}
+      <label>Mode <select id="ms-part">${Object.entries(PARTITIONS).map(([k, l]) => `<option value="${k}" ${partitionOf(U.ms) === k ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>
+      ${partitionOf(U.ms) === 'pairs' ? linksBox() : ''}
+    </div>
+    <div class="card mg-card wide">
+      <div class="titlerow"><h3>4. Affectation des numéros</h3>${helpButton('ms-h3', 'Aide : affectation')}</div>
       ${helpBox('ms-h3', 'Numéros de poste du contexte commun (une ligne par numéro ; une ligne partagée n\'apparaît qu\'une fois). Un numéro affecté à un site sera déplacé dans le contexte du site : la ligne suit automatiquement (vérifié dans le code de Wazo), le poste n\'est pas reprovisionné. Non affecté : il reste dans le commun.')}
       ${assignTools()}
       <div class="tablewrap mg-assign"><table class="diff"><thead><tr><th><input type="checkbox" id="ms-all" title="Tout cocher (lignes affichées)"></th><th>Numéro</th><th>Utilisateur(s)</th><th>Site</th></tr></thead><tbody id="ms-rows">${rows()}</tbody></table></div>
@@ -73,13 +80,34 @@ function draw() {
 function siteRow(s) {
   const n = [...U.ms.assign.values()].filter((k) => k === s.key).length;
   const { errors } = parseRanges(s.rangesText);
+  // Noms par défaut (ID client et site) en indication ; saisie = nom imposé.
+  const def = siteNames(U.ms, { label: s.label });
   return `<div class="ms-site" data-key="${esc(s.key)}">
     <label>Nom du site <input data-f="label" value="${esc(s.label)}" placeholder="ex. Nantes"></label>
     <label>Plages de postes <input data-f="rangesText" value="${esc(s.rangesText)}" placeholder="ex. 100-149, 160">${errors.length ? `<span class="error small">${esc(errors[0])}</span>` : ''}</label>
     <span class="muted small ms-n">${n} numéro(s)</span>
     <button data-act="calc" title="Plages les plus courtes couvrant les numéros affectés">Calculer</button>
     <button class="icon" data-act="del" title="Retirer ce site">×</button>
+    <div class="ms-names small">
+      <label>Interne <input data-f="ctxLabel" value="${esc(s.ctxLabel || '')}" placeholder="${esc(def.ctx)}"></label>
+      <label>Sortant <input data-f="outLabel" value="${esc(s.outLabel || '')}" placeholder="${esc(def.out)}"></label>
+      <label>Entrant <input data-f="incLabel" value="${esc(s.incLabel || '')}" placeholder="${esc(def.inc)}"></label>
+    </div>
   </div>`;
+}
+// Liens entre sites (mode « Liens choisis ») : une case par paire, appels dans les deux sens.
+function linksBox() {
+  const sites = U.ms.sites.filter((s) => s.label);
+  if (sites.length < 2) return '<p class="muted small">Nommez au moins deux sites pour choisir leurs liens.</p>';
+  const pairs = []; for (let i = 0; i < sites.length; i++) for (let j = i + 1; j < sites.length; j++) pairs.push([sites[i], sites[j]]);
+  return `<div class="small ms-links">${pairs.map(([a, b]) => `<label class="inline"><input type="checkbox" data-link="${esc(linkKey(a.key, b.key))}" ${(U.ms.links || []).includes(linkKey(a.key, b.key)) ? 'checked' : ''}> ${esc(a.label)} ↔ ${esc(b.label)}</label>`).join('')}</div>`;
+}
+// Tableau de simulation : une ligne par contexte d'appel, une colonne par numéro type.
+function simTable(sim) {
+  if (!sim?.rows?.length) return '';
+  return `<details class="ms-sim" open><summary class="small"><strong>Simulation des appels</strong> : où part chaque numéro, depuis chaque site, avant et après (moteur de Call Flow et de l'import 3CX ; droits d'appel et horaires non pris en compte)</summary>
+    <div class="tablewrap"><table class="diff small"><thead><tr><th>Depuis</th>${sim.cols.map((c) => `<th>${esc(c.n)}<div class="muted">${esc(c.what)}</div></th>`).join('')}</tr></thead>
+    <tbody>${sim.rows.map((r) => `<tr><td>${esc(r.from)}</td>${r.cells.map((x) => `<td class="${x.ok ? '' : 'x3-error'}" title="Avant (depuis le commun) : ${esc(x.before)}">${esc(x.after)}${x.after !== x.before ? `<div class="muted">avant : ${esc(x.before)}</div>` : ''}</td>`).join('')}</tr>`).join('')}</tbody></table></div></details>`;
 }
 function assignTools() {
   const opts = U.ms.sites.map((s) => `<option value="${esc(s.key)}">${esc(s.label || '(sans nom)')}</option>`).join('');
@@ -110,9 +138,10 @@ function planBox() {
   const lr = !U.lr?.ok ? `Live reload illisible (${esc(U.lr?.err || '')}) : un rechargement d'Asterisk par numéro déplacé, sur tout le serveur.`
     : !U.lr.enabled ? 'Live reload déjà désactivé sur le serveur : aucun rechargement ne sera fait, à faire ensuite.'
       : mv.length > 1 ? 'Rechargements regroupés : live reload coupé pendant les déplacements, un seul rechargement complet à la fin.' : '';
-  return `<div class="titlerow"><h3>4. Aperçu et bascule</h3>${helpButton('ms-h4', 'Aide : bascule')}</div>
-    ${helpBox('ms-h4', 'Avant d\'écrire : un export JSON du tenant est téléchargé (sauvegarde). Ensuite, dans l\'ordre : création des contextes, inclusions des sites, inclusions du commun (relues juste avant), puis déplacement des numéros (chacun relu avant, arrêt si l\'un a changé). Chaque écriture est notée dans un journal, téléchargé à la fin et gardé dans le navigateur : il permet d\'annuler la bascule. Les appels en cours ne sont pas coupés ; un poste peut mettre quelques secondes à appeler depuis son nouveau contexte (rechargement).')}
+  return `<div class="titlerow"><h3>5. Aperçu et bascule</h3>${helpButton('ms-h4', 'Aide : bascule')}</div>
+    ${helpBox('ms-h4', 'Avant d\'écrire : un export JSON du tenant est téléchargé (sauvegarde). Ensuite, dans l\'ordre : création des contextes de chaque site, inclusions des sites, inclusions du commun (relues juste avant, seulement si tous les sites s\'appellent), puis déplacement des numéros (chacun relu avant, arrêt si l\'un a changé). Chaque écriture est notée dans un journal, téléchargé à la fin et gardé dans le navigateur : il permet d\'annuler la bascule. Les appels en cours ne sont pas coupés ; un poste peut mettre quelques secondes à appeler depuis son nouveau contexte (rechargement). Une case rouge de la simulation est une erreur : appel interne perdu, ou cloisonnement qui fuit.')}
     ${probs}
+    ${simTable(p.sim)}
     <p class="small"><strong>${ctx.length}</strong> écriture(s) de contexte, <strong>${mv.length}</strong> numéro(s) à déplacer. ${esc(lr)}</p>
     ${p.steps.length ? `<details class="ms-steps"><summary class="small">Détail des écritures</summary><ol class="small">${p.steps.map((s) => `<li>${esc(s.text)}</li>`).join('')}</ol></details>` : ''}
     <div id="ms-progress" class="muted small"></div>
@@ -136,13 +165,22 @@ function journalBox(j) {
 // Événements
 // ---------------------------------------------------------------------------
 function refreshPlan() { $('ms-plan').innerHTML = planBox(); bindPlan(); }
+// Noms par défaut des contextes (indication des champs) quand l'ID client ou le nom du site change.
+function refreshNames() {
+  for (const row of document.querySelectorAll('.ms-site')) {
+    const s = U.ms.sites.find((x) => x.key === row.dataset.key); if (!s) continue; const def = siteNames(U.ms, { label: s.label });
+    for (const [f, k] of [['ctxLabel', 'ctx'], ['outLabel', 'out'], ['incLabel', 'inc']]) { const i = row.querySelector(`[data-f="${f}"]`); if (i) i.placeholder = def[k]; }
+  }
+}
 function bind() {
   $('ms-src').onchange = (e) => { U.ms.source = e.target.value; U.ms.assign.clear(); U.sel.clear(); saveDraft(); draw(); };
   $('ms-add').onclick = () => { U.ms.sites.push(newSite()); saveDraft(); draw(); };
-  $('ms-inter').onchange = (e) => { U.ms.interSite = e.target.checked; saveDraft(); refreshPlan(); };
+  $('ms-client').oninput = (e) => { U.ms.clientId = e.target.value.trim(); saveDraft(); refreshPlan(); refreshNames(); };
+  $('ms-part').onchange = (e) => { U.ms.partition = e.target.value; saveDraft(); draw(); };
+  for (const c of document.querySelectorAll('[data-link]')) c.onchange = (e) => { const k = e.target.dataset.link; const l = new Set(U.ms.links || []); e.target.checked ? l.add(k) : l.delete(k); U.ms.links = [...l]; saveDraft(); refreshPlan(); };
   $('ms-sites').addEventListener('input', (e) => {
     const row = e.target.closest('.ms-site'); const f = e.target.dataset.f; if (!row || !f) return;
-    const s = U.ms.sites.find((x) => x.key === row.dataset.key); s[f] = e.target.value; saveDraft(); refreshPlan();
+    const s = U.ms.sites.find((x) => x.key === row.dataset.key); s[f] = e.target.value; saveDraft(); refreshPlan(); if (f === 'label') refreshNames();
   });
   $('ms-sites').addEventListener('change', (e) => { if (e.target.dataset.f === 'label') draw(); }); // libellés des listes de choix
   $('ms-sites').addEventListener('click', (e) => {
@@ -199,7 +237,7 @@ function openRun() {
   if (!p.ok) return;
   const warns = p.problems.filter((x) => x.sev === 'warn');
   confirmModal(`<h3>Basculer en multisite ?</h3>
-    <p>${p.sites.length} contexte(s) créé(s) (${p.sites.map((s) => esc(s.label)).join(', ')}), inclusions du commun modifiées, <strong>${p.moves}</strong> numéro(s) déplacé(s).</p>
+    <p>${p.sites.length * 3} contexte(s) créé(s), trois par site (${p.sites.map((s) => esc(s.label)).join(', ')}), ${esc(PARTITIONS[partitionOf(U.ms)].toLowerCase())}${partitionOf(U.ms) === 'mesh' ? ', inclusions du commun modifiées' : ', commun inchangé'}, <strong>${p.moves}</strong> numéro(s) déplacé(s).</p>
     ${warns.length ? `<p class="small">À noter : ${warns.map((w) => esc(w.text)).join(' ')}</p>` : ''}
     <p class="small">Un export JSON du tenant est d'abord téléchargé. Le journal permettra d'annuler.${!U.lr?.ok || !U.lr.enabled ? '' : p.moves > 1 ? ' Le live reload (commun à tout le serveur) sera coupé quelques instants.' : ''}</p>`, () => run(p), 'Basculer');
 }

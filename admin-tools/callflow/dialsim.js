@@ -12,7 +12,7 @@
 //    « prefix » est lu mais pas appliqué.
 // Supposé : effet exact des autorisations d'appels et d'un horaire sur une
 // règle sortante (affichés à titre indicatif).
-import { M, scheduleState, whenOf, entity, groupMemberList, groupTimes } from './model.js?v=0.40.49';
+import { M, scheduleState, whenOf, entity, groupMemberList, groupTimes } from './model.js?v=0.40.50';
 
 // Motif → liste d'éléments { set: chaînes de caractères, size } | { dot } | { bang } ; null si numéro exact.
 export function parsePattern(p) {
@@ -136,14 +136,15 @@ export function rightMatches(number, pattern) {
   try { return new RegExp(`^${re}$`).test(String(number)); } catch { return false; }
 }
 // Autorisations d'un objet : champ call_permissions de l'objet, ou listes users / groups / outcalls de l'autorisation.
-function rightsOf(kind, o) {
+// lists : listes du tenant (Call Flow : M.lists ; Migration Assistant passe les siennes).
+function rightsOf(kind, o, lists = M.lists) {
   if (!o) return [];
   const ids = new Set((o.call_permissions || []).map((p) => String(p.id)));
   const back = { user: (p) => (p.users || []).some((u) => u.uuid === o.uuid || u.id === o.id), group: (p) => (p.groups || []).some((g) => g.uuid === o.uuid || g.id === o.id), outcall: (p) => (p.outcalls || []).some((x) => x.id === o.id) }[kind];
-  return (M.lists.callpermission || []).filter((p) => ids.has(String(p.id)) || back?.(p));
+  return (lists.callpermission || []).filter((p) => ids.has(String(p.id)) || back?.(p));
 }
 // Groupes dont l'utilisateur est membre (membre fixe).
-export const groupsOfUser = (u) => (u ? (M.lists.group || []).filter((g) => (g.members?.users || []).some((m) => m.uuid === u.uuid)) : []);
+export const groupsOfUser = (u, lists = M.lists) => (u ? (lists.group || []).filter((g) => (g.members?.users || []).some((m) => m.uuid === u.uuid)) : []);
 // Autorisations qui s'appliquent à un appel passé par user via outcall, dans
 // l'ordre d'évaluation : [{ level, p, via? }] (via = nom du groupe).
 export function rightsList(user, outcall) {
@@ -154,18 +155,18 @@ export function rightsList(user, outcall) {
   return out;
 }
 // → { verdict: 'allow' | 'deny', level: 'user' | 'group' | 'outcall' | null, by: autorisation, code: bool, matched: [autorisations] }
-export function callRights(number, user, outcall) {
+export function callRights(number, user, outcall, lists = M.lists) {
   const n = String(number || '');
-  const matched = (M.lists.callpermission || []).filter((p) => (p.extensions || []).some((x) => rightMatches(n, x)));
+  const matched = (lists.callpermission || []).filter((p) => (p.extensions || []).some((x) => rightMatches(n, x)));
   if (!matched.length) return { verdict: 'allow', level: null, matched };
   const ids = new Set(matched.map((p) => String(p.id)));
   const on = (list) => list.filter((p) => ids.has(String(p.id)) && p.enabled !== false);
   const levels = [];
   if (user) {
-    levels.push(['user', on(rightsOf('user', user))]);
-    levels.push(['group', on(groupsOfUser(user).flatMap((g) => rightsOf('group', g)))]);
+    levels.push(['user', on(rightsOf('user', user, lists))]);
+    levels.push(['group', on(groupsOfUser(user, lists).flatMap((g) => rightsOf('group', g, lists)))]);
   }
-  if (outcall) levels.push(['outcall', on(rightsOf('outcall', outcall))]);
+  if (outcall) levels.push(['outcall', on(rightsOf('outcall', outcall, lists))]);
   for (const [level, rows] of levels) {
     if (!rows.length) continue;
     const ok = rows.find((p) => p.mode === 'allow');
