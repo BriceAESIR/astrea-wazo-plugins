@@ -1,11 +1,12 @@
 // Migration Assistant — interface de la bascule multisite (lot 2).
 // Moteur : multisite.js. Brouillon (sites, affectations) gardé dans le
 // navigateur par serveur et tenant (confort seulement).
-import { S, $, esc, toast, canWrite, confirmModal, downloadJson, helpButton, helpBox } from '../common/core.js?v=0.40.52';
-import { I } from './inventory.js?v=0.40.52';
-import { buildExport, exportFileName } from './export.js?v=0.40.52';
-import { sourceContexts, movableExtensions, buildPlan, executePlan, undoJournal, compactRanges, rangesText, parseRanges, liveReload, enableLiveReload, lrMarkedByUs, loadSavedJournal, clearSavedJournal, JOURNAL_FORMAT, PARTITIONS, partitionOf, linkKey, siteNames, tenantDids, didSite, outOf, didsReady, moveDids, movableObjects, objSite } from './multisite.js?v=0.40.52';
-import { FR_FAMILIES, FR_FORMATS } from './3cx-sites.js?v=0.40.52';
+import { S, $, esc, toast, canWrite, confirmModal, downloadJson, helpButton, helpBox } from '../common/core.js?v=0.40.53';
+import { I } from './inventory.js?v=0.40.53';
+import { buildExport, exportFileName } from './export.js?v=0.40.53';
+import { sourceContexts, movableExtensions, buildPlan, executePlan, undoJournal, compactRanges, rangesText, parseRanges, liveReload, enableLiveReload, lrMarkedByUs, loadSavedJournal, clearSavedJournal, JOURNAL_FORMAT, PARTITIONS, partitionOf, linkKey, siteNames, tenantDids, didSite, outOf, didsReady, moveDids, movableObjects, objSite, rewriteOn } from './multisite.js?v=0.40.53';
+import { FR_FAMILIES, FR_FORMATS } from './3cx-sites.js?v=0.40.53';
+import { numWazo } from './3cx-draft.js?v=0.40.53';
 
 const DRAFT_KEY = 'astrea-migration-ms-draft-v1';
 const U = { ms: null, scope: null, q: '', sel: new Set(), busy: false, reload: null, lr: null, result: null };
@@ -14,7 +15,7 @@ const newSite = (label = '') => ({ key: `s${Date.now().toString(36)}${seq++}`, l
 
 function draftKey() { return `${DRAFT_KEY}|${S.base}|${I.tenant}`; }
 function saveDraft() {
-  try { localStorage.setItem(draftKey(), JSON.stringify({ source: U.ms.source, sites: U.ms.sites, assign: [...U.ms.assign], clientId: U.ms.clientId, partition: U.ms.partition, links: U.ms.links, out: U.ms.out, didAssign: U.ms.didAssign, objAssign: U.ms.objAssign, moveVm: U.ms.moveVm })); } catch { /* */ }
+  try { localStorage.setItem(draftKey(), JSON.stringify({ source: U.ms.source, sites: U.ms.sites, assign: [...U.ms.assign], clientId: U.ms.clientId, partition: U.ms.partition, links: U.ms.links, out: U.ms.out, didAssign: U.ms.didAssign, objAssign: U.ms.objAssign, moveVm: U.ms.moveVm, rewrite: U.ms.rewrite, dropCommonOut: U.ms.dropCommonOut })); } catch { /* */ }
 }
 function loadDraft() { try { return JSON.parse(localStorage.getItem(draftKey()) || 'null'); } catch { return null; } }
 
@@ -29,7 +30,7 @@ export async function renderMultisite() {
     const srcs = sourceContexts();
     U.ms = { source: srcs[0]?.name || null, sites: [], assign: new Map(), clientId: '', partition: 'mesh', links: [], out: null, didAssign: {}, objAssign: {}, moveVm: true };
     // Brouillon d'avant (interSite) : « tous les sites s'appellent », comme le faisait le commun.
-    if (d && srcs.some((s) => s.name === d.source)) U.ms = { source: d.source, sites: d.sites || [], assign: new Map(d.assign || []), clientId: d.clientId || '', partition: d.partition || 'mesh', links: d.links || [], out: d.out || null, didAssign: d.didAssign || {}, objAssign: d.objAssign || {}, moveVm: d.moveVm !== false };
+    if (d && srcs.some((s) => s.name === d.source)) U.ms = { source: d.source, sites: d.sites || [], assign: new Map(d.assign || []), clientId: d.clientId || '', partition: d.partition || 'mesh', links: d.links || [], out: d.out || null, didAssign: d.didAssign || {}, objAssign: d.objAssign || {}, moveVm: d.moveVm !== false, rewrite: d.rewrite, dropCommonOut: !!d.dropCommonOut };
     U.ms.out = outOf(U.ms);
   }
   // Affectations vers des numéros qui n'existent plus (relecture) : retirées.
@@ -69,6 +70,8 @@ function draw() {
       ${helpBox('ms-h2b', 'Asterisk suit les inclusions en cascade : un contexte inclus apporte ses propres inclusions. « Tous les sites s\'appellent » : chaque site inclut les autres, et le commun inclut les sites. « Liens choisis » et « Sites isolés » : chaque site n\'inclut que les sites cochés, puis le commun ; le commun n\'inclut plus les sites, sinon ils se joindraient par lui. Conséquence : les utilisateurs restés dans le commun ne joignent plus les sites, et les références « numéro@commun » vers un numéro déplacé cassent (relevées dans l\'aperçu). La simulation montre le résultat avant d\'écrire.')}
       <label>Mode <select id="ms-part">${Object.entries(PARTITIONS).map(([k, l]) => `<option value="${k}" ${partitionOf(U.ms) === k ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>
       ${partitionOf(U.ms) === 'pairs' ? linksBox() : ''}
+      <label class="inline small" title="Destinations « numéro » (SDA, débordements, SVI, horaires, seuils de file) et membres « numéro » des groupes qui visent un numéro déplacé : leur contexte devient celui du site. Relu avant chaque écriture, valeur d'avant gardée dans le journal."><input type="checkbox" id="ms-rewrite" ${rewriteOn(U.ms) ? 'checked' : ''}> Réécrire les références « numéro@commun » vers les numéros déplacés${partitionOf(U.ms) === 'mesh' ? ' (facultatif ici : le commun inclut les sites)' : ' (nécessaire : le commun n\'inclut pas les sites)'}</label>
+      <label class="inline small" title="Seulement si plus aucun poste ne reste dans le commun et que chaque site a son trunk : les sites ne sortent plus que par leur propre règle (sinon ce qu'elle ne prend pas part par le sortant du commun)."><input type="checkbox" id="ms-dropout" ${U.ms.dropCommonOut ? 'checked' : ''}> Retirer le sortant du commun (commun vidé de ses postes)</label>
     </div>
     <div class="card mg-card wide">
       <div class="titlerow"><h3>Appels sortants et SDA des sites</h3>${helpButton('ms-h2c', 'Aide : sortants et SDA')}</div>
@@ -102,6 +105,7 @@ function siteRow(s) {
     <button data-act="calc" title="Plages les plus courtes couvrant les numéros affectés">Calculer</button>
     <button class="icon" data-act="del" title="Retirer ce site">×</button>
     <div class="ms-names small">
+      <label title="Numéro présenté par la règle du site aux utilisateurs réglés sur « défaut » (wazo-agid : le numéro de la règle sortante, lu dans outgoingfeatures.py)">Numéro présenté <select data-f="callerId"><option value="">celui du trunk</option>${tenantDids().filter((d) => didSite(U.ms, d) === s.key).map((d) => { const n = numWazo(d.exten); return `<option value="${esc(n)}" ${s.callerId === n ? 'selected' : ''}>${esc(n)}</option>`; }).join('')}</select></label>
       <label>Trunk du site <select data-f="trunkId"><option value="">aucun (sort par le commun)</option>${(I.lists.trunk || []).map((t) => `<option value="${t.id}" ${String(s.trunkId) === String(t.id) ? 'selected' : ''}>${esc(t.endpoint_sip?.label || t.endpoint_sip?.name || `Trunk ${t.id}`)}</option>`).join('')}</select></label>
       <label>Interne <input data-f="ctxLabel" value="${esc(s.ctxLabel || '')}" placeholder="${esc(def.ctx)}"></label>
       <label>Sortant <input data-f="outLabel" value="${esc(s.outLabel || '')}" placeholder="${esc(def.out)}"></label>
@@ -209,6 +213,8 @@ function bind() {
   $('ms-part').onchange = (e) => { U.ms.partition = e.target.value; saveDraft(); draw(); };
   for (const c of document.querySelectorAll('[data-obj]')) c.onchange = (e) => { U.ms.objAssign = { ...(U.ms.objAssign || {}), [e.target.dataset.obj]: e.target.value }; saveDraft(); refreshPlan(); };
   $('ms-vm').onchange = (e) => { U.ms.moveVm = e.target.checked; saveDraft(); refreshPlan(); };
+  $('ms-rewrite').onchange = (e) => { U.ms.rewrite = e.target.checked; saveDraft(); refreshPlan(); };
+  $('ms-dropout').onchange = (e) => { U.ms.dropCommonOut = e.target.checked; saveDraft(); refreshPlan(); };
   for (const c of document.querySelectorAll('[data-did]')) c.onchange = (e) => { U.ms.didAssign = { ...(U.ms.didAssign || {}), [e.target.dataset.did]: e.target.value }; saveDraft(); refreshPlan(); };
   for (const c of document.querySelectorAll('[data-out]')) c.onchange = (e) => {
     const t = e.target; const o = U.ms.out;

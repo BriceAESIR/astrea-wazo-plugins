@@ -8,11 +8,11 @@
 //  - live reload coupé pendant toute l'opération, réactivé AVANT le dernier
 //    déplacement (une écriture identique ne recharge rien, lu dans le notifier) ;
 //  - journal de chaque écriture, annulation depuis le journal.
-import { S, api, ApiError } from '../common/core.js?v=0.40.52';
-import { I, sameTenant, membersOf, objLabel } from './inventory.js?v=0.40.52';
-import { patternMatch, allDests } from './checks.js?v=0.40.52';
-import { worldOf, route, siteSlug, clientPatterns, defaultOut, BLOCK_118 } from './3cx-sites.js?v=0.40.52';
-import { userContext } from '../callflow/dialsim.js?v=0.40.52';
+import { S, api, ApiError } from '../common/core.js?v=0.40.53';
+import { I, sameTenant, membersOf, objLabel } from './inventory.js?v=0.40.53';
+import { patternMatch, allDests } from './checks.js?v=0.40.53';
+import { worldOf, route, siteSlug, clientPatterns, defaultOut, BLOCK_118 } from './3cx-sites.js?v=0.40.53';
+import { userContext } from '../callflow/dialsim.js?v=0.40.53';
 
 // ---------------------------------------------------------------------------
 // Jeu de contextes par site et cloisonnement (demande de Brice, 06/11/2026)
@@ -45,6 +45,13 @@ export const commonIncludesSites = (ms) => partitionOf(ms) === 'mesh';
 // suivie par Asterisk, à vérifier en réel). Les SDA du site y sont ensuite déplacées
 // (« Déplacer les SDA »), seulement une fois le trunk réglé.
 export const outOf = (ms) => ms.out || defaultOut();
+// Réécriture des références : par défaut quand le commun n'inclut pas les sites (sinon elles cassent).
+export const rewriteOn = (ms) => (typeof ms.rewrite === 'boolean' ? ms.rewrite : partitionOf(ms) !== 'mesh');
+// Retrait du sortant du commun : seulement si plus aucun poste n'y reste et que chaque site a sa règle.
+export function dropCommonOk(ms, sites, common) {
+  const left = movableExtensions(common.name).filter((e) => !sites.some((s) => s.moved.some((m) => m.id === e.id))).length;
+  return { ok: !left && sites.length && sites.every((s) => s.trunk), left };
+}
 export const ruleName = (ms, s) => `${String(ms.clientId || '').trim() || '<ID>'} - ${s.label} - Appels sortants`;
 // SDA du tenant : une ligne par numéro entrant (extension de l'incall).
 export function tenantDids() {
@@ -122,6 +129,55 @@ export function objSite(ms, x) {
   }
   const n = membersOf(x.obj).users.length; const best = Object.entries(c).sort((a, b) => b[1] - a[1])[0];
   return best && best[1] * 2 > n ? best[0] : null; // majorité stricte, sinon reste dans le commun
+}
+
+// ---------------------------------------------------------------------------
+// Références « numéro@commun » vers un numéro déplacé (quatrième temps, 06/11/2026)
+// ---------------------------------------------------------------------------
+// Lu dans confd : PUT partiel (parse_and_update) pour /incalls, /ivr, /schedules, /queues ;
+// /…/fallbacks et /groups/{uuid}/members/extensions remplacent tout (schéma chargé sans partial) :
+// l'objet est relu et renvoyé entier. Chaque écriture garde la valeur d'avant pour l'annulation.
+// Non réécrit : membres « numéro » des files, touches « numérotation rapide » (sans contexte).
+const FALLBACK_KEYS = ['noanswer_destination', 'busy_destination', 'congestion_destination', 'fail_destination'];
+export function refTargets(common, movedSet) {
+  const hit = (d) => d?.type === 'extension' && d.context === common && movedSet.has(String(d.exten));
+  const out = [];
+  for (const i of I.lists.incall || []) if (hit(i.destination)) out.push({ kind: 'incall', path: `/incalls/${i.id}`, label: objLabel('incall', i) });
+  for (const [t, key] of [['user', 'uuid'], ['group', 'uuid'], ['queue', 'id'], ['switchboard', 'uuid']]) {
+    for (const o of I.lists[t] || []) if (FALLBACK_KEYS.some((k) => hit(o.fallbacks?.[k]))) out.push({ kind: 'fallbacks', path: `/${t === 'user' ? 'users' : t === 'group' ? 'groups' : t === 'queue' ? 'queues' : 'switchboards'}/${o[key]}/fallbacks`, label: `débordements de ${objLabel(t, o)}` });
+  }
+  for (const q of I.lists.queue || []) if (hit(q.wait_time_destination) || hit(q.wait_ratio_destination)) out.push({ kind: 'queue', path: `/queues/${q.id}`, label: `seuils de ${objLabel('queue', q)}` });
+  for (const v of I.lists.ivr || []) if ((v.choices || []).some((c) => hit(c.destination)) || ['timeout_destination', 'invalid_destination', 'abort_destination'].some((k) => hit(v[k]))) out.push({ kind: 'ivr', path: `/ivr/${v.id}`, label: objLabel('ivr', v) });
+  for (const s of I.lists.schedule || []) if (hit(s.closed_destination) || (s.exceptional_periods || []).some((p) => hit(p.destination))) out.push({ kind: 'schedule', path: `/schedules/${s.id}`, label: objLabel('schedule', s) });
+  for (const g of I.lists.group || []) if (membersOf(g).extensions.some((m) => m.context === common && movedSet.has(String(m.exten)))) out.push({ kind: 'gmember', path: `/groups/${g.uuid}`, label: `membres « numéro » de ${objLabel('group', g)}` });
+  return out;
+}
+// Réécrit une cible (relue juste avant) ; renvoie { path, before, after } ou null si rien n'a changé.
+async function rewriteTarget(t, mapDest, mapMember) {
+  const cur = await tapi('GET', t.path);
+  const chg = (d) => { const n = mapDest(d); return n !== d ? n : undefined; };
+  if (t.kind === 'incall') { const n = chg(cur.destination); if (!n) return null; await tapi('PUT', t.path, { destination: n }); return { path: t.path, before: { destination: cur.destination }, after: { destination: n } }; }
+  if (t.kind === 'fallbacks') {
+    const before = Object.fromEntries(FALLBACK_KEYS.map((k) => [k, cur?.[k] ?? null]));
+    const after = Object.fromEntries(FALLBACK_KEYS.map((k) => [k, mapDest(before[k])]));
+    if (FALLBACK_KEYS.every((k) => after[k] === before[k])) return null;
+    await tapi('PUT', t.path, after); return { path: t.path, before, after };
+  }
+  if (t.kind === 'queue' || t.kind === 'ivr' || t.kind === 'schedule') {
+    const keys = { queue: ['wait_time_destination', 'wait_ratio_destination'], ivr: ['timeout_destination', 'invalid_destination', 'abort_destination'], schedule: ['closed_destination'] }[t.kind];
+    const before = {}; const after = {};
+    for (const k of keys) { const n = chg(cur[k]); if (n) { before[k] = cur[k]; after[k] = n; } }
+    if (t.kind === 'ivr' && (cur.choices || []).some((c) => chg(c.destination))) { const strip = (c) => ({ exten: c.exten, destination: c.destination }); before.choices = (cur.choices || []).map(strip); after.choices = (cur.choices || []).map((c) => ({ exten: c.exten, destination: mapDest(c.destination) })); }
+    if (t.kind === 'schedule' && (cur.exceptional_periods || []).some((p) => chg(p.destination))) { before.exceptional_periods = cur.exceptional_periods; after.exceptional_periods = cur.exceptional_periods.map((p) => ({ ...p, destination: mapDest(p.destination) })); }
+    if (!Object.keys(after).length) return null;
+    await tapi('PUT', t.path, after); return { path: t.path, before, after };
+  }
+  if (t.kind === 'gmember') {
+    const list = membersOf(cur).extensions; const body = (l) => ({ extensions: l.map((m) => ({ extension: { exten: m.exten, context: m.context }, priority: m.priority ?? 0 })) });
+    const nl = list.map((m) => mapMember(m)); if (nl.every((m, i) => m === list[i])) return null;
+    const p = `${t.path}/members/extensions`; await tapi('PUT', p, body(nl)); return { path: p, before: body(list), after: body(nl) };
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
@@ -215,12 +271,20 @@ export function buildPlan(ms) {
   for (let i = 0; i < sites.length; i++) for (let j = i + 1; j < sites.length; j++) {
     if (sites[i].ranges.some((a) => sites[j].ranges.some((b) => a.start.length === b.start.length && Number(a.start) <= Number(b.end) && Number(b.start) <= Number(a.end)))) warn(`Les plages de « ${sites[i].label} » et « ${sites[j].label} » se chevauchent.`);
   }
-  const sim = simulate(ms, sites, common);
+  // Numéro présenté de chaque site (règle sortante) : une de ses SDA, au format des numéros Wazo.
+  for (const s of sites) if (s.callerId && !s.trunk) warn(`Site « ${s.label} » : numéro présenté sans règle sortante (aucun trunk) : sans effet.`);
+  // Références à réécrire, retrait du sortant du commun.
+  const movedSet = new Set(sites.flatMap((s) => [...s.moved, ...s.objs].map((m) => String(m.exten))));
+  const targets = rewriteOn(ms) ? refTargets(common.name, movedSet) : [];
+  const drop = dropCommonOk(ms, sites, common);
+  if (ms.dropCommonOut && !drop.ok) err(`Retrait du sortant du commun impossible : ${drop.left ? `${drop.left} poste(s) restent dans le commun` : 'chaque site doit avoir son trunk et sa règle'}.`);
+  const dropOut = !!(ms.dropCommonOut && drop.ok);
+  const sim = simulate(ms, sites, common, { dropOut });
   problems.push(...sim.issues);
   // Écritures, dans l'ordre d'exécution.
   const steps = [];
   for (const s of sites) steps.push({ phase: 'ctx', site: s.key, text: `Créer les contextes « ${s.names.ctx} » (interne, postes ${rangesText(s.ranges) || 'aucune'}${Object.entries(s.objRanges).map(([k, r]) => `, ${RANGE_FR[k]} ${rangesText(r)}`).join('')}), « ${s.names.out} » (sortant) et « ${s.names.inc} » (entrant, ${s.dids.length} SDA dans ses plages, inclut ${s.incFrom.map((c) => `« ${I.by.context.get(String(c))?.label || c} »`).join(', ') || 'rien'})` });
-  for (const s of sites.filter((x) => x.trunk)) steps.push({ phase: 'rule', site: s.key, text: `Règle « ${s.rule} » : ${s.pats.length} motif(s) de l'assistant France dans « ${s.names.out} », vers ${objLabel('trunk', s.trunk)}${outOf(ms).block118 ? `, 118 bloqués (« interdit-118 » ${perm118 ? 'reprise' : 'créée'})` : ''}` });
+  for (const s of sites.filter((x) => x.trunk)) steps.push({ phase: 'rule', site: s.key, text: `Règle « ${s.rule} » : ${s.pats.length} motif(s) de l'assistant France dans « ${s.names.out} », vers ${objLabel('trunk', s.trunk)}${s.callerId ? `, numéro présenté ${s.callerId} (utilisateurs réglés sur « défaut »)` : ''}${outOf(ms).block118 ? `, 118 bloqués (« interdit-118 » ${perm118 ? 'reprise' : 'créée'})` : ''}` });
   const lbl = (s, k) => (k === 'common' ? `commun « ${common.label || common.name} »` : k === 'out' ? `« ${s.names.out} »` : `« ${s.names.ctx} »`);
   for (const s of sites) steps.push({ phase: 'inc', site: s.key, text: `Inclusions de « ${s.names.ctx} » : ${siteIncludes(ms, sites, s, lbl).join(', ')}` });
   // Sites en FIN de liste du commun (06/11/2026) : en tête, les appels externes du commun
@@ -228,9 +292,11 @@ export function buildPlan(ms) {
   if (commonIncludesSites(ms)) steps.push({ phase: 'common', text: `Inclusions du commun « ${common.label || common.name} » : ${(common.contexts || []).map((c) => `« ${c.label || c.name} »`).join(', ') || 'rien'} (inchangées), puis ${sites.map((s) => `« ${s.names.ctx} »`).join(', ')} en fin de liste` });
   for (const s of sites) for (const e of s.moved) steps.push({ phase: 'move', site: s.key, extId: e.id, exten: e.exten, text: `${e.exten} (${e.label}) → « ${s.names.ctx} »` });
   for (const s of sites) for (const x of s.objs) steps.push({ phase: 'move', site: s.key, extId: x.id, exten: x.exten, text: `${x.what} ${x.exten} (${x.label}) → « ${s.names.ctx} »` });
+  for (const t of targets) steps.push({ phase: 'rewrite', target: t, text: `Réécrire ${t.label} : numéro@commun → numéro@site (relu avant, valeur d'avant gardée)` });
+  if (dropOut) steps.push({ phase: 'dropout', text: `Retirer du commun « ${common.label || common.name} » ses contextes sortants (${(common.contexts || []).filter((c) => I.by.context?.get(String(c.name))?.type === 'outcall').map((c) => `« ${c.label || c.name} »`).join(', ') || 'aucun'}) : les sites ne sortent plus que par leur règle` });
   for (const s of sites) for (const v of s.vms) steps.push({ phase: 'vm', site: s.key, vmId: v.id, text: `messagerie ${v.number} (${v.name || ''}) → contexte « ${s.names.ctx} » (messages déplacés par Wazo)` });
   const moves = steps.filter((x) => x.phase === 'move').length;
-  return { problems, steps, sites, common, moves, sim, perm118, ok: !problems.some((p) => p.sev === 'error') && moves > 0 };
+  return { problems, steps, sites, common, moves, sim, perm118, targets, dropOut, drop, ok: !problems.some((p) => p.sev === 'error') && moves > 0 };
 }
 
 // ---------------------------------------------------------------------------
@@ -238,7 +304,7 @@ export function buildPlan(ms) {
 // ses règles sortantes, puis les contextes inclus dans l'ordre, chacun une fois)
 // ---------------------------------------------------------------------------
 const vname = (s, k) => `@site:${s.key}:${k}`;
-function futureWorld(ms, sites, common) {
+function futureWorld(ms, sites, common, dropOut = false) {
   const w = worldOf({ contexts: I.lists.context || [], extensions: I.lists.extension || [], outcalls: I.lists.outcall || [] });
   const f = { ctx: new Map([...w.ctx].map(([k, v]) => [k, { ...v, includes: [...v.includes] }])), exts: new Map(w.exts), outs: new Map([...w.outs].map(([k, v]) => [k, [...v]])) };
   const nm = (s, k) => (k === 'common' ? common.name : vname(s, k));
@@ -251,15 +317,16 @@ function futureWorld(ms, sites, common) {
     for (const e of [...s.moved, ...s.objs]) { const k = `${e.exten}@${common.name}`; const x = f.exts.get(k); f.exts.delete(k); f.exts.set(`${e.exten}@${vname(s, 'ctx')}`, { ...(x || { users: 1 }), ctx: vname(s, 'ctx') }); }
   }
   if (commonIncludesSites(ms)) f.ctx.get(common.name).includes = [...f.ctx.get(common.name).includes.filter((x) => !x.startsWith('@site:')), ...sites.map((s) => vname(s, 'ctx'))];
+  if (dropOut) f.ctx.get(common.name).includes = f.ctx.get(common.name).includes.filter((x) => f.ctx.get(x)?.type !== 'outcall');
   return { before: w, after: f };
 }
 const SIM_EXT = [['15', 'SAMU'], ['112', 'urgences'], ['0240000000', 'fixe'], ['0612345678', 'mobile'], ['0033123456789', 'international']];
 // Résultat lisible d'une recherche.
 const simText = (w, r) => (r.kind === 'internal' ? `interne · ${w.ctx.get(r.ctx)?.label || r.ctx}` : r.kind === 'out' ? `sortant · règle « ${r.rule} »` : 'non routé');
-export function simulate(ms, sites, common) {
+export function simulate(ms, sites, common, { dropOut = false } = {}) {
   const issues = []; const rows = [];
   if (!sites.length) return { issues, rows, cols: [] };
-  const { before, after } = futureWorld(ms, sites, common);
+  const { before, after } = futureWorld(ms, sites, common, dropOut);
   const cName = common.label || common.name;
   // Une cible par site (son premier numéro), une pour le commun (premier numéro resté), puis l'extérieur.
   const stay = (I.lists.extension || []).filter((e) => e.context === common.name && /^\d+$/.test(e.exten || '') && !sites.some((s) => [...s.moved, ...s.objs].some((m) => m.exten === e.exten)));
@@ -279,8 +346,9 @@ export function simulate(ms, sites, common) {
       else if (c.common) want = true;
       // Extérieur depuis le commun : rien ne doit changer (même règle qu'avant la bascule).
       const same = simText(before, b) === simText(after, a);
-      const ok = want == null ? (fr.common ? same : a.kind === 'out' || a.kind === b.kind) : want ? a.kind === 'internal' && (!c.site || a.ctx === vname(c.site, 'ctx')) : a.kind !== 'internal';
-      if (fr.common && c.ext && !same) want = 'same';
+      // Sortant du commun retiré (plus aucun poste n'y compose) : son extérieur change, c'est voulu.
+      const ok = want == null ? (fr.common ? same || dropOut : a.kind === 'out' || a.kind === b.kind) : want ? a.kind === 'internal' && (!c.site || a.ctx === vname(c.site, 'ctx')) : a.kind !== 'internal';
+      if (fr.common && c.ext && !same && !dropOut) want = 'same';
       return { before: simText(before, b), after: simText(after, a), ok, want };
     });
     rows.push({ from: fr.label, cells });
@@ -298,12 +366,14 @@ export function simulate(ms, sites, common) {
   // Références numéro@contexte vers un numéro déplacé, cherchées depuis leur contexte après la bascule.
   const moved = new Map(sites.flatMap((s) => [...s.moved, ...s.objs].map((m) => [m.exten, s])));
   const refs = [];
-  for (const x of allDests()) if (x.dest?.type === 'extension' && moved.has(x.dest.exten)) refs.push({ from: x.dest.context, n: x.dest.exten, what: `${objLabel(x.type, x.obj)}, ${x.slot}` });
-  for (const t of ['group', 'queue']) for (const o of I.lists[t] || []) for (const m of membersOf(o).extensions) if (moved.has(m.exten)) refs.push({ from: m.context, n: m.exten, what: `membre ${m.exten} de ${t === 'group' ? 'groupe' : 'file'} ${o.label || o.name}` });
+  // Réécriture active : les destinations et membres de groupe « numéro@commun » visent le site du numéro.
+  const fixed = (ctx, n, can) => (can && rewriteOn(ms) && ctx === common.name && moved.has(n) ? vname(moved.get(n), 'ctx') : ctx);
+  for (const x of allDests()) if (x.dest?.type === 'extension' && moved.has(x.dest.exten)) refs.push({ from: fixed(x.dest.context, x.dest.exten, true), n: x.dest.exten, what: `${objLabel(x.type, x.obj)}, ${x.slot}` });
+  for (const t of ['group', 'queue']) for (const o of I.lists[t] || []) for (const m of membersOf(o).extensions) if (moved.has(m.exten)) refs.push({ from: fixed(m.context, m.exten, t === 'group'), n: m.exten, what: `membre ${m.exten} de ${t === 'group' ? 'groupe' : 'file'} ${o.label || o.name}` });
   const ctxOfUser = (u) => { const c = userContext(u); const e = (u.lines?.[0]?.extensions || [])[0]; const s = e && c === common.name ? moved.get(e.exten) : null; return s ? vname(s, 'ctx') : c; };
   for (const u of I.lists.user || []) for (const [pos, k] of Object.entries(I.funckeys?.[u.uuid] || {})) if (k?.destination?.type === 'custom' && moved.has(k.destination.exten)) refs.push({ from: ctxOfUser(u), n: k.destination.exten, what: `touche ${pos} de ${[u.firstname, u.lastname].filter(Boolean).join(' ')}` });
   const broken = refs.filter((r) => r.from && route(after, r.from, r.n).kind !== 'internal');
-  if (broken.length) issues.push({ sev: 'error', text: `${broken.length} référence(s) « numéro » vers un numéro déplacé ne le trouveront plus (${broken.slice(0, 5).map((r) => `${r.what} → ${r.n}`).join(' ; ')}${broken.length > 5 ? '…' : ''}). Choisir « Tous les sites s'appellent » (le commun inclut alors les sites), ou attendre la réécriture des références (lot suivant).` });
+  if (broken.length) issues.push({ sev: 'error', text: `${broken.length} référence(s) « numéro » vers un numéro déplacé ne le trouveront plus (${broken.slice(0, 5).map((r) => `${r.what} → ${r.n}`).join(' ; ')}${broken.length > 5 ? '…' : ''}). ${rewriteOn(ms) ? 'Non réécrites par l\'outil (membres « numéro » des files, touches de numérotation rapide) : à corriger à la main, ou choisir « Tous les sites s\'appellent ».' : 'Cocher « Réécrire les références », ou choisir « Tous les sites s\'appellent » (le commun inclut alors les sites).'}` });
   return { issues, rows, cols };
 }
 
@@ -404,7 +474,7 @@ export async function executePlan(plan, ms, onProgress = () => {}) {
   const byKey = new Map(); // clé du site → { ctx, out, inc } (contextes créés)
   let moves = [];
   const withCommon = commonIncludesSites(ms);
-  const nWrites = plan.sites.length * 5 + plan.steps.filter((x) => x.phase === 'vm').length + plan.sites.reduce((a, s) => a + (s.trunk ? s.pats.length * 2 + 3 : 0), 0) + (withCommon ? 1 : 0) + plan.moves;
+  const nWrites = plan.sites.length * 5 + plan.steps.filter((x) => x.phase === 'vm' || x.phase === 'rewrite').length + plan.sites.reduce((a, s) => a + (s.trunk ? s.pats.length * 2 + 3 : 0), 0) + (withCommon ? 1 : 0) + plan.moves;
   j.partition = partitionOf(ms);
   try {
     j.note = await withGroupedReload(nWrites, async (grouped) => {
@@ -447,7 +517,7 @@ export async function executePlan(plan, ms, onProgress = () => {}) {
         for (const p of s.pats) {
           const ext = await tapi('POST', '/extensions', { exten: p.exten, context: byKey.get(s.key).out.name });
           log({ op: 'create_extension', id: ext.id, exten: p.exten, outcall: o.id });
-          await tapi('PUT', `/outcalls/${o.id}/extensions/${ext.id}`, { strip_digits: p.strip_digits || 0, external_prefix: p.external_prefix || null, prefix: null, caller_id: null });
+          await tapi('PUT', `/outcalls/${o.id}/extensions/${ext.id}`, { strip_digits: p.strip_digits || 0, external_prefix: p.external_prefix || null, prefix: null, caller_id: s.callerId || null });
         }
         await tapi('PUT', `/outcalls/${o.id}/trunks`, { trunks: [{ id: Number(s.trunk.id) }] });
         if (outOf(ms).block118) {
@@ -462,14 +532,18 @@ export async function executePlan(plan, ms, onProgress = () => {}) {
       j.sites = plan.sites.map((s) => ({ site: s.key, label: s.label, inc: { id: byKey.get(s.key).inc.id, name: byKey.get(s.key).inc.name, label: s.names.inc }, trunkId: s.trunk?.id ?? null, dids: s.dids.map((d) => ({ extId: d.extId, exten: d.exten, from: d.context })) }));
       // 3. Inclusions du commun (relues juste avant), seulement si tous les sites s'appellent :
       //    sinon le commun ouvrirait les sites les uns aux autres.
-      if (withCommon) {
+      //    Sortant du commun retiré si demandé (plus aucun poste n'y compose).
+      if (withCommon || plan.dropOut) {
         const fresh = await tapi('GET', `/contexts/${plan.common.id}`);
         const before = (fresh?.contexts || []).map((c) => c.id);
-        j.common_includes_before = before;
         const siteIds = plan.sites.map((s) => byKey.get(s.key).ctx.id);
-        const after = [...before.filter((id) => !siteIds.includes(id)), ...siteIds];
-        await tapi('PUT', `/contexts/${plan.common.id}/contexts`, { contexts: after.map((id) => ({ id })) });
-        log({ op: 'common_includes', id: plan.common.id, before, after });
+        let after = withCommon ? [...before.filter((id) => !siteIds.includes(id)), ...siteIds] : [...before];
+        if (plan.dropOut) after = after.filter((id) => (I.lists.context || []).find((c) => c.id === id)?.type !== 'outcall');
+        if (after.join() !== before.join()) {
+          j.common_includes_before = before;
+          await tapi('PUT', `/contexts/${plan.common.id}/contexts`, { contexts: after.map((id) => ({ id })) });
+          log({ op: 'common_includes', id: plan.common.id, before, after });
+        }
       }
       // 3b. Messageries des utilisateurs déplacés (PUT partiel, lu : parse_and_update ; sysconfd
       //     déplace aussi les messages, voicemail/service.py move_voicemail). Relues juste avant.
@@ -487,6 +561,15 @@ export async function executePlan(plan, ms, onProgress = () => {}) {
         onProgress(`Déplacement des numéros : ${i + 1} / ${moves.length}`);
         await moveOne(m, log);
         if (!grouped) await sleep(300); // laisse Asterisk souffler entre deux rechargements
+      }
+      // 5. Références « numéro@commun » vers un numéro déplacé : vers le contexte de son site.
+      const siteOf = new Map(plan.sites.flatMap((s) => [...s.moved, ...s.objs].map((m) => [String(m.exten), byKey.get(s.key).ctx.name])));
+      const mapDest = (d) => (d?.type === 'extension' && d.context === plan.common.name && siteOf.has(String(d.exten)) ? { ...d, context: siteOf.get(String(d.exten)) } : d);
+      const mapMember = (m) => (m.context === plan.common.name && siteOf.has(String(m.exten)) ? { ...m, context: siteOf.get(String(m.exten)) } : m);
+      for (const st of plan.steps.filter((x) => x.phase === 'rewrite')) {
+        onProgress(`Références : ${st.target.label}`);
+        const r = await rewriteTarget(st.target, mapDest, mapMember);
+        if (r) log({ op: 'rewrite', label: st.target.label, ...r });
       }
     }, async () => {
       onProgress(`Déplacement des numéros : ${moves.length} / ${moves.length}`);
@@ -560,7 +643,14 @@ export async function undoJournal(j, onProgress = () => {}) {
       } catch (x) { log({ op: 'move_vm', vmId: e.vmId, error: x.message }); }
     }
   };
-  const nRules = j.entries.filter((e) => ['create_outcall', 'create_extension', 'create_perm', 'move_vm'].includes(e.op)).length;
+  // Références réécrites : valeur d'avant renvoyée telle quelle (PUT partiel ou objet entier, selon la cible).
+  const restoreRefs = async () => {
+    for (const e of [...j.entries].reverse().filter((x) => x.op === 'rewrite')) {
+      try { onProgress(`Références : ${e.label}`); await tapi('PUT', e.path, e.before); log({ op: 'rewrite', path: e.path, restored: true }); }
+      catch (x) { log({ op: 'rewrite', path: e.path, error: x.message }); }
+    }
+  };
+  const nRules = j.entries.filter((e) => ['create_outcall', 'create_extension', 'create_perm', 'move_vm', 'rewrite'].includes(e.op)).length;
   const nWrites = back.length + (Array.isArray(j.common_includes_before) ? 1 : 0) + early.length + nRules;
   const note = await withGroupedReload(nWrites, async (grouped) => {
     if (back.length) await restoreIncludes();
@@ -569,6 +659,7 @@ export async function undoJournal(j, onProgress = () => {}) {
       await moveOne(m, log);
       if (!grouped) await sleep(300);
     }
+    await restoreRefs();
     await delVms();
     await delRules();
     if (back.length) for (const c of early) await del(c);
