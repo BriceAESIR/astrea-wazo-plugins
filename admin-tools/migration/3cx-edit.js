@@ -2,19 +2,19 @@
 // Modèle et règles : 3cx-draft.js. Chaque modification est enregistrée dans le
 // navigateur (brouillon par fichier et date de sauvegarde) ; rien n'est écrit
 // dans Wazo depuis ces tableaux.
-import { $, esc, toast, helpButton, helpBox, confirmModal, downloadJson } from '../common/core.js?v=0.40.56';
-import { I } from './inventory.js?v=0.40.56';
+import { $, esc, toast, helpButton, helpBox, confirmModal, downloadJson } from '../common/core.js?v=0.40.57';
+import { I } from './inventory.js?v=0.40.57';
 import {
   GROUP_STRATEGIES, MODES, HUNT_TARGETS, LICENCES, AUTH_METHODS, effectiveUsername, isVoix, applyLicence, fillCallerIds, callerIdWazo, upgradeDraft, saveDraft, clearDraft, buildDraft, acceptDraft, userBy, userName, imported,
   destLabel, destProblem, draftIssues, usersCsv, blfRows, devicesCsv, deviceDesc, macWazo, macValid, tenantIssues,
   LINE_MODES, linesOf, VM_LANGS, vmEmail, upperName, upgradeSchedules, pastHolidays, didWazo,
-} from './3cx-draft.js?v=0.40.56';
-import { setWizard, wizardTab, wizardChange, wizardClick, wizardDone, wizardTotal } from './3cx-wizard.js?v=0.40.56';
-import { unitCfg, unitLabels, autoRanges, RANGE_KEYS, rangeIssues, unitPrefix, wazoNum, wazoNumOf, renumbers, numberIssues } from './3cx-sites.js?v=0.40.56';
-import { rangesText } from './multisite.js?v=0.40.56';
-import { WAZO_FIELDS, tagsOf, tagLabel, tagChecked, ensurePhonebook, phonebookName, phonebookIssues, companyContacts, personalCsv, toWazoContact, csvKeys } from './3cx-phonebook.js?v=0.40.56';
-import { SORTS, CATEGORY_RE, soundUsages, ensureSounds, mohLabel, soundCategory, FILES, keyOf, loaded, addFiles, addFileAs, targetName } from './3cx-sounds.js?v=0.40.56';
-import { DEPT_MODES, deptLabel, ensureDepts, deptObjects, unitOf, unitList, setDeptMode, moveObject } from './3cx-depts.js?v=0.40.56';
+} from './3cx-draft.js?v=0.40.57';
+import { setWizard, wizardTab, wizardChange, wizardClick, wizardDone, wizardTotal } from './3cx-wizard.js?v=0.40.57';
+import { unitCfg, unitLabels, autoRanges, RANGE_KEYS, rangeIssues, unitPrefix, wazoNum, wazoNumOf, renumbers, numberIssues } from './3cx-sites.js?v=0.40.57';
+import { rangesText } from './multisite.js?v=0.40.57';
+import { WAZO_FIELDS, tagsOf, tagLabel, tagChecked, ensurePhonebook, phonebookName, phonebookIssues, companyContacts, personalCsv, toWazoContact, csvKeys } from './3cx-phonebook.js?v=0.40.57';
+import { SORTS, CATEGORY_RE, soundUsages, ensureSounds, mohLabel, soundCategory, FILES, keyOf, loaded, addFiles, addFileAs, targetName } from './3cx-sounds.js?v=0.40.57';
+import { DEPT_MODES, deptLabel, ensureDepts, deptObjects, unitOf, unitList, setDeptMode, moveObject } from './3cx-depts.js?v=0.40.57';
 
 const E = { d: null, m: null, file: '', tab: 'users', sel: { users: new Set(), dids: new Set(), vms: new Set() }, q: '', onReset: null };
 export const TABS = [
@@ -156,6 +156,8 @@ const cidInput = (path) => input(path, 'class="x3-num" list="x3-cids" placeholde
 const cidList = (d) => `<datalist id="x3-cids">${[...new Set((d.dids || []).map((r) => callerIdWazo(r.did)).filter(Boolean))].map((n) => `<option value="${esc(n)}">`).join('')}<option value="anonymous"></datalist>`;
 // Numéro Wazo modifiable (nouvelle base) : vide = numéro calculé (préfixe du site + numéro 3CX, ou numéro 3CX).
 const numInput = (path, o) => input(path, `class="x3-short" inputmode="numeric" placeholder="${esc(wazoNum(E.d, { ...o, wn: '' }))}" title="Numéro dans Wazo ; vide : ${esc(wazoNum(E.d, { ...o, wn: '' }))} (calculé)"`);
+// Numéro 3CX rappelé seulement quand le numéro Wazo en diffère.
+const was3cx = (d, o) => (wazoNum(d, o) !== o.n ? `<div class="muted small">${esc(o.n)} dans 3CX</div>` : '');
 const VOIX_NOTE = 'Licence Voix : pas d\'accès aux applications Wazo, rien à saisir (identifiant, méthode, accès), comme dans User Manager. Le CSV laisse l\'identifiant vide : Wazo prend l\'e-mail, sinon l\'identifiant interne. Aucun mot de passe généré.';
 function usersTab(opts) {
   const d = E.d; const q = E.q.trim().toLowerCase();
@@ -165,7 +167,7 @@ function usersTab(opts) {
     return `<tr class="${u.mode !== 'user' ? 'x3-off' : ''}${E.sel.users.has(i) ? ' sel' : ''}${on && !u.checked ? ' x3-unchecked' : ''}">
       <td><input type="checkbox" data-sel="users" data-i="${i}" ${E.sel.users.has(i) ? 'checked' : ''}></td>
       <td class="x3-c">${on ? check(`${p}.checked`, 'Utilisateur vérifié') : ''}</td>
-      <td>${numInput(`${p}.wn`, u)}<div class="muted small">${esc(u.n)} dans 3CX</div>${u.src.enabled ? '' : '<div class="muted small">désactivé 3CX</div>'}</td>
+      <td>${numInput(`${p}.wn`, u)}${was3cx(d, u)}${u.src.enabled ? '' : '<div class="muted small">désactivé 3CX</div>'}</td>
       <td>${sel(`${p}.mode`, MODES)}</td>
       <td>${on ? licSel(`${p}.sub`) : ''}</td>
       <td>${input(`${p}.first`, `class="${u.guessed ? 'x3-guess' : ''}" title="${esc(`Dans 3CX : ${[u.src.first, u.src.last].filter(Boolean).join(' ') || 'vide'}`)}"`)}</td>
@@ -366,7 +368,7 @@ function deptsTab() {
     if (cfg.created) return `<span class="small">créés : ${[cfg.created.ctxName, cfg.created.incName, cfg.created.outName].filter(Boolean).map(esc).join(', ')}</span>`;
     return `<input data-ctxname="${esc(k)}|newLabel" value="${esc(cfg.newLabel || '')}" placeholder="${esc(L.ctx)}" class="x3-mail" title="Contexte interne">
       <input data-ctxname="${esc(k)}|incLabel" value="${esc(cfg.incLabel || '')}" placeholder="${esc(L.inc)}" class="x3-mail" title="Contexte entrant (le trunk du jeu y est pointé)">
-      <input data-ctxname="${esc(k)}|outLabel" value="${esc(cfg.outLabel || '')}" placeholder="${esc(L.out)}" class="x3-mail" title="Contexte sortant">${many ? `<label class="inline small" title="Numéro Wazo = préfixe du site + numéro 3CX à 3 chiffres (201 → ${esc(unitPrefix(d, k))}201, groupe 801 → ${esc(unitPrefix(d, k))}801). Le CSV, les touches et les plages suivent. Décoché : numéros 3CX gardés."><input type="checkbox" data-renum="${esc(k)}" ${renumbers(d, k) ? 'checked' : ''}> Renuméroter</label> <label class="small">Préfixe des plages <input data-ctxname="${esc(k)}|prefix" value="${esc(cfg.prefix || '')}" placeholder="${esc(unitPrefix(d, k))}" class="x3-short" title="Plages standard du jeu précédées de ce chiffre : ${esc(unitPrefix(d, k))}200-${esc(unitPrefix(d, k))}299 (postes), …800-…899 (groupes), …900-…999 (files), …700-…799 (conférences). Vide : rang du jeu."></label>` : '<div class="muted small">si « nouveau contexte » (onglet Écriture)</div>'}
+      <input data-ctxname="${esc(k)}|outLabel" value="${esc(cfg.outLabel || '')}" placeholder="${esc(L.out)}" class="x3-mail" title="Contexte sortant">${many ? `<label class="inline small" title="Numéro Wazo = préfixe du site + numéro 3CX à 3 chiffres (201 → ${esc(unitPrefix(d, k))}201, groupe 801 → ${esc(unitPrefix(d, k))}801). Le CSV, les touches et les plages suivent. Décoché (par défaut) : numéros 3CX et plages existantes gardés, les annuaires des postes n'ont rien à changer."><input type="checkbox" data-renum="${esc(k)}" ${renumbers(d, k) ? 'checked' : ''}> Renuméroter (suggestion : ${esc(unitPrefix(d, k))}XXX)</label> ${renumbers(d, k) ? '' : '<span class="muted small">numéros 3CX gardés</span>'}<label class="small"${renumbers(d, k) ? '' : ' hidden'}>Préfixe des plages <input data-ctxname="${esc(k)}|prefix" value="${esc(cfg.prefix || '')}" placeholder="${esc(unitPrefix(d, k))}" class="x3-short" title="Plages standard du jeu précédées de ce chiffre : ${esc(unitPrefix(d, k))}200-${esc(unitPrefix(d, k))}299 (postes), …800-…899 (groupes), …900-…999 (files), …700-…799 (conférences). Vide : rang du jeu."></label>` : '<div class="muted small">si « nouveau contexte » (onglet Écriture)</div>'}
       <div class="x3-ranges">${RANGE_KEYS.map(([rk, rl]) => { const auto = rangesText(autoRanges(d, many ? k : null)[rk]); return `<label class="small">${esc(rl)} <input data-ctxrange="${esc(k)}|${rk}" value="${esc(cfg.ranges?.[rk] || '')}" placeholder="${esc(auto || 'aucune')}" title="Plages du contexte interne, ex. 200-260, 321 ; vide : ${esc(auto || 'aucune')} (plages standard, plus celles des numéros du client qui n'y tombent pas) ; « - » : aucune"></label>`; }).join('')}</div>`;
   };
   const count = (k) => { const o = deptObjects(d, k); return [`${o.users.filter((u) => u.mode === 'user').length} postes`, `${o.hunts.length} groupes / files`, `${o.ivrs.length} SVI`, `${o.dids.length} SDA`].join(', '); };
@@ -497,7 +499,7 @@ function huntsTab(opts) {
     const p = `hunts.${i}`;
     const add = users.filter((u) => !h.members.includes(u.n)).map((u) => `<option value="${esc(u.n)}">${esc(u.n)} ${esc(userName(u))}</option>`).join('');
     return `<tr class="${h.target === 'skip' ? 'x3-off' : ''}">
-      <td>${numInput(`hunts.${i}.wn`, h)}<div class="muted small">${esc(h.n)} dans 3CX</div></td><td class="small">${h.src === 'Queue' ? 'File' : 'Groupe'} 3CX</td>
+      <td>${numInput(`hunts.${i}.wn`, h)}${was3cx(d, h)}</td><td class="small">${h.src === 'Queue' ? 'File' : 'Groupe'} 3CX</td>
       <td>${sel(`${p}.target`, HUNT_TARGETS)}</td>
       <td>${input(`${p}.name`)}</td>
       <td>${sel(`${p}.strategy`, GROUP_STRATEGIES)}</td>
@@ -517,7 +519,7 @@ function ivrsTab(opts) {
   const rows = E.d.ivrs.map((v, i) => {
     const p = `ivrs.${i}`;
     return `<tr class="${v.import ? '' : 'x3-off'}">
-      <td>${numInput(`${p}.wn`, v)}<div class="muted small">${esc(v.n)} dans 3CX</div></td><td class="x3-c">${check(`${p}.import`, 'Reprendre')}</td><td>${input(`${p}.name`)}</td><td class="small">${esc(v.prompt || '')}${v.prompt ? soundSlot(v.prompt, { player: false }) : ''}</td>
+      <td>${numInput(`${p}.wn`, v)}${was3cx(d, v)}</td><td class="x3-c">${check(`${p}.import`, 'Reprendre')}</td><td>${input(`${p}.name`)}</td><td class="small">${esc(v.prompt || '')}${v.prompt ? soundSlot(v.prompt, { player: false }) : ''}</td>
       <td>${num(`${p}.timeout`, 1, 120)}</td>
       <td>${v.choices.map((c, k) => `<div class="x3-choice"><input data-p="${p}.choices.${k}.key" value="${esc(c.key)}" class="x3-key">${destCell(`${p}.choices.${k}.dest`, opts)}<button class="icon" data-act="rm-choice" data-i="${i}" data-k="${k}" title="Retirer la touche">×</button></div>`).join('')}
         <button class="x3-link" data-act="add-choice" data-i="${i}">+ touche</button></td>

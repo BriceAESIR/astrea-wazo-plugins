@@ -26,11 +26,11 @@
 // (_X.) inclus avant un autre établissement prend aussi ses numéros internes ;
 // inclus après, les numéros externes passent par l'établissement inclus, donc
 // par son trunk. Les écarts sont montrés avant écriture.
-import { matches, comparePatterns, dialedNumber } from '../callflow/dialsim.js?v=0.40.56';
-import { FR_FAMILIES, FR_FORMATS, frTransform, BLOCK_118 } from '../callflow/outcall-editor.js?v=0.40.56';
-import { imported, didWazo } from './3cx-draft.js?v=0.40.56';
-import { unitList, unitOf } from './3cx-depts.js?v=0.40.56';
-import { parseRanges, rangesText, inRanges } from './multisite.js?v=0.40.56';
+import { matches, comparePatterns, dialedNumber } from '../callflow/dialsim.js?v=0.40.57';
+import { FR_FAMILIES, FR_FORMATS, frTransform, BLOCK_118 } from '../callflow/outcall-editor.js?v=0.40.57';
+import { imported, didWazo } from './3cx-draft.js?v=0.40.57';
+import { unitList, unitOf } from './3cx-depts.js?v=0.40.57';
+import { parseRanges, rangesText, inRanges } from './multisite.js?v=0.40.57';
 
 export { FR_FAMILIES, FR_FORMATS, BLOCK_118 };
 export const SITE_MODES = {
@@ -51,8 +51,10 @@ export const isVirtual = (name) => String(name || '').startsWith('@');
 // ou SVI est le préfixe de son site suivi du numéro 3CX à 3 chiffres (site 1 : 201 → 1201,
 // 801 → 1801). Le brouillon garde le numéro 3CX comme clé (BLF, renvois, destinations) ;
 // le numéro Wazo est calculé à la sortie (plages, CSV, contrôles, simulation, affichage).
-// Case « Renuméroter » par jeu, cochée par défaut ; un seul jeu : numéros inchangés.
-export const renumbers = (d, unit) => unit != null && multi(d) && unitCfg(d, unit).renumber !== false;
+// Case « Renuméroter » par jeu, DÉCOCHÉE par défaut (Brice, 09/11/2026 : les clients gardent
+// leurs numéros, leurs annuaires locaux n'ont pas à changer ; la renumérotation est une
+// suggestion). Un seul jeu : numéros inchangés.
+export const renumbers = (d, unit) => unit != null && multi(d) && unitCfg(d, unit).renumber === true;
 // Numéro saisi à la main (o.wn, demande de Brice : « on part sur une nouvelle base ») : prioritaire.
 export function wazoNum(d, o) {
   if (o && String(o.wn ?? '').trim()) return String(o.wn).trim();
@@ -113,8 +115,9 @@ export const unitPrefix = (d, unit) => {
   const own = String(unitCfg(d, unit).prefix ?? '').trim();
   return /^\d{1,2}$/.test(own) ? own : String(i < 0 ? 1 : i + 1);
 };
+// Plages préfixées seulement si le jeu est renuméroté ; sinon plages standard + celles des numéros existants.
 export function stdRanges(d, unit = null) {
-  if (unit == null || !multi(d)) return STD_RANGES;
+  if (unit == null || !renumbers(d, unit)) return STD_RANGES;
   const p = unitPrefix(d, unit);
   return Object.fromEntries(Object.entries(STD_RANGES).map(([k, l]) => [k, l.map((r) => ({ start: p + r.start, end: p + r.end }))]));
 }
@@ -170,13 +173,14 @@ export function rangeIssues(d) {
       for (const x of r[k] || []) all.push({ u: u.label, key, k, l, x });
     }
   }
-  // Chevauchement signalé seulement s'il contient des numéros des deux jeux (les plages
-  // standard 200-299… sont les mêmes partout : sans numéros communs, rien à signaler).
-  const numsIn = (key, k, len, lo, hi) => clientNumbers(d, key).filter((y) => y.key === k && y.n.length === len && Number(y.n) >= lo && Number(y.n) <= hi);
-  if (many) for (let i = 0; i < all.length; i++) for (let j = i + 1; j < all.length; j++) {
-    const a = all[i]; const b = all[j];
-    const lo = Math.max(Number(a.x.start), Number(b.x.start)); const hi = Math.min(Number(a.x.end), Number(b.x.end));
-    if (a.u !== b.u && a.k === b.k && a.x.start.length === b.x.start.length && lo <= hi && numsIn(a.key, a.k, a.x.start.length, lo, hi).length && numsIn(b.key, b.k, a.x.start.length, lo, hi).length) out.push({ sev: 'warn', title: 'Plages qui se chevauchent', text: `${a.l} : « ${a.u} » ${rangesText([a.x])} et « ${b.u} » ${rangesText([b.x])}.` });
+  // Plages communes à plusieurs jeux (standard 200-299… partout) : sans effet tant qu'un même
+  // numéro n'est pas dans deux jeux. Ce cas-là est signalé : depuis un jeu qui inclut l'autre,
+  // le premier trouvé répond et l'autre n'est jamais joignable.
+  if (many) {
+    const by = new Map();
+    for (const u of units) for (const x of clientNumbers(d, u.key)) { const k2 = `${x.key === 'user_ranges' ? 'n' : 'h'}|${x.n}`; if (!by.has(k2)) by.set(k2, []); if (!by.get(k2).includes(u.label)) by.get(k2).push(u.label); }
+    const dup = [...by].filter(([, l]) => l.length > 1).map(([k2, l]) => `${k2.split('|')[1]} (${l.join(', ')})`);
+    if (dup.length) out.push({ sev: 'warn', title: 'Même numéro dans plusieurs jeux', text: `${dup.join(', ')} : si les jeux s'incluent, un seul répondra. Renuméroter un des sites, ou saisir un autre numéro.` });
   }
   return out;
 }
