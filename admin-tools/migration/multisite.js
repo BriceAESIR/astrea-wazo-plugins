@@ -8,11 +8,11 @@
 //  - live reload coupé pendant toute l'opération, réactivé AVANT le dernier
 //    déplacement (une écriture identique ne recharge rien, lu dans le notifier) ;
 //  - journal de chaque écriture, annulation depuis le journal.
-import { S, api, ApiError } from '../common/core.js?v=0.40.51';
-import { I, sameTenant, membersOf, objLabel } from './inventory.js?v=0.40.51';
-import { patternMatch, allDests } from './checks.js?v=0.40.51';
-import { worldOf, route, siteSlug, clientPatterns, defaultOut, BLOCK_118 } from './3cx-sites.js?v=0.40.51';
-import { userContext } from '../callflow/dialsim.js?v=0.40.51';
+import { S, api, ApiError } from '../common/core.js?v=0.40.52';
+import { I, sameTenant, membersOf, objLabel } from './inventory.js?v=0.40.52';
+import { patternMatch, allDests } from './checks.js?v=0.40.52';
+import { worldOf, route, siteSlug, clientPatterns, defaultOut, BLOCK_118 } from './3cx-sites.js?v=0.40.52';
+import { userContext } from '../callflow/dialsim.js?v=0.40.52';
 
 // ---------------------------------------------------------------------------
 // Jeu de contextes par site et cloisonnement (demande de Brice, 06/11/2026)
@@ -95,6 +95,35 @@ export function movableExtensions(source) {
     .sort((a, b) => Number(a.exten) - Number(b.exten) || a.exten.localeCompare(b.exten));
 }
 
+// Groupes, files et conférences du commun (troisième temps, 06/11/2026). Lu dans confd :
+// déplacés par leur numéro (PUT /extensions/{id} {context}), numéro contrôlé dans les
+// group_ranges / queue_ranges / conference_room_ranges du contexte cible (extension/validator.py).
+const RANGE_FR = { group_ranges: 'groupes', queue_ranges: 'files', conference_room_ranges: 'conférences' };
+const OBJ_KINDS = [['group', 'groupe', 'group_ranges'], ['queue', 'file', 'queue_ranges'], ['conference', 'conférence', 'conference_room_ranges']];
+export function movableObjects(source) {
+  const out = [];
+  for (const e of I.lists.extension || []) {
+    if (e.context !== source || !/^\d+$/.test(e.exten || '')) continue;
+    const k = OBJ_KINDS.find(([t]) => e[t]); if (!k) continue;
+    const o = (I.lists[k[0]] || []).find((x) => String(x.id) === String(e[k[0]].id));
+    out.push({ id: e.id, exten: e.exten, context: e.context, kind: k[0], what: k[1], rangeKey: k[2], obj: o, label: o?.label || o?.name || `${k[1]} ${e.exten}` });
+  }
+  return out.sort((a, b) => Number(a.exten) - Number(b.exten));
+}
+// Site d'un groupe ou d'une file : choix explicite, sinon celui de la majorité de ses membres utilisateurs déplacés.
+export function objSite(ms, x) {
+  if (ms.objAssign && Object.prototype.hasOwnProperty.call(ms.objAssign, x.id)) return ms.objAssign[x.id] || null;
+  if (!x.obj || x.kind === 'conference') return null;
+  const c = {};
+  for (const m of membersOf(x.obj).users) {
+    const u = (I.lists.user || []).find((y) => y.uuid === m.uuid) || I.userByUuid?.get(m.uuid); const e = u?.lines?.[0]?.extensions?.[0];
+    const ext = e && (I.lists.extension || []).find((y) => y.exten === e.exten && y.context === e.context);
+    const k = ext && ms.assign.get(ext.id); if (k) c[k] = (c[k] || 0) + 1;
+  }
+  const n = membersOf(x.obj).users.length; const best = Object.entries(c).sort((a, b) => b[1] - a[1])[0];
+  return best && best[1] * 2 > n ? best[0] : null; // majorité stricte, sinon reste dans le commun
+}
+
 // ---------------------------------------------------------------------------
 // Plages
 // ---------------------------------------------------------------------------
@@ -139,6 +168,7 @@ export function buildPlan(ms) {
   const common = I.by.context?.get(String(ms.source));
   if (!common) { err('Contexte commun introuvable : relisez l\'inventaire.'); return { problems, steps: [], sites: [] }; }
   const exts = movableExtensions(ms.source);
+  const objsAll = movableObjects(ms.source);
   const extById = new Map(exts.map((e) => [e.id, e]));
   const labels = new Set((I.lists.context || []).map((c) => String(c.label || '').trim().toLowerCase()));
   if (!String(ms.clientId || '').trim()) err('ID client manquant : il sert au nom des contextes (<ID client>-<site>-internal…).');
@@ -170,7 +200,13 @@ export function buildPlan(ms) {
     const bad = dids.filter((d) => !/^\d+$/.test(didOf(d.exten)) || didOf(d.exten) !== d.exten);
     if (bad.length) warn(`Site « ${label} » : SDA ${bad.map((d) => d.exten).join(', ')} non numériques (motif ?) : ni plage ni déplacement.`);
     const incFrom = [...new Set([...dids.map((d) => d.context), ...(trunk?.context ? [trunk.context] : [])])].filter((c) => I.by.context?.get(String(c))?.type === 'incall');
-    return { ...s, label, ranges, moved, names, trunk, pats, rule, dids: dids.filter((d) => !bad.includes(d)), incFrom };
+    // Groupes, files, conférences du site : plages calculées par type (plus courtes couvrant leurs numéros).
+    const objs = objsAll.filter((x) => objSite(ms, x) === s.key);
+    const objRanges = {};
+    for (const [, , rk] of OBJ_KINDS) { const l = objs.filter((x) => x.rangeKey === rk).map((x) => x.exten); if (l.length) objRanges[rk] = compactRanges(l); }
+    // Messageries des utilisateurs déplacés (option) : leur contexte suit celui du poste.
+    const vms = ms.moveVm === false ? [] : moved.flatMap((e) => e.users.map((u) => u.voicemail?.id).filter(Boolean)).map((id) => (I.lists.voicemail || []).find((v) => v.id === id)).filter((v) => v && v.context === ms.source);
+    return { ...s, label, ranges, moved, names, trunk, pats, rule, dids: dids.filter((d) => !bad.includes(d)), incFrom, objs, objRanges, vms };
   });
   // Autorisation « interdit-118 » existante (reprise), sinon créée à la première règle.
   const perm118 = outOf(ms).block118 ? (I.lists.callpermission || []).find((x) => x.mode === 'deny' && x.enabled !== false && (x.extensions || []).includes(BLOCK_118)) || null : null;
@@ -183,7 +219,7 @@ export function buildPlan(ms) {
   problems.push(...sim.issues);
   // Écritures, dans l'ordre d'exécution.
   const steps = [];
-  for (const s of sites) steps.push({ phase: 'ctx', site: s.key, text: `Créer les contextes « ${s.names.ctx} » (interne, plages ${rangesText(s.ranges) || 'aucune'}), « ${s.names.out} » (sortant) et « ${s.names.inc} » (entrant, ${s.dids.length} SDA dans ses plages, inclut ${s.incFrom.map((c) => `« ${I.by.context.get(String(c))?.label || c} »`).join(', ') || 'rien'})` });
+  for (const s of sites) steps.push({ phase: 'ctx', site: s.key, text: `Créer les contextes « ${s.names.ctx} » (interne, postes ${rangesText(s.ranges) || 'aucune'}${Object.entries(s.objRanges).map(([k, r]) => `, ${RANGE_FR[k]} ${rangesText(r)}`).join('')}), « ${s.names.out} » (sortant) et « ${s.names.inc} » (entrant, ${s.dids.length} SDA dans ses plages, inclut ${s.incFrom.map((c) => `« ${I.by.context.get(String(c))?.label || c} »`).join(', ') || 'rien'})` });
   for (const s of sites.filter((x) => x.trunk)) steps.push({ phase: 'rule', site: s.key, text: `Règle « ${s.rule} » : ${s.pats.length} motif(s) de l'assistant France dans « ${s.names.out} », vers ${objLabel('trunk', s.trunk)}${outOf(ms).block118 ? `, 118 bloqués (« interdit-118 » ${perm118 ? 'reprise' : 'créée'})` : ''}` });
   const lbl = (s, k) => (k === 'common' ? `commun « ${common.label || common.name} »` : k === 'out' ? `« ${s.names.out} »` : `« ${s.names.ctx} »`);
   for (const s of sites) steps.push({ phase: 'inc', site: s.key, text: `Inclusions de « ${s.names.ctx} » : ${siteIncludes(ms, sites, s, lbl).join(', ')}` });
@@ -191,6 +227,8 @@ export function buildPlan(ms) {
   // traversaient le premier site et sortaient par son trunk (vu dans la simulation).
   if (commonIncludesSites(ms)) steps.push({ phase: 'common', text: `Inclusions du commun « ${common.label || common.name} » : ${(common.contexts || []).map((c) => `« ${c.label || c.name} »`).join(', ') || 'rien'} (inchangées), puis ${sites.map((s) => `« ${s.names.ctx} »`).join(', ')} en fin de liste` });
   for (const s of sites) for (const e of s.moved) steps.push({ phase: 'move', site: s.key, extId: e.id, exten: e.exten, text: `${e.exten} (${e.label}) → « ${s.names.ctx} »` });
+  for (const s of sites) for (const x of s.objs) steps.push({ phase: 'move', site: s.key, extId: x.id, exten: x.exten, text: `${x.what} ${x.exten} (${x.label}) → « ${s.names.ctx} »` });
+  for (const s of sites) for (const v of s.vms) steps.push({ phase: 'vm', site: s.key, vmId: v.id, text: `messagerie ${v.number} (${v.name || ''}) → contexte « ${s.names.ctx} » (messages déplacés par Wazo)` });
   const moves = steps.filter((x) => x.phase === 'move').length;
   return { problems, steps, sites, common, moves, sim, perm118, ok: !problems.some((p) => p.sev === 'error') && moves > 0 };
 }
@@ -210,7 +248,7 @@ function futureWorld(ms, sites, common) {
     f.ctx.set(vname(s, 'out'), { name: vname(s, 'out'), label: s.names.out, type: 'outcall', includes: [] });
     f.ctx.set(vname(s, 'inc'), { name: vname(s, 'inc'), label: s.names.inc, type: 'incall', includes: [] });
     f.ctx.set(vname(s, 'ctx'), { name: vname(s, 'ctx'), label: s.names.ctx, type: 'internal', includes: siteIncludes(ms, sites, s, nm) });
-    for (const e of s.moved) { const k = `${e.exten}@${common.name}`; const x = f.exts.get(k); f.exts.delete(k); f.exts.set(`${e.exten}@${vname(s, 'ctx')}`, { ...(x || { users: 1 }), ctx: vname(s, 'ctx') }); }
+    for (const e of [...s.moved, ...s.objs]) { const k = `${e.exten}@${common.name}`; const x = f.exts.get(k); f.exts.delete(k); f.exts.set(`${e.exten}@${vname(s, 'ctx')}`, { ...(x || { users: 1 }), ctx: vname(s, 'ctx') }); }
   }
   if (commonIncludesSites(ms)) f.ctx.get(common.name).includes = [...f.ctx.get(common.name).includes.filter((x) => !x.startsWith('@site:')), ...sites.map((s) => vname(s, 'ctx'))];
   return { before: w, after: f };
@@ -224,7 +262,7 @@ export function simulate(ms, sites, common) {
   const { before, after } = futureWorld(ms, sites, common);
   const cName = common.label || common.name;
   // Une cible par site (son premier numéro), une pour le commun (premier numéro resté), puis l'extérieur.
-  const stay = (I.lists.extension || []).filter((e) => e.context === common.name && /^\d+$/.test(e.exten || '') && !sites.some((s) => s.moved.some((m) => m.exten === e.exten)));
+  const stay = (I.lists.extension || []).filter((e) => e.context === common.name && /^\d+$/.test(e.exten || '') && !sites.some((s) => [...s.moved, ...s.objs].some((m) => m.exten === e.exten)));
   const cols = [
     ...sites.filter((s) => s.moved.length).map((s) => ({ n: s.moved[0].exten, what: `site ${s.label}`, site: s })),
     ...(stay.length ? [{ n: stay[0].exten, what: `commun (${stay[0].group ? 'groupe' : stay[0].queue ? 'file' : 'poste'})`, common: true }] : []),
@@ -258,7 +296,7 @@ export function simulate(ms, sites, common) {
   // Urgences depuis chaque site.
   for (const s of sites) { const miss = EMERGENCY.filter((n) => route(after, vname(s, 'ctx'), n).kind !== 'out'); if (miss.length) issues.push({ sev: 'warn', text: `Depuis « ${s.names.ctx} », numéros d'urgence non routés : ${miss.join(', ')}.` }); }
   // Références numéro@contexte vers un numéro déplacé, cherchées depuis leur contexte après la bascule.
-  const moved = new Map(sites.flatMap((s) => s.moved.map((m) => [m.exten, s])));
+  const moved = new Map(sites.flatMap((s) => [...s.moved, ...s.objs].map((m) => [m.exten, s])));
   const refs = [];
   for (const x of allDests()) if (x.dest?.type === 'extension' && moved.has(x.dest.exten)) refs.push({ from: x.dest.context, n: x.dest.exten, what: `${objLabel(x.type, x.obj)}, ${x.slot}` });
   for (const t of ['group', 'queue']) for (const o of I.lists[t] || []) for (const m of membersOf(o).extensions) if (moved.has(m.exten)) refs.push({ from: m.context, n: m.exten, what: `membre ${m.exten} de ${t === 'group' ? 'groupe' : 'file'} ${o.label || o.name}` });
@@ -366,7 +404,7 @@ export async function executePlan(plan, ms, onProgress = () => {}) {
   const byKey = new Map(); // clé du site → { ctx, out, inc } (contextes créés)
   let moves = [];
   const withCommon = commonIncludesSites(ms);
-  const nWrites = plan.sites.length * 5 + plan.sites.reduce((a, s) => a + (s.trunk ? s.pats.length * 2 + 3 : 0), 0) + (withCommon ? 1 : 0) + plan.moves;
+  const nWrites = plan.sites.length * 5 + plan.steps.filter((x) => x.phase === 'vm').length + plan.sites.reduce((a, s) => a + (s.trunk ? s.pats.length * 2 + 3 : 0), 0) + (withCommon ? 1 : 0) + plan.moves;
   j.partition = partitionOf(ms);
   try {
     j.note = await withGroupedReload(nWrites, async (grouped) => {
@@ -376,7 +414,7 @@ export async function executePlan(plan, ms, onProgress = () => {}) {
         onProgress(`Création des contextes de « ${s.label} »`);
         const made = {};
         const incRanges = s.dids.map((d) => ({ start: d.exten, end: d.exten }));
-        for (const [role, body] of [['out', { label: s.names.out, type: 'outcall' }], ['inc', { label: s.names.inc, type: 'incall', incall_ranges: incRanges }], ['ctx', { label: s.names.ctx, type: 'internal', user_ranges: s.ranges }]]) {
+        for (const [role, body] of [['out', { label: s.names.out, type: 'outcall' }], ['inc', { label: s.names.inc, type: 'incall', incall_ranges: incRanges }], ['ctx', { label: s.names.ctx, type: 'internal', user_ranges: s.ranges, ...s.objRanges }]]) {
           const c = await tapi('POST', '/contexts', { ...body, description: desc });
           if (!c?.id || !c?.name) throw new Error('POST /contexts : réponse sans id ni nom');
           made[role] = c;
@@ -433,8 +471,17 @@ export async function executePlan(plan, ms, onProgress = () => {}) {
         await tapi('PUT', `/contexts/${plan.common.id}/contexts`, { contexts: after.map((id) => ({ id })) });
         log({ op: 'common_includes', id: plan.common.id, before, after });
       }
+      // 3b. Messageries des utilisateurs déplacés (PUT partiel, lu : parse_and_update ; sysconfd
+      //     déplace aussi les messages, voicemail/service.py move_voicemail). Relues juste avant.
+      for (const st of plan.steps.filter((x) => x.phase === 'vm')) {
+        const to = byKey.get(st.site).ctx.name; const cur = await tapi('GET', `/voicemails/${st.vmId}`);
+        if (cur?.context === to) continue;
+        if (cur?.context !== plan.common.name) throw new Error(`messagerie ${cur?.number} : contexte changé depuis la lecture (${cur?.context}) : arrêt.`);
+        await tapi('PUT', `/voicemails/${st.vmId}`, { context: to });
+        log({ op: 'move_vm', vmId: st.vmId, number: cur.number, from: plan.common.name, to });
+      }
       saveJournal(j);
-      // 4. Numéros, sauf le dernier
+      // 4. Numéros (postes, puis groupes, files, conférences), sauf le dernier
       moves = plan.steps.filter((x) => x.phase === 'move').map((x) => ({ extId: x.extId, exten: x.exten, from: plan.common.name, to: byKey.get(x.site).ctx.name }));
       for (const [i, m] of moves.slice(0, -1).entries()) {
         onProgress(`Déplacement des numéros : ${i + 1} / ${moves.length}`);
@@ -503,7 +550,17 @@ export async function undoJournal(j, onProgress = () => {}) {
   // son site, qui ne pouvaient pas être supprimés avant (un rechargement chacun, trois au plus).
   const lastSite = back.length ? j.created.find((c) => c.name === back[back.length - 1].from)?.site : null;
   const early = dels.filter((c) => c.site !== lastSite); const late = dels.filter((c) => c.site === lastSite);
-  const nRules = j.entries.filter((e) => ['create_outcall', 'create_extension', 'create_perm'].includes(e.op)).length;
+  // Messageries remises dans le commun (avant la suppression des contextes de site).
+  const delVms = async () => {
+    for (const e of [...j.entries].reverse().filter((x) => x.op === 'move_vm')) {
+      try {
+        const cur = await tapi('GET', `/voicemails/${e.vmId}`);
+        if (cur?.context !== e.to) { log({ op: 'move_vm', vmId: e.vmId, skipped: `contexte actuel ${cur?.context}` }); continue; }
+        await tapi('PUT', `/voicemails/${e.vmId}`, { context: e.from }); log({ op: 'move_vm', vmId: e.vmId, restored: e.from });
+      } catch (x) { log({ op: 'move_vm', vmId: e.vmId, error: x.message }); }
+    }
+  };
+  const nRules = j.entries.filter((e) => ['create_outcall', 'create_extension', 'create_perm', 'move_vm'].includes(e.op)).length;
   const nWrites = back.length + (Array.isArray(j.common_includes_before) ? 1 : 0) + early.length + nRules;
   const note = await withGroupedReload(nWrites, async (grouped) => {
     if (back.length) await restoreIncludes();
@@ -512,6 +569,7 @@ export async function undoJournal(j, onProgress = () => {}) {
       await moveOne(m, log);
       if (!grouped) await sleep(300);
     }
+    await delVms();
     await delRules();
     if (back.length) for (const c of early) await del(c);
   }, async () => {

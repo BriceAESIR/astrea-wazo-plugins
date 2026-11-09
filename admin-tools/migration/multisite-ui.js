@@ -1,11 +1,11 @@
 // Migration Assistant — interface de la bascule multisite (lot 2).
 // Moteur : multisite.js. Brouillon (sites, affectations) gardé dans le
 // navigateur par serveur et tenant (confort seulement).
-import { S, $, esc, toast, canWrite, confirmModal, downloadJson, helpButton, helpBox } from '../common/core.js?v=0.40.51';
-import { I } from './inventory.js?v=0.40.51';
-import { buildExport, exportFileName } from './export.js?v=0.40.51';
-import { sourceContexts, movableExtensions, buildPlan, executePlan, undoJournal, compactRanges, rangesText, parseRanges, liveReload, enableLiveReload, lrMarkedByUs, loadSavedJournal, clearSavedJournal, JOURNAL_FORMAT, PARTITIONS, partitionOf, linkKey, siteNames, tenantDids, didSite, outOf, didsReady, moveDids } from './multisite.js?v=0.40.51';
-import { FR_FAMILIES, FR_FORMATS } from './3cx-sites.js?v=0.40.51';
+import { S, $, esc, toast, canWrite, confirmModal, downloadJson, helpButton, helpBox } from '../common/core.js?v=0.40.52';
+import { I } from './inventory.js?v=0.40.52';
+import { buildExport, exportFileName } from './export.js?v=0.40.52';
+import { sourceContexts, movableExtensions, buildPlan, executePlan, undoJournal, compactRanges, rangesText, parseRanges, liveReload, enableLiveReload, lrMarkedByUs, loadSavedJournal, clearSavedJournal, JOURNAL_FORMAT, PARTITIONS, partitionOf, linkKey, siteNames, tenantDids, didSite, outOf, didsReady, moveDids, movableObjects, objSite } from './multisite.js?v=0.40.52';
+import { FR_FAMILIES, FR_FORMATS } from './3cx-sites.js?v=0.40.52';
 
 const DRAFT_KEY = 'astrea-migration-ms-draft-v1';
 const U = { ms: null, scope: null, q: '', sel: new Set(), busy: false, reload: null, lr: null, result: null };
@@ -14,7 +14,7 @@ const newSite = (label = '') => ({ key: `s${Date.now().toString(36)}${seq++}`, l
 
 function draftKey() { return `${DRAFT_KEY}|${S.base}|${I.tenant}`; }
 function saveDraft() {
-  try { localStorage.setItem(draftKey(), JSON.stringify({ source: U.ms.source, sites: U.ms.sites, assign: [...U.ms.assign], clientId: U.ms.clientId, partition: U.ms.partition, links: U.ms.links, out: U.ms.out, didAssign: U.ms.didAssign })); } catch { /* */ }
+  try { localStorage.setItem(draftKey(), JSON.stringify({ source: U.ms.source, sites: U.ms.sites, assign: [...U.ms.assign], clientId: U.ms.clientId, partition: U.ms.partition, links: U.ms.links, out: U.ms.out, didAssign: U.ms.didAssign, objAssign: U.ms.objAssign, moveVm: U.ms.moveVm })); } catch { /* */ }
 }
 function loadDraft() { try { return JSON.parse(localStorage.getItem(draftKey()) || 'null'); } catch { return null; } }
 
@@ -27,9 +27,9 @@ export async function renderMultisite() {
     U.scope = scope; U.sel.clear(); U.result = null;
     const d = loadDraft();
     const srcs = sourceContexts();
-    U.ms = { source: srcs[0]?.name || null, sites: [], assign: new Map(), clientId: '', partition: 'mesh', links: [], out: null, didAssign: {} };
+    U.ms = { source: srcs[0]?.name || null, sites: [], assign: new Map(), clientId: '', partition: 'mesh', links: [], out: null, didAssign: {}, objAssign: {}, moveVm: true };
     // Brouillon d'avant (interSite) : « tous les sites s'appellent », comme le faisait le commun.
-    if (d && srcs.some((s) => s.name === d.source)) U.ms = { source: d.source, sites: d.sites || [], assign: new Map(d.assign || []), clientId: d.clientId || '', partition: d.partition || 'mesh', links: d.links || [], out: d.out || null, didAssign: d.didAssign || {} };
+    if (d && srcs.some((s) => s.name === d.source)) U.ms = { source: d.source, sites: d.sites || [], assign: new Map(d.assign || []), clientId: d.clientId || '', partition: d.partition || 'mesh', links: d.links || [], out: d.out || null, didAssign: d.didAssign || {}, objAssign: d.objAssign || {}, moveVm: d.moveVm !== false };
     U.ms.out = outOf(U.ms);
   }
   // Affectations vers des numéros qui n'existent plus (relecture) : retirées.
@@ -84,6 +84,8 @@ function draw() {
       ${helpBox('ms-h3', 'Numéros de poste du contexte commun (une ligne par numéro ; une ligne partagée n\'apparaît qu\'une fois). Un numéro affecté à un site sera déplacé dans le contexte du site : la ligne suit automatiquement (vérifié dans le code de Wazo), le poste n\'est pas reprovisionné. Non affecté : il reste dans le commun.')}
       ${assignTools()}
       <div class="tablewrap mg-assign"><table class="diff"><thead><tr><th><input type="checkbox" id="ms-all" title="Tout cocher (lignes affichées)"></th><th>Numéro</th><th>Utilisateur(s)</th><th>Site</th></tr></thead><tbody id="ms-rows">${rows()}</tbody></table></div>
+      <label class="inline small"><input type="checkbox" id="ms-vm" ${U.ms.moveVm !== false ? 'checked' : ''}> Messagerie des utilisateurs déplacée avec eux (contexte du site ; Wazo déplace aussi les messages)</label>
+      ${objTable()}
     </div>
     <div class="card mg-card wide" id="ms-plan">${planBox()}</div>`;
   bind();
@@ -106,6 +108,13 @@ function siteRow(s) {
       <label>Entrant <input data-f="incLabel" value="${esc(s.incLabel || '')}" placeholder="${esc(def.inc)}"></label>
     </div>
   </div>`;
+}
+// Groupes, files et conférences du commun et leur site (par défaut : majorité stricte de leurs membres).
+function objTable() {
+  const objs = movableObjects(U.ms.source); if (!objs.length) return '';
+  const opts = (cur) => `<option value="">commun (reste)</option>${U.ms.sites.map((s) => `<option value="${esc(s.key)}" ${s.key === cur ? 'selected' : ''}>${esc(s.label || '(sans nom)')}</option>`).join('')}`;
+  return `<details class="small" open><summary>Groupes, files et conférences (${objs.length}) : déplacés par leur numéro ; les plages du site sont calculées</summary><div class="tablewrap"><table class="diff small"><thead><tr><th>Numéro</th><th>Type</th><th>Nom</th><th>Site</th></tr></thead><tbody>
+    ${objs.map((x) => `<tr><td>${esc(x.exten)}</td><td>${esc(x.what)}</td><td>${esc(x.label)}</td><td><select data-obj="${x.id}">${opts(objSite(U.ms, x))}</select></td></tr>`).join('')}</tbody></table></div></details>`;
 }
 // SDA du tenant et leur site (par défaut : celui de l'utilisateur visé).
 function didTable() {
@@ -198,6 +207,8 @@ function bind() {
   $('ms-add').onclick = () => { U.ms.sites.push(newSite()); saveDraft(); draw(); };
   $('ms-client').oninput = (e) => { U.ms.clientId = e.target.value.trim(); saveDraft(); refreshPlan(); refreshNames(); };
   $('ms-part').onchange = (e) => { U.ms.partition = e.target.value; saveDraft(); draw(); };
+  for (const c of document.querySelectorAll('[data-obj]')) c.onchange = (e) => { U.ms.objAssign = { ...(U.ms.objAssign || {}), [e.target.dataset.obj]: e.target.value }; saveDraft(); refreshPlan(); };
+  $('ms-vm').onchange = (e) => { U.ms.moveVm = e.target.checked; saveDraft(); refreshPlan(); };
   for (const c of document.querySelectorAll('[data-did]')) c.onchange = (e) => { U.ms.didAssign = { ...(U.ms.didAssign || {}), [e.target.dataset.did]: e.target.value }; saveDraft(); refreshPlan(); };
   for (const c of document.querySelectorAll('[data-out]')) c.onchange = (e) => {
     const t = e.target; const o = U.ms.out;
@@ -278,7 +289,7 @@ async function run(p) {
     const j = await executePlan(p, U.ms, prog);
     downloadJson(journalName(j), j);
     U.result = { html: `Bascule terminée : ${j.created.length} contexte(s) créé(s), ${j.entries.filter((e) => e.op === 'move' && !e.skipped).length} numéro(s) déplacé(s). ${esc(j.note || '')} Journal téléchargé. Testez un appel depuis chaque site.` };
-    U.ms.assign.clear(); U.ms.sites = []; U.ms.didAssign = {}; saveDraft();
+    U.ms.assign.clear(); U.ms.sites = []; U.ms.didAssign = {}; U.ms.objAssign = {}; saveDraft();
   } catch (e) {
     if (e.journal) downloadJson(journalName(e.journal), e.journal);
     U.result = { bad: true, html: `Bascule interrompue : ${esc(e.message)}. ${e.journal ? 'Journal téléchargé ; « Annuler cette bascule » remet en place ce qui a été fait.' : 'Rien n\'a été écrit.'}` };
