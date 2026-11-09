@@ -1,11 +1,12 @@
 // Migration Assistant — vue « Import 3CX » (lot 4) : fiche de reprise (état de
 // la sauvegarde 3CX) et brouillon d'import modifiable par onglets (3cx-edit.js),
 // source des exports. Aucune écriture dans Wazo. Lecteur : 3cx.js ; brouillon : 3cx-draft.js.
-import { $, esc, toast, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.55';
-import { I } from './inventory.js?v=0.40.55';
-import { parse3cx, issuesOf, schedulesOf, destText, periodsText, redacted, nameOf, STRATEGY, STRATEGY_FR, KIND_FR } from './3cx.js?v=0.40.55';
-import { buildDraft, buildDevices, loadDraft, saveDraft, blfRows } from './3cx-draft.js?v=0.40.55';
-import { TABS, setDraft, renderTab, tabCounts, onDraftChange, draft } from './3cx-edit.js?v=0.40.55';
+import { $, esc, toast, helpButton, helpBox, downloadJson, confirmModal } from '../common/core.js?v=0.40.56';
+import { FILES } from './3cx-sounds.js?v=0.40.56';
+import { I } from './inventory.js?v=0.40.56';
+import { parse3cx, issuesOf, schedulesOf, destText, periodsText, redacted, nameOf, STRATEGY, STRATEGY_FR, KIND_FR } from './3cx.js?v=0.40.56';
+import { buildDraft, buildDevices, loadDraft, saveDraft, blfRows, storedDrafts, clearStoredDrafts } from './3cx-draft.js?v=0.40.56';
+import { TABS, setDraft, renderTab, tabCounts, onDraftChange, draft } from './3cx-edit.js?v=0.40.56';
 
 const X = { m: null, file: '', tab: 'fiche' };
 const SEV_FR = { error: 'Erreur', warn: 'À vérifier', info: 'Info' };
@@ -32,6 +33,27 @@ export function init3cx() {
     r.readAsText(f);
   };
   onDraftChange(() => drawTabs());
+  $('x3-clear').onclick = clearCache;
+}
+// Vider le cache de l'import : brouillons de tous les fichiers dans ce navigateur, sons déposés
+// (mémoire de la page). La sauvegarde 3CX et Wazo ne sont pas touchés. Le journal d'annulation
+// des phases déjà appliquées est dans le brouillon : signalé, avec le téléchargement proposé avant.
+function clearCache() {
+  const list = storedDrafts(); const applied = list.filter((x) => x.applied);
+  if (!list.length && !FILES.size && !X.m) return toast('Rien à vider : aucun brouillon d\'import dans ce navigateur.', 4000);
+  confirmModal(`<h3>Vider le cache de l'import ?</h3>
+    <p class="small">Supprimé de ce navigateur : ${list.length} brouillon(s) d'import${list.length ? ` (${list.map((x) => `${esc(x.file)}${x.date ? ` du ${esc(x.date)}` : ''}`).join(', ')})` : ''}${FILES.size ? `, ${FILES.size} fichier(s) son déposé(s)` : ''}. La prochaine lecture de la sauvegarde 3CX repart de zéro. Rien n'est modifié dans Wazo.</p>
+    ${applied.length ? `<p class="compat blocking small">${applied.map((x) => esc(x.file)).join(', ')} : des phases ont déjà été appliquées dans Wazo. Leur journal d'annulation est dans le brouillon et sera perdu : télécharger le brouillon (onglet Exports) avant, pour pouvoir le recharger.</p>` : ''}
+    ${X.m && draft() ? '<p class="small"><button type="button" id="x3-clear-dl">Télécharger le brouillon ouvert d\'abord</button></p>' : ''}`, () => {
+    const n = clearStoredDrafts();
+    for (const f of FILES.values()) if (f.url) URL.revokeObjectURL(f.url);
+    FILES.clear();
+    X.m = null; X.file = ''; X.tab = 'fiche';
+    $('x3').innerHTML = '<p class="muted small">Cache vidé. Charger la sauvegarde 3CX pour repartir d\'un brouillon neuf.</p>';
+    toast(`${n} brouillon(s) supprimé(s) de ce navigateur.`, 5000);
+  }, 'Vider');
+  const dl = document.getElementById('x3-clear-dl');
+  if (dl) dl.onclick = () => { const d = draft(); downloadJson(`astrea-3cx-brouillon-${(X.file || '3cx').replace(/\.xml$/i, '')}.json`, d); };
 }
 // Rafraîchit la comparaison avec le tenant après une relecture de l'inventaire.
 export function render3cx() { if (X.m) draw(); }

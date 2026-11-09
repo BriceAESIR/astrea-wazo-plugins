@@ -13,7 +13,7 @@
 // Les objets Wazo correspondants (destinations confd user_id, group_id…) ne
 // sont résolus qu'à l'écriture : convertir une file en groupe ne demande donc
 // aucune reprise des destinations qui la visent.
-import { nameOf, schedulesOf, STRATEGY } from './3cx.js?v=0.40.55';
+import { nameOf, schedulesOf, STRATEGY } from './3cx.js?v=0.40.56';
 
 export const DRAFT_FORMAT = 'astrea-3cx-draft';
 const KEY = 'astrea-migration-3cx-draft-v1';
@@ -269,6 +269,20 @@ const storeKey = (d) => `${KEY}|${d.file}|${d.sourceDate}`;
 export function saveDraft(d) { try { d.savedAt = new Date().toISOString(); localStorage.setItem(storeKey(d), JSON.stringify(d)); return true; } catch { return false; } }
 export function loadDraft(file, sourceDate) { try { const d = JSON.parse(localStorage.getItem(storeKey({ file, sourceDate })) || 'null'); return d?.format === DRAFT_FORMAT ? d : null; } catch { return null; } }
 export function clearDraft(d) { try { localStorage.removeItem(storeKey(d)); } catch { /* */ } }
+// Cache de l'import (demande de Brice, 09/11/2026) : tous les brouillons 3CX gardés dans ce
+// navigateur, quel que soit le fichier. → [{ key, file, date, savedAt, phases }]
+export function storedDrafts() {
+  const out = [];
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i); if (!k?.startsWith(`${KEY}|`)) continue;
+      let d = null; try { d = JSON.parse(localStorage.getItem(k)); } catch { /* brouillon illisible : supprimé aussi */ }
+      out.push({ key: k, file: d?.file || '?', date: d?.sourceDate || '', savedAt: d?.savedAt || '', applied: Object.values(d?.write?.phases || {}).filter((p) => p.undo?.length).length });
+    }
+  } catch { /* stockage indisponible */ }
+  return out;
+}
+export function clearStoredDrafts() { let n = 0; for (const x of storedDrafts()) { try { localStorage.removeItem(x.key); n++; } catch { /* */ } } return n; }
 // Brouillon chargé depuis un fichier : il doit venir de la même sauvegarde.
 export function acceptDraft(json, file, sourceDate) {
   if (json?.format !== DRAFT_FORMAT) throw new Error('ce fichier n\'est pas un brouillon d\'import 3CX');

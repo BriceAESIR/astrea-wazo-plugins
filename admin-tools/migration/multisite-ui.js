@@ -1,12 +1,12 @@
 // Migration Assistant — interface de la bascule multisite (lot 2).
 // Moteur : multisite.js. Brouillon (sites, affectations) gardé dans le
 // navigateur par serveur et tenant (confort seulement).
-import { S, $, esc, toast, canWrite, confirmModal, downloadJson, helpButton, helpBox } from '../common/core.js?v=0.40.55';
-import { I } from './inventory.js?v=0.40.55';
-import { buildExport, exportFileName } from './export.js?v=0.40.55';
-import { sourceContexts, movableExtensions, buildPlan, executePlan, undoJournal, compactRanges, rangesText, parseRanges, liveReload, enableLiveReload, lrMarkedByUs, loadSavedJournal, clearSavedJournal, JOURNAL_FORMAT, PARTITIONS, partitionOf, linkKey, siteNames, tenantDids, didSite, outOf, didsReady, moveDids, movableObjects, objSite, rewriteOn } from './multisite.js?v=0.40.55';
-import { FR_FAMILIES, FR_FORMATS } from './3cx-sites.js?v=0.40.55';
-import { numWazo } from './3cx-draft.js?v=0.40.55';
+import { S, $, esc, toast, canWrite, confirmModal, downloadJson, helpButton, helpBox } from '../common/core.js?v=0.40.56';
+import { I } from './inventory.js?v=0.40.56';
+import { buildExport, exportFileName } from './export.js?v=0.40.56';
+import { sourceContexts, movableExtensions, buildPlan, executePlan, undoJournal, compactRanges, rangesText, parseRanges, liveReload, enableLiveReload, lrMarkedByUs, loadSavedJournal, clearSavedJournal, JOURNAL_FORMAT, PARTITIONS, partitionOf, linkKey, siteNames, tenantDids, didSite, outOf, didsReady, moveDids, movableObjects, objSite, rewriteOn } from './multisite.js?v=0.40.56';
+import { FR_FAMILIES, FR_FORMATS } from './3cx-sites.js?v=0.40.56';
+import { numWazo } from './3cx-draft.js?v=0.40.56';
 
 const DRAFT_KEY = 'astrea-migration-ms-draft-v1';
 const U = { ms: null, scope: null, q: '', sel: new Set(), busy: false, reload: null, lr: null, result: null };
