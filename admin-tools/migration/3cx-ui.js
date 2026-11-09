@@ -1,12 +1,12 @@
 // Migration Assistant — vue « Import 3CX » (lot 4) : fiche de reprise (état de
 // la sauvegarde 3CX) et brouillon d'import modifiable par onglets (3cx-edit.js),
 // source des exports. Aucune écriture dans Wazo. Lecteur : 3cx.js ; brouillon : 3cx-draft.js.
-import { $, esc, toast, helpButton, helpBox, downloadJson, confirmModal } from '../common/core.js?v=0.40.60';
-import { FILES } from './3cx-sounds.js?v=0.40.60';
-import { I } from './inventory.js?v=0.40.60';
-import { parse3cx, issuesOf, schedulesOf, destText, periodsText, redacted, nameOf, STRATEGY, STRATEGY_FR, KIND_FR } from './3cx.js?v=0.40.60';
-import { buildDraft, buildDevices, loadDraft, saveDraft, blfRows, storedDrafts, clearStoredDrafts } from './3cx-draft.js?v=0.40.60';
-import { TABS, setDraft, renderTab, tabCounts, onDraftChange, draft } from './3cx-edit.js?v=0.40.60';
+import { $, esc, toast, helpButton, helpBox, downloadJson, confirmModal } from '../common/core.js?v=0.40.61';
+import { FILES } from './3cx-sounds.js?v=0.40.61';
+import { I } from './inventory.js?v=0.40.61';
+import { parse3cx, issuesOf, schedulesOf, destText, periodsText, redacted, rehydrate, nameOf, STRATEGY, STRATEGY_FR, KIND_FR } from './3cx.js?v=0.40.61';
+import { buildDraft, buildDevices, loadDraft, saveDraft, blfRows, storedDrafts, clearStoredDrafts, draftByKey, saveModel, loadModel, modelKeys } from './3cx-draft.js?v=0.40.61';
+import { TABS, setDraft, renderTab, tabCounts, onDraftChange, draft } from './3cx-edit.js?v=0.40.61';
 
 const X = { m: null, file: '', tab: 'fiche' };
 const SEV_FR = { error: 'Erreur', warn: 'À vérifier', info: 'Info' };
@@ -25,6 +25,7 @@ export function init3cx() {
         if (saved && !saved.devices) saved.devices = buildDevices(X.m, saved.users);
         const d = saved || buildDraft(X.m, f.name);
         saveDraft(d);
+        saveModel(d, redacted(X.m)); // pour rouvrir sans le XML (sans les secrets)
         setDraft(d, X.m, f.name, () => {});
         draw();
         toast(saved ? 'Sauvegarde 3CX lue ; brouillon repris là où vous l\'aviez laissé.' : 'Sauvegarde 3CX lue (dans le navigateur, rien n\'a été envoyé) ; brouillon créé.', 5000);
@@ -34,6 +35,34 @@ export function init3cx() {
   };
   onDraftChange(() => drawTabs());
   $('x3-clear').onclick = clearCache;
+  $('x3').onclick = (e) => {
+    const b = e.target.closest('[data-x3open]'); if (b) return reopen(b.dataset.x3open);
+    if (e.target.closest('#x3-close')) { X.m = null; X.file = ''; X.tab = 'fiche'; drawHome(); }
+  };
+  drawHome();
+}
+// Accueil de l'import : brouillons gardés dans ce navigateur, à rouvrir sans le XML s'ils ont leur
+// analyse en cache (brouillons d'avant la 0.40.61 : il faut recharger la sauvegarde une fois).
+async function drawHome() {
+  if (X.m) return;
+  const list = storedDrafts().sort((a, b) => String(b.savedAt).localeCompare(String(a.savedAt)));
+  const has = await modelKeys();
+  if (X.m) return;
+  const when = (s) => (s ? new Date(s).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }) : '?');
+  $('x3').innerHTML = `<p class="muted small">Dans 3CX : Sauvegarde et restauration, puis récupérer le fichier XML de la sauvegarde (dans l'archive ZIP).</p>
+    ${list.length ? `<div class="card mg-card wide"><h3>Brouillons gardés dans ce navigateur (${list.length})</h3>
+      <table class="diff"><thead><tr><th>Client</th><th>Fichier</th><th>Sauvegarde 3CX du</th><th>Modifié le</th><th>Écriture</th><th></th></tr></thead><tbody>${list.map((x) => `<tr><td>${esc(x.company || '?')}</td><td>${esc(x.file)}</td><td>${esc(x.date)}</td><td>${esc(when(x.savedAt))}</td><td>${x.applied ? `${x.applied} phase(s) appliquée(s)` : '<span class="muted">rien d\'écrit</span>'}</td>
+        <td>${has.has(x.key) ? `<button type="button" class="primary" data-x3open="${esc(x.key)}">Reprendre</button>` : '<span class="muted small">recharger la sauvegarde 3CX une fois</span>'}</td></tr>`).join('')}</tbody></table>
+      <p class="muted small">Repris sans le fichier XML, le brouillon n'a pas les codes des messageries 3CX (jamais gardés dans le navigateur) : recharger la sauvegarde avant le CSV des utilisateurs si les codes 3CX doivent être repris.</p></div>` : ''}`;
+}
+async function reopen(key) {
+  const d = draftByKey(key); const r = await loadModel(key);
+  if (!d || !r) { toast('Brouillon ou analyse introuvable dans ce navigateur : recharger la sauvegarde 3CX.', 6000); return drawHome(); }
+  X.m = rehydrate(r); X.file = d.file; X.tab = 'fiche';
+  if (!d.devices) d.devices = buildDevices(X.m, d.users);
+  setDraft(d, X.m, d.file, () => {});
+  draw();
+  toast('Brouillon repris depuis ce navigateur (sans le fichier XML).', 4000);
 }
 // Vider le cache de l'import : brouillons de tous les fichiers dans ce navigateur, sons déposés
 // (mémoire de la page). La sauvegarde 3CX et Wazo ne sont pas touchés. Le journal d'annulation
@@ -62,7 +91,7 @@ function draw() {
   const m = X.m;
   $('x3').innerHTML = `
     <div class="card mg-card wide x3-head">
-      <div><strong>${esc(m.company || 'Sauvegarde 3CX')}</strong> · 3CX ${esc(m.version)} · sauvegarde du ${esc(m.date)} · ${esc(X.file)}</div>
+      <div class="x3-headrow"><div><strong>${esc(m.company || 'Sauvegarde 3CX')}</strong> · 3CX ${esc(m.version)} · sauvegarde du ${esc(m.date)} · ${esc(X.file)}${m.fromCache ? ' <span class="muted small">(repris du navigateur, sans le XML : codes des messageries 3CX absents)</span>' : ''}</div><span class="spacer"></span><button type="button" id="x3-close" class="noprint">Fermer le brouillon</button></div>
       <div class="muted small">${m.extensions.length} postes, ${m.ringGroups.length} groupes, ${m.queues.length} file(s), ${m.ivrs.filter((v) => !v.system).length} SVI, ${m.trunks.reduce((s, t) => s + t.dids.length, 0)} SDA, ${m.holidays.filter((h) => !h.past).length} fermeture(s) à venir ou récurrente(s), ${m.prompts.length} fichier(s) son.</div>
     </div>
     <nav class="x3-tabs noprint" id="x3-tabs"></nav>

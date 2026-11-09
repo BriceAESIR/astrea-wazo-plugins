@@ -13,7 +13,7 @@
 // Les objets Wazo correspondants (destinations confd user_id, group_id…) ne
 // sont résolus qu'à l'écriture : convertir une file en groupe ne demande donc
 // aucune reprise des destinations qui la visent.
-import { nameOf, schedulesOf, STRATEGY } from './3cx.js?v=0.40.60';
+import { nameOf, schedulesOf, STRATEGY } from './3cx.js?v=0.40.61';
 
 export const DRAFT_FORMAT = 'astrea-3cx-draft';
 const KEY = 'astrea-migration-3cx-draft-v1';
@@ -290,12 +290,38 @@ export function storedDrafts() {
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i); if (!k?.startsWith(`${KEY}|`)) continue;
       let d = null; try { d = JSON.parse(localStorage.getItem(k)); } catch { /* brouillon illisible : supprimé aussi */ }
-      out.push({ key: k, file: d?.file || '?', date: d?.sourceDate || '', savedAt: d?.savedAt || '', applied: Object.values(d?.write?.phases || {}).filter((p) => p.undo?.length).length });
+      out.push({ key: k, file: d?.file || '?', company: d?.company || '', date: d?.sourceDate || '', savedAt: d?.savedAt || '', applied: Object.values(d?.write?.phases || {}).filter((p) => p.undo?.length).length });
     }
   } catch { /* stockage indisponible */ }
   return out;
 }
-export function clearStoredDrafts() { let n = 0; for (const x of storedDrafts()) { try { localStorage.removeItem(x.key); n++; } catch { /* */ } } return n; }
+export function clearStoredDrafts() { let n = 0; for (const x of storedDrafts()) { try { localStorage.removeItem(x.key); n++; } catch { /* */ } } clearModels(); return n; }
+export const draftKey = storeKey;
+export function draftByKey(key) { try { const d = JSON.parse(localStorage.getItem(key) || 'null'); return d?.format === DRAFT_FORMAT ? d : null; } catch { return null; } }
+
+// Analyse de la sauvegarde gardée avec le brouillon (demande de Brice, 09/11/2026 : rouvrir un
+// brouillon sans recharger le XML). Sans les secrets (redacted de 3cx.js : identifiants SIP, codes
+// des messageries), dans IndexedDB (trop gros pour localStorage). Rouvert sans le XML, le modèle
+// n'a donc pas les codes : marqué fromCache, les exports qui en ont besoin le disent.
+const IDB = 'astrea-migration-3cx'; const STORE = 'models';
+function idb() {
+  return new Promise((ok, ko) => {
+    const r = indexedDB.open(IDB, 1);
+    r.onupgradeneeded = () => r.result.createObjectStore(STORE);
+    r.onsuccess = () => ok(r.result); r.onerror = () => ko(r.error);
+  });
+}
+async function idbDo(mode, fn) {
+  const db = await idb();
+  try {
+    return await new Promise((ok, ko) => { const tx = db.transaction(STORE, mode); const q = fn(tx.objectStore(STORE)); tx.oncomplete = () => ok(q?.result); tx.onerror = () => ko(tx.error); });
+  } finally { db.close(); }
+}
+export async function saveModel(d, model) { try { await idbDo('readwrite', (s) => s.put(model, storeKey(d))); return true; } catch { return false; } }
+export async function loadModel(key) { try { return (await idbDo('readonly', (s) => s.get(key))) || null; } catch { return null; } }
+export async function modelKeys() { try { return new Set(await idbDo('readonly', (s) => s.getAllKeys())); } catch { return new Set(); } }
+export async function deleteModel(key) { try { await idbDo('readwrite', (s) => s.delete(key)); } catch { /* */ } }
+export async function clearModels() { try { await idbDo('readwrite', (s) => s.clear()); } catch { /* stockage indisponible */ } }
 // Brouillon chargé depuis un fichier : il doit venir de la même sauvegarde.
 export function acceptDraft(json, file, sourceDate) {
   if (json?.format !== DRAFT_FORMAT) throw new Error('ce fichier n\'est pas un brouillon d\'import 3CX');

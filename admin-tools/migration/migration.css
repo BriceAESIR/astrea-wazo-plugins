@@ -199,7 +199,9 @@ input.short { width: 110px !important; }
 .x3w-todo, .x3w-plan { margin: 6px 0; padding-left: 22px; line-height: 1.6; }
 .x3w-step .btnrow { margin-top: 8px; }
 .x3w-step code { font-size: .75rem; }
-/* Parcours guidé : barre d'étapes, une étape affichée, navigation en bas. */
+.x3-headrow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.x3-headrow .spacer { flex: 1; }
+/* Parcours guidé :barre d'étapes, une étape affichée, navigation en bas. */
 .x3w-bar { list-style: none; display: flex; flex-wrap: wrap; gap: 4px; margin: 0 0 10px; padding: 0; max-width: 980px; }
 .x3w-bar li { flex: 1 1 140px; }
 .x3w-bar button { width: 100%; display: flex; align-items: center; gap: 8px; padding: 6px 10px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); color: var(--muted); font-size: .8125rem; text-transform: none; letter-spacing: normal; text-align: left; cursor: pointer; }

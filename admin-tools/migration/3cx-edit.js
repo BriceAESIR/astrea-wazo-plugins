@@ -2,19 +2,19 @@
 // Modèle et règles : 3cx-draft.js. Chaque modification est enregistrée dans le
 // navigateur (brouillon par fichier et date de sauvegarde) ; rien n'est écrit
 // dans Wazo depuis ces tableaux.
-import { $, esc, toast, helpButton, helpBox, confirmModal, downloadJson } from '../common/core.js?v=0.40.60';
-import { I } from './inventory.js?v=0.40.60';
+import { $, esc, toast, helpButton, helpBox, confirmModal, downloadJson } from '../common/core.js?v=0.40.61';
+import { I } from './inventory.js?v=0.40.61';
 import {
   GROUP_STRATEGIES, MODES, HUNT_TARGETS, LICENCES, AUTH_METHODS, effectiveUsername, isVoix, applyLicence, fillCallerIds, callerIdWazo, upgradeDraft, saveDraft, clearDraft, buildDraft, acceptDraft, userBy, userName, imported,
   destLabel, destProblem, draftIssues, usersCsv, blfRows, devicesCsv, deviceDesc, macWazo, macValid, tenantIssues,
   LINE_MODES, linesOf, VM_LANGS, vmEmail, upperName, upgradeSchedules, pastHolidays, didWazo, VERIFY,
-} from './3cx-draft.js?v=0.40.60';
-import { setWizard, wizardTab, wizardChange, wizardClick, wizardDone, wizardTotal } from './3cx-wizard.js?v=0.40.60';
-import { unitCfg, unitLabels, autoRanges, RANGE_KEYS, rangeIssues, unitPrefix, wazoNum, wazoNumOf, renumbers, numberIssues } from './3cx-sites.js?v=0.40.60';
-import { rangesText } from './multisite.js?v=0.40.60';
-import { WAZO_FIELDS, tagsOf, tagLabel, tagChecked, ensurePhonebook, phonebookName, phonebookIssues, companyContacts, personalCsv, toWazoContact, csvKeys } from './3cx-phonebook.js?v=0.40.60';
-import { SORTS, CATEGORY_RE, soundUsages, ensureSounds, mohLabel, soundCategory, FILES, keyOf, loaded, addFiles, addFileAs, targetName } from './3cx-sounds.js?v=0.40.60';
-import { DEPT_MODES, deptLabel, ensureDepts, deptObjects, unitOf, unitList, setDeptMode, moveObject } from './3cx-depts.js?v=0.40.60';
+} from './3cx-draft.js?v=0.40.61';
+import { setWizard, wizardTab, wizardChange, wizardClick, wizardDone, wizardTotal } from './3cx-wizard.js?v=0.40.61';
+import { unitCfg, unitLabels, autoRanges, RANGE_KEYS, rangeIssues, unitPrefix, wazoNum, wazoNumOf, renumbers, numberIssues } from './3cx-sites.js?v=0.40.61';
+import { rangesText } from './multisite.js?v=0.40.61';
+import { WAZO_FIELDS, tagsOf, tagLabel, tagChecked, ensurePhonebook, phonebookName, phonebookIssues, companyContacts, personalCsv, toWazoContact, csvKeys } from './3cx-phonebook.js?v=0.40.61';
+import { SORTS, CATEGORY_RE, soundUsages, ensureSounds, mohLabel, soundCategory, FILES, keyOf, loaded, addFiles, addFileAs, targetName } from './3cx-sounds.js?v=0.40.61';
+import { DEPT_MODES, deptLabel, ensureDepts, deptObjects, unitOf, unitList, setDeptMode, moveObject } from './3cx-depts.js?v=0.40.61';
 
 const E = { d: null, m: null, file: '', tab: 'users', sel: { users: new Set(), dids: new Set(), vms: new Set() }, q: '', onReset: null };
 export const TABS = [
@@ -850,6 +850,8 @@ function exportUsers() {
   if (!ctx && !ctxOf) return toast('Choisissez le contexte interne (tenant Wazo à ouvrir dans le portail).', 6000);
   const needIn = E.d.dids.some((r) => r.import && r.viaCsv && r.dest.t === 'user');
   if (needIn && !incallCtx) return toast('Aucun contexte entrant : décochez « CSV » dans l\'onglet SDA, ou ouvrez le bon tenant.', 6000);
+  // Brouillon repris sans le XML : codes 3CX absents (jamais gardés dans le navigateur).
+  if (E.m.fromCache && imported(E.d).some((u) => u.vm && u.vmPin)) return toast('Codes des messageries 3CX non disponibles (brouillon repris sans le fichier XML) : recharger la sauvegarde 3CX, puis relancer le CSV.', 8000);
   const pins = Object.fromEntries(E.m.extensions.map((e) => [e.number, e.vm.pin]));
   const go = () => download(`wazo-import-utilisateurs-${base()}.csv`, usersCsv(E.d, { ctx, incallCtx, pins, ctxOf, incallOf, numOf: (u) => wazoNum(E.d, u) }));
   const errs = [...tenantChecks(), ...draftIssues(E.d).filter((x) => x.area.startsWith('Utilisateur '))].filter((x) => x.sev === 'error');

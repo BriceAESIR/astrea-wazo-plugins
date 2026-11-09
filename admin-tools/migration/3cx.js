@@ -427,3 +427,15 @@ export function wazoUsersCsv(m, { ctx, incallCtx, vmPin = false, withDids = true
 export function redacted(m) {
   return JSON.parse(JSON.stringify({ ...m, dn: undefined }, (k, v) => (['authId', 'pin'].includes(k) && v ? SECRET : v)));
 }
+// Modèle relu depuis le cache (redacted) : index des numéros reconstruit dans l'ordre de parse3cx
+// (mêmes objets que les listes). Codes absents : fromCache le signale aux exports.
+export function rehydrate(r) {
+  const m = { ...r, dn: new Map(), fromCache: true };
+  const reg = (kind, list, name) => { for (const x of list || []) if (x.number) m.dn.set(x.number, { kind: kind || x.kind, name: name(x), obj: x }); };
+  reg('Extension', m.extensions, (x) => [x.first, x.last].filter(Boolean).join(' '));
+  reg('RingGroup', m.ringGroups, (x) => x.name); reg('Queue', m.queues, (x) => x.name); reg('IVR', m.ivrs, (x) => x.name);
+  reg('', m.parks, (x) => x.name); reg('', m.others, (x) => x.name);
+  // Code masqué gardé tel quel (« *** ») : l'onglet Messageries sait qu'il existe, et le CSV refuse
+  // de partir sans la sauvegarde (contrôle de 3cx-edit.js).
+  return m;
+}
