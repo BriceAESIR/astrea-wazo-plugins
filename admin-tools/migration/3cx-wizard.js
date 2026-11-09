@@ -11,16 +11,16 @@
 // de l'assistant France de Call Flow ; lues dans le code, testées sur faux tenant). Les phases
 // Personnes, Routage et Finitions sont planifiées (lecture seule) ; leur
 // écriture arrive aux lots 5b-5d.
-import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.65';
-import { I, sameTenant } from './inventory.js?v=0.40.65';
-import { buildExport, exportFileName } from './export.js?v=0.40.65';
-import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText, didWazo, numWazo, unverified } from './3cx-draft.js?v=0.40.65';
+import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.66';
+import { I, sameTenant } from './inventory.js?v=0.40.66';
+import { buildExport, exportFileName } from './export.js?v=0.40.66';
+import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText, didWazo, numWazo, unverified, defaultVmo, vmEmail, isVoix, deviceDesc } from './3cx-draft.js?v=0.40.66';
 import {
   SITE_MODES, FR_FAMILIES, FR_FORMATS, BLOCK_118, defaultSite, defaultOut, clientPatterns, unitDids, rangeIssues, occupancy, placements, unitLabels, unitCfg, futureOf, siteChecks, routeText, newRanges, multi as multiSites, wazoNum, numberIssues, NO_TRUNK, exitOk, outcallName,
-} from './3cx-sites.js?v=0.40.65';
-import { unitList, unitOf, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.65';
-import { mohLabel, soundCategory, loaded, uniqueNames, putBinary, CATEGORY_RE } from './3cx-sounds.js?v=0.40.65';
-import { phonebookName, companyContacts, sourceColumns, dird } from './3cx-phonebook.js?v=0.40.65';
+} from './3cx-sites.js?v=0.40.66';
+import { unitList, unitOf, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.66';
+import { mohLabel, soundCategory, loaded, uniqueNames, putBinary, CATEGORY_RE } from './3cx-sounds.js?v=0.40.66';
+import { phonebookName, companyContacts, sourceColumns, dird, personalCsv } from './3cx-phonebook.js?v=0.40.66';
 
 const W = { d: null, m: null, t: null, busy: false, msg: null, at: null };
 export function setWizard(d, m) { W.d = d; W.m = m; W.t = null; W.msg = null; ensureState(); }
@@ -56,6 +56,17 @@ async function logd(method, path, body) {
   if (!r.ok) { let m = `call-logd ${method} ${path} → ${r.status}`; try { m += ' ' + JSON.stringify(await r.json()).slice(0, 300); } catch { /* */ } throw new ApiError(r.status, m); }
   return r.status === 204 ? null : r.json();
 }
+// wazo-auth (compte des applications) : mêmes en-têtes, comme User Manager (users/settings.js authApi).
+async function authd(method, path, body) {
+  guard();
+  if (S.readonly && method !== 'GET') throw new ApiError(0, `Lecture seule : ${S.readonly}`);
+  const headers = { 'X-Auth-Token': S.token, Accept: 'application/json' };
+  if (S.tenant) headers['Wazo-Tenant'] = S.tenant;
+  if (body !== undefined) headers['Content-Type'] = 'application/json';
+  const r = await fetch(`${S.base}/api/auth/0.1${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+  if (!r.ok) { let m = `wazo-auth ${method} ${path} → ${r.status}`; try { m += ' ' + JSON.stringify(await r.json()).slice(0, 300); } catch { /* */ } throw new ApiError(r.status, m); }
+  return r.status === 204 ? null : r.json();
+}
 const e164 = numWazo; // même normalisation que le brouillon (3cx-draft.js)
 const soft = async (fn, fallback) => { try { return await fn(); } catch (e) { return fallback(e); } };
 
@@ -64,11 +75,11 @@ const soft = async (fn, fallback) => { try { return await fn(); } catch (e) { re
 // ---------------------------------------------------------------------------
 async function readTenant() {
   const list = (p) => soft(() => listAll(p), (e) => ({ error: e.message, items: [] }));
-  const [contexts, extensions, trunks, outcalls, users, voicemails, devices, groups, queues, ivrs, schedules, incalls, phones, perms, moh, sounds] = await Promise.all(
-    ['/contexts', '/extensions', '/trunks', '/outcalls', '/users', '/voicemails', '/devices', '/groups', '/queues', '/ivr', '/schedules', '/incalls', '/phone-numbers', '/callpermissions', '/moh', '/sounds'].map(list));
+  const [contexts, extensions, trunks, outcalls, users, voicemails, devices, groups, queues, ivrs, schedules, incalls, phones, perms, moh, sounds, lines] = await Promise.all(
+    ['/contexts', '/extensions', '/trunks', '/outcalls', '/users', '/voicemails', '/devices', '/groups', '/queues', '/ivr', '/schedules', '/incalls', '/phone-numbers', '/callpermissions', '/moh', '/sounds', '/lines'].map(list));
   const unwrap = (x) => (Array.isArray(x) ? x : []);
   const t = {
-    at: new Date(), contexts: unwrap(contexts), extensions: unwrap(extensions), trunks: unwrap(trunks), outcalls: unwrap(outcalls), users: unwrap(users), voicemails: unwrap(voicemails),
+    at: new Date(), contexts: unwrap(contexts), extensions: unwrap(extensions), trunks: unwrap(trunks), outcalls: unwrap(outcalls), users: unwrap(users), voicemails: unwrap(voicemails), lines: unwrap(lines),
     devices: unwrap(devices), groups: unwrap(groups), queues: unwrap(queues), ivrs: unwrap(ivrs), schedules: unwrap(schedules), incalls: unwrap(incalls), phones: unwrap(phones), perms: unwrap(perms), moh: unwrap(moh), sounds: unwrap(sounds),
     phonesError: phones?.error || null,
   };
@@ -200,6 +211,8 @@ function prerequisites(t) {
   const s = W.d.write.site; const decided = c.many || s.mode || s.created;
   const NEWCTX_HINT = `choisir « ${SITE_MODES.new} » ci-dessous pour que l'outil le crée, ou en créer un dans le Portal puis relire le tenant.`;
   // Contexte interne absent : signalé par siteChecks (même étape).
+  // Contextes du client pas encore créés : Personnes et Routage attendent les Fondations.
+  if (c.units.some((u) => u.ctxObj?.virtual)) add('fix', 'Contextes du client', 'créés par la phase Fondations : Personnes et Routage attendent qu\'elle soit appliquée.', ['people', 'routing']);
   if (decided && !c.incall && c.units.some((u) => !u.inc)) add('error', 'Contexte entrant', `aucun contexte entrant dans le tenant, les SDA ne pourraient pas être créées : ${NEWCTX_HINT}`, ['routing'], 'site');
   // Site Wazo, contextes et appels simulés (bloquant pour tout : les numéros en dépendent).
   // Trunks jamais modifiés par l'outil (décision de Brice, 04/11/2026). Contexte entrant d'un jeu
@@ -216,7 +229,11 @@ function prerequisites(t) {
   }
   // Plages des contextes à créer (saisies dans l'onglet Départements, ou calculées).
   if (c.units.some((u) => u.newCtx)) for (const x of rangeIssues(W.d)) add(x.sev, x.title, x.text, x.sev === 'error' ? ['found', 'people', 'routing'] : [], 'site');
-  for (const x of siteChecks(t, W.d, (id) => trunkLabel(t, id)).issues) add(x.sev === 'info' ? 'remind' : x.sev, x.title, x.text, x.sev === 'error' ? ['found', 'people', 'routing'] : [], 'site');  const tIss = c.internal ? tenantIssues(W.d, { ctx: c.internal.name, incallCtx: c.incall?.name, numOf: (u) => wazoNum(W.d, u) }, { contexts: c.internal.virtual ? [...t.contexts, c.internal] : t.contexts, extensions: t.extensions, users: t.users, voicemails: t.voicemails }) : [];
+  for (const x of siteChecks(t, W.d, (id) => trunkLabel(t, id)).issues) add(x.sev === 'info' ? 'remind' : x.sev, x.title, x.text, x.sev === 'error' ? ['found', 'people', 'routing'] : [], 'site');  // Utilisateurs déjà créés par la phase Personnes : leurs numéros, messageries et e-mails sont les leurs,
+  // pas des conflits (sinon « numéro déjà utilisé » bloquerait « Compléter » et le Routage).
+  const mk = made(); const live = new Set(t.users.map((x) => x.uuid));
+  const notMade = { ...W.d, users: W.d.users.filter((u) => !(mk.users[u.n] && live.has(mk.users[u.n]))) };
+  const tIss = c.internal ? tenantIssues(notMade, { ctx: c.internal.name, incallCtx: c.incall?.name, numOf: (u) => wazoNum(W.d, u) }, { contexts: c.internal.virtual ? [...t.contexts, c.internal] : t.contexts, extensions: t.extensions, users: t.users, voicemails: t.voicemails }) : [];
   // Numéros hors des plages : corrigés par la phase Fondations (ajout des plages), pas une erreur à régler à la main.
   for (const x of tIss.filter((y) => y.sev === 'error' && !/hors des plages/.test(y.text))) add('error', x.area, x.text, ['people']);
   for (const { ctx, unit } of rangeTargets(c)) {
@@ -250,7 +267,7 @@ const blockedPhases = (pre) => new Set(pre.filter((p) => ['error', 'manual', 'fi
 // ---------------------------------------------------------------------------
 const PHASES = [
   { id: 'found', title: 'Fondations', help: 'Réglages du tenant et ce dont dépendent les appels : pays, conservation des données, numéros publics, appels sortants.', lot: null },
-  { id: 'people', title: 'Personnes', help: 'Messageries communes, utilisateurs (licence, ligne, numéro, messagerie, compte des applications) et appareils associés. Création objet par objet comme l\'import de Wazo (décision de Brice).', lot: '5b' },
+  { id: 'people', title: 'Personnes', help: 'Messageries communes, appareils (par MAC), puis utilisateurs : licence, ligne(s), numéro, messagerie, appareil associé, compte des applications. Un utilisateur à la fois, comme le portail ; si son compte est refusé, il est supprimé. Les identifiants des comptes ouverts se téléchargent après la phase (jamais gardés).', lot: null },
   { id: 'routing', title: 'Routage', help: 'Horaires, groupes et files, SVI, SDA : dans cet ordre, chaque objet après ses cibles.', lot: '5c' },
   { id: 'finish', title: 'Finitions', help: 'Renvois et débordements (deuxième passe, quand toutes les cibles existent), touches de fonction. L\'annuaire de la société est écrit par les Fondations.', lot: '5c / 5d' },
 ];
@@ -326,18 +343,12 @@ function buildPlan(t) {
     const willExist = name || sp.def.files.some((f) => loaded(f));
     add('found', done ? 'exists' : willExist ? 'update' : 'conflict', `Musique d'attente par défaut : « ${sp.def.label} »`, done ? 'déjà réglée (moh_suggest du modèle SIP global)' : willExist ? 'option moh_suggest du modèle SIP global (comme le Wizard de déploiement de Wazo), les autres options du modèle inchangées' : 'musique absente de Wazo : déposer ses fichiers (onglet Sons), puis « Compléter »');
   }
-  // Personnes
-  const unitCtx = new Set(c.units.map((u) => u.ctx));
-  const vmIn = new Set(t.voicemails.filter((v) => unitCtx.has(v.context)).map((v) => String(v.number)));
-  for (const u of d.users.filter((x) => x.mode === 'voicemail')) add('people', vmIn.has(u.n) ? 'exists' : 'create', `Messagerie commune ${u.n} ${userName(u)}`, vmIn.has(u.n) ? 'déjà présente' : '');
-  const extIn = new Set(t.extensions.filter((e) => unitCtx.has(e.context)).map((e) => e.exten));
-  for (const u of imported(d)) {
-    const lic = u.sub == null ? 'licence à choisir' : LICENCES[u.sub];
-    const wn = wazoNum(d, u);
-    add('people', extIn.has(wn) ? 'conflict' : u.sub == null ? 'conflict' : 'create', `Utilisateur ${wn}${wn !== u.n ? ` (${u.n} dans 3CX)` : ''} ${userName(u)}`, extIn.has(wn) ? 'numéro déjà pris dans le contexte' : `${lic}, ligne${linesOf(u).length > 1 ? 's' : ''} ${linesText(u)}${u.vm ? ', messagerie' : ''}${u.checked ? '' : ' · non vérifié'}`);
-  }
-  const macs = new Set(t.devices.map((x) => String(x.mac || '').toLowerCase()));
-  for (const dv of (d.devices || []).filter((x) => x.import)) add('people', macs.has(dv.mac.toLowerCase()) ? 'exists' : 'create', `Appareil ${dv.model} ${dv.mac}`, `${macs.has(dv.mac.toLowerCase()) ? 'déjà présent : sera associé' : 'à créer'}${dv.owner ? ` → ligne de ${dv.owner}` : ' (stock)'}`);
+  // Personnes : état calculé par peopleState (même calcul que les écritures).
+  const ps = peopleState(t, c);
+  for (const x of ps.vms) add('people', x.status, `Messagerie commune ${x.num} ${userName(x.u)}`, x.why);
+  for (const x of ps.devices) add('people', x.status, `Appareil ${x.dv.model} ${x.dv.mac}`, x.why);
+  for (const x of ps.users) add('people', x.status, `Utilisateur ${x.num}${x.num !== x.u.n ? ` (${x.u.n} dans 3CX)` : ''} ${userName(x.u)}`, x.why);
+  const extIn = new Set(t.extensions.filter((e) => c.units.some((u) => u.ctx === e.context)).map((e) => e.exten));
   // Routage
   const schedNames = new Set(t.schedules.map((s) => s.name));
   for (const s of d.schedules.filter((x) => d.dids.some((r) => r.import && r.schedule === x.key))) add('routing', schedNames.has(s.name) ? 'exists' : 'create', `Horaire « ${s.name} »`, s.text);
@@ -448,6 +459,166 @@ function losses() {
 const didRange = (n) => ({ start: n, end: n, did_length: String(n).length });
 // Contextes entrants créés par l'outil avant la 0.40.65 : plages sans did_length.
 const zeroDidCtx = (t, c) => c.units.filter((u) => u.created && u.inc).map((u) => t.contexts.find((x) => x.name === u.inc)).filter((x) => x && (x.incall_ranges || []).some((r) => !r.did_length && /^\d+$/.test(r.start)));
+// ---------------------------------------------------------------------------
+// Phase Personnes (lot 5b, 09/11/2026). Lu dans wazo-confd :
+//  - POST /users (user/middleware.py create) : utilisateur, messagerie imbriquée (UserVoicemailSchema,
+//    create_voicemail : créée puis associée), lignes (create_line : endpoint SIP, numéro créé ou repris
+//    s'il existe déjà, d'où SIP + WebRTC au même numéro ; device_id : assign_tenant puis association).
+//    Même flux que User Manager (users/create.js, validé en réel) ;
+//  - endpoint : name = username, comme l'import (user_import/creators.py SipCreator) et le portail ;
+//    modèles global (+ webrtc) du tenant (WebRTCCreator) ;
+//  - compte des applications : POST /api/auth/0.1/users à part, comme le portail et User Manager. S'il est
+//    refusé, l'utilisateur est supprimé (DELETE /users/{uuid}?recursive=true : appareil dissocié, lignes
+//    et messagerie supprimées, user/middleware.py delete) : rien à moitié créé ;
+//  - appareil : POST /devices {mac, description} (device/schema.py ; MAC unique, device/validator.py),
+//    sans plugin ni modèle : provd les reconnaît au premier contact du poste (SUPPOSÉ, à tester) ;
+//  - messagerie commune : POST /voicemails (voicemail/schema.py), valeurs envoyées explicitement.
+// Idempotence : ce que la phase a créé est noté (write.made) et relu dans le tenant ; « Compléter »
+// reprend le reste. Codes 3CX des messageries : lus dans la sauvegarde, jamais stockés.
+// ---------------------------------------------------------------------------
+const made = () => (W.d.write.made ||= { users: {}, vms: {}, devices: {} });
+const rnd = (n, set) => { const a = new Uint32Array(n); crypto.getRandomValues(a); return [...a].map((x) => set[x % set.length]).join(''); };
+const PW_SET = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+const unitOfUser = (c, u) => (c.many ? c.units.find((x) => x.key === unitOf(W.d, u)) : c.units[0]);
+const pinOf = (u) => { const p = W.m?.extensions.find((e) => e.number === u.n)?.vm?.pin || ''; return /^\d+$/.test(p) ? p : ''; };
+const needsPin = (u) => u.vm && u.vmPin;
+// → { vms, devices, users } : [{ u|dv, num, ctx, status, why, ... }]
+function peopleState(t, c) {
+  const d = W.d; const mk = made();
+  const uuids = new Set(t.users.map((x) => x.uuid)); const vmIds = new Set(t.voicemails.map((x) => x.id));
+  const taken = new Set(t.extensions.map((e) => `${e.exten}@${e.context}`));
+  const vmTaken = new Set(t.voicemails.map((v) => `${v.number}@${v.context}`));
+  const mails = new Set(t.users.filter((x) => x.email).map((x) => x.email.toLowerCase()));
+  const byMac = new Map(t.devices.map((x) => [String(x.mac || '').toLowerCase(), x]));
+  const busy = new Set(t.lines.map((l) => l.device_id).filter(Boolean));
+  const noCtx = (un) => !un?.ctxObj || un.ctxObj.virtual;
+  const vms = d.users.filter((u) => u.mode === 'voicemail').map((u) => {
+    const un = unitOfUser(c, u); const num = wazoNum(d, u); const ctx = un?.ctx;
+    const done = mk.vms[u.n] && vmIds.has(mk.vms[u.n]);
+    const st = done ? ['exists', 'créée par l\'outil'] : noCtx(un) ? ['conflict', 'contexte du client pas encore créé (Fondations)'] : vmTaken.has(`${num}@${ctx}`) ? ['conflict', 'numéro de messagerie déjà pris dans le contexte']
+      : needsPin(u) && W.m?.fromCache ? ['conflict', 'code 3CX à reprendre : recharger la sauvegarde 3CX'] : ['create', `${vmEmail(u) || 'sans e-mail'}${needsPin(u) ? ', code 3CX' : ''}`];
+    return { u, num, ctx, status: st[0], why: st[1] };
+  });
+  const devices = (d.devices || []).filter((x) => x.import).map((dv) => {
+    const key = dv.mac.toLowerCase(); const ex = byMac.get(key);
+    // Associé par la phase à la ligne de son propriétaire (GET /lines : device_id, users[].uuid) : rien à faire.
+    const ownerUuid = dv.owner && mk.users[dv.owner];
+    const mine = ex && ownerUuid && t.lines.some((l) => l.device_id === ex.id && (l.users || []).some((y) => y.uuid === ownerUuid));
+    const st = mine ? ['exists', `associé à la ligne de ${dv.owner}`] : ex && busy.has(ex.id) ? ['conflict', 'déjà associé à une ligne dans Wazo : l\'utilisateur sera créé sans appareil'] : ex ? ['exists', `déjà dans Wazo${dv.owner ? ` : sera associé à la ligne de ${dv.owner}` : ''}`] : ['create', dv.owner ? `→ ligne SIP de ${dv.owner}` : 'stock (sans ligne)'];
+    return { dv, id: ex?.id || null, status: st[0], why: st[1] };
+  });
+  const users = imported(d).map((u) => {
+    const un = unitOfUser(c, u); const num = wazoNum(d, u); const ctx = un?.ctx;
+    const done = mk.users[u.n] && uuids.has(mk.users[u.n]);
+    const dev = devices.find((x) => x.dv.owner === u.n && x.status !== 'conflict');
+    const lic = u.sub == null ? '' : LICENCES[u.sub];
+    const st = done ? ['exists', 'créé par l\'outil'] : u.sub == null ? ['conflict', 'licence à choisir (onglet Utilisateurs)'] : noCtx(un) ? ['conflict', 'contexte du client pas encore créé (Fondations)']
+      : taken.has(`${num}@${ctx}`) ? ['conflict', 'numéro déjà pris dans le contexte'] : u.vm && vmTaken.has(`${num}@${ctx}`) ? ['conflict', 'numéro de messagerie déjà pris dans le contexte']
+        : u.email && mails.has(u.email.toLowerCase()) ? ['conflict', `e-mail ${u.email} déjà utilisé (unique sur le serveur)`] : needsPin(u) && W.m?.fromCache ? ['conflict', 'code 3CX à reprendre : recharger la sauvegarde 3CX']
+          : ['create', `${lic}, ligne${linesOf(u).length > 1 ? 's' : ''} ${linesText(u)}${dev ? `, appareil ${dev.dv.mac}` : ''}${u.vm ? ', messagerie' : ''}${isVoix(u) ? ', compte fermé (Voix)' : u.appAccess === false ? ', applications non autorisées' : ''}${u.checked ? '' : ' · non vérifié'}`];
+    return { u, num, ctx, dev, status: st[0], why: st[1] };
+  });
+  return { vms, devices, users };
+}
+function vmBody(u, number, context) {
+  const o = { ...defaultVmo(), ...(u.vmo || {}) }; const mail = vmEmail(u) || null;
+  // Comme l'import (voicemail_* du CSV) : supprimer après envoi seulement avec e-mail et pièce jointe (validates_schema).
+  return { name: userName(u).slice(0, 80), number, context, password: needsPin(u) ? (pinOf(u) || null) : null, email: mail, attach_audio: !!(mail && o.attach), delete_messages: !!(mail && o.attach && o.del), ask_password: o.ask !== false, language: o.lang || 'fr_FR', max_messages: o.max ?? null, enabled: true };
+}
+function lineBody(t, type, exten, context, deviceId) {
+  const name = rnd(8, 'abcdefghijklmnopqrstuvwxyz');
+  const templates = (type === 'webrtc' ? [t.sipTpl.global, t.sipTpl.webrtc] : [t.sipTpl.global]).map((uuid) => ({ uuid }));
+  return { context, endpoint_sip: { name, label: name, templates, auth_section_options: [['username', name], ['password', rnd(16, PW_SET)]] }, extensions: [{ exten, context }], ...(type === 'sip' && deviceId ? { device_id: deviceId } : {}) };
+}
+// Identifiants des comptes ouverts : en mémoire seulement, à télécharger après la phase.
+W.creds = [];
+
+// Mails de bienvenue (demande de Brice, 09/11/2026) : un .eml par compte ouvert, destinataire = e-mail
+// du compte, identifiant et mot de passe de l'application Wazo, contacts personnels 3CX du poste en
+// pièce jointe (même CSV que l'onglet Annuaire). « X-Unsent: 1 » : Outlook l'ouvre en brouillon à
+// envoyer. .msg impossible (format binaire Outlook). Fichiers regroupés en ZIP (sans compression).
+const b64 = (s) => { const by = new TextEncoder().encode(s); let bin = ''; for (const x of by) bin += String.fromCharCode(x); return btoa(bin).replace(/.{76}/g, '$&\r\n'); };
+const hdr = (s) => (/^[\x20-\x7e]*$/.test(s) ? s : `=?UTF-8?B?${b64(s).replace(/\r\n/g, '')}?=`);
+function emlOf(c) {
+  const host = S.base ? new URL(S.base).host : '';
+  const csv = W.d.phonebook?.personal ? personalCsv(W.d, c.n3) : '';
+  const hasCsv = csv.split('\r\n').length > 1;
+  const text = [`Bonjour ${c.first || c.name},`, '', 'Votre compte pour l\'application Wazo (web, ordinateur et mobile) est prêt :', '',
+    `  Identifiant : ${c.username}`, `  Mot de passe : ${c.password}`, host ? `  Serveur : ${host}` : '', `  Votre numéro interne : ${c.n}`, '',
+    hasCsv ? 'Vous trouverez en pièce jointe vos contacts personnels repris de l\'ancien standard (fichier CSV), à importer dans vos contacts personnels de l\'application.' : '',
+    '', 'Cordialement,', W.d.write.clientName || ''].filter((l, i, a) => l !== '' || a[i - 1] !== '').join('\r\n');
+  const bnd = `astrea-${rnd(16, 'abcdefghijklmnopqrstuvwxyz0123456789')}`;
+  const file = `contacts-${c.n}.csv`;
+  return [`To: ${c.email ? `${hdr(c.name)} <${c.email}>` : ''}`, `Subject: ${hdr('Vos accès à l\'application Wazo')}`, 'X-Unsent: 1', 'MIME-Version: 1.0',
+    `Content-Type: multipart/mixed; boundary="${bnd}"`, '', `--${bnd}`, 'Content-Type: text/plain; charset=UTF-8', 'Content-Transfer-Encoding: base64', '', b64(text),
+    ...(hasCsv ? [`--${bnd}`, `Content-Type: text/csv; charset=UTF-8; name="${file}"`, 'Content-Transfer-Encoding: base64', `Content-Disposition: attachment; filename="${file}"`, '', b64(csv)] : []),
+    `--${bnd}--`, ''].join('\r\n');
+}
+// ZIP « stocké » (méthode 0), noms UTF-8 (bit 11) : assez pour une poignée de .eml.
+const CRC = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+const crc32 = (b) => { let c = 0xffffffff; for (const x of b) c = CRC[(c ^ x) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
+function zipOf(files) {
+  const enc = new TextEncoder(); const parts = []; const dir = []; let off = 0;
+  const le = (n, len) => { const a = new Uint8Array(len); for (let i = 0; i < len; i++) a[i] = (n >>> (8 * i)) & 0xff; return a; };
+  for (const f of files) {
+    const name = enc.encode(f.name); const data = enc.encode(f.text); const crc = crc32(data);
+    const common = [le(20, 2), le(0x0800, 2), le(0, 2), le(0, 2), le(0x21, 2), le(crc, 4), le(data.length, 4), le(data.length, 4), le(name.length, 2), le(0, 2)];
+    const local = [le(0x04034b50, 4), ...common, name, data];
+    dir.push([le(0x02014b50, 4), le(20, 2), ...common, le(0, 2), le(0, 2), le(0, 2), le(0, 4), le(off, 4), name]);
+    for (const p of local) { parts.push(p); off += p.length; }
+  }
+  const cd = dir.flat(); const cdLen = cd.reduce((a, p) => a + p.length, 0);
+  return new Blob([...parts, ...cd, le(0x06054b50, 4), le(0, 2), le(0, 2), le(files.length, 2), le(files.length, 2), le(cdLen, 4), le(off, 4), le(0, 2)], { type: 'application/zip' });
+}
+const safeName = (s) => String(s).replace(/[\\/:*?"<>|]+/g, ' ').trim();
+function peopleOps(t) {
+  const d = W.d; const c = contextsOf(t); const ps = peopleState(t, c); const ops = []; const mk = made();
+  for (const x of ps.vms.filter((y) => y.status === 'create')) {
+    ops.push({ soft: true, label: `Messagerie commune ${x.num} ${userName(x.u)} (POST /voicemails)`, run: async () => {
+      const v = await tapi('POST', '/voicemails', vmBody(x.u, x.num, x.ctx));
+      mk.vms[x.u.n] = v.id;
+      return { created: `messagerie ${v.id}`, undo: { method: 'DELETE', path: `/voicemails/${v.id}` } };
+    } });
+  }
+  for (const x of ps.devices.filter((y) => y.status === 'create')) {
+    ops.push({ soft: true, label: `Appareil ${x.dv.model} ${x.dv.mac} (POST /devices)`, run: async () => {
+      const desc = deviceDesc(d, x.dv) || null;
+      const dv = await tapi('POST', '/devices', { mac: x.dv.mac.toLowerCase(), description: desc });
+      mk.devices[x.dv.mac.toLowerCase()] = dv.id;
+      return { created: `appareil ${dv.id}`, undo: { method: 'DELETE', path: `/devices/${dv.id}` } };
+    } });
+  }
+  for (const x of ps.users.filter((y) => y.status === 'create')) {
+    const u = x.u;
+    ops.push({ soft: true, label: `Utilisateur ${x.num} ${userName(u)} : ${linesText(u)}${u.vm ? ', messagerie' : ''}${x.dev ? ', appareil' : ''}, compte des applications (POST /users, POST auth /users)`, run: async () => {
+      if (needsPin(u) && W.m?.fromCache) throw new Error(`${userName(u)} : code 3CX de messagerie absent (brouillon repris sans la sauvegarde) : recharger la sauvegarde 3CX`);
+      const devId = x.dev ? (x.dev.id || mk.devices[x.dev.dv.mac.toLowerCase()] || null) : null;
+      // Champs de l'import (colonnes de csvparse.py reprises par le CSV de l'onglet Exports).
+      const body = {
+        firstname: u.first || (u.last ? '' : `Poste ${x.num}`), lastname: u.last || null, email: u.email || null, mobile_phone_number: u.mobile || null,
+        outgoing_caller_id: u.callerId || 'default', enabled: true, subscription_type: u.sub, ring_seconds: u.ring,
+        lines: linesOf(u).map((ty, i) => lineBody(t, ty, x.num, x.ctx, ty === 'sip' && i === linesOf(u).indexOf('sip') ? devId : null)),
+        ...(u.vm ? { voicemail: vmBody(u, x.num, x.ctx) } : {}),
+      };
+      const user = await tapi('POST', '/users', body);
+      const undoUser = { method: 'DELETE', path: `/users/${user.uuid}?recursive=true` };
+      // Compte des applications, comme User Manager (create.js) : Voix = compte fermé, identifiant e-mail ou uuid.
+      const voix = isVoix(u); const username = (voix ? u.email : (u.username || u.email)) || user.uuid; const password = rnd(14, PW_SET);
+      const enabled = !voix && u.appAccess !== false;
+      try {
+        await authd('POST', '/users', { uuid: user.uuid, firstname: body.firstname, lastname: body.lastname, username, password, email_address: u.email || null, enabled, emails: [] });
+      } catch (e) {
+        try { await runUndo(undoUser); } catch (e2) { throw new Error(`compte des applications refusé (${e.message}) ; ATTENTION : utilisateur ${user.uuid} resté sans compte (suppression impossible : ${e2.message})`); }
+        throw new Error(`compte des applications refusé pour ${userName(u)} (${e.message}) : l'utilisateur créé a été supprimé`);
+      }
+      mk.users[u.n] = user.uuid;
+      if (enabled) W.creds.push({ n: x.num, n3: u.n, first: u.first || '', name: userName(u), email: u.email || '', username, password });
+      const note = u.authMethod && u.authMethod !== 'default' ? ` · méthode de connexion « ${u.authMethod} » à régler dans User Manager` : '';
+      return { created: `${user.uuid}${enabled ? ` · identifiant ${username}` : ' · compte fermé'}${note}`, undo: { seq: [{ api: 'auth', method: 'DELETE', path: `/users/${user.uuid}` }, undoUser] } };
+    } });
+  }
+  return ops;
+}
 async function foundationOps(t) {
   const d = W.d; const c = contextsOf(t); const ops = [];
   for (const x of zeroDidCtx(t, c)) {
@@ -714,6 +885,7 @@ async function runUndo(u) {
     const s = W.d.write.site; if (s.created) { W.d.ctx = s.created.prevCtx; s.created = null; } return;
   }
   if (u.api === 'logd') return logd(u.method, u.path, u.body);
+  if (u.api === 'auth') return authd(u.method, u.path, u.body);
   if (u.api === 'dird') { guard(); return dird(u.method, u.path, u.body); }
   return tapi(u.method, u.path, u.body);
 }
@@ -883,6 +1055,7 @@ function phaseCard(p, k, items, pre, blocked, isNext) {
   const can = !p.lot && W.d.write.ackLosses && !blocked && (s.status !== 'done' || more) && !W.busy;
   return `<div class="x3w-phasebox ${isNext ? 'next' : ''} ${s.status === 'done' ? 'done' : ''} ${p.lot ? 'later' : ''}">
     <div class="x3w-head"><span class="x3w-n">${String.fromCharCode(65 + k)}</span><strong>${esc(p.title)}</strong><span class="x3w-badge ${s.status === 'done' ? 'ok' : isNext ? 'open' : ''}">${esc(state)}</span><span class="spacer"></span>
+      ${p.id === 'people' && W.creds.length ? `<button data-wact="creds" title="CSV : numéro, nom, identifiant, mot de passe. Gardé nulle part : à télécharger avant de quitter la page.">Identifiants (${W.creds.length})</button><button data-wact="mails" title="Un mail .eml par compte (à ouvrir dans Outlook, brouillon prêt à envoyer) : destinataire = e-mail du compte, identifiant et mot de passe, contacts personnels 3CX du poste en pièce jointe. ZIP téléchargé, rien gardé.">Mails (.eml)</button>` : ''}
       ${p.lot ? '' : `${s.undo.length ? `<button data-wact="undo" data-p="${p.id}" class="danger" ${W.busy ? 'disabled' : ''}>Annuler la phase</button>` : ''}${s.status === 'done' && !more ? '' : `<button data-wact="apply" data-p="${p.id}" class="${isNext || more ? 'primary' : ''}" ${can ? '' : 'disabled'}>${s.status === 'done' ? `Compléter (${more})` : `Appliquer ${esc(p.title.toLowerCase())}`}</button>`}`}</div>
     <p class="small muted">${esc(p.help)}</p>
     ${!p.lot && blocked && s.status !== 'done' ? `<div class="compat blocking small"><strong>Bloquée par :</strong> ${why.map((x) => esc(x.title)).join(', ')} (étapes Tenant Wazo ou Site et appels sortants).</div>` : ''}
@@ -925,21 +1098,42 @@ export async function wizardClick(b, rerender) {
     } catch (e) { toast(`Lecture du tenant impossible : ${e.message}`, 8000); }
     W.busy = false; return rerender();
   }
+  if (act === 'mails') {
+    const blob = zipOf(W.creds.map((c) => ({ name: `${safeName(`${c.n} ${c.name}`)}.eml`, text: emlOf(c) })));
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `mails-wazo-${W.d.write.clientId || 'client'}.zip`;
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    return;
+  }
+  if (act === 'creds') {
+    // Identifiants des comptes ouverts pendant cette session : jamais gardés (ni brouillon ni navigateur).
+    const q = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const csv = '﻿' + [['numero', 'nom', 'identifiant', 'mot_de_passe'].join(';'), ...W.creds.map((x) => [x.n, x.name, x.username, x.password].map(q).join(';'))].join('\r\n');
+    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    a.download = `identifiants-${(W.d.write.clientId || 'client')}.csv`; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    return;
+  }
   const id = b.dataset.p; const p = PHASES.find((x) => x.id === id); if (!p) return;
   const s = ph(id);
   const log = (text) => s.log.push({ at: new Date().toISOString(), text });
   if (act === 'apply') {
     if (!canWrite()) return;
     let ops;
-    try { W.t = await readTenant(); ops = id === 'found' ? await foundationOps(W.t) : []; } catch (e) { W.msg = { bad: true, text: `Relecture impossible : ${e.message}` }; return rerender(); }
+    try { W.t = await readTenant(); ops = id === 'found' ? await foundationOps(W.t) : id === 'people' ? peopleOps(W.t) : []; } catch (e) { W.msg = { bad: true, text: `Relecture impossible : ${e.message}` }; return rerender(); }
     if (!ops.length) { s.status = 'done'; log('rien à écrire : déjà conforme'); save(); W.msg = { text: `${p.title} : déjà conforme, rien à écrire.` }; return rerender(); }
     return confirmModal(`<h3>Appliquer : ${esc(p.title)}</h3><ol class="small">${ops.map((o) => `<li>${esc(o.label)}</li>`).join('')}</ol><p class="small">Tenant ${esc(I.tenant || '?')}. ${W.d.write.backupAt ? '' : 'Un export JSON du tenant est d\'abord téléchargé (sauvegarde). '}Chaque écriture est notée dans le journal de la phase et peut être annulée.</p>`, async () => {
       W.busy = true; rerender();
       if (!W.d.write.backupAt) { downloadJson(exportFileName().replace('astrea-export', 'astrea-export-avant-migration-3cx'), buildExport({ secrets: false })); W.d.write.backupAt = new Date().toISOString(); }
-      let n = 0;
+      let n = 0; const failed = [];
       try {
-        for (const o of ops) { const r = await o.run(); n++; if (r?.undo) s.undo.push(r.undo); log(`${o.label}${r?.created ? ` → ${r.created}` : ''}`); save(); }
-        s.status = 'done'; W.msg = { text: `${p.title} : ${n} écriture(s) faite(s).` };
+        for (const o of ops) {
+          // Opération « soft » (un utilisateur, une messagerie, un appareil) : son échec n'arrête pas les
+          // suivantes ; elle n'a rien laissé (retour arrière dans l'opération), il est noté et listé.
+          let r;
+          try { r = await o.run(); } catch (e) { if (!o.soft) throw e; failed.push(`${o.label} : ${e.message}`); log(`ÉCHEC ${o.label} : ${e.message}`); save(); continue; }
+          n++; if (r?.undo) s.undo.push(r.undo); log(`${o.label}${r?.created ? ` → ${r.created}` : ''}`); save();
+        }
+        s.status = failed.length ? 'error' : 'done';
+        W.msg = failed.length ? { bad: true, text: `${p.title} : ${n} écriture(s) faite(s), ${failed.length} refusée(s) (détail dans le journal) : ${failed.slice(0, 3).join(' ; ')}${failed.length > 3 ? '…' : ''}. Corriger puis relancer : ce qui est fait est sauté.` } : { text: `${p.title} : ${n} écriture(s) faite(s).` };
       } catch (e) {
         s.status = 'error'; log(`ERREUR après ${n} écriture(s) : ${e.message}`);
         W.msg = { bad: true, text: `${p.title} interrompue après ${n} écriture(s) sur ${ops.length} : ${e.message}. Ce qui a été écrit est dans le journal et annulable.` };
