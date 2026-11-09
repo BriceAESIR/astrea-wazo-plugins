@@ -13,7 +13,7 @@
 //    département des SDA qui le visent, s'il n'y en a qu'un, sinon à celui
 //    dont le nom figure dans le sien (« Fermeture exceptionnelle - Site B »).
 // Supposé : un poste dans deux départements réels (le premier est retenu, signalé).
-import { imported } from './3cx-draft.js?v=0.40.53';
+import { imported } from './3cx-draft.js?v=0.40.54';
 
 export const DEFAULT = '__DEFAULT__';
 export const DEPT_MODES = { own: 'Jeu de contextes propre', merge: 'Fusionné dans un autre', skip: 'Site Wazo séparé (non importé ici)' };
@@ -24,7 +24,8 @@ export function deptTrunk(m, name) {
   const r = [...(m.outbound || [])].sort((a, b) => a.priority - b.priority).find((x) => x.groups.includes(name) && x.routes.length);
   return r ? r.routes[0].gateway : '';
 }
-const destRefs = (r) => [r.dest, r.closed, r.holiday].filter((x) => x && ['user', 'hunt', 'ivr', 'vm'].includes(x.t)).map((x) => x.ref);
+// Destinations d'une SDA : ouvert, puis fermé et férié de son horaire (brouillon v3), ou les siennes (avant).
+const destRefs = (r, d) => { const s = d?.schedules?.find((x) => x.key === r.schedule); return [r.dest, s?.closed ?? r.closed, s?.holiday ?? r.holiday].filter((x) => x && ['user', 'hunt', 'ivr', 'vm'].includes(x.t)).map((x) => x.ref); };
 
 // Rattachement des objets et choix par défaut (une seule fois par brouillon).
 export function ensureDepts(d, m) {
@@ -44,12 +45,12 @@ export function ensureDepts(d, m) {
   const trunkDept = new Map(sites.map((g) => [deptTrunk(m, g.name), g.name]).filter(([t]) => t));
   for (const r of d.dids) {
     const tr = m.inbound.find((x) => x.did === r.did)?.trunk || m.trunks.find((t) => t.dids.includes(r.did))?.name;
-    const byDest = destRefs(r).map((ref) => [...d.users, ...d.hunts, ...d.ivrs].find((o) => o.n === ref)?.dept).find((k) => k && k !== DEFAULT);
+    const byDest = destRefs(r, d).map((ref) => [...d.users, ...d.hunts, ...d.ivrs].find((o) => o.n === ref)?.dept).find((k) => k && k !== DEFAULT);
     r.dept = trunkDept.get(tr) || byDest || DEFAULT;
   }
   // Objets seuls dans __DEFAULT__ visés par les SDA d'un seul département.
   for (const o of [...d.users, ...d.hunts, ...d.ivrs].filter((x) => x.dept === DEFAULT)) {
-    const ks = [...new Set(d.dids.filter((r) => destRefs(r).includes(o.n)).map((r) => r.dept).filter((k) => k !== DEFAULT))];
+    const ks = [...new Set(d.dids.filter((r) => destRefs(r, d).includes(o.n)).map((r) => r.dept).filter((k) => k !== DEFAULT))];
     if (ks.length === 1) { o.dept = ks[0]; o.deptBy = 'SDA'; continue; }
     // Sinon, un nom qui contient celui d'un seul département (« Fermeture exceptionnelle - Site B »).
     const norm = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();

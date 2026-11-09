@@ -26,11 +26,11 @@
 // (_X.) inclus avant un autre établissement prend aussi ses numéros internes ;
 // inclus après, les numéros externes passent par l'établissement inclus, donc
 // par son trunk. Les écarts sont montrés avant écriture.
-import { matches, comparePatterns, dialedNumber } from '../callflow/dialsim.js?v=0.40.53';
-import { FR_FAMILIES, FR_FORMATS, frTransform, BLOCK_118 } from '../callflow/outcall-editor.js?v=0.40.53';
-import { imported, didWazo } from './3cx-draft.js?v=0.40.53';
-import { unitList, unitOf } from './3cx-depts.js?v=0.40.53';
-import { parseRanges, rangesText, inRanges } from './multisite.js?v=0.40.53';
+import { matches, comparePatterns, dialedNumber } from '../callflow/dialsim.js?v=0.40.54';
+import { FR_FAMILIES, FR_FORMATS, frTransform, BLOCK_118 } from '../callflow/outcall-editor.js?v=0.40.54';
+import { imported, didWazo } from './3cx-draft.js?v=0.40.54';
+import { unitList, unitOf } from './3cx-depts.js?v=0.40.54';
+import { parseRanges, rangesText, inRanges } from './multisite.js?v=0.40.54';
 
 export { FR_FAMILIES, FR_FORMATS, BLOCK_118 };
 export const SITE_MODES = {
@@ -69,7 +69,34 @@ export function clientPatterns(out) {
 // par bloc de numéros, coupée aux trous de plus de 20 (site A 200-260 et 321,
 // au lieu de 200-321 qui déborderait sur le site B 300-320).
 const GAP = 20;
+// Plages standard d'un nouveau jeu de contextes (Brice, 09/11/2026) : postes 200-299,
+// groupes 800-899, files 900-999, conférences 700-799. Les numéros du client qui n'y
+// tombent pas ajoutent leurs propres plages, calculées comme avant.
+export const STD_RANGES = { user_ranges: [{ start: '200', end: '299' }], group_ranges: [{ start: '800', end: '899' }], queue_ranges: [{ start: '900', end: '999' }], conference_room_ranges: [{ start: '700', end: '799' }] };
+// Plusieurs jeux de contextes (Brice, 09/11/2026) : mêmes plages précédées du préfixe du
+// site (site 1 : 1200-1299, 1800-1899, 1900-1999, 1700-1799 ; site 2 : 2200…). Préfixe
+// choisi par jeu dans l'onglet Départements, rang du jeu par défaut. Pas de renumérotation :
+// les numéros existants qui n'y tombent pas gardent leurs plages calculées en plus.
+export const unitPrefix = (d, unit) => {
+  const units = unitList(d); const i = units.findIndex((u) => u.key === unit);
+  const own = String(unitCfg(d, unit).prefix ?? '').trim();
+  return /^\d{1,2}$/.test(own) ? own : String(i < 0 ? 1 : i + 1);
+};
+export function stdRanges(d, unit = null) {
+  if (unit == null || !multi(d)) return STD_RANGES;
+  const p = unitPrefix(d, unit);
+  return Object.fromEntries(Object.entries(STD_RANGES).map(([k, l]) => [k, l.map((r) => ({ start: p + r.start, end: p + r.end }))]));
+}
 export function autoRanges(d, unit = null) {
+  const calc = calcRanges(d, unit); const out = {}; const stds = stdRanges(d, unit);
+  for (const [k] of RANGE_KEYS) {
+    const std = stds[k] || [];
+    const extra = (calc[k] || []).filter((r) => !std.some((s) => s.start.length === r.start.length && Number(s.start) <= Number(r.start) && Number(r.end) <= Number(s.end)));
+    out[k] = [...std, ...extra];
+  }
+  return out;
+}
+function calcRanges(d, unit = null) {
   const out = {};
   for (const x of clientNumbers(d, unit)) (out[x.key] ||= []).push(x.n);
   for (const k of Object.keys(out)) {
@@ -109,12 +136,16 @@ export function rangeIssues(d) {
       if (txt && txt !== '-') for (const e of parseRanges(txt).errors) out.push({ sev: 'error', title: who, text: `${l} : ${e}.` });
       const outside = clientNumbers(d, key).filter((x) => x.key === k && !inRanges(x.n, r[k])).map((x) => x.n);
       if (outside.length) out.push({ sev: 'error', title: who, text: `${l} : ${outside.join(', ')} hors des plages (${rangesText(r[k]) || 'aucune'}) : Wazo refuserait ces numéros.` });
-      for (const x of r[k] || []) all.push({ u: u.label, k, l, x });
+      for (const x of r[k] || []) all.push({ u: u.label, key, k, l, x });
     }
   }
+  // Chevauchement signalé seulement s'il contient des numéros des deux jeux (les plages
+  // standard 200-299… sont les mêmes partout : sans numéros communs, rien à signaler).
+  const numsIn = (key, k, len, lo, hi) => clientNumbers(d, key).filter((y) => y.key === k && y.n.length === len && Number(y.n) >= lo && Number(y.n) <= hi);
   if (many) for (let i = 0; i < all.length; i++) for (let j = i + 1; j < all.length; j++) {
     const a = all[i]; const b = all[j];
-    if (a.u !== b.u && a.k === b.k && a.x.start.length === b.x.start.length && Number(a.x.start) <= Number(b.x.end) && Number(b.x.start) <= Number(a.x.end)) out.push({ sev: 'warn', title: 'Plages qui se chevauchent', text: `${a.l} : « ${a.u} » ${rangesText([a.x])} et « ${b.u} » ${rangesText([b.x])}.` });
+    const lo = Math.max(Number(a.x.start), Number(b.x.start)); const hi = Math.min(Number(a.x.end), Number(b.x.end));
+    if (a.u !== b.u && a.k === b.k && a.x.start.length === b.x.start.length && lo <= hi && numsIn(a.key, a.k, a.x.start.length, lo, hi).length && numsIn(b.key, b.k, a.x.start.length, lo, hi).length) out.push({ sev: 'warn', title: 'Plages qui se chevauchent', text: `${a.l} : « ${a.u} » ${rangesText([a.x])} et « ${b.u} » ${rangesText([b.x])}.` });
   }
   return out;
 }

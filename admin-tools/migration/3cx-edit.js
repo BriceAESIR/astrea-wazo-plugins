@@ -2,19 +2,19 @@
 // Modèle et règles : 3cx-draft.js. Chaque modification est enregistrée dans le
 // navigateur (brouillon par fichier et date de sauvegarde) ; rien n'est écrit
 // dans Wazo depuis ces tableaux.
-import { $, esc, toast, helpButton, helpBox, confirmModal, downloadJson } from '../common/core.js?v=0.40.53';
-import { I } from './inventory.js?v=0.40.53';
+import { $, esc, toast, helpButton, helpBox, confirmModal, downloadJson } from '../common/core.js?v=0.40.54';
+import { I } from './inventory.js?v=0.40.54';
 import {
   GROUP_STRATEGIES, MODES, HUNT_TARGETS, LICENCES, AUTH_METHODS, effectiveUsername, isVoix, applyLicence, fillCallerIds, callerIdWazo, upgradeDraft, saveDraft, clearDraft, buildDraft, acceptDraft, userBy, userName, imported,
   destLabel, destProblem, draftIssues, usersCsv, blfRows, devicesCsv, deviceDesc, macWazo, macValid, tenantIssues,
   LINE_MODES, linesOf, VM_LANGS, vmEmail, upperName, upgradeSchedules, pastHolidays, didWazo,
-} from './3cx-draft.js?v=0.40.53';
-import { setWizard, wizardTab, wizardChange, wizardClick, wizardDone, wizardTotal } from './3cx-wizard.js?v=0.40.53';
-import { unitCfg, unitLabels, autoRanges, RANGE_KEYS, rangeIssues } from './3cx-sites.js?v=0.40.53';
-import { rangesText } from './multisite.js?v=0.40.53';
-import { WAZO_FIELDS, tagsOf, tagLabel, tagChecked, ensurePhonebook, phonebookName, phonebookIssues, companyContacts, personalCsv, toWazoContact, csvKeys } from './3cx-phonebook.js?v=0.40.53';
-import { SORTS, CATEGORY_RE, soundUsages, ensureSounds, mohLabel, soundCategory, FILES, keyOf, loaded, addFiles, addFileAs, targetName } from './3cx-sounds.js?v=0.40.53';
-import { DEPT_MODES, deptLabel, ensureDepts, deptObjects, unitOf, unitList, setDeptMode, moveObject } from './3cx-depts.js?v=0.40.53';
+} from './3cx-draft.js?v=0.40.54';
+import { setWizard, wizardTab, wizardChange, wizardClick, wizardDone, wizardTotal } from './3cx-wizard.js?v=0.40.54';
+import { unitCfg, unitLabels, autoRanges, RANGE_KEYS, rangeIssues, unitPrefix } from './3cx-sites.js?v=0.40.54';
+import { rangesText } from './multisite.js?v=0.40.54';
+import { WAZO_FIELDS, tagsOf, tagLabel, tagChecked, ensurePhonebook, phonebookName, phonebookIssues, companyContacts, personalCsv, toWazoContact, csvKeys } from './3cx-phonebook.js?v=0.40.54';
+import { SORTS, CATEGORY_RE, soundUsages, ensureSounds, mohLabel, soundCategory, FILES, keyOf, loaded, addFiles, addFileAs, targetName } from './3cx-sounds.js?v=0.40.54';
+import { DEPT_MODES, deptLabel, ensureDepts, deptObjects, unitOf, unitList, setDeptMode, moveObject } from './3cx-depts.js?v=0.40.54';
 
 const E = { d: null, m: null, file: '', tab: 'users', sel: { users: new Set(), dids: new Set(), vms: new Set() }, q: '', onReset: null };
 export const TABS = [
@@ -363,8 +363,8 @@ function deptsTab() {
     if (cfg.created) return `<span class="small">créés : ${[cfg.created.ctxName, cfg.created.incName, cfg.created.outName].filter(Boolean).map(esc).join(', ')}</span>`;
     return `<input data-ctxname="${esc(k)}|newLabel" value="${esc(cfg.newLabel || '')}" placeholder="${esc(L.ctx)}" class="x3-mail" title="Contexte interne">
       <input data-ctxname="${esc(k)}|incLabel" value="${esc(cfg.incLabel || '')}" placeholder="${esc(L.inc)}" class="x3-mail" title="Contexte entrant (le trunk du jeu y est pointé)">
-      <input data-ctxname="${esc(k)}|outLabel" value="${esc(cfg.outLabel || '')}" placeholder="${esc(L.out)}" class="x3-mail" title="Contexte sortant">${many ? '' : '<div class="muted small">si « nouveau contexte » (onglet Écriture)</div>'}
-      <div class="x3-ranges">${RANGE_KEYS.map(([rk, rl]) => { const auto = rangesText(autoRanges(d, many ? k : null)[rk]); return `<label class="small">${esc(rl)} <input data-ctxrange="${esc(k)}|${rk}" value="${esc(cfg.ranges?.[rk] || '')}" placeholder="${esc(auto || 'aucune')}" title="Plages du contexte interne, ex. 200-260, 321 ; vide : ${esc(auto || 'aucune')} (calculé) ; « - » : aucune"></label>`; }).join('')}</div>`;
+      <input data-ctxname="${esc(k)}|outLabel" value="${esc(cfg.outLabel || '')}" placeholder="${esc(L.out)}" class="x3-mail" title="Contexte sortant">${many ? `<label class="small">Préfixe des plages <input data-ctxname="${esc(k)}|prefix" value="${esc(cfg.prefix || '')}" placeholder="${esc(unitPrefix(d, k))}" class="x3-short" title="Plages standard du jeu précédées de ce chiffre : ${esc(unitPrefix(d, k))}200-${esc(unitPrefix(d, k))}299 (postes), …800-…899 (groupes), …900-…999 (files), …700-…799 (conférences). Vide : rang du jeu."></label>` : '<div class="muted small">si « nouveau contexte » (onglet Écriture)</div>'}
+      <div class="x3-ranges">${RANGE_KEYS.map(([rk, rl]) => { const auto = rangesText(autoRanges(d, many ? k : null)[rk]); return `<label class="small">${esc(rl)} <input data-ctxrange="${esc(k)}|${rk}" value="${esc(cfg.ranges?.[rk] || '')}" placeholder="${esc(auto || 'aucune')}" title="Plages du contexte interne, ex. 200-260, 321 ; vide : ${esc(auto || 'aucune')} (plages standard, plus celles des numéros du client qui n'y tombent pas) ; « - » : aucune"></label>`; }).join('')}</div>`;
   };
   const count = (k) => { const o = deptObjects(d, k); return [`${o.users.filter((u) => u.mode === 'user').length} postes`, `${o.hunts.length} groupes / files`, `${o.ivrs.length} SVI`, `${o.dids.length} SDA`].join(', '); };
   const rows = d.depts.map((x) => `<tr class="${x.mode === 'skip' ? 'x3-off' : ''}">
@@ -524,7 +524,7 @@ function ivrsTab(opts) {
   return `${intro('ivrs', 'SVI', IVR_HELP)}<div class="x3-edit-wrap"><table class="diff x3-edit">${head([['N°'], ['Reprise'], ['Nom'], ['Message'], ['Délai'], ['Touches'], ['Sans saisie']])}<tbody>${rows}</tbody></table></div>`;
 }
 
-const DID_HELP = 'Une ligne par SDA du trunk (les SDA sans règle 3CX sont décochées), au format Wazo 33… (numéro 3CX en dessous). Contexte entrant : celui où la SDA sera déclarée ; en multi-site, celui du département de la SDA (onglet Départements), dont le trunk est à régler sur ce contexte dans le Portal. Destination : en heures d\'ouverture, ou toujours si aucun horaire. Horaire : celui déduit de la règle 3CX, modifiable ; fermé et férié ne servent que s\'il y a un horaire. CSV : créer cette SDA avec l\'utilisateur par le CSV d\'import (destination utilisateur seulement, sans horaire : à associer ensuite).';
+const DID_HELP = 'Une ligne par SDA du trunk (les SDA sans règle 3CX sont décochées), au format Wazo 33… (numéro 3CX en dessous). Contexte entrant : celui où la SDA sera déclarée ; en multi-site, celui du département de la SDA (onglet Départements), dont le trunk est à régler sur ce contexte dans le Portal. Destination : en heures d\'ouverture, ou toujours si aucun horaire. Horaire : celui déduit de la règle 3CX, modifiable ; ses sorties « fermé » et « férié » se règlent dans l\'onglet Horaires (comme dans le Portal, elles appartiennent à l\'horaire, pas à la SDA). Par le CSV : créer cette SDA avec l\'utilisateur dans le CSV d\'import (destination utilisateur seulement) ; le CSV de Wazo n\'associe pas d\'horaire, la SDA perdrait donc ses sorties fermé et férié jusqu\'à ce qu\'on associe l\'horaire à la main.';
 // Contexte entrant où la SDA sera déclarée (demande de Brice, 04/11/2026), même règle que
 // l'écriture (3cx-wizard.js, incallOf) : celui du jeu de contextes de la SDA (créé ou à créer),
 // sinon celui du trunk choisi, sinon celui choisi dans Exports. → { label, note }
@@ -552,9 +552,7 @@ function didsTab(opts) {
       <td class="small">${(() => { const x = incallOfDid(r); return `${x.label ? esc(x.label) : '<span class="x3-warn">aucun</span>'}${x.note ? `<div class="muted">${esc(x.note)}</div>` : ''}`; })()}</td>
       <td>${destCell(`${p}.dest`, opts)}</td>
       <td><select data-p="${p}.schedule">${schedOpts(r.schedule)}</select></td>
-      <td>${r.schedule ? destCell(`${p}.closed`, opts) : '<span class="muted">—</span>'}</td>
-      <td>${r.schedule ? destCell(`${p}.holiday`, opts) : '<span class="muted">—</span>'}</td>
-      <td class="x3-c">${r.dest.t === 'user' ? check(`${p}.viaCsv`, 'Créer par le CSV d\'import') : '<span class="muted">—</span>'}</td>
+      <td class="x3-c">${r.dest.t === 'user' ? check(`${p}.viaCsv`, 'Créer la SDA dans le CSV d\'import des utilisateurs (sans son horaire : Wazo ne le permet pas)') : '<span class="muted">—</span>'}</td>
     </tr>`;
   }).join('');
   const n = E.sel.dids.size;
@@ -565,16 +563,16 @@ function didsTab(opts) {
       <label>Destination <select id="xd-dest"><option value="keep">inchangée</option>${opts}</select></label><input id="xd-num" placeholder="numéro externe" class="x3-num">
       <label>Horaire <select id="xd-sched"><option value="keep">inchangé</option>${schedOpts('__')}</select></label>
       <button data-act="bulk-dids" ${n ? '' : 'disabled'}>Appliquer</button></div>
-    <div class="x3-edit-wrap"><table class="diff x3-edit">${head([['[all:dids]'], ['SDA'], ['Reprise'], ['Contexte entrant', 'Où la SDA sera déclarée : contexte entrant de son jeu de contextes (département en multi-site), sinon celui du trunk'], ['Destination'], ['Horaire'], ['Fermé'], ['Férié'], ['CSV']])}<tbody>${rows}</tbody></table></div>`;
+    <div class="x3-edit-wrap"><table class="diff x3-edit">${head([['[all:dids]'], ['SDA'], ['Reprise'], ['Contexte entrant', 'Où la SDA sera déclarée : contexte entrant de son jeu de contextes (département en multi-site), sinon celui du trunk'], ['Destination', 'Où va l\'appel (ou pendant les heures d\'ouverture, si la SDA a un horaire)'], ['Horaire', 'Horaire Wazo de la SDA ; ses sorties « fermé » et « férié » se règlent dans l\'onglet Horaires, comme dans le Portal'], ['Par le CSV', 'SDA créée dans le CSV d\'import des utilisateurs (destination utilisateur seulement). Le CSV n\'associe pas d\'horaire : décocher si la SDA en a un']])}<tbody>${rows}</tbody></table></div>`;
 }
 
-function schedsTab() {
+function schedsTab(opts) {
   const d = E.d;
   const used = (k) => d.dids.filter((r) => r.import && r.schedule === k).length;
   const past = pastHolidays(E.m);
   const where = (h) => (h.depts || ['tenant']).map((k) => (k === 'tenant' ? 'tous' : deptLabel(k))).join(', ');
-  return `${intro('scheds', 'Horaires', 'Horaires Wazo à créer, déduits des règles entrantes 3CX. Une règle « heures de bureau » prend celles du département de sa SDA (heures de bureau moins la pause) ; une règle à plages propres garde les siennes. Le nom est modifiable ; les plages se modifieront dans Call Flow Manager après création. Fermetures exceptionnelles : celles de 3CX pour tous les départements et celles d\'un département, ajoutées aux horaires concernés si cochées ; les fermetures passées ne sont pas reprises. Les jours fériés légaux français autres que ceux de la sauvegarde sont à ajouter.')}
-    <div class="x3-edit-wrap"><table class="diff x3-edit">${head([['Nom'], ['Département', 'Département 3CX dont l\'horaire reprend les heures de bureau'], ['Plages'], ['SDA']])}<tbody>${d.schedules.map((s, i) => `<tr><td>${input(`schedules.${i}.name`)}</td><td class="small">${s.dept ? esc(deptLabel(s.dept)) : '<span class="muted">plages propres de la règle</span>'}</td><td>${esc(s.text)}</td><td>${used(s.key)}</td></tr>`).join('') || '<tr><td colspan="4" class="muted">Aucun horaire.</td></tr>'}</tbody></table></div>
+  return `${intro('scheds', 'Horaires', 'Horaires Wazo à créer, déduits des règles entrantes 3CX. Une règle « heures de bureau » prend celles du département de sa SDA (heures de bureau moins la pause) ; une règle à plages propres garde les siennes. Le nom est modifiable ; les plages se modifieront dans Call Flow Manager après création. Comme dans Wazo, l\'horaire porte ses sorties : « Fermé » (hors des plages) et « Férié » (pendant les fermetures exceptionnelles) ; les SDA ne font que le viser. Des SDA 3CX aux mêmes plages mais aux sorties différentes ont donné des horaires distincts ; « Dupliquer » en crée un autre, à choisir ensuite dans l\'onglet SDA. Fermetures exceptionnelles : celles de 3CX pour tous les départements et celles d\'un département, ajoutées aux horaires concernés si cochées ; les fermetures passées ne sont pas reprises. Les jours fériés légaux français autres que ceux de la sauvegarde sont à ajouter.')}
+    <div class="x3-edit-wrap"><table class="diff x3-edit">${head([['Nom'], ['Département', 'Département 3CX dont l\'horaire reprend les heures de bureau, ou règle entrante dont il reprend les heures spécifiques'], ['Plages'], ['Fermé', 'Où va l\'appel hors des plages (closed_destination)'], ['Férié', 'Où va l\'appel pendant les fermetures exceptionnelles de l\'horaire'], ['SDA'], ['']])}<tbody>${d.schedules.map((s, i) => `<tr><td>${input(`schedules.${i}.name`)}</td><td class="small">${s.dept ? esc(deptLabel(s.dept)) : `<span class="muted">heures spécifiques de la règle entrante${(() => { const l = d.dids.filter((r) => r.schedule === s.key).map((r) => didWazo(r.did)); return l.length ? ` (${esc(l.join(', '))})` : ''; })()}</span>`}</td><td>${esc(s.text)}</td><td>${destCell(`schedules.${i}.closed`, opts)}</td><td>${destCell(`schedules.${i}.holiday`, opts)}</td><td>${used(s.key)}</td><td><button data-act="sched-dup" data-i="${i}" class="x3-mini" title="Même plages, autres sorties : à choisir ensuite pour certaines SDA">Dupliquer</button></td></tr>`).join('') || '<tr><td colspan="7" class="muted">Aucun horaire.</td></tr>'}</tbody></table></div>
     <h3 class="x3-h">Fermetures exceptionnelles</h3>${past ? `<p class="small muted">${past} fermeture(s) passée(s) dans la sauvegarde, non reprises.</p>` : ''}
     <div class="x3-edit-wrap"><table class="diff x3-edit">${head([['Reprise'], ['Nom'], ['Départements'], ['Dates'], ['Heures']])}<tbody>${d.holidays.map((h, i) => `<tr class="${h.include ? '' : 'x3-off'}"><td class="x3-c">${check(`holidays.${i}.include`)}</td><td>${input(`holidays.${i}.name`)}</td><td class="small">${esc(where(h))}</td><td>${h.day}/${h.month}${h.recurrent ? ' (tous les ans)' : `/${h.year}`}${h.dayEnd !== h.day || h.monthEnd !== h.month ? ` → ${h.dayEnd}/${h.monthEnd}` : ''}</td><td>${esc(h.from)}-${esc(h.to)}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">Aucune à venir.</td></tr>'}</tbody></table></div>`;
 }
@@ -743,6 +741,7 @@ function onClick(e, root) {
     case 'pb-csv': return download(`contacts-personnels-${b.dataset.o}-${base()}.csv`, personalCsv(d, b.dataset.o));
     case 'pb-csv-all': return download(`contacts-personnels-${base()}.csv`, personalCsv(d, null, { bom: true }));
     case 'pb-all': for (const c of d.phonebook.contacts) c.import = b.dataset.v === '1'; return changed(root);
+    case 'sched-dup': { const s = d.schedules[Number(b.dataset.i)]; d.schedules.splice(Number(b.dataset.i) + 1, 0, { ...JSON.parse(JSON.stringify(s)), key: `${s.key.split('#')[0]}#${Date.now().toString(36)}`, name: `${s.name} (copie)` }); return changed(root); }
     case 'moh-add': { const k = `moh${Date.now().toString(36)}`; d.sounds.moh.push({ key: k, label: '', sort: 'alphabetical' }); return changed(root); }
     case 'moh-del': {
       const [x] = d.sounds.moh.splice(Number(b.dataset.i), 1);

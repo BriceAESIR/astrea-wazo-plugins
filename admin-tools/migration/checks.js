@@ -9,9 +9,9 @@
 //  - plage d'un contexte (xivo_dao contextnumbers.in_range) : comparaison
 //    numérique, bornes réduites aux did_length derniers chiffres si renseigné ;
 //    un numéro commençant par « _ » est un motif, non contrôlé.
-import { I, objLabel, membersOf, ctxLabel } from './inventory.js?v=0.40.53';
-import { worldOf, route } from './3cx-sites.js?v=0.40.53';
-import { matches, callRights, userContext } from '../callflow/dialsim.js?v=0.40.53';
+import { I, objLabel, membersOf, ctxLabel } from './inventory.js?v=0.40.54';
+import { worldOf, route } from './3cx-sites.js?v=0.40.54';
+import { matches, callRights, userContext } from '../callflow/dialsim.js?v=0.40.54';
 
 const L = (type, o, detail) => ({ type, label: objLabel(type, o), detail });
 

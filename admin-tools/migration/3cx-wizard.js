@@ -11,16 +11,16 @@
 // de l'assistant France de Call Flow ; lues dans le code, testées sur faux tenant). Les phases
 // Personnes, Routage et Finitions sont planifiées (lecture seule) ; leur
 // écriture arrive aux lots 5b-5d.
-import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.53';
-import { I, sameTenant } from './inventory.js?v=0.40.53';
-import { buildExport, exportFileName } from './export.js?v=0.40.53';
-import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText, didWazo, numWazo } from './3cx-draft.js?v=0.40.53';
+import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.54';
+import { I, sameTenant } from './inventory.js?v=0.40.54';
+import { buildExport, exportFileName } from './export.js?v=0.40.54';
+import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText, didWazo, numWazo } from './3cx-draft.js?v=0.40.54';
 import {
   SITE_MODES, FR_FAMILIES, FR_FORMATS, BLOCK_118, defaultSite, defaultOut, clientPatterns, unitDids, rangeIssues, occupancy, placements, unitLabels, unitCfg, futureOf, siteChecks, routeText, newRanges, multi as multiSites,
-} from './3cx-sites.js?v=0.40.53';
-import { unitList, unitOf, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.53';
-import { mohLabel, soundCategory, loaded, uniqueNames, putBinary, CATEGORY_RE } from './3cx-sounds.js?v=0.40.53';
-import { phonebookName, companyContacts, sourceColumns, dird } from './3cx-phonebook.js?v=0.40.53';
+} from './3cx-sites.js?v=0.40.54';
+import { unitList, unitOf, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.54';
+import { mohLabel, soundCategory, loaded, uniqueNames, putBinary, CATEGORY_RE } from './3cx-sounds.js?v=0.40.54';
+import { phonebookName, companyContacts, sourceColumns, dird } from './3cx-phonebook.js?v=0.40.54';
 
 const W = { d: null, m: null, t: null, busy: false, msg: null, at: null };
 export function setWizard(d, m) { W.d = d; W.m = m; W.t = null; W.msg = null; ensureState(); }
@@ -394,7 +394,7 @@ function losses() {
   const blf = blfAll.filter((b) => !b.ok && !parkKeys.includes(b));
   if (blf.length) add('info', `${blf.length} touche(s) BLF non reprises`, 'Cibles absentes (anciens postes), postes non repris ou doublons.', 'Liste exacte dans l\'onglet Exports (CSV des touches).');
   if (m.parks.length) add('info', `Parking 3CX non repris${parkKeys.length ? ` (${parkKeys.length} touche(s) de place sur ${new Set(parkKeys.map((b) => b.owner)).size} poste(s))` : ''}`, 'Plusieurs appels en attente : touches ligne du poste Wazo (un appel par touche) ou appli Wazo. Un appel en attente ne se reprend que depuis le poste qui l\'a mis en attente ; pour le passer à un collègue, le transférer.', 'Si un collègue doit reprendre l\'appel depuis son poste, créer un parking Wazo à la main (touches « place de parking »).');
-  if (d.dids.some((r) => r.import && [r.holiday, r.closed].some((x) => x?.t === 'sound'))) add('info', 'Message de fermeture des jours fériés', 'Le son du jour férié doit exister dans Wazo, sinon la fermeture n\'a rien à jouer.', 'Fournir les sons (phase musiques), ou viser la messagerie.');
+  if (d.schedules.some((s) => d.dids.some((r) => r.import && r.schedule === s.key) && [s.holiday, s.closed].some((x) => x?.t === 'sound'))) add('info', 'Message de fermeture des jours fériés', 'Le son du jour férié doit exister dans Wazo, sinon la fermeture n\'a rien à jouer.', 'Fournir les sons (phase musiques), ou viser la messagerie.');
   if (m.ivrs.some((v) => v.system)) add('info', 'SVI internes de 3CX (code PIN, rappel de file)', 'Sans équivalent : non repris.', '—');
   if (m.others.length) add('info', m.others.map((o) => `${o.kind.replace('Extension', '')} ${o.number}`).join(', '), 'Fax, conférence et menu spécial 3CX : non repris.', 'À créer à la main si utilisés.');
   add('info', 'Messages vocaux, enregistrements et journaux d\'appels 3CX', 'Non migrables par l\'API de Wazo.', 'Les exporter depuis 3CX si le client veut les garder.');

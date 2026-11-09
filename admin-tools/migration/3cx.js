@@ -364,7 +364,8 @@ export function schedulesOf(m) {
   const holidaysOf = (dept) => dedupHolidays([...m.holidays, ...((m.groups.find((g) => g.name === dept)?.holidays) || [])].filter((h) => !h.past));
   let n = 0;
   return [...map.values()].map((s) => ({
-    ...s, name: s.own ? `Horaire ${++n}` : `Heures de bureau${s.dept && s.dept !== '__DEFAULT__' ? ` - ${s.dept}` : ''}`,
+    // Heures spécifiques d'une seule règle entrante : nommées d'après sa SDA (le nom de la règle 3CX est souvent vide).
+    ...s, name: s.own ? (s.users.filter((u) => !/par défaut/.test(u)).length === 1 ? `Horaire ${s.users.find((u) => !/par défaut/.test(u))}` : `Horaire ${++n}`) : `Heures de bureau${s.dept && s.dept !== '__DEFAULT__' ? ` - ${s.dept}` : ''}`,
     text: periodsText(s.periods), holidays: holidaysOf(s.dept || '__DEFAULT__'),
   }));
 }

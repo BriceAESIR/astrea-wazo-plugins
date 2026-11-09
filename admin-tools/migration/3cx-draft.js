@@ -13,7 +13,7 @@
 // Les objets Wazo correspondants (destinations confd user_id, group_id…) ne
 // sont résolus qu'à l'écriture : convertir une file en groupe ne demande donc
 // aucune reprise des destinations qui la visent.
-import { nameOf, schedulesOf, STRATEGY } from './3cx.js?v=0.40.53';
+import { nameOf, schedulesOf, STRATEGY } from './3cx.js?v=0.40.54';
 
 export const DRAFT_FORMAT = 'astrea-3cx-draft';
 const KEY = 'astrea-migration-3cx-draft-v1';
@@ -121,13 +121,46 @@ export function buildDraft(m, file) {
   });
   // SDA du trunk sans règle propre : rejet par défaut dans 3CX, reprises « non affectées ».
   const ruled = new Set(dids.map((d) => d.did));
-  for (const t of m.trunks) for (const did of t.dids) if (!ruled.has(did)) dids.push({ did, import: false, name: '(sans règle 3CX)', dest: { t: 'none' }, schedule: '', closed: { t: 'none' }, holiday: { t: 'none' }, viaCsv: false });
-  return { format: DRAFT_FORMAT, version: 1, file, sourceDate: m.date, company: m.company, createdAt: new Date().toISOString(), users, devices: buildDevices(m, users), hunts, ivrs, dids, schedules, holidays, blfOffset: 1, upperLast: false, schedVersion: SCHED_VERSION };
+  for (const t of m.trunks) for (const did of t.dids) if (!ruled.has(did)) dids.push({ did, import: false, name: '(sans règle 3CX)', dest: { t: 'none' }, schedule: '', viaCsv: false });
+  const d = { format: DRAFT_FORMAT, version: 1, file, sourceDate: m.date, company: m.company, createdAt: new Date().toISOString(), users, devices: buildDevices(m, users), hunts, ivrs, dids, schedules, holidays, blfOffset: 1, upperLast: false, schedVersion: SCHED_VERSION };
+  return exitsOnSchedules(d);
 }
 // Horaires et fermetures du brouillon. Version 2 (04/11/2026) : heures de bureau
 // du département de chaque règle (et non plus de __DEFAULT__), fermetures des
 // départements en plus de celles du tenant, chacune avec ses départements.
-const SCHED_VERSION = 2;
+// Version 3 (09/11/2026, demande de Brice : « les SDA ce sont les SDA, les horaires,
+// les horaires ») : comme dans Wazo, les sorties « fermé » et « férié » sont
+// portées par l'horaire (schedule : closed_destination, destination de chaque
+// fermeture exceptionnelle), plus par la SDA. Des SDA 3CX aux mêmes plages mais
+// aux sorties différentes donnent des horaires distincts (Wazo n'a pas d'autre moyen).
+const SCHED_VERSION = 3;
+const exitSig = (r) => JSON.stringify([r.closed || { t: 'none' }, r.holiday || { t: 'none' }]);
+function exitsOnSchedules(d) {
+  // Fermé et férié identiques à la destination ouverte (3CX : « autre destination » décochée) :
+  // l'horaire ne change rien, la SDA est « toujours ouverte » dans Wazo.
+  const same = (a, b) => JSON.stringify(a || { t: 'none' }) === JSON.stringify(b || { t: 'none' });
+  for (const r of d.dids) if (r.schedule && 'closed' in r && same(r.closed, r.dest) && same(r.holiday, r.dest)) r.schedule = '';
+  const out = [];
+  for (const s of d.schedules) {
+    const users = d.dids.filter((r) => r.schedule === s.key);
+    // Groupes de SDA par sorties, le plus grand garde l'horaire et sa clé.
+    const by = new Map(); for (const r of users) { const k = exitSig(r); if (!by.has(k)) by.set(k, []); by.get(k).push(r); }
+    const groups = [...by.values()].sort((a, b) => b.length - a.length);
+    // Horaire sans SDA : gardé seulement s'il en avait avant (brouillon v3 déjà réglé) ou s'il vient d'un département.
+    if (!groups.length) { if (s.dept || 'closed' in s) out.push({ ...s, closed: s.closed || { t: 'none' }, holiday: s.holiday || { t: 'none' } }); continue; }
+    groups.forEach((g, i) => {
+      const key = i ? `${s.key}#${i + 1}` : s.key;
+      const closed = g[0].closed || { t: 'none' }; const holiday = g[0].holiday || { t: 'none' };
+      out.push({ ...s, key, name: i ? `${s.name} - ${destLabel(d, closed)}` : s.name, closed, holiday });
+      for (const r of g) r.schedule = key;
+    });
+  }
+  for (const r of d.dids) { delete r.closed; delete r.holiday; }
+  d.schedules = out;
+  return d;
+}
+// Sorties d'un horaire du brouillon (pour les contrôles et les départements).
+export const scheduleOf = (d, key) => (d.schedules || []).find((s) => s.key === key) || null;
 const keyOfPeriods = (p) => p.map((x) => `${x.day}:${x.from}-${x.to}`).join('|');
 function schedulesFrom(m, scheds = schedulesOf(m)) {
   const schedules = scheds.map((s) => ({ key: keyOfPeriods(s.periods), name: s.name, text: s.text, periods: s.periods, dept: s.dept || '' }));
@@ -145,11 +178,15 @@ export const pastHolidays = (m) => schedulesFrom(m).past;
 // reprise de sa règle 3CX.
 export function upgradeSchedules(d, m) {
   if (d.schedVersion === SCHED_VERSION) return d;
-  const scheds = schedulesOf(m); const { schedules, holidays } = schedulesFrom(m, scheds);
-  const oldName = new Map((d.schedules || []).map((s) => [s.key, s.name]));
-  for (const s of schedules) if (oldName.has(s.key) && !/^(Heures de bureau|Horaire \d+)$/.test(oldName.get(s.key))) s.name = oldName.get(s.key);
-  d.schedules = schedules; d.holidays = holidays;
-  for (const r of d.dids) { const rule = m.inbound.find((x) => x.did === r.did); if (rule) r.schedule = rule.scheduleKey || ''; }
+  if (!d.schedVersion || d.schedVersion < 2) {
+    const scheds = schedulesOf(m); const { schedules, holidays } = schedulesFrom(m, scheds);
+    const oldName = new Map((d.schedules || []).map((s) => [s.key, s.name]));
+    for (const s of schedules) if (oldName.has(s.key) && !/^(Heures de bureau|Horaire \d+)$/.test(oldName.get(s.key))) s.name = oldName.get(s.key);
+    d.schedules = schedules; d.holidays = holidays;
+    for (const r of d.dids) { const rule = m.inbound.find((x) => x.did === r.did); if (rule) r.schedule = rule.scheduleKey || ''; }
+  }
+  // Version 3 : sorties passées des SDA aux horaires (saisies du brouillon gardées).
+  exitsOnSchedules(d);
   d.schedVersion = SCHED_VERSION;
   return d;
 }
@@ -348,16 +385,21 @@ export function draftIssues(d) {
   // SDA : une ligne par problème ; les cas répétitifs sont regroupés en une ligne.
   const csvNoSched = []; const noDest = [];
   for (const r of d.dids.filter((x) => x.import)) {
-    for (const [k, l] of [['dest', 'ouvert'], ['closed', 'fermé'], ['holiday', 'férié']]) {
-      if (k !== 'dest' && !r.schedule) continue;
-      const p = destProblem(d, r[k]);
-      if (p) add('warn', `SDA ${r.did} ${l}`, r[k]?.t === 'none' ? `${p}.` : `${destLabel(d, r[k])} : ${p}.`);
-    }
+    const p = destProblem(d, r.dest);
+    if (p) add('warn', `SDA ${r.did} ouvert`, r.dest?.t === 'none' ? `${p}.` : `${destLabel(d, r.dest)} : ${p}.`);
     if (r.dest.t === 'none' && !r.dest.todo) noDest.push(r.did);
     if (r.viaCsv && r.dest.t === 'user' && r.schedule) csvNoSched.push(r.did);
   }
+  // Sorties des horaires utilisés par une SDA reprise (portées par l'horaire, comme dans Wazo).
+  for (const s of d.schedules.filter((x) => d.dids.some((r) => r.import && r.schedule === x.key))) {
+    for (const [k, l] of [['closed', 'fermé'], ['holiday', 'fermetures exceptionnelles']]) {
+      const p = destProblem(d, s[k]);
+      if (p) add('warn', `Horaire « ${s.name} » ${l}`, s[k]?.t === 'none' ? `${p}.` : `${destLabel(d, s[k])} : ${p}.`);
+    }
+  }
   if (noDest.length) add('info', 'SDA', `${noDest.length} SDA sans destination (appel rejeté) : ${noDest.join(', ')}.`);
-  if (csvNoSched.length) add('info', 'SDA', `${csvNoSched.length} SDA directes créées par le CSV sans leur horaire (à associer ensuite) : ${csvNoSched.join(', ')}.`);
+  // Le CSV de Wazo n'associe pas d'horaire : la SDA arrive sans ses sorties fermé et férié.
+  if (csvNoSched.length) add('warn', 'SDA', `${csvNoSched.length} SDA créées par le CSV perdent leur horaire (et donc ses sorties fermé et férié) jusqu'à ce qu'il soit associé à la main : ${csvNoSched.join(', ')}. Décocher « CSV » pour les créer par l'écriture guidée.`);
   return out;
 }
 
