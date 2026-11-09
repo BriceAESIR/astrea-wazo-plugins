@@ -11,16 +11,16 @@
 // de l'assistant France de Call Flow ; lues dans le code, testées sur faux tenant). Les phases
 // Personnes, Routage et Finitions sont planifiées (lecture seule) ; leur
 // écriture arrive aux lots 5b-5d.
-import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.59';
-import { I, sameTenant } from './inventory.js?v=0.40.59';
-import { buildExport, exportFileName } from './export.js?v=0.40.59';
-import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText, didWazo, numWazo, unverified } from './3cx-draft.js?v=0.40.59';
+import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.60';
+import { I, sameTenant } from './inventory.js?v=0.40.60';
+import { buildExport, exportFileName } from './export.js?v=0.40.60';
+import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText, didWazo, numWazo, unverified } from './3cx-draft.js?v=0.40.60';
 import {
   SITE_MODES, FR_FAMILIES, FR_FORMATS, BLOCK_118, defaultSite, defaultOut, clientPatterns, unitDids, rangeIssues, occupancy, placements, unitLabels, unitCfg, futureOf, siteChecks, routeText, newRanges, multi as multiSites, wazoNum, numberIssues,
-} from './3cx-sites.js?v=0.40.59';
-import { unitList, unitOf, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.59';
-import { mohLabel, soundCategory, loaded, uniqueNames, putBinary, CATEGORY_RE } from './3cx-sounds.js?v=0.40.59';
-import { phonebookName, companyContacts, sourceColumns, dird } from './3cx-phonebook.js?v=0.40.59';
+} from './3cx-sites.js?v=0.40.60';
+import { unitList, unitOf, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.60';
+import { mohLabel, soundCategory, loaded, uniqueNames, putBinary, CATEGORY_RE } from './3cx-sounds.js?v=0.40.60';
+import { phonebookName, companyContacts, sourceColumns, dird } from './3cx-phonebook.js?v=0.40.60';
 
 const W = { d: null, m: null, t: null, busy: false, msg: null, at: null };
 export function setWizard(d, m) { W.d = d; W.m = m; W.t = null; W.msg = null; ensureState(); }
@@ -185,7 +185,7 @@ const kindOf = (area) => (/^Utilisateur/.test(area) ? 'utilisateurs' : /^SDA/.te
 // Prérequis : bloquants (empêchent une phase) ou rappels (hors stack).
 function prerequisites(t) {
   const c = contextsOf(t); const out = [];
-  const add = (sev, title, text, phases = []) => out.push({ sev, title, text, phases });
+  const add = (sev, title, text, phases = [], src = '') => out.push({ sev, title, text, phases, src });
   if (!c.internal) add('error', 'Contexte interne', 'aucun contexte interne dans le tenant.', ['people', 'routing']);
   if (!c.incall) add('error', 'Contexte entrant', 'aucun contexte entrant : les SDA ne pourront pas être créées.', ['routing']);
   // Site Wazo, contextes et appels simulés (bloquant pour tout : les numéros en dépendent).
@@ -198,13 +198,12 @@ function prerequisites(t) {
     const mine = new Set(unitDids(W.d, c.many ? u.key : null));
     const foreign = cur ? t.incalls.flatMap((x) => x.extensions || []).filter((e) => e.context === cur && !mine.has(e.exten)).map((e) => e.exten) : [];
     const curLabel = t.contexts.find((x) => x.name === cur)?.label || cur || 'aucun';
-    if (foreign.length) add('warn', `Trunk ${trunkLabel(t, u.trunkId)}`, `il reçoit déjà ${foreign.length} SDA dans « ${curLabel} » qui ne sont pas à ${c.many ? `« ${u.label} »` : 'ce client'} (${foreign.slice(0, 5).join(', ')}${foreign.length > 5 ? '…' : ''}) : changer son contexte entrant les couperait. Prévoir un trunk propre à ${c.many ? 'ce département' : 'ce client'}.`);
-    if (cur !== u.inc) add('manual', `Trunk ${trunkLabel(t, u.trunkId)}`, `non modifié par l'outil. ${u.incObj?.virtual ? 'Après la phase Fondations, dans' : 'Dans'} le Portal (Interconnexions > ${trunkLabel(t, u.trunkId)}), régler le contexte entrant sur « ${target} » (actuel : « ${curLabel} »), puis « Relire le tenant ». Le Routage (SDA) attend ce réglage.`, ['routing']);
+    if (foreign.length) add('warn', `Trunk ${trunkLabel(t, u.trunkId)}`, `il reçoit déjà ${foreign.length} SDA dans « ${curLabel} » qui ne sont pas à ${c.many ? `« ${u.label} »` : 'ce client'} (${foreign.slice(0, 5).join(', ')}${foreign.length > 5 ? '…' : ''}) : changer son contexte entrant les couperait. Prévoir un trunk propre à ${c.many ? 'ce département' : 'ce client'}.`, [], 'site');
+    if (cur !== u.inc) add('manual', `Trunk ${trunkLabel(t, u.trunkId)}`, `non modifié par l'outil. ${u.incObj?.virtual ? 'Après la phase Fondations, dans' : 'Dans'} le Portal (Interconnexions > ${trunkLabel(t, u.trunkId)}), régler le contexte entrant sur « ${target} » (actuel : « ${curLabel} »), puis « Relire le tenant ». Le Routage (SDA) attend ce réglage.`, ['routing'], 'site');
   }
   // Plages des contextes à créer (saisies dans l'onglet Départements, ou calculées).
-  if (c.units.some((u) => u.newCtx)) for (const x of rangeIssues(W.d)) add(x.sev, x.title, x.text, x.sev === 'error' ? ['found', 'people', 'routing'] : []);
-  for (const x of siteChecks(t, W.d, (id) => trunkLabel(t, id)).issues) add(x.sev === 'info' ? 'remind' : x.sev, x.title, x.text, x.sev === 'error' ? ['found', 'people', 'routing'] : []);
-  const tIss = c.internal ? tenantIssues(W.d, { ctx: c.internal.name, incallCtx: c.incall?.name, numOf: (u) => wazoNum(W.d, u) }, { contexts: c.internal.virtual ? [...t.contexts, c.internal] : t.contexts, extensions: t.extensions, users: t.users, voicemails: t.voicemails }) : [];
+  if (c.units.some((u) => u.newCtx)) for (const x of rangeIssues(W.d)) add(x.sev, x.title, x.text, x.sev === 'error' ? ['found', 'people', 'routing'] : [], 'site');
+  for (const x of siteChecks(t, W.d, (id) => trunkLabel(t, id)).issues) add(x.sev === 'info' ? 'remind' : x.sev, x.title, x.text, x.sev === 'error' ? ['found', 'people', 'routing'] : [], 'site');  const tIss = c.internal ? tenantIssues(W.d, { ctx: c.internal.name, incallCtx: c.incall?.name, numOf: (u) => wazoNum(W.d, u) }, { contexts: c.internal.virtual ? [...t.contexts, c.internal] : t.contexts, extensions: t.extensions, users: t.users, voicemails: t.voicemails }) : [];
   // Numéros hors des plages : corrigés par la phase Fondations (ajout des plages), pas une erreur à régler à la main.
   for (const x of tIss.filter((y) => y.sev === 'error' && !/hors des plages/.test(y.text))) add('error', x.area, x.text, ['people']);
   for (const { ctx, unit } of rangeTargets(c)) {
@@ -677,40 +676,93 @@ async function runUndo(u) {
 // ---------------------------------------------------------------------------
 const ST = { create: 'à créer', update: 'à modifier', exists: 'déjà présent', conflict: 'à régler', skip: 'rien à faire' };
 const PST = { todo: 'À appliquer', done: 'Appliquée', error: 'Interrompue' };
-export function wizardTab() {
-  const d = W.d; const w = d.write;
-  let html = `<div class="titlerow"><h3>Migration dans Wazo</h3>${helpButton('x3w-h', 'Aide : migration')}</div>
-    ${helpBox('x3w-h', 'Comme le mode édition de Call Flow Manager : rien n\'est écrit avant « Appliquer ». 1. Préparer relit le tenant ouvert et liste ce qui manque. 2. Le plan est ordonné par l\'outil (chaque objet après ce dont il dépend). 3. Les pertes et écarts disent tout ce qui ne sera pas reproduit à l\'identique ; il faut en prendre connaissance. 4. Appliquer, phase par phase : sauvegarde du tenant avant la première écriture, journal, annulation de la phase.')}
-    <div class="card x3w-step"><div class="ms-tools"><label>ID client <input data-w="clientId" value="${esc(w.clientId)}" class="x3-short" placeholder="44150"></label><label>Nom du client <input data-w="clientName" value="${esc(w.clientName)}" class="x3-mail"></label><label>Journal d'appels (j) <input type="number" min="0" max="3650" data-w="cdrDays" value="${esc(w.cdrDays)}" class="x3-short"></label><label>Enregistrements (j) <input type="number" min="0" max="3650" data-w="recordingDays" value="${esc(w.recordingDays)}" class="x3-short"></label></div>
-      <p class="small muted">Tenant visé : ${esc(S.base ? new URL(S.base).host : '?')} · ${esc(I.tenant || 'hors portail')}. Noms produits : « ${esc(w.clientName || '<client>')} - Appels sortants », « ${esc(w.clientId || '<ID>')} - Attente », « ${esc(w.clientId || '<ID>')} - Prédécroché ».</p></div>`;
-  // 1. Préparer
-  html += `<div class="card x3w-step ${W.t ? 'ok' : 'open'}"><div class="x3w-head"><span class="x3w-n">1</span><strong>Préparer</strong><span class="spacer"></span><button data-wact="read" ${W.busy ? 'disabled' : ''} class="${W.t ? '' : 'primary'}">${W.t ? 'Relire le tenant' : 'Lire le tenant'}</button></div>`;
-  if (!W.t) html += '<p class="small muted">Lecture seule : l\'outil lit le tenant ouvert et le confronte au brouillon.</p></div>';
-  else {
-    const pre = prerequisites(W.t);
-    html += `<p class="small muted">Lu à ${esc(W.t.at.toLocaleTimeString('fr-FR'))}.</p>${pre.map((p) => `<div class="${p.sev === 'error' ? 'compat blocking' : ['manual', 'warn', 'fix'].includes(p.sev) ? 'warn' : 'x3w-remind small'}"><strong>${esc(p.title)}</strong> : ${esc(p.text)}</div>`).join('')}`;
-    if (!W.t.trunks.length) html += trunkHelp();
-    else if (!multiSites(W.d)) html += `<label class="small">Trunk des appels sortants <select data-w="trunkId">${W.t.trunks.map((t) => `<option value="${t.id}" ${String(w.trunkId) === String(t.id) ? 'selected' : ''}>${esc(t.endpoint_sip?.label || t.endpoint_sip?.name || `Trunk ${t.id}`)}</option>`).join('')}</select></label>`;
-    html += siteBlock(W.t);
-    html += '</div>';
-    // 2. Plan
-    const plan = buildPlan(W.t); const blocked = blockedPhases(pre);
-    html += `<div class="card x3w-step ok"><div class="x3w-head"><span class="x3w-n">2</span><strong>Plan de migration</strong><span class="spacer"></span><span class="muted small">ordre calculé par l'outil</span></div>
-      ${PHASES.map((p) => phaseBlock(p, plan[p.id], blocked.has(p.id))).join('')}</div>`;
-    // 3. Pertes et écarts
-    const L = losses();
-    html += `<div class="card x3w-step ${w.ackLosses ? 'ok' : 'open'}"><div class="x3w-head"><span class="x3w-n">3</span><strong>Pertes et écarts avant écriture</strong><span class="spacer"></span><span class="muted small">${L.filter((x) => x.sev === 'warn').length} à surveiller, ${L.filter((x) => x.sev === 'info').length} informations</span></div>
-      <label class="inline small"><input type="checkbox" data-w="keepProfiles" ${w.keepProfiles ? 'checked' : ''}> Reprendre le profil 3CX actuel des postes absents en renvoi immédiat Wazo</label>
-      <div class="x3-edit-wrap x3w-loss"><table class="diff x3-edit"><thead><tr><th>Quoi</th><th>Conséquence</th><th>Parade</th></tr></thead><tbody>${L.map((x) => `<tr class="x3-${x.sev}"><td>${esc(x.what)}</td><td>${esc(x.effect)}</td><td>${esc(x.fix)}</td></tr>`).join('')}</tbody></table></div>
-      <label class="inline"><input type="checkbox" data-w="ackLosses" ${w.ackLosses ? 'checked' : ''}> J'ai pris connaissance de ces pertes et écarts</label></div>`;
-    // 4. Appliquer
-    html += `<div class="card x3w-step ${w.ackLosses ? 'open' : 'locked'}"><div class="x3w-head"><span class="x3w-n">4</span><strong>Appliquer</strong></div>
-      ${!w.ackLosses ? '<p class="small muted">Prendre connaissance des pertes et écarts (étape 3) avant d\'écrire.</p>' : ''}
-      ${PHASES.map((p) => applyRow(p, blocked.has(p.id))).join('')}
-      ${W.msg ? `<div class="${W.msg.bad ? 'compat blocking' : 'mg-allok'}">${esc(W.msg.text)}</div>` : ''}</div>`;
-    html += '<div class="card x3w-step later"><div class="x3w-head"><span class="x3w-n">5</span><strong>Contrôle final</strong><span class="spacer"></span><span class="x3w-badge">À venir</span></div><p class="small muted">Après les phases Routage et Finitions : comparaison du parcours de chaque SDA, 3CX ↔ Wazo (ouvert, fermé, férié), et vérifications du paramétrage.</p></div>';
+// Parcours guidé (retour de Brice, 09/11/2026 : « franchement la zone ») : une étape affichée à
+// la fois, « Suivant » seulement quand l'étape est remplie, raison affichée sinon.
+const STEPS = [
+  { id: 'client', title: 'Client', help: 'Identité du client : elle sert à nommer ce qui est créé dans Wazo.' },
+  { id: 'tenant', title: 'Tenant Wazo', help: 'Lecture seule : l\'outil lit le tenant ouvert dans le portail et liste ce qui manque avant d\'écrire.' },
+  { id: 'site', title: 'Site et appels sortants', help: 'Où le client s\'installe (contextes), par quel trunk il sort, et simulation des appels avant toute écriture.' },
+  { id: 'losses', title: 'Pertes et écarts', help: 'Ce qui ne sera pas reproduit à l\'identique de 3CX. À lire et à accepter avant d\'écrire.' },
+  { id: 'write', title: 'Écriture', help: 'Phase par phase, dans l\'ordre. Sauvegarde du tenant avant la première écriture, journal, annulation possible de chaque phase.' },
+  { id: 'final', title: 'Contrôle final', help: 'Après Routage et Finitions : comparaison du parcours de chaque SDA, 3CX et Wazo (ouvert, fermé, férié).' },
+];
+// Ce qui manque pour finir l'étape i (null = finie).
+function stepTodo(i, pre) {
+  const w = W.d.write;
+  switch (STEPS[i].id) {
+    case 'client': return !w.clientId ? 'saisir l\'ID client' : !w.clientName ? 'saisir le nom du client' : null;
+    case 'tenant': return !W.t ? 'lire le tenant' : !W.t.trunks.length ? 'créer le trunk dans le Portal, puis relire le tenant' : null;
+    case 'site': {
+      const c = contextsOf(W.t);
+      if (!c.many && !w.site.created && !w.site.mode) return 'choisir l\'installation du client';
+      const n = pre.filter((p) => p.src === 'site' && p.sev === 'error').length;
+      return n ? `corriger ${n} erreur(s) signalée(s) ci-dessus` : null;
+    }
+    case 'losses': return w.ackLosses ? null : 'cocher « J\'ai pris connaissance de ces pertes et écarts »';
+    case 'write': return PHASES.filter((p) => !p.lot).every((p) => ph(p.id).status === 'done') ? null : 'appliquer les phases disponibles';
+    default: return 'à venir';
   }
+}
+const PRE_GROUPS = [
+  ['error', 'Bloquant', 'compat blocking'], ['manual', 'À faire dans le Portal', 'warn'], ['fix', 'Corrigé par l\'outil à l\'écriture', 'x3w-remind small'],
+  ['warn', 'À surveiller', 'warn'], ['remind', 'Rappels', 'x3w-remind small'],
+];
+const phaseTitles = (ids) => ids.map((id) => PHASES.find((p) => p.id === id)?.title).filter(Boolean).join(', ');
+function preList(list) {
+  return PRE_GROUPS.map(([sev, label, cls]) => {
+    const l = list.filter((p) => (PRE_GROUPS.some((g) => g[0] === p.sev) ? p.sev : 'warn') === sev);
+    return l.length ? `<h4 class="x3w-gh">${esc(label)} (${l.length})</h4>${l.map((p) => `<div class="${cls}"><strong>${esc(p.title)}</strong> : ${esc(p.text)}${p.phases.length && ['error', 'manual', 'fix'].includes(sev) ? ` <span class="muted small">Bloque : ${esc(phaseTitles(p.phases))}.</span>` : ''}</div>`).join('')}` : '';
+  }).join('');
+}
+export function wizardTab() {
+  const w = W.d.write;
+  const pre = W.t ? prerequisites(W.t) : [];
+  const todo = STEPS.map((_, i) => (i > 1 && !W.t ? 'lire le tenant' : stepTodo(i, pre)));
+  // Étape la plus loin atteignable : toutes les précédentes finies (Contrôle final : après Écriture).
+  let reach = 0; while (reach < STEPS.length - 1 && !todo[reach]) reach++;
+  // w.view gardé tel quel : après rechargement (tenant à relire), on revient où on en était.
+  const i = Math.min(w.view ?? reach, reach); const st = STEPS[i];
+  let html = `<div class="titlerow"><h3>Migration dans Wazo</h3>${helpButton('x3w-h', 'Aide : migration')}</div>
+    ${helpBox('x3w-h', 'Comme le mode édition de Call Flow Manager : rien n\'est écrit avant « Appliquer ». Les étapes se suivent ; « Suivant » se débloque quand l\'étape est remplie, et dit ce qui manque sinon. Une étape finie reste consultable en cliquant sur son nom.')}
+    <ol class="x3w-bar">${STEPS.map((s, k) => `<li><button type="button" data-wact="goto" data-s="${k}" class="${k === i ? 'cur' : !todo[k] ? 'done' : ''}" ${k > reach ? 'disabled' : ''}><span class="x3w-n">${k + 1}</span>${esc(s.title)}</button></li>`).join('')}</ol>
+    <div class="card x3w-step open"><div class="x3w-head"><span class="x3w-n">${i + 1}</span><strong>${esc(st.title)}</strong><span class="spacer"></span>${todo[i] ? '' : '<span class="x3w-badge ok">Fait</span>'}</div>
+    <p class="small muted">${esc(st.help)}</p>`;
+  html += { client: stepClient, tenant: stepTenant, site: stepSite, losses: stepLosses, write: stepWrite, final: () => '' }[st.id](pre);
+  html += `<div class="x3w-nav">${i ? `<button type="button" data-wact="goto" data-s="${i - 1}">Précédent</button>` : ''}<span class="spacer"></span>
+    ${i < STEPS.length - 1 ? `${todo[i] ? `<span class="small x3w-why">Pour continuer : ${esc(todo[i])}.</span>` : ''}<button type="button" class="primary" data-wact="goto" data-s="${i + 1}" ${todo[i] ? 'disabled' : ''}>Suivant : ${esc(STEPS[i + 1].title)}</button>` : ''}</div></div>`;
   return html;
+}
+function stepClient() {
+  const w = W.d.write;
+  return `<div class="ms-tools"><label>ID client <input data-w="clientId" value="${esc(w.clientId)}" class="x3-short" placeholder="44150"></label><label>Nom du client <input data-w="clientName" value="${esc(w.clientName)}" class="x3-mail"></label><label>Journal d'appels (j) <input type="number" min="0" max="3650" data-w="cdrDays" value="${esc(w.cdrDays)}" class="x3-short"></label><label>Enregistrements (j) <input type="number" min="0" max="3650" data-w="recordingDays" value="${esc(w.recordingDays)}" class="x3-short"></label></div>
+    <p class="small muted">Tenant visé : ${esc(S.base ? new URL(S.base).host : '?')} · ${esc(I.tenant || 'hors portail')}. Noms produits : « ${esc(w.clientName || '<client>')} - Appels sortants », « ${esc(w.clientId || '<ID>')} - Attente », « ${esc(w.clientId || '<ID>')} - Prédécroché ».</p>`;
+}
+function stepTenant(pre) {
+  let h = `<div class="btnrow"><button data-wact="read" ${W.busy ? 'disabled' : ''} class="${W.t ? '' : 'primary'}">${W.t ? 'Relire le tenant' : 'Lire le tenant'}</button>${W.t ? `<span class="small muted">Lu à ${esc(W.t.at.toLocaleTimeString('fr-FR'))}. Relire après chaque changement fait dans le Portal.</span>` : ''}</div>`;
+  if (!W.t) return h;
+  if (!W.t.trunks.length) h += trunkHelp();
+  const l = pre.filter((p) => p.src !== 'site');
+  return h + (l.length ? preList(l) : '<div class="mg-allok">Rien ne manque dans le tenant.</div>');
+}
+function stepSite(pre) {
+  const w = W.d.write; let h = '';
+  const l = pre.filter((p) => p.src === 'site');
+  if (l.length) h += preList(l);
+  if (!multiSites(W.d)) h += `<label class="small">Trunk du client <select data-w="trunkId">${W.t.trunks.map((t) => `<option value="${t.id}" ${String(w.trunkId || W.t.trunks[0]?.id) === String(t.id) ? 'selected' : ''}>${esc(trunkLabel(W.t, t.id))}</option>`).join('')}</select></label>`;
+  return h + siteBlock(W.t);
+}
+function stepLosses() {
+  const w = W.d.write; const L = losses();
+  return `<p class="small"><strong>${L.filter((x) => x.sev === 'warn').length} à surveiller</strong> (en orange), ${L.filter((x) => x.sev === 'info').length} pour information.</p>
+    <label class="inline small"><input type="checkbox" data-w="keepProfiles" ${w.keepProfiles ? 'checked' : ''}> Reprendre le profil 3CX actuel des postes absents en renvoi immédiat Wazo</label>
+    <div class="x3-edit-wrap x3w-loss"><table class="diff x3-edit"><thead><tr><th>Quoi</th><th>Conséquence</th><th>Parade</th></tr></thead><tbody>${L.map((x) => `<tr class="x3-${x.sev}"><td>${esc(x.what)}</td><td>${esc(x.effect)}</td><td>${esc(x.fix)}</td></tr>`).join('')}</tbody></table></div>
+    <label class="inline x3w-ack"><input type="checkbox" data-w="ackLosses" ${w.ackLosses ? 'checked' : ''}> J'ai pris connaissance de ces pertes et écarts</label>`;
+}
+function stepWrite(pre) {
+  const plan = buildPlan(W.t); const blocked = blockedPhases(pre);
+  const next = PHASES.find((p) => !p.lot && ph(p.id).status !== 'done');
+  return `${W.msg ? `<div class="${W.msg.bad ? 'compat blocking' : 'mg-allok'}">${esc(W.msg.text)}</div>` : ''}
+    ${PHASES.map((p, k) => phaseCard(p, k, plan[p.id], pre, blocked.has(p.id), p === next)).join('')}`;
 }
 // Où installer le client, règle sortante (assistant France de Call Flow) et
 // simulation des appels depuis son contexte, avant toute écriture.
@@ -759,19 +811,20 @@ function trunkHelp() {
   const t = W.m?.trunks?.[0]; const w = W.d.write;
   return `<ol class="small x3w-todo"><li>Portal : Gestion des appels > Interconnexions > Créer, modèle de l'opérateur (${esc(t?.name || 'Unyc')} ; paramètres sur Atlas).</li><li>Nom affiché : « ${esc(w.clientName || '<client>')} - Trunk ${esc(t ? t.name.charAt(0).toUpperCase() + t.name.slice(1) : 'Unyc')} ».</li><li>Serveur proxy : pbx.eqinoxe.com.</li><li>Identifiant et mot de passe du trunk : ceux d'Atlas. Si 3CX utilise encore ce trunk, fausser son mot de passe d'un côté pour éviter un double enregistrement.</li><li>Numéro principal : ${esc(t?.mainNumber || '?')}. Créer, puis « Relire le tenant ».</li></ol>`;
 }
-function phaseBlock(p, items, blocked) {
-  const n = (s) => items.filter((x) => x.status === s).length;
-  const sum = ['create', 'update', 'exists', 'conflict'].filter((s) => n(s)).map((s) => `${n(s)} ${ST[s]}`).join(' · ') || 'rien';
-  return `<details class="x3w-phase"${p.id === 'found' ? ' open' : ''}><summary><strong>${esc(p.title)}</strong> <span class="muted small">${esc(sum)}${blocked ? ' · bloquée (voir Préparer)' : ''}${p.lot ? ` · écriture au lot ${esc(p.lot)}` : ''}</span></summary>
-    <p class="small muted">${esc(p.help)}</p>
-    <table class="diff x3-edit x3w-items"><tbody>${items.map((x) => `<tr class="st-${x.status}"><td class="x3w-st">${esc(ST[x.status])}</td><td>${esc(x.label)}</td><td class="muted small">${esc(x.detail || '')}</td></tr>`).join('')}</tbody></table></details>`;
-}
-function applyRow(p, blocked) {
+// Une phase = ce qu'elle écrira (plan), ce qui la bloque, son bouton et son journal, au même endroit.
+function phaseCard(p, k, items, pre, blocked, isNext) {
   const s = ph(p.id);
+  const n = (x) => items.filter((y) => y.status === x).length;
+  const sum = ['create', 'update', 'exists', 'conflict'].filter((x) => n(x)).map((x) => `${n(x)} ${ST[x]}`).join(' · ') || 'rien à écrire';
+  const why = pre.filter((x) => ['error', 'manual', 'fix'].includes(x.sev) && x.phases.includes(p.id));
   const can = !p.lot && W.d.write.ackLosses && !blocked && s.status !== 'done' && !W.busy;
-  return `<div class="x3w-apply"><strong>${esc(p.title)}</strong> <span class="x3w-badge ${s.status === 'done' ? 'ok' : ''}">${esc(p.lot ? `lot ${p.lot}` : PST[s.status])}</span>
-    <span class="spacer"></span>
-    ${p.lot ? '<span class="muted small">écriture à venir</span>' : `<button data-wact="apply" data-p="${p.id}" class="primary" ${can ? '' : 'disabled'}>Appliquer ${esc(p.title.toLowerCase())}</button>${s.undo.length ? `<button data-wact="undo" data-p="${p.id}" class="danger" ${W.busy ? 'disabled' : ''}>Annuler la phase</button>` : ''}`}
+  const state = p.lot ? `écriture au lot ${p.lot}` : PST[s.status];
+  return `<div class="x3w-phasebox ${isNext ? 'next' : ''} ${s.status === 'done' ? 'done' : ''} ${p.lot ? 'later' : ''}">
+    <div class="x3w-head"><span class="x3w-n">${String.fromCharCode(65 + k)}</span><strong>${esc(p.title)}</strong><span class="x3w-badge ${s.status === 'done' ? 'ok' : isNext ? 'open' : ''}">${esc(state)}</span><span class="spacer"></span>
+      ${p.lot ? '' : `${s.undo.length ? `<button data-wact="undo" data-p="${p.id}" class="danger" ${W.busy ? 'disabled' : ''}>Annuler la phase</button>` : ''}${s.status === 'done' ? '' : `<button data-wact="apply" data-p="${p.id}" class="${isNext ? 'primary' : ''}" ${can ? '' : 'disabled'}>Appliquer ${esc(p.title.toLowerCase())}</button>`}`}</div>
+    <p class="small muted">${esc(p.help)}</p>
+    ${!p.lot && blocked && s.status !== 'done' ? `<div class="compat blocking small"><strong>Bloquée par :</strong> ${why.map((x) => esc(x.title)).join(', ')} (étapes Tenant Wazo ou Site et appels sortants).</div>` : ''}
+    <details class="small"${!p.lot && n('conflict') && s.status !== 'done' ? ' open' : ''}><summary>${s.status === 'done' ? 'État du tenant relu' : 'Ce qui sera écrit'} : ${esc(sum)}</summary><table class="diff x3-edit x3w-items"><tbody>${items.map((x) => `<tr class="st-${x.status}"><td class="x3w-st">${esc(ST[x.status])}</td><td>${esc(x.label)}</td><td class="muted small">${esc(x.detail || '')}</td></tr>`).join('')}</tbody></table></details>
     ${s.log.length ? `<details class="small x3w-log"><summary>Journal (${s.log.length})</summary><ul>${s.log.map((l) => `<li>${esc(new Date(l.at).toLocaleString('fr-FR'))} · ${esc(l.text)}</li>`).join('')}</ul></details>` : ''}</div>`;
 }
 
@@ -795,6 +848,7 @@ export async function wizardChange(t) {
 }
 export async function wizardClick(b, rerender) {
   const act = b.dataset.wact;
+  if (act === 'goto') { W.d.write.view = Number(b.dataset.s); W.msg = null; save(); rerender(); document.querySelector('.x3w-bar')?.scrollIntoView({ block: 'nearest' }); return; }
   if (act === 'read') {
     W.busy = true; rerender();
     try {

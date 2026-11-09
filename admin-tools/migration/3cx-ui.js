@@ -1,12 +1,12 @@
 // Migration Assistant — vue « Import 3CX » (lot 4) : fiche de reprise (état de
 // la sauvegarde 3CX) et brouillon d'import modifiable par onglets (3cx-edit.js),
 // source des exports. Aucune écriture dans Wazo. Lecteur : 3cx.js ; brouillon : 3cx-draft.js.
-import { $, esc, toast, helpButton, helpBox, downloadJson, confirmModal } from '../common/core.js?v=0.40.59';
-import { FILES } from './3cx-sounds.js?v=0.40.59';
-import { I } from './inventory.js?v=0.40.59';
-import { parse3cx, issuesOf, schedulesOf, destText, periodsText, redacted, nameOf, STRATEGY, STRATEGY_FR, KIND_FR } from './3cx.js?v=0.40.59';
-import { buildDraft, buildDevices, loadDraft, saveDraft, blfRows, storedDrafts, clearStoredDrafts } from './3cx-draft.js?v=0.40.59';
-import { TABS, setDraft, renderTab, tabCounts, onDraftChange, draft } from './3cx-edit.js?v=0.40.59';
+import { $, esc, toast, helpButton, helpBox, downloadJson, confirmModal } from '../common/core.js?v=0.40.60';
+import { FILES } from './3cx-sounds.js?v=0.40.60';
+import { I } from './inventory.js?v=0.40.60';
+import { parse3cx, issuesOf, schedulesOf, destText, periodsText, redacted, nameOf, STRATEGY, STRATEGY_FR, KIND_FR } from './3cx.js?v=0.40.60';
+import { buildDraft, buildDevices, loadDraft, saveDraft, blfRows, storedDrafts, clearStoredDrafts } from './3cx-draft.js?v=0.40.60';
+import { TABS, setDraft, renderTab, tabCounts, onDraftChange, draft } from './3cx-edit.js?v=0.40.60';
 
 const X = { m: null, file: '', tab: 'fiche' };
 const SEV_FR = { error: 'Erreur', warn: 'À vérifier', info: 'Info' };
