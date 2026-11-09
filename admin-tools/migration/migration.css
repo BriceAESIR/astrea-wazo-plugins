@@ -211,7 +211,8 @@ input.short { width: 110px !important; }
 .x3w-bar button.cur { border-color: var(--accent); color: var(--accent); font-weight: 600; box-shadow: inset 0 -2px 0 var(--accent); }
 .x3w-bar button.cur .x3w-n { background: color-mix(in srgb, var(--accent) 14%, var(--panel)); color: var(--accent); }
 .x3w-nav { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--line); }
-.x3w-nav .spacer { flex: 1; }
+.x3w-wrap { max-width: 1100px; min-width: 0; }
+.x3w-wrap .x3w-step { overflow-x: auto; }
 .x3w-why { color: var(--warn); }
 .x3w-gh { margin: 12px 0 6px; font-size: .75rem; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
 .x3w-ack { display: block; margin-top: 8px; font-weight: 600; }

@@ -26,17 +26,18 @@
 // (_X.) inclus avant un autre établissement prend aussi ses numéros internes ;
 // inclus après, les numéros externes passent par l'établissement inclus, donc
 // par son trunk. Les écarts sont montrés avant écriture.
-import { matches, comparePatterns, dialedNumber } from '../callflow/dialsim.js?v=0.40.62';
-import { FR_FAMILIES, FR_FORMATS, frTransform, BLOCK_118 } from '../callflow/outcall-editor.js?v=0.40.62';
-import { imported, didWazo } from './3cx-draft.js?v=0.40.62';
-import { unitList, unitOf } from './3cx-depts.js?v=0.40.62';
-import { parseRanges, rangesText, inRanges } from './multisite.js?v=0.40.62';
+import { matches, comparePatterns, dialedNumber } from '../callflow/dialsim.js?v=0.40.63';
+import { FR_FAMILIES, FR_FORMATS, frTransform, BLOCK_118 } from '../callflow/outcall-editor.js?v=0.40.63';
+import { imported, didWazo } from './3cx-draft.js?v=0.40.63';
+import { unitList, unitOf } from './3cx-depts.js?v=0.40.63';
+import { parseRanges, rangesText, inRanges } from './multisite.js?v=0.40.63';
 
 export { FR_FAMILIES, FR_FORMATS, BLOCK_118 };
 export const SITE_MODES = {
-  dedicated: 'Site Wazo dédié à ce client',
-  existing: 'Site Wazo partagé : contexte interne existant',
-  new: 'Site Wazo partagé : nouveau contexte pour ce client',
+  // Libellés revus le 09/11/2026 (Brice, tenant neuf sans contexte) : dire si l'outil crée ou réutilise.
+  new: 'Nouveaux contextes pour ce client (créés par l\'outil)',
+  dedicated: 'Contextes déjà dans le tenant (site dédié à ce client)',
+  existing: 'Contexte interne d\'un autre établissement (site partagé)',
 };
 export const defaultSite = () => ({ mode: null, newLabel: '', outLabel: '', inter: true, interUnits: true, peers: null, created: null });
 // Format « nat » par défaut : la règle _X. de la procédure de Brice envoyait le
@@ -329,7 +330,7 @@ export function siteChecks(t, d, trunkName = (id) => `trunk ${id}`) {
   const { w, ps, skipped } = futureOf(t, d);
   const now = worldOf(t);
   if (!many && !s.mode) { add('error', 'Site Wazo', occ.length ? `ce site Wazo contient déjà ${total(occ)} poste(s) (${occ.map((x) => `${x.label} : ${x.n}`).join(', ')}) : choisir où installer le client.` : 'choisir où installer le client.'); return { issues, tables: [], w, ps }; }
-  if (ps.some((p) => !p.ctx)) { add('error', 'Contexte interne', 'aucun contexte interne dans ce site Wazo.'); return { issues, tables: [], w, ps }; }
+  if (ps.some((p) => !p.ctx)) { add('error', 'Contexte interne', `aucun contexte interne dans ce site Wazo : choisir « ${SITE_MODES.new} » pour que l'outil le crée, ou en créer un dans le Portal puis relire le tenant.`); return { issues, tables: [], w, ps }; }
   const who = (p) => (many ? `« ${p.label} »` : 'le client');
   if (many && occ.length) add('info', 'Site Wazo partagé', `ce site Wazo contient déjà ${total(occ)} poste(s) (${occ.map((x) => `${x.label} : ${x.n}`).join(', ')}) ; les ${ps.length} départements y auront chacun leur jeu de contextes.`);
   const noTrunk = ps.filter((p) => !p.trunkId);
@@ -341,7 +342,7 @@ export function siteChecks(t, d, trunkName = (id) => `trunk ${id}`) {
   for (const p of ps.filter((x) => !x.newCtx && !x.created && occ.some((y) => y.name === x.ctx))) {
     const moved = SAMPLES.map(([n]) => [n, route(now, p.ctx, n), route(w, p.ctx, n)]).filter(([n, a, b]) => !n.startsWith('118') && a.kind === 'out' && b.kind === 'out' && (a.rule !== b.rule || String(a.trunks) !== String(b.trunks)));
     const other = moved.filter(([, a, b]) => String(a.trunks) !== String(b.trunks));
-    if (other.length) add('error', `Postes existants de ${label(w, p.ctx)}`, `ils partiraient par le trunk du client : ${other.map(([n, a, b]) => `${n} : ${routeText(now, a, trunkName)} → ${routeText(w, b, trunkName)}`).join(' ; ')}. Un contexte = des règles sortantes communes : pour un trunk propre au client, choisir « nouveau contexte ».`);
+    if (other.length) add('error', `Postes existants de ${label(w, p.ctx)}`, `ils partiraient par le trunk du client : ${other.map(([n, a, b]) => `${n} : ${routeText(now, a, trunkName)} → ${routeText(w, b, trunkName)}`).join(' ; ')}. Un contexte = des règles sortantes communes : pour un trunk propre au client, choisir « Nouveaux contextes pour ce client ».`);
     else if (moved.length) add('info', `Postes existants de ${label(w, p.ctx)}`, `${moved.length} type(s) de numéros passeraient par la règle du client (même trunk) : ${moved.map(([n]) => n).join(', ')}.`);
     if (s.mode === 'existing') add('info', 'Contexte partagé', `le contexte ${label(w, p.ctx)} contient déjà ${occ.find((y) => y.name === p.ctx).n} poste(s) : le client partagera leurs appels sortants (${p.newOut ? 'nouveau sortant inclus en tête' : `sortant ${label(w, p.out)}`}).`);
   }

@@ -11,16 +11,16 @@
 // de l'assistant France de Call Flow ; lues dans le code, testées sur faux tenant). Les phases
 // Personnes, Routage et Finitions sont planifiées (lecture seule) ; leur
 // écriture arrive aux lots 5b-5d.
-import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.62';
-import { I, sameTenant } from './inventory.js?v=0.40.62';
-import { buildExport, exportFileName } from './export.js?v=0.40.62';
-import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText, didWazo, numWazo, unverified } from './3cx-draft.js?v=0.40.62';
+import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.63';
+import { I, sameTenant } from './inventory.js?v=0.40.63';
+import { buildExport, exportFileName } from './export.js?v=0.40.63';
+import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText, didWazo, numWazo, unverified } from './3cx-draft.js?v=0.40.63';
 import {
   SITE_MODES, FR_FAMILIES, FR_FORMATS, BLOCK_118, defaultSite, defaultOut, clientPatterns, unitDids, rangeIssues, occupancy, placements, unitLabels, unitCfg, futureOf, siteChecks, routeText, newRanges, multi as multiSites, wazoNum, numberIssues, NO_TRUNK, exitOk, outcallName,
-} from './3cx-sites.js?v=0.40.62';
-import { unitList, unitOf, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.62';
-import { mohLabel, soundCategory, loaded, uniqueNames, putBinary, CATEGORY_RE } from './3cx-sounds.js?v=0.40.62';
-import { phonebookName, companyContacts, sourceColumns, dird } from './3cx-phonebook.js?v=0.40.62';
+} from './3cx-sites.js?v=0.40.63';
+import { unitList, unitOf, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.63';
+import { mohLabel, soundCategory, loaded, uniqueNames, putBinary, CATEGORY_RE } from './3cx-sounds.js?v=0.40.63';
+import { phonebookName, companyContacts, sourceColumns, dird } from './3cx-phonebook.js?v=0.40.63';
 
 const W = { d: null, m: null, t: null, busy: false, msg: null, at: null };
 export function setWizard(d, m) { W.d = d; W.m = m; W.t = null; W.msg = null; ensureState(); }
@@ -186,8 +186,12 @@ const kindOf = (area) => (/^Utilisateur/.test(area) ? 'utilisateurs' : /^SDA/.te
 function prerequisites(t) {
   const c = contextsOf(t); const out = [];
   const add = (sev, title, text, phases = [], src = '') => out.push({ sev, title, text, phases, src });
-  if (!c.internal) add('error', 'Contexte interne', 'aucun contexte interne dans le tenant.', ['people', 'routing']);
-  if (!c.incall) add('error', 'Contexte entrant', 'aucun contexte entrant : les SDA ne pourront pas être créées.', ['routing']);
+  // Contextes : seulement une fois l'installation choisie (étape Site). « Nouveau contexte » crée
+  // l'interne, l'entrant et le sortant du client : un tenant vide n'est pas un manque (Brice, 09/11/2026).
+  const s = W.d.write.site; const decided = c.many || s.mode || s.created;
+  const NEWCTX_HINT = `choisir « ${SITE_MODES.new} » ci-dessous pour que l'outil le crée, ou en créer un dans le Portal puis relire le tenant.`;
+  // Contexte interne absent : signalé par siteChecks (même étape).
+  if (decided && !c.incall && c.units.some((u) => !u.inc)) add('error', 'Contexte entrant', `aucun contexte entrant dans le tenant, les SDA ne pourraient pas être créées : ${NEWCTX_HINT}`, ['routing'], 'site');
   // Site Wazo, contextes et appels simulés (bloquant pour tout : les numéros en dépendent).
   // Trunks jamais modifiés par l'outil (décision de Brice, 04/11/2026). Contexte entrant d'un jeu
   // créé : à régler à la main dans le Portal ; le Routage (SDA) attend que ce soit fait. Si le trunk
@@ -735,9 +739,10 @@ export function wizardTab() {
     <div class="card x3w-step open"><div class="x3w-head"><span class="x3w-n">${i + 1}</span><strong>${esc(st.title)}</strong><span class="spacer"></span>${todo[i] ? '' : '<span class="x3w-badge ok">Fait</span>'}</div>
     <p class="small muted">${esc(st.help)}</p>`;
   html += { client: stepClient, tenant: stepTenant, site: stepSite, losses: stepLosses, write: stepWrite, final: () => '' }[st.id](pre);
-  html += `<div class="x3w-nav">${i ? `<button type="button" data-wact="goto" data-s="${i - 1}">Précédent</button>` : ''}<span class="spacer"></span>
-    ${i < STEPS.length - 1 ? `${todo[i] ? `<span class="small x3w-why">Pour continuer : ${esc(todo[i])}.</span>` : ''}<button type="button" class="primary" data-wact="goto" data-s="${i + 1}" ${todo[i] ? 'disabled' : ''}>Suivant : ${esc(STEPS[i + 1].title)}</button>` : ''}</div></div>`;
-  return html;
+  // Boutons groupés à gauche : à droite, ils sortaient de l'écran dans le Portal (capture de Brice, 09/11/2026).
+  html += `<div class="x3w-nav">${i ? `<button type="button" data-wact="goto" data-s="${i - 1}">Précédent</button>` : ''}
+    ${i < STEPS.length - 1 ? `<button type="button" class="primary" data-wact="goto" data-s="${i + 1}" ${todo[i] ? 'disabled' : ''}>Suivant : ${esc(STEPS[i + 1].title)}</button>${todo[i] ? `<span class="small x3w-why">Pour continuer : ${esc(todo[i])}.</span>` : ''}` : ''}</div></div>`;
+  return `<div class="x3w-wrap">${html}</div>`;
 }
 function stepClient() {
   const w = W.d.write;
@@ -863,7 +868,11 @@ export async function wizardClick(b, rerender) {
     try {
       W.t = await readTenant(); W.msg = null;
       // Site Wazo vide : dédié au client par défaut ; sinon le choix est demandé.
-      if (!W.d.write.site.mode && !occupancy(W.t).length) { W.d.write.site.mode = 'dedicated'; save(); }
+      // Tenant neuf sans contexte interne : l'outil crée le jeu de contextes complet (plages standard).
+      // Ancien défaut « dédié » sur un tenant vide : bloquait sur « aucun contexte entrant » (Brice, 09/11/2026).
+      const st = W.d.write.site; const noInternal = !W.t.contexts.some((x) => x.type === 'internal');
+      if (!st.created && noInternal && (!st.mode || st.mode === 'dedicated')) { st.mode = 'new'; save(); }
+      else if (!st.mode && !occupancy(W.t).length) { st.mode = 'dedicated'; save(); }
     } catch (e) { toast(`Lecture du tenant impossible : ${e.message}`, 8000); }
     W.busy = false; return rerender();
   }

@@ -2,19 +2,19 @@
 // Modèle et règles : 3cx-draft.js. Chaque modification est enregistrée dans le
 // navigateur (brouillon par fichier et date de sauvegarde) ; rien n'est écrit
 // dans Wazo depuis ces tableaux.
-import { $, esc, toast, helpButton, helpBox, confirmModal, downloadJson } from '../common/core.js?v=0.40.62';
-import { I } from './inventory.js?v=0.40.62';
+import { $, esc, toast, helpButton, helpBox, confirmModal, downloadJson } from '../common/core.js?v=0.40.63';
+import { I } from './inventory.js?v=0.40.63';
 import {
   GROUP_STRATEGIES, MODES, HUNT_TARGETS, LICENCES, AUTH_METHODS, effectiveUsername, isVoix, applyLicence, fillCallerIds, callerIdWazo, upgradeDraft, saveDraft, clearDraft, buildDraft, acceptDraft, userBy, userName, imported,
   destLabel, destProblem, draftIssues, usersCsv, blfRows, devicesCsv, deviceDesc, macWazo, macValid, tenantIssues,
   LINE_MODES, linesOf, VM_LANGS, vmEmail, upperName, upgradeSchedules, pastHolidays, didWazo, VERIFY,
-} from './3cx-draft.js?v=0.40.62';
-import { setWizard, wizardTab, wizardChange, wizardClick, wizardDone, wizardTotal } from './3cx-wizard.js?v=0.40.62';
-import { unitCfg, unitLabels, autoRanges, RANGE_KEYS, rangeIssues, unitPrefix, wazoNum, wazoNumOf, renumbers, numberIssues } from './3cx-sites.js?v=0.40.62';
-import { rangesText } from './multisite.js?v=0.40.62';
-import { WAZO_FIELDS, tagsOf, tagLabel, tagChecked, ensurePhonebook, phonebookName, phonebookIssues, companyContacts, personalCsv, toWazoContact, csvKeys } from './3cx-phonebook.js?v=0.40.62';
-import { SORTS, CATEGORY_RE, soundUsages, ensureSounds, mohLabel, soundCategory, FILES, keyOf, loaded, addFiles, addFileAs, targetName } from './3cx-sounds.js?v=0.40.62';
-import { DEPT_MODES, deptLabel, ensureDepts, deptObjects, unitOf, unitList, setDeptMode, moveObject } from './3cx-depts.js?v=0.40.62';
+} from './3cx-draft.js?v=0.40.63';
+import { setWizard, wizardTab, wizardChange, wizardClick, wizardDone, wizardTotal } from './3cx-wizard.js?v=0.40.63';
+import { unitCfg, unitLabels, autoRanges, RANGE_KEYS, rangeIssues, unitPrefix, wazoNum, wazoNumOf, renumbers, numberIssues } from './3cx-sites.js?v=0.40.63';
+import { rangesText } from './multisite.js?v=0.40.63';
+import { WAZO_FIELDS, tagsOf, tagLabel, tagChecked, ensurePhonebook, phonebookName, phonebookIssues, companyContacts, personalCsv, toWazoContact, csvKeys } from './3cx-phonebook.js?v=0.40.63';
+import { SORTS, CATEGORY_RE, soundUsages, ensureSounds, mohLabel, soundCategory, FILES, keyOf, loaded, addFiles, addFileAs, targetName } from './3cx-sounds.js?v=0.40.63';
+import { DEPT_MODES, deptLabel, ensureDepts, deptObjects, unitOf, unitList, setDeptMode, moveObject } from './3cx-depts.js?v=0.40.63';
 
 const E = { d: null, m: null, file: '', tab: 'users', sel: { users: new Set(), dids: new Set(), vms: new Set() }, q: '', onReset: null };
 export const TABS = [
@@ -363,7 +363,7 @@ function deptsTab() {
   const units = unitList(d);
   const opt = (v, l, cur) => `<option value="${esc(v)}" ${v === cur ? 'selected' : ''}>${esc(l)}</option>`;
   // Noms des futurs contextes (demande de Brice, 04/11/2026), mêmes réglages que l'onglet Écriture :
-  // un jeu par département « propre » (plusieurs), ou celui du client (un seul, mode « nouveau contexte »).
+  // un jeu par département « propre » (plusieurs), ou celui du client (un seul, mode « Nouveaux contextes pour ce client »).
   const many = units.length > 1;
   const ctxNames = (k) => {
     const u = units.find((y) => y.key === k); if (!u || (!many && k !== units[0].key)) return '<span class="muted small">—</span>';
@@ -372,7 +372,7 @@ function deptsTab() {
     if (cfg.created) return `<span class="small">créés : ${[cfg.created.ctxName, cfg.created.incName, cfg.created.outName].filter(Boolean).map(esc).join(', ')}</span>`;
     return `<input data-ctxname="${esc(k)}|newLabel" value="${esc(cfg.newLabel || '')}" placeholder="${esc(L.ctx)}" class="x3-mail" title="Contexte interne">
       <input data-ctxname="${esc(k)}|incLabel" value="${esc(cfg.incLabel || '')}" placeholder="${esc(L.inc)}" class="x3-mail" title="Contexte entrant (le trunk du jeu y est pointé)">
-      <input data-ctxname="${esc(k)}|outLabel" value="${esc(cfg.outLabel || '')}" placeholder="${esc(L.out)}" class="x3-mail" title="Contexte sortant">${many ? `<label class="inline small" title="Numéro Wazo = préfixe du site + numéro 3CX à 3 chiffres (201 → ${esc(unitPrefix(d, k))}201, groupe 801 → ${esc(unitPrefix(d, k))}801). Le CSV, les touches et les plages suivent. Décoché (par défaut) : numéros 3CX et plages existantes gardés, les annuaires des postes n'ont rien à changer."><input type="checkbox" data-renum="${esc(k)}" ${renumbers(d, k) ? 'checked' : ''}> Renuméroter (suggestion : ${esc(unitPrefix(d, k))}XXX)</label> ${renumbers(d, k) ? '' : '<span class="muted small">numéros 3CX gardés</span>'}<label class="small"${renumbers(d, k) ? '' : ' hidden'}>Préfixe des plages <input data-ctxname="${esc(k)}|prefix" value="${esc(cfg.prefix || '')}" placeholder="${esc(unitPrefix(d, k))}" class="x3-short" title="Plages standard du jeu précédées de ce chiffre : ${esc(unitPrefix(d, k))}200-${esc(unitPrefix(d, k))}299 (postes), …800-…899 (groupes), …900-…999 (files), …700-…799 (conférences). Vide : rang du jeu."></label>` : '<div class="muted small">si « nouveau contexte » (onglet Écriture)</div>'}
+      <input data-ctxname="${esc(k)}|outLabel" value="${esc(cfg.outLabel || '')}" placeholder="${esc(L.out)}" class="x3-mail" title="Contexte sortant">${many ? `<label class="inline small" title="Numéro Wazo = préfixe du site + numéro 3CX à 3 chiffres (201 → ${esc(unitPrefix(d, k))}201, groupe 801 → ${esc(unitPrefix(d, k))}801). Le CSV, les touches et les plages suivent. Décoché (par défaut) : numéros 3CX et plages existantes gardés, les annuaires des postes n'ont rien à changer."><input type="checkbox" data-renum="${esc(k)}" ${renumbers(d, k) ? 'checked' : ''}> Renuméroter (suggestion : ${esc(unitPrefix(d, k))}XXX)</label> ${renumbers(d, k) ? '' : '<span class="muted small">numéros 3CX gardés</span>'}<label class="small"${renumbers(d, k) ? '' : ' hidden'}>Préfixe des plages <input data-ctxname="${esc(k)}|prefix" value="${esc(cfg.prefix || '')}" placeholder="${esc(unitPrefix(d, k))}" class="x3-short" title="Plages standard du jeu précédées de ce chiffre : ${esc(unitPrefix(d, k))}200-${esc(unitPrefix(d, k))}299 (postes), …800-…899 (groupes), …900-…999 (files), …700-…799 (conférences). Vide : rang du jeu."></label>` : '<div class="muted small">si « Nouveaux contextes pour ce client » (onglet Écriture)</div>'}
       <div class="x3-ranges">${RANGE_KEYS.map(([rk, rl]) => { const auto = rangesText(autoRanges(d, many ? k : null)[rk]); return `<label class="small">${esc(rl)} <input data-ctxrange="${esc(k)}|${rk}" value="${esc(cfg.ranges?.[rk] || '')}" placeholder="${esc(auto || 'aucune')}" title="Plages du contexte interne, ex. 200-260, 321 ; vide : ${esc(auto || 'aucune')} (plages standard, plus celles des numéros du client qui n'y tombent pas) ; « - » : aucune"></label>`; }).join('')}</div>`;
   };
   const count = (k) => { const o = deptObjects(d, k); return [`${o.users.filter((u) => u.mode === 'user').length} postes`, `${o.hunts.length} groupes / files`, `${o.ivrs.length} SVI`, `${o.dids.length} SDA`].join(', '); };
