@@ -13,7 +13,7 @@
 // Les objets Wazo correspondants (destinations confd user_id, group_id…) ne
 // sont résolus qu'à l'écriture : convertir une file en groupe ne demande donc
 // aucune reprise des destinations qui la visent.
-import { nameOf, schedulesOf, STRATEGY } from './3cx.js?v=0.40.57';
+import { nameOf, schedulesOf, STRATEGY } from './3cx.js?v=0.40.58';
 
 export const DRAFT_FORMAT = 'astrea-3cx-draft';
 const KEY = 'astrea-migration-3cx-draft-v1';
@@ -159,6 +159,19 @@ function exitsOnSchedules(d) {
   d.schedules = out;
   return d;
 }
+// Vérification objet par objet (demande de Brice, 09/11/2026 : « comme la case à cocher de
+// chaque utilisateur, pour tout »). Par onglet : objets repris et clé de leur case.
+export const VERIFY = {
+  users: { label: 'utilisateurs', key: 'checked', list: (d) => imported(d) },
+  vms: { label: 'messageries', key: 'vmChecked', list: (d) => d.users.filter((u) => u.mode !== 'skip' && u.vm) },
+  devices: { label: 'appareils', key: 'checked', list: (d) => (d.devices || []).filter((x) => x.import) },
+  hunts: { label: 'groupes et files', key: 'checked', list: (d) => d.hunts.filter((h) => h.target !== 'skip') },
+  ivrs: { label: 'SVI', key: 'checked', list: (d) => d.ivrs.filter((v) => v.import) },
+  dids: { label: 'SDA', key: 'checked', list: (d) => d.dids.filter((r) => r.import) },
+  scheds: { label: 'horaires', key: 'checked', list: (d) => d.schedules.filter((s) => d.dids.some((r) => r.import && r.schedule === s.key)) },
+};
+// Objets pas encore vérifiés, par onglet : [{ tab, label, n, total }].
+export const unverified = (d) => Object.entries(VERIFY).map(([tab, v]) => { const l = v.list(d); return { tab, label: v.label, total: l.length, n: l.filter((o) => !o[v.key]).length }; }).filter((x) => x.n);
 // Sorties d'un horaire du brouillon (pour les contrôles et les départements).
 export const scheduleOf = (d, key) => (d.schedules || []).find((s) => s.key === key) || null;
 const keyOfPeriods = (p) => p.map((x) => `${x.day}:${x.from}-${x.to}`).join('|');
