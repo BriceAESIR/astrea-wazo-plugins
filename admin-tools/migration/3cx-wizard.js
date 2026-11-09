@@ -11,16 +11,16 @@
 // de l'assistant France de Call Flow ; lues dans le code, testées sur faux tenant). Les phases
 // Personnes, Routage et Finitions sont planifiées (lecture seule) ; leur
 // écriture arrive aux lots 5b-5d.
-import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.64';
-import { I, sameTenant } from './inventory.js?v=0.40.64';
-import { buildExport, exportFileName } from './export.js?v=0.40.64';
-import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText, didWazo, numWazo, unverified } from './3cx-draft.js?v=0.40.64';
+import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.65';
+import { I, sameTenant } from './inventory.js?v=0.40.65';
+import { buildExport, exportFileName } from './export.js?v=0.40.65';
+import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText, didWazo, numWazo, unverified } from './3cx-draft.js?v=0.40.65';
 import {
   SITE_MODES, FR_FAMILIES, FR_FORMATS, BLOCK_118, defaultSite, defaultOut, clientPatterns, unitDids, rangeIssues, occupancy, placements, unitLabels, unitCfg, futureOf, siteChecks, routeText, newRanges, multi as multiSites, wazoNum, numberIssues, NO_TRUNK, exitOk, outcallName,
-} from './3cx-sites.js?v=0.40.64';
-import { unitList, unitOf, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.64';
-import { mohLabel, soundCategory, loaded, uniqueNames, putBinary, CATEGORY_RE } from './3cx-sounds.js?v=0.40.64';
-import { phonebookName, companyContacts, sourceColumns, dird } from './3cx-phonebook.js?v=0.40.64';
+} from './3cx-sites.js?v=0.40.65';
+import { unitList, unitOf, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.65';
+import { mohLabel, soundCategory, loaded, uniqueNames, putBinary, CATEGORY_RE } from './3cx-sounds.js?v=0.40.65';
+import { phonebookName, companyContacts, sourceColumns, dird } from './3cx-phonebook.js?v=0.40.65';
 
 const W = { d: null, m: null, t: null, busy: false, msg: null, at: null };
 export function setWizard(d, m) { W.d = d; W.m = m; W.t = null; W.msg = null; ensureState(); }
@@ -270,6 +270,7 @@ function buildPlan(t) {
       for (const peer of u.peers) { const x = t.contexts.find((y) => y.name === peer); add('found', 'update', `Inclusions de « ${x?.label || peer} »`, `« ${u.L.ctx} » ajouté en fin de liste (appels vers lui), et inclus par lui (appels depuis lui)`); }
     } else if (u.newOut && u.ctxObj) add('found', 'create', `Contexte sortant « ${u.L.out} »`, `inclus en tête par « ${u.ctxObj.label || u.ctxObj.name} »`);
   }
+  for (const x of zeroDidCtx(t, c)) add('found', 'update', `Longueur des SDA du contexte entrant « ${x.label || x.name} »`, 'did_length 0 → longueur du numéro, comme Wazo (contexte créé avant la 0.40.65)');
   // Fondations : d'abord les plages du contexte interne (les numéros en dépendent).
   for (const { ctx, unit } of rangeTargets(c)) for (const f of rangeFixes(ctx, unit)) add('found', 'update', `Plages ${f.label} du contexte ${ctx.label || ctx.name}`, `ajouter ${f.add.map(rangeTxt).join(', ')} (actuelles : ${f.current.map(rangeTxt).join(', ') || 'aucune'} ; ${f.missing.length} numéro(s) hors plages)`);
   if (t.localization?.error) add('found', 'conflict', 'Pays', `lecture impossible : ${t.localization.error}`);
@@ -441,8 +442,22 @@ function losses() {
 // 4. Écritures de la phase Fondations (lues dans le code, cf. cadrage 5a)
 // op = { label, run: async () => ({ created?, undo? }) }
 // ---------------------------------------------------------------------------
+// Plage d'une SDA comme Wazo : did_length = longueur du numéro (user/middleware.py de confd, création
+// d'un incall : { start, end, did_length: len(numéro) }). 0 marche aussi (numéro entier comparé,
+// contextnumbers.in_range) mais le Portal affiche 0 ; question de Brice du 09/11/2026.
+const didRange = (n) => ({ start: n, end: n, did_length: String(n).length });
+// Contextes entrants créés par l'outil avant la 0.40.65 : plages sans did_length.
+const zeroDidCtx = (t, c) => c.units.filter((u) => u.created && u.inc).map((u) => t.contexts.find((x) => x.name === u.inc)).filter((x) => x && (x.incall_ranges || []).some((r) => !r.did_length && /^\d+$/.test(r.start)));
 async function foundationOps(t) {
   const d = W.d; const c = contextsOf(t); const ops = [];
+  for (const x of zeroDidCtx(t, c)) {
+    ops.push({ label: `Contexte entrant « ${x.label || x.name} » : longueur des SDA (did_length) comme Wazo`, run: async () => {
+      const cur = await tapi('GET', `/contexts/${x.id}`); const prev = cur.incall_ranges || [];
+      const next = prev.map((r) => (!r.did_length && /^\d+$/.test(r.start) ? { ...r, did_length: String(r.start).length } : r));
+      await tapi('PUT', `/contexts/${x.id}`, { incall_ranges: next });
+      return { created: `${next.filter((r, i) => r !== prev[i]).length} plage(s)`, undo: { method: 'PUT', path: `/contexts/${x.id}`, body: { incall_ranges: prev } } };
+    } });
+  }
   const s = d.write.site;
   const incl = (ids) => ({ contexts: ids.map((id) => ({ id })) });
   const includesOf = async (id) => ((await tapi('GET', `/contexts/${id}`)).contexts || []).map((x) => x.id);
@@ -462,7 +477,7 @@ async function foundationOps(t) {
           undo.unshift({ method: 'DELETE', path: `/contexts/${oc.id}` });
           const ic = await tapi('POST', '/contexts', { label: u.L.ctx, type: 'internal', ...newRanges(d, c.many ? u.key : null) });
           undo.unshift({ method: 'DELETE', path: `/contexts/${ic.id}` });
-          const inc = await tapi('POST', '/contexts', { label: u.L.inc, type: 'incall', incall_ranges: unitDids(d, c.many ? u.key : null).map((n) => ({ start: n, end: n })) });
+          const inc = await tapi('POST', '/contexts', { label: u.L.inc, type: 'incall', incall_ranges: unitDids(d, c.many ? u.key : null).map(didRange) });
           undo.unshift({ method: 'DELETE', path: `/contexts/${inc.id}` });
           made[u.key] = { oc, ic, inc };
         }

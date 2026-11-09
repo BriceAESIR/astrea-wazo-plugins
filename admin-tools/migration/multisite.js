@@ -8,11 +8,11 @@
 //  - live reload coupé pendant toute l'opération, réactivé AVANT le dernier
 //    déplacement (une écriture identique ne recharge rien, lu dans le notifier) ;
 //  - journal de chaque écriture, annulation depuis le journal.
-import { S, api, ApiError } from '../common/core.js?v=0.40.64';
-import { I, sameTenant, membersOf, objLabel } from './inventory.js?v=0.40.64';
-import { patternMatch, allDests } from './checks.js?v=0.40.64';
-import { worldOf, route, siteSlug, clientPatterns, defaultOut, BLOCK_118 } from './3cx-sites.js?v=0.40.64';
-import { userContext } from '../callflow/dialsim.js?v=0.40.64';
+import { S, api, ApiError } from '../common/core.js?v=0.40.65';
+import { I, sameTenant, membersOf, objLabel } from './inventory.js?v=0.40.65';
+import { patternMatch, allDests } from './checks.js?v=0.40.65';
+import { worldOf, route, siteSlug, clientPatterns, defaultOut, BLOCK_118 } from './3cx-sites.js?v=0.40.65';
+import { userContext } from '../callflow/dialsim.js?v=0.40.65';
 
 // ---------------------------------------------------------------------------
 // Jeu de contextes par site et cloisonnement (demande de Brice, 06/11/2026)
@@ -483,7 +483,8 @@ export async function executePlan(plan, ms, onProgress = () => {}) {
       for (const s of plan.sites) {
         onProgress(`Création des contextes de « ${s.label} »`);
         const made = {};
-        const incRanges = s.dids.map((d) => ({ start: d.exten, end: d.exten }));
+        // did_length = longueur du numéro, comme Wazo (confd user/middleware.py) ; 0 affiché sinon dans le Portal.
+        const incRanges = s.dids.map((d) => ({ start: d.exten, end: d.exten, did_length: String(d.exten).length }));
         for (const [role, body] of [['out', { label: s.names.out, type: 'outcall' }], ['inc', { label: s.names.inc, type: 'incall', incall_ranges: incRanges }], ['ctx', { label: s.names.ctx, type: 'internal', user_ranges: s.ranges, ...s.objRanges }]]) {
           const c = await tapi('POST', '/contexts', { ...body, description: desc });
           if (!c?.id || !c?.name) throw new Error('POST /contexts : réponse sans id ni nom');

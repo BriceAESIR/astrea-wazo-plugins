@@ -17,8 +17,8 @@
 // identifiant 2-254 caractères `^[a-zA-Z0-9-._~!$&'()*+,;=%@]+$` ; mot de
 // passe 4-64 caractères `^[a-zA-Z0-9-._~!$&'()*+,;=%]+$`.
 // Non testé en réel.
-import { S, $, esc, toast, api, fullName, canWrite, confirmModal, helpButton, helpBox } from '../common/core.js?v=0.40.64';
-import { settingById, same, LANG, SUBS, subLabel, authApi, IDX, readLines, newLineBody, normDest, LINES } from './settings.js?v=0.40.64';
+import { S, $, esc, toast, api, fullName, canWrite, confirmModal, helpButton, helpBox } from '../common/core.js?v=0.40.65';
+import { settingById, same, LANG, SUBS, subLabel, authApi, IDX, readLines, newLineBody, normDest, LINES } from './settings.js?v=0.40.65';
 
 const opts = (items, sel) => items.map(([v, t]) => `<option value="${esc(v)}"${String(v) === String(sel) ? ' selected' : ''}>${esc(t)}</option>`).join('');
 const $v = (id) => document.getElementById(id)?.value ?? '';
