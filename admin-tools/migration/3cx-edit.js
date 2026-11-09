@@ -2,19 +2,19 @@
 // Modèle et règles : 3cx-draft.js. Chaque modification est enregistrée dans le
 // navigateur (brouillon par fichier et date de sauvegarde) ; rien n'est écrit
 // dans Wazo depuis ces tableaux.
-import { $, esc, toast, helpButton, helpBox, confirmModal, downloadJson } from '../common/core.js?v=0.40.54';
-import { I } from './inventory.js?v=0.40.54';
+import { $, esc, toast, helpButton, helpBox, confirmModal, downloadJson } from '../common/core.js?v=0.40.55';
+import { I } from './inventory.js?v=0.40.55';
 import {
   GROUP_STRATEGIES, MODES, HUNT_TARGETS, LICENCES, AUTH_METHODS, effectiveUsername, isVoix, applyLicence, fillCallerIds, callerIdWazo, upgradeDraft, saveDraft, clearDraft, buildDraft, acceptDraft, userBy, userName, imported,
   destLabel, destProblem, draftIssues, usersCsv, blfRows, devicesCsv, deviceDesc, macWazo, macValid, tenantIssues,
   LINE_MODES, linesOf, VM_LANGS, vmEmail, upperName, upgradeSchedules, pastHolidays, didWazo,
-} from './3cx-draft.js?v=0.40.54';
-import { setWizard, wizardTab, wizardChange, wizardClick, wizardDone, wizardTotal } from './3cx-wizard.js?v=0.40.54';
-import { unitCfg, unitLabels, autoRanges, RANGE_KEYS, rangeIssues, unitPrefix } from './3cx-sites.js?v=0.40.54';
-import { rangesText } from './multisite.js?v=0.40.54';
-import { WAZO_FIELDS, tagsOf, tagLabel, tagChecked, ensurePhonebook, phonebookName, phonebookIssues, companyContacts, personalCsv, toWazoContact, csvKeys } from './3cx-phonebook.js?v=0.40.54';
-import { SORTS, CATEGORY_RE, soundUsages, ensureSounds, mohLabel, soundCategory, FILES, keyOf, loaded, addFiles, addFileAs, targetName } from './3cx-sounds.js?v=0.40.54';
-import { DEPT_MODES, deptLabel, ensureDepts, deptObjects, unitOf, unitList, setDeptMode, moveObject } from './3cx-depts.js?v=0.40.54';
+} from './3cx-draft.js?v=0.40.55';
+import { setWizard, wizardTab, wizardChange, wizardClick, wizardDone, wizardTotal } from './3cx-wizard.js?v=0.40.55';
+import { unitCfg, unitLabels, autoRanges, RANGE_KEYS, rangeIssues, unitPrefix, wazoNum, wazoNumOf, renumbers, numberIssues } from './3cx-sites.js?v=0.40.55';
+import { rangesText } from './multisite.js?v=0.40.55';
+import { WAZO_FIELDS, tagsOf, tagLabel, tagChecked, ensurePhonebook, phonebookName, phonebookIssues, companyContacts, personalCsv, toWazoContact, csvKeys } from './3cx-phonebook.js?v=0.40.55';
+import { SORTS, CATEGORY_RE, soundUsages, ensureSounds, mohLabel, soundCategory, FILES, keyOf, loaded, addFiles, addFileAs, targetName } from './3cx-sounds.js?v=0.40.55';
+import { DEPT_MODES, deptLabel, ensureDepts, deptObjects, unitOf, unitList, setDeptMode, moveObject } from './3cx-depts.js?v=0.40.55';
 
 const E = { d: null, m: null, file: '', tab: 'users', sel: { users: new Set(), dids: new Set(), vms: new Set() }, q: '', onReset: null };
 export const TABS = [
@@ -32,7 +32,7 @@ function tenantCtx() {
   const pick = (cur, type) => (ctxs.some((c) => c.name === cur && c.type === type) ? cur : (ctxs.find((c) => c.type === type)?.name || ''));
   return { ctx: pick(E.d.ctx, 'internal'), incallCtx: pick(E.d.incallCtx, 'incall') };
 }
-const tenantChecks = () => tenantIssues(E.d, tenantCtx(), { contexts: I.lists.context, extensions: I.lists.extension, users: I.lists.user, voicemails: I.lists.voicemail });
+const tenantChecks = () => tenantIssues(E.d, { ...tenantCtx(), numOf: (u) => wazoNum(E.d, u) }, { contexts: I.lists.context, extensions: I.lists.extension, users: I.lists.user, voicemails: I.lists.voicemail });
 export function tabCounts() {
   const d = E.d; if (!d) return {};
   const iss = [...draftIssues(d), ...tenantChecks()];
@@ -154,6 +154,8 @@ const USER_HELP = 'Une ligne par poste 3CX. « Vérifier un par un » ouvre la f
 // Numéro présenté : saisie libre, SDA du client proposées (liste x3-cids, posée par usersTab).
 const cidInput = (path) => input(path, 'class="x3-num" list="x3-cids" placeholder="défaut" title="Vide : défaut (numéro du trunk) ; anonymous : masqué"');
 const cidList = (d) => `<datalist id="x3-cids">${[...new Set((d.dids || []).map((r) => callerIdWazo(r.did)).filter(Boolean))].map((n) => `<option value="${esc(n)}">`).join('')}<option value="anonymous"></datalist>`;
+// Numéro Wazo modifiable (nouvelle base) : vide = numéro calculé (préfixe du site + numéro 3CX, ou numéro 3CX).
+const numInput = (path, o) => input(path, `class="x3-short" inputmode="numeric" placeholder="${esc(wazoNum(E.d, { ...o, wn: '' }))}" title="Numéro dans Wazo ; vide : ${esc(wazoNum(E.d, { ...o, wn: '' }))} (calculé)"`);
 const VOIX_NOTE = 'Licence Voix : pas d\'accès aux applications Wazo, rien à saisir (identifiant, méthode, accès), comme dans User Manager. Le CSV laisse l\'identifiant vide : Wazo prend l\'e-mail, sinon l\'identifiant interne. Aucun mot de passe généré.';
 function usersTab(opts) {
   const d = E.d; const q = E.q.trim().toLowerCase();
@@ -163,7 +165,7 @@ function usersTab(opts) {
     return `<tr class="${u.mode !== 'user' ? 'x3-off' : ''}${E.sel.users.has(i) ? ' sel' : ''}${on && !u.checked ? ' x3-unchecked' : ''}">
       <td><input type="checkbox" data-sel="users" data-i="${i}" ${E.sel.users.has(i) ? 'checked' : ''}></td>
       <td class="x3-c">${on ? check(`${p}.checked`, 'Utilisateur vérifié') : ''}</td>
-      <td>${esc(u.n)}${u.src.enabled ? '' : '<div class="muted small">désactivé 3CX</div>'}</td>
+      <td>${numInput(`${p}.wn`, u)}<div class="muted small">${esc(u.n)} dans 3CX</div>${u.src.enabled ? '' : '<div class="muted small">désactivé 3CX</div>'}</td>
       <td>${sel(`${p}.mode`, MODES)}</td>
       <td>${on ? licSel(`${p}.sub`) : ''}</td>
       <td>${input(`${p}.first`, `class="${u.guessed ? 'x3-guess' : ''}" title="${esc(`Dans 3CX : ${[u.src.first, u.src.last].filter(Boolean).join(' ') || 'vide'}`)}"`)}</td>
@@ -223,9 +225,10 @@ function reviewPanel(opts) {
   const blf = blfRows(d, E.m).filter((b) => b.owner === u.n);
   const f = (label, html, hint = '') => `<label class="x3-rf"><span>${esc(label)}</span>${html}${hint ? `<small class="muted">${esc(hint)}</small>` : ''}</label>`;
   return `<div class="card x3-review">
-    <div class="x3-review-head"><strong>Utilisateur ${esc(u.n)} · ${esc(userName(u))}</strong><span class="muted small">${k + 1} / ${imp.length}${u.checked ? ' · vérifié' : ''}</span><span class="spacer"></span><button class="icon" data-act="review-close" title="Fermer">×</button></div>
+    <div class="x3-review-head"><strong>Utilisateur ${esc(wazoNum(d, u))}${wazoNum(d, u) !== u.n ? ` (${esc(u.n)} dans 3CX)` : ''} · ${esc(userName(u))}</strong><span class="muted small">${k + 1} / ${imp.length}${u.checked ? ' · vérifié' : ''}</span><span class="spacer"></span><button class="icon" data-act="review-close" title="Fermer">×</button></div>
     ${iss.length ? `<div class="x3-review-iss">${iss.sort(bySev).map((x) => `<div class="${x.sev === 'error' ? 'compat blocking' : x.sev === 'warn' ? 'warn' : 'muted small'}">${esc(x.text)}</div>`).join('')}</div>` : '<p class="small x3-ok">Aucun problème pour cet utilisateur.</p>'}
     <div class="x3-review-grid">
+      ${f('Numéro dans Wazo', numInput(`${p}.wn`, u), `${u.n} dans 3CX ; vide : ${wazoNum(d, { ...u, wn: '' })} (calculé). Touches, renvois et SDA suivent.`)}
       ${f('Prénom', input(`${p}.first`), u.guessed ? `déduit de l'e-mail ; dans 3CX : ${[u.src.first, u.src.last].filter(Boolean).join(' ') || 'vide'}` : '')}
       ${f('Nom', input(`${p}.last`))}
       ${f('E-mail', input(`${p}.email`, 'type="email"'), 'Unique sur tout le serveur ; obligatoire pour Communication unifiée et Relation client.')}
@@ -363,7 +366,7 @@ function deptsTab() {
     if (cfg.created) return `<span class="small">créés : ${[cfg.created.ctxName, cfg.created.incName, cfg.created.outName].filter(Boolean).map(esc).join(', ')}</span>`;
     return `<input data-ctxname="${esc(k)}|newLabel" value="${esc(cfg.newLabel || '')}" placeholder="${esc(L.ctx)}" class="x3-mail" title="Contexte interne">
       <input data-ctxname="${esc(k)}|incLabel" value="${esc(cfg.incLabel || '')}" placeholder="${esc(L.inc)}" class="x3-mail" title="Contexte entrant (le trunk du jeu y est pointé)">
-      <input data-ctxname="${esc(k)}|outLabel" value="${esc(cfg.outLabel || '')}" placeholder="${esc(L.out)}" class="x3-mail" title="Contexte sortant">${many ? `<label class="small">Préfixe des plages <input data-ctxname="${esc(k)}|prefix" value="${esc(cfg.prefix || '')}" placeholder="${esc(unitPrefix(d, k))}" class="x3-short" title="Plages standard du jeu précédées de ce chiffre : ${esc(unitPrefix(d, k))}200-${esc(unitPrefix(d, k))}299 (postes), …800-…899 (groupes), …900-…999 (files), …700-…799 (conférences). Vide : rang du jeu."></label>` : '<div class="muted small">si « nouveau contexte » (onglet Écriture)</div>'}
+      <input data-ctxname="${esc(k)}|outLabel" value="${esc(cfg.outLabel || '')}" placeholder="${esc(L.out)}" class="x3-mail" title="Contexte sortant">${many ? `<label class="inline small" title="Numéro Wazo = préfixe du site + numéro 3CX à 3 chiffres (201 → ${esc(unitPrefix(d, k))}201, groupe 801 → ${esc(unitPrefix(d, k))}801). Le CSV, les touches et les plages suivent. Décoché : numéros 3CX gardés."><input type="checkbox" data-renum="${esc(k)}" ${renumbers(d, k) ? 'checked' : ''}> Renuméroter</label> <label class="small">Préfixe des plages <input data-ctxname="${esc(k)}|prefix" value="${esc(cfg.prefix || '')}" placeholder="${esc(unitPrefix(d, k))}" class="x3-short" title="Plages standard du jeu précédées de ce chiffre : ${esc(unitPrefix(d, k))}200-${esc(unitPrefix(d, k))}299 (postes), …800-…899 (groupes), …900-…999 (files), …700-…799 (conférences). Vide : rang du jeu."></label>` : '<div class="muted small">si « nouveau contexte » (onglet Écriture)</div>'}
       <div class="x3-ranges">${RANGE_KEYS.map(([rk, rl]) => { const auto = rangesText(autoRanges(d, many ? k : null)[rk]); return `<label class="small">${esc(rl)} <input data-ctxrange="${esc(k)}|${rk}" value="${esc(cfg.ranges?.[rk] || '')}" placeholder="${esc(auto || 'aucune')}" title="Plages du contexte interne, ex. 200-260, 321 ; vide : ${esc(auto || 'aucune')} (plages standard, plus celles des numéros du client qui n'y tombent pas) ; « - » : aucune"></label>`; }).join('')}</div>`;
   };
   const count = (k) => { const o = deptObjects(d, k); return [`${o.users.filter((u) => u.mode === 'user').length} postes`, `${o.hunts.length} groupes / files`, `${o.ivrs.length} SVI`, `${o.dids.length} SDA`].join(', '); };
@@ -494,7 +497,7 @@ function huntsTab(opts) {
     const p = `hunts.${i}`;
     const add = users.filter((u) => !h.members.includes(u.n)).map((u) => `<option value="${esc(u.n)}">${esc(u.n)} ${esc(userName(u))}</option>`).join('');
     return `<tr class="${h.target === 'skip' ? 'x3-off' : ''}">
-      <td>${esc(h.n)}</td><td class="small">${h.src === 'Queue' ? 'File' : 'Groupe'} 3CX</td>
+      <td>${numInput(`hunts.${i}.wn`, h)}<div class="muted small">${esc(h.n)} dans 3CX</div></td><td class="small">${h.src === 'Queue' ? 'File' : 'Groupe'} 3CX</td>
       <td>${sel(`${p}.target`, HUNT_TARGETS)}</td>
       <td>${input(`${p}.name`)}</td>
       <td>${sel(`${p}.strategy`, GROUP_STRATEGIES)}</td>
@@ -514,7 +517,7 @@ function ivrsTab(opts) {
   const rows = E.d.ivrs.map((v, i) => {
     const p = `ivrs.${i}`;
     return `<tr class="${v.import ? '' : 'x3-off'}">
-      <td>${esc(v.n)}</td><td class="x3-c">${check(`${p}.import`, 'Reprendre')}</td><td>${input(`${p}.name`)}</td><td class="small">${esc(v.prompt || '')}${v.prompt ? soundSlot(v.prompt, { player: false }) : ''}</td>
+      <td>${numInput(`${p}.wn`, v)}<div class="muted small">${esc(v.n)} dans 3CX</div></td><td class="x3-c">${check(`${p}.import`, 'Reprendre')}</td><td>${input(`${p}.name`)}</td><td class="small">${esc(v.prompt || '')}${v.prompt ? soundSlot(v.prompt, { player: false }) : ''}</td>
       <td>${num(`${p}.timeout`, 1, 120)}</td>
       <td>${v.choices.map((c, k) => `<div class="x3-choice"><input data-p="${p}.choices.${k}.key" value="${esc(c.key)}" class="x3-key">${destCell(`${p}.choices.${k}.dest`, opts)}<button class="icon" data-act="rm-choice" data-i="${i}" data-k="${k}" title="Retirer la touche">×</button></div>`).join('')}
         <button class="x3-link" data-act="add-choice" data-i="${i}">+ touche</button></td>
@@ -584,7 +587,7 @@ function checksTab() {
   const { ctx, incallCtx } = tenantCtx();
   const c = (I.lists.context || []).find((x) => x.name === ctx);
   return `${intro('checks', 'Contrôles du brouillon', 'Recalculés à chaque modification : numéros en double ou non numériques, utilisateurs sans nom, destinations vers un objet non repris, groupes sans membre repris, SDA sans destination. Les erreurs bloqueront l\'écriture dans Wazo (étape suivante) ; les exports restent possibles.')}
-    ${issuesTable(draftIssues(E.d), 'Aucun problème dans le brouillon.')}
+    ${issuesTable([...draftIssues(E.d), ...numberIssues(E.d)], 'Aucun problème dans le brouillon.')}
     <div class="titlerow x3-h"><h3>Contre le tenant Wazo ouvert</h3>${helpButton('x3e-tchk', 'Aide : contrôles contre le tenant')}</div>
     ${helpBox('x3e-tchk', 'Ce qui ferait refuser le CSV par Wazo, lu dans le code de l\'import (wazo-confd, user_import) : l\'import est tout ou rien, la première erreur annule tout. Poste hors des plages utilisateurs du contexte interne, numéro ou SDA déjà présents, messagerie existante rattachée, e-mail déjà pris dans le tenant. Contextes : ceux choisis dans l\'onglet Exports.')}
     <p class="small muted">Contexte interne : ${esc(c ? `${c.label || c.name} (${c.name})` : 'aucun')} · contexte entrant : ${esc(incallCtx || 'aucun')}.</p>
@@ -683,6 +686,7 @@ function onChange(e, root) {
     const cfg = unitList(E.d).length > 1 ? unitCfg(E.d, k) : E.d.write.site; cfg[f] = t.value.trim();
     return changed(root);
   }
+  if (t.dataset.renum) { unitCfg(E.d, t.dataset.renum).renumber = t.checked; return changed(root); }
   if (t.dataset.deptMode) { setDeptMode(E.d, t.dataset.deptMode, t.value); return changed(root); }
   if (t.dataset.deptInto) { setDeptMode(E.d, t.dataset.deptInto, 'merge', t.value); return changed(root); }
   if (t.dataset.move) { const [kind, n] = t.dataset.move.split('|'); moveObject(E.d, kind, n, t.value); return changed(root); }
@@ -753,7 +757,7 @@ function onClick(e, root) {
     case 'bulk-dids': return bulkDids(root);
     case 'csv-users': return exportUsers();
     case 'csv-blf': return exportBlf();
-    case 'csv-devices': return download(`astrea-3cx-appareils-${base()}.csv`, devicesCsv(d));
+    case 'csv-devices': return download(`astrea-3cx-appareils-${base()}.csv`, devicesCsv(d, (u) => wazoNum(d, u)));
     case 'draft-dl': return downloadJson(`astrea-3cx-brouillon-${(E.file || '3cx').replace(/\.xml$/i, '')}.json`, d);
     case 'draft-reset': return confirmModal('<h3>Réinitialiser le brouillon ?</h3><p>Toutes les modifications sont perdues ; le brouillon repart de la sauvegarde 3CX.</p>', () => { clearDraft(d); E.d = normalize(buildDraft(E.m, E.file), E.m); saveDraft(E.d); setWizard(E.d, E.m); E.onReset?.(E.d); renderTab(root, E.tab); E.onChange?.(); }, 'Réinitialiser');
     default:
@@ -834,7 +838,7 @@ function exportUsers() {
   const needIn = E.d.dids.some((r) => r.import && r.viaCsv && r.dest.t === 'user');
   if (needIn && !incallCtx) return toast('Aucun contexte entrant : décochez « CSV » dans l\'onglet SDA, ou ouvrez le bon tenant.', 6000);
   const pins = Object.fromEntries(E.m.extensions.map((e) => [e.number, e.vm.pin]));
-  const go = () => download(`wazo-import-utilisateurs-${base()}.csv`, usersCsv(E.d, { ctx, incallCtx, pins, ctxOf, incallOf }));
+  const go = () => download(`wazo-import-utilisateurs-${base()}.csv`, usersCsv(E.d, { ctx, incallCtx, pins, ctxOf, incallOf, numOf: (u) => wazoNum(E.d, u) }));
   const errs = [...tenantChecks(), ...draftIssues(E.d).filter((x) => x.area.startsWith('Utilisateur '))].filter((x) => x.sev === 'error');
   const unchecked = imported(E.d).filter((u) => !u.checked).length;
   if (!errs.length && !unchecked) return go();
@@ -845,7 +849,8 @@ function exportUsers() {
 }
 function exportBlf() {
   const q = (s) => `"${String(s ?? '').replace(/"/g, '""')}"`;
-  const rows = [['poste', 'nom', 'position_3cx', 'position_wazo', 'type', 'cible', 'cible_nom', 'reprise'].join(';'), ...blfRows(E.d, E.m).map((b) => [b.owner, b.ownerName, b.pos, b.wpos, b.type, b.target, b.targetName, b.status].map(q).join(';'))];
+  // Numéros Wazo (renumérotation multi-site), numéro 3CX en colonne à part.
+  const rows = [['poste', 'poste_3cx', 'nom', 'position_3cx', 'position_wazo', 'type', 'cible', 'cible_3cx', 'cible_nom', 'reprise'].join(';'), ...blfRows(E.d, E.m).map((b) => [wazoNumOf(E.d, b.owner), b.owner, b.ownerName, b.pos, b.wpos, b.type, b.type === 'parking' ? b.target : wazoNumOf(E.d, b.target), b.target, b.targetName, b.status].map(q).join(';'))];
   download(`astrea-3cx-blf-${base()}.csv`, '﻿' + rows.join('\r\n'));
 }
 function loadDraftFile(input, root) {

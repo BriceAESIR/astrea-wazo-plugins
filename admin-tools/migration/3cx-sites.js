@@ -26,11 +26,11 @@
 // (_X.) inclus avant un autre établissement prend aussi ses numéros internes ;
 // inclus après, les numéros externes passent par l'établissement inclus, donc
 // par son trunk. Les écarts sont montrés avant écriture.
-import { matches, comparePatterns, dialedNumber } from '../callflow/dialsim.js?v=0.40.54';
-import { FR_FAMILIES, FR_FORMATS, frTransform, BLOCK_118 } from '../callflow/outcall-editor.js?v=0.40.54';
-import { imported, didWazo } from './3cx-draft.js?v=0.40.54';
-import { unitList, unitOf } from './3cx-depts.js?v=0.40.54';
-import { parseRanges, rangesText, inRanges } from './multisite.js?v=0.40.54';
+import { matches, comparePatterns, dialedNumber } from '../callflow/dialsim.js?v=0.40.55';
+import { FR_FAMILIES, FR_FORMATS, frTransform, BLOCK_118 } from '../callflow/outcall-editor.js?v=0.40.55';
+import { imported, didWazo } from './3cx-draft.js?v=0.40.55';
+import { unitList, unitOf } from './3cx-depts.js?v=0.40.55';
+import { parseRanges, rangesText, inRanges } from './multisite.js?v=0.40.55';
 
 export { FR_FAMILIES, FR_FORMATS, BLOCK_118 };
 export const SITE_MODES = {
@@ -47,13 +47,44 @@ const NEW_OUT = (k) => `@nouveau-sortant:${k}`;
 const NEW_INC = (k) => `@nouveau-entrant:${k}`;
 export const isVirtual = (name) => String(name || '').startsWith('@');
 
-// Numéros qu'une unité apporte (postes, groupes, files) avec leur type de plage.
+// Renumérotation multi-site (Brice, 09/11/2026) : le numéro Wazo d'un poste, groupe, file
+// ou SVI est le préfixe de son site suivi du numéro 3CX à 3 chiffres (site 1 : 201 → 1201,
+// 801 → 1801). Le brouillon garde le numéro 3CX comme clé (BLF, renvois, destinations) ;
+// le numéro Wazo est calculé à la sortie (plages, CSV, contrôles, simulation, affichage).
+// Case « Renuméroter » par jeu, cochée par défaut ; un seul jeu : numéros inchangés.
+export const renumbers = (d, unit) => unit != null && multi(d) && unitCfg(d, unit).renumber !== false;
+// Numéro saisi à la main (o.wn, demande de Brice : « on part sur une nouvelle base ») : prioritaire.
+export function wazoNum(d, o) {
+  if (o && String(o.wn ?? '').trim()) return String(o.wn).trim();
+  if (!o || !/^\d{3}$/.test(String(o.n))) return o?.n;
+  const u = unitOf(d, o); return u && renumbers(d, u) ? `${unitPrefix(d, u)}${o.n}` : o.n;
+}
+// Numéro Wazo d'un numéro 3CX (poste, groupe, file ou SVI du brouillon) ; sinon inchangé.
+export function wazoNumOf(d, n) {
+  const o = [...(d.users || []), ...(d.hunts || []), ...(d.ivrs || [])].find((x) => x.n === String(n));
+  return o ? wazoNum(d, o) : n;
+}
+// Contrôles des numéros Wazo : chiffres seuls, pas deux objets repris au même numéro dans un
+// même jeu de contextes (confd refuserait le second : numéro déjà pris dans le contexte).
+export function numberIssues(d) {
+  const out = []; const by = new Map();
+  const objs = [...imported(d).map((o) => [o, 'Utilisateur']), ...d.users.filter((u) => u.mode === 'voicemail').map((o) => [o, 'Messagerie']), ...d.hunts.filter((h) => h.target !== 'skip').map((o) => [o, o.target === 'queue' ? 'File' : 'Groupe']), ...d.ivrs.filter((v) => v.import).map((o) => [o, 'SVI'])];
+  for (const [o, what] of objs) {
+    const n = wazoNum(d, o); const area = `${what} ${o.n}`;
+    if (!/^\d{1,16}$/.test(String(n || ''))) { out.push({ sev: 'error', area, text: `numéro Wazo « ${n ?? ''} » invalide (chiffres seuls).` }); continue; }
+    // Messagerie seule : numéro de boîte, pas d'extension ; comptée à part.
+    const k = `${what === 'Messagerie' ? 'vm' : 'ext'}|${unitOf(d, o) || '_'}|${n}`;
+    if (by.has(k)) out.push({ sev: 'error', area, text: `numéro Wazo ${n} déjà pris par ${by.get(k)}.` }); else by.set(k, area);
+  }
+  return out;
+}
+// Numéros qu'une unité apporte (postes, groupes, files) avec leur type de plage (numéros Wazo).
 export function clientNumbers(d, unit = null) {
   const mine = (o) => unit == null || unitOf(d, o) === unit;
   return [
-    ...imported(d).filter(mine).map((u) => ({ n: u.n, key: 'user_ranges' })),
-    ...d.hunts.filter((h) => h.target === 'group' && mine(h)).map((h) => ({ n: h.n, key: 'group_ranges' })),
-    ...d.hunts.filter((h) => h.target === 'queue' && mine(h)).map((h) => ({ n: h.n, key: 'queue_ranges' })),
+    ...imported(d).filter(mine).map((u) => ({ n: wazoNum(d, u), key: 'user_ranges' })),
+    ...d.hunts.filter((h) => h.target === 'group' && mine(h)).map((h) => ({ n: wazoNum(d, h), key: 'group_ranges' })),
+    ...d.hunts.filter((h) => h.target === 'queue' && mine(h)).map((h) => ({ n: wazoNum(d, h), key: 'queue_ranges' })),
   ].filter((x) => /^\d+$/.test(x.n));
 }
 // SDA reprises d'une unité, au format du contexte entrant Wazo (33…).

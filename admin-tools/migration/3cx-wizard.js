@@ -11,16 +11,16 @@
 // de l'assistant France de Call Flow ; lues dans le code, testées sur faux tenant). Les phases
 // Personnes, Routage et Finitions sont planifiées (lecture seule) ; leur
 // écriture arrive aux lots 5b-5d.
-import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.54';
-import { I, sameTenant } from './inventory.js?v=0.40.54';
-import { buildExport, exportFileName } from './export.js?v=0.40.54';
-import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText, didWazo, numWazo } from './3cx-draft.js?v=0.40.54';
+import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.55';
+import { I, sameTenant } from './inventory.js?v=0.40.55';
+import { buildExport, exportFileName } from './export.js?v=0.40.55';
+import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText, didWazo, numWazo } from './3cx-draft.js?v=0.40.55';
 import {
-  SITE_MODES, FR_FAMILIES, FR_FORMATS, BLOCK_118, defaultSite, defaultOut, clientPatterns, unitDids, rangeIssues, occupancy, placements, unitLabels, unitCfg, futureOf, siteChecks, routeText, newRanges, multi as multiSites,
-} from './3cx-sites.js?v=0.40.54';
-import { unitList, unitOf, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.54';
-import { mohLabel, soundCategory, loaded, uniqueNames, putBinary, CATEGORY_RE } from './3cx-sounds.js?v=0.40.54';
-import { phonebookName, companyContacts, sourceColumns, dird } from './3cx-phonebook.js?v=0.40.54';
+  SITE_MODES, FR_FAMILIES, FR_FORMATS, BLOCK_118, defaultSite, defaultOut, clientPatterns, unitDids, rangeIssues, occupancy, placements, unitLabels, unitCfg, futureOf, siteChecks, routeText, newRanges, multi as multiSites, wazoNum, numberIssues,
+} from './3cx-sites.js?v=0.40.55';
+import { unitList, unitOf, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.55';
+import { mohLabel, soundCategory, loaded, uniqueNames, putBinary, CATEGORY_RE } from './3cx-sounds.js?v=0.40.55';
+import { phonebookName, companyContacts, sourceColumns, dird } from './3cx-phonebook.js?v=0.40.55';
 
 const W = { d: null, m: null, t: null, busy: false, msg: null, at: null };
 export function setWizard(d, m) { W.d = d; W.m = m; W.t = null; W.msg = null; ensureState(); }
@@ -158,7 +158,7 @@ function rangeFixes(ctx, unit = null) {
   if (!ctx || ctx.virtual) return [];
   const out = [];
   for (const [key, label, objs] of RANGE_TYPES) {
-    const nums = objs(W.d).filter((o) => unit == null || unitOf(W.d, o) === unit).map((o) => o.n);
+    const nums = objs(W.d).filter((o) => unit == null || unitOf(W.d, o) === unit).map((o) => wazoNum(W.d, o));
     const missing = [...new Set(nums)].filter((n) => /^\d+$/.test(n) && !inR(n, ctx[key]));
     if (missing.length) out.push({ key, label, missing, add: spanOf(missing), current: ctx[key] || [] });
   }
@@ -204,14 +204,14 @@ function prerequisites(t) {
   // Plages des contextes à créer (saisies dans l'onglet Départements, ou calculées).
   if (c.units.some((u) => u.newCtx)) for (const x of rangeIssues(W.d)) add(x.sev, x.title, x.text, x.sev === 'error' ? ['found', 'people', 'routing'] : []);
   for (const x of siteChecks(t, W.d, (id) => trunkLabel(t, id)).issues) add(x.sev === 'info' ? 'remind' : x.sev, x.title, x.text, x.sev === 'error' ? ['found', 'people', 'routing'] : []);
-  const tIss = c.internal ? tenantIssues(W.d, { ctx: c.internal.name, incallCtx: c.incall?.name }, { contexts: c.internal.virtual ? [...t.contexts, c.internal] : t.contexts, extensions: t.extensions, users: t.users, voicemails: t.voicemails }) : [];
+  const tIss = c.internal ? tenantIssues(W.d, { ctx: c.internal.name, incallCtx: c.incall?.name, numOf: (u) => wazoNum(W.d, u) }, { contexts: c.internal.virtual ? [...t.contexts, c.internal] : t.contexts, extensions: t.extensions, users: t.users, voicemails: t.voicemails }) : [];
   // Numéros hors des plages : corrigés par la phase Fondations (ajout des plages), pas une erreur à régler à la main.
   for (const x of tIss.filter((y) => y.sev === 'error' && !/hors des plages/.test(y.text))) add('error', x.area, x.text, ['people']);
   for (const { ctx, unit } of rangeTargets(c)) {
     const fixes = rangeFixes(ctx, unit);
     if (fixes.length) add('fix', `Plages du contexte ${ctx.label || ctx.name}`, `${fixes.map((f) => `${f.missing.length} ${f.label} hors des plages`).join(', ')} : la phase Fondations ajoute ${fixes.map((f) => `${f.label} ${f.add.map(rangeTxt).join(', ')}`).join(' ; ')}. Personnes et Routage attendent cette correction.`, ['people', 'routing']);
   }
-  for (const x of grouped(draftIssues(W.d).filter((y) => y.sev === 'error'), kindOf)) add('error', x.area, x.text, [/^\d+ (utilisateurs|appareils)|^(Utilisateur|Appareil)/.test(x.area) ? 'people' : 'routing']);
+  for (const x of grouped([...draftIssues(W.d), ...numberIssues(W.d)].filter((y) => y.sev === 'error'), kindOf)) add('error', x.area, x.text, [/^\d+ (utilisateurs|appareils)|^(Utilisateur|Appareil)/.test(x.area) ? 'people' : 'routing']);
   if (!t.sipTpl?.global) add('error', 'Modèle SIP global', 'modèle SIP « global » du tenant introuvable : aucune ligne ne peut être créée (l\'import de Wazo échoue de même).', ['people']);
   const webrtc = imported(W.d).filter((u) => linesOf(u).includes('webrtc'));
   if (webrtc.length && !t.sipTpl?.webrtc) add('error', 'Modèle SIP WebRTC', `modèle SIP « webrtc » du tenant introuvable : ${webrtc.length} ligne(s) WebRTC impossibles.`, ['people']);
@@ -300,7 +300,8 @@ function buildPlan(t) {
   const extIn = new Set(t.extensions.filter((e) => unitCtx.has(e.context)).map((e) => e.exten));
   for (const u of imported(d)) {
     const lic = u.sub == null ? 'licence à choisir' : LICENCES[u.sub];
-    add('people', extIn.has(u.n) ? 'conflict' : u.sub == null ? 'conflict' : 'create', `Utilisateur ${u.n} ${userName(u)}`, extIn.has(u.n) ? 'numéro déjà pris dans le contexte' : `${lic}, ligne${linesOf(u).length > 1 ? 's' : ''} ${linesText(u)}${u.vm ? ', messagerie' : ''}${u.checked ? '' : ' · non vérifié'}`);
+    const wn = wazoNum(d, u);
+    add('people', extIn.has(wn) ? 'conflict' : u.sub == null ? 'conflict' : 'create', `Utilisateur ${wn}${wn !== u.n ? ` (${u.n} dans 3CX)` : ''} ${userName(u)}`, extIn.has(wn) ? 'numéro déjà pris dans le contexte' : `${lic}, ligne${linesOf(u).length > 1 ? 's' : ''} ${linesText(u)}${u.vm ? ', messagerie' : ''}${u.checked ? '' : ' · non vérifié'}`);
   }
   const macs = new Set(t.devices.map((x) => String(x.mac || '').toLowerCase()));
   for (const dv of (d.devices || []).filter((x) => x.import)) add('people', macs.has(dv.mac.toLowerCase()) ? 'exists' : 'create', `Appareil ${dv.model} ${dv.mac}`, `${macs.has(dv.mac.toLowerCase()) ? 'déjà présent : sera associé' : 'à créer'}${dv.owner ? ` → ligne de ${dv.owner}` : ' (stock)'}`);
@@ -309,7 +310,7 @@ function buildPlan(t) {
   for (const s of d.schedules.filter((x) => d.dids.some((r) => r.import && r.schedule === x.key))) add('routing', schedNames.has(s.name) ? 'exists' : 'create', `Horaire « ${s.name} »`, s.text);
   for (const h of d.hunts.filter((x) => x.target !== 'skip')) {
     const kind = h.target === 'group' ? 'Groupe' : 'File';
-    const taken = extIn.has(h.n);
+    const taken = extIn.has(wazoNum(d, h));
     const members = h.members.filter((n) => userBy(d, n)?.mode === 'user').length;
     add('routing', taken ? 'conflict' : 'create', `${kind} ${h.n} ${h.name}`, taken ? 'numéro déjà pris' : `${members} membre(s)${h.src === 'Queue' && h.target === 'group' ? ' · file 3CX convertie en groupe' : ''}`);
   }

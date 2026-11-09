@@ -13,7 +13,7 @@
 // Les objets Wazo correspondants (destinations confd user_id, group_id…) ne
 // sont résolus qu'à l'écriture : convertir une file en groupe ne demande donc
 // aucune reprise des destinations qui la visent.
-import { nameOf, schedulesOf, STRATEGY } from './3cx.js?v=0.40.54';
+import { nameOf, schedulesOf, STRATEGY } from './3cx.js?v=0.40.55';
 
 export const DRAFT_FORMAT = 'astrea-3cx-draft';
 const KEY = 'astrea-migration-3cx-draft-v1';
@@ -420,12 +420,13 @@ export function draftIssues(d) {
 // `t` = { contexts, extensions, users, voicemails } (listes du tenant).
 // ---------------------------------------------------------------------------
 const inUserRanges = (exten, ctx) => (ctx?.user_ranges || []).some((r) => Number(r.start) <= Number(exten) && Number(exten) <= Number(r.end ?? r.start));
-export function tenantIssues(d, { ctx, incallCtx }, t) {
+export function tenantIssues(d, { ctx, incallCtx, numOf = (u) => u.n }, t) {
   const out = [];
   const add = (sev, area, text) => out.push({ sev, area, text, tenant: true });
   const c = (t.contexts || []).find((x) => x.name === ctx);
   if (!c) { add('error', 'Contexte interne', 'aucun contexte interne choisi ou lu dans le tenant.'); return out; }
-  const users = imported(d);
+  // Numéros Wazo (renumérotation multi-site) : copie des utilisateurs avec n = numéro Wazo.
+  const users = imported(d).map((u) => ({ ...u, n: numOf(u) }));
   const outRange = users.filter((u) => !inUserRanges(u.n, c)).map((u) => u.n);
   if (outRange.length) add('error', `Contexte ${c.label || c.name}`, `${outRange.length} numéro(s) hors des plages utilisateurs du contexte (${(c.user_ranges || []).map((r) => (r.end && r.end !== r.start ? `${r.start}-${r.end}` : r.start)).join(', ') || 'aucune plage'}) : ${outRange.join(', ')}. Wazo refusera tout l'import : élargir les plages du contexte (Portal) ou changer les numéros.`);
   const ext = new Map((t.extensions || []).filter((e) => e.context === ctx).map((e) => [e.exten, e]));
@@ -458,7 +459,8 @@ export function tenantIssues(d, { ctx, incallCtx }, t) {
 // dans le brouillon (navigateur, fichier partageable) : `pins` est lu dans la
 // sauvegarde 3CX au moment de l'export ({ numéro: code }).
 // ctxOf(u) : contexte propre à chaque utilisateur (départements en jeux de contextes séparés).
-export function usersCsv(d, { ctx, incallCtx, pins = {}, ctxOf = null, incallOf = null }) {
+// numOf(u) : numéro Wazo du poste (renumérotation multi-site, 3cx-sites.js wazoNum) ; défaut : numéro 3CX.
+export function usersCsv(d, { ctx, incallCtx, pins = {}, ctxOf = null, incallOf = null, numOf = (u) => u.n }) {
   // subscription_type : IntRule de USER_RULES ; username : WAZO_USER_RULES (vide
   // → Wazo prend l'e-mail). Ni méthode de connexion ni accès aux applications
   // dans le CSV (WazoUserSchema) : à poser après l'import.
@@ -473,8 +475,8 @@ export function usersCsv(d, { ctx, incallCtx, pins = {}, ctxOf = null, incallOf 
     const pin = u.vm && u.vmPin && /^\d+$/.test(pins[u.n] || '') ? pins[u.n] : '';
     const o = u.vmo || defaultVmo(); const mail = u.vm ? vmEmail(u) : ''; const c = ctxOf ? ctxOf(u) : ctx;
     const v = {
-      firstname: u.first || (u.last ? '' : `Poste ${u.n}`), lastname: u.last, email: u.email, mobile_phone_number: u.mobile, outgoing_caller_id: u.callerId || '', enabled: '1', subscription_type: u.sub ?? '', ring_seconds: u.ring, context: c, line_protocol: linesOf(u)[0], exten: u.n,
-      voicemail_name: u.vm ? userName(u) : '', voicemail_number: u.vm ? u.n : '', voicemail_context: u.vm ? c : '', voicemail_password: pin,
+      firstname: u.first || (u.last ? '' : `Poste ${numOf(u)}`), lastname: u.last, email: u.email, mobile_phone_number: u.mobile, outgoing_caller_id: u.callerId || '', enabled: '1', subscription_type: u.sub ?? '', ring_seconds: u.ring, context: c, line_protocol: linesOf(u)[0], exten: numOf(u),
+      voicemail_name: u.vm ? userName(u) : '', voicemail_number: u.vm ? numOf(u) : '', voicemail_context: u.vm ? c : '', voicemail_password: pin,
       voicemail_email: mail, voicemail_attach_audio: mail ? (o.attach ? '1' : '0') : '', voicemail_delete_messages: u.vm ? (o.del && mail && o.attach ? '1' : '0') : '', voicemail_ask_password: u.vm ? (o.ask ? '1' : '0') : '', incall_exten: did.get(u.n) || '', incall_context: did.has(u.n) ? (incallOf ? incallOf(u) : incallCtx) : '', username: isVoix(u) ? '' : u.username || '',
     };
     return cols.map((c) => q(v[c])).join(',');
@@ -482,9 +484,9 @@ export function usersCsv(d, { ctx, incallCtx, pins = {}, ctxOf = null, incallOf 
   return [cols.join(','), ...rows].join('\r\n');
 }
 // Appareils : MAC (format Wazo), modèle, description, utilisateur associé.
-export function devicesCsv(d) {
+export function devicesCsv(d, numOf = (u) => u.n) {
   const q = (s) => `"${String(s ?? '').replace(/"/g, '""')}"`;
-  const rows = (d.devices || []).filter((x) => x.import).map((dv) => { const u = dv.owner ? userBy(d, dv.owner) : null; return [dv.mac, dv.vendor, dv.model, deviceDesc(d, dv), dv.owner || '', u ? userName(u) : ''].map(q).join(';'); });
+  const rows = (d.devices || []).filter((x) => x.import).map((dv) => { const u = dv.owner ? userBy(d, dv.owner) : null; return [dv.mac, dv.vendor, dv.model, deviceDesc(d, dv), u ? numOf(u) : (dv.owner || ''), u ? userName(u) : ''].map(q).join(';'); });
   return '﻿' + [['mac', 'marque', 'modele', 'description', 'numero', 'utilisateur'].join(';'), ...rows].join('\r\n');
 }
 // Touches : reprise alignée sur le brouillon (poste et cible repris, doublons).
