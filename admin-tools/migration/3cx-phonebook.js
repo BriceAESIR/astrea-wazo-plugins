@@ -19,7 +19,7 @@
 //    d'utilisateur : impossible avec le jeton de l'admin. D'où l'export CSV par
 //    poste, à importer par l'utilisateur (ou un plugin d'appli Wazo avec son jeton).
 // Supposé : profil du site nommé « default » ; colonnes affichées par les postes.
-import { S, ApiError } from '../common/core.js?v=0.40.63';
+import { S, ApiError } from '../common/core.js?v=0.40.64';
 
 // Champs Wazo proposés (clés des contacts dird).
 export const WAZO_FIELDS = {

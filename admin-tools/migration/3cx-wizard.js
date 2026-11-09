@@ -11,16 +11,16 @@
 // de l'assistant France de Call Flow ; lues dans le code, testées sur faux tenant). Les phases
 // Personnes, Routage et Finitions sont planifiées (lecture seule) ; leur
 // écriture arrive aux lots 5b-5d.
-import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.63';
-import { I, sameTenant } from './inventory.js?v=0.40.63';
-import { buildExport, exportFileName } from './export.js?v=0.40.63';
-import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText, didWazo, numWazo, unverified } from './3cx-draft.js?v=0.40.63';
+import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.64';
+import { I, sameTenant } from './inventory.js?v=0.40.64';
+import { buildExport, exportFileName } from './export.js?v=0.40.64';
+import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText, didWazo, numWazo, unverified } from './3cx-draft.js?v=0.40.64';
 import {
   SITE_MODES, FR_FAMILIES, FR_FORMATS, BLOCK_118, defaultSite, defaultOut, clientPatterns, unitDids, rangeIssues, occupancy, placements, unitLabels, unitCfg, futureOf, siteChecks, routeText, newRanges, multi as multiSites, wazoNum, numberIssues, NO_TRUNK, exitOk, outcallName,
-} from './3cx-sites.js?v=0.40.63';
-import { unitList, unitOf, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.63';
-import { mohLabel, soundCategory, loaded, uniqueNames, putBinary, CATEGORY_RE } from './3cx-sounds.js?v=0.40.63';
-import { phonebookName, companyContacts, sourceColumns, dird } from './3cx-phonebook.js?v=0.40.63';
+} from './3cx-sites.js?v=0.40.64';
+import { unitList, unitOf, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.64';
+import { mohLabel, soundCategory, loaded, uniqueNames, putBinary, CATEGORY_RE } from './3cx-sounds.js?v=0.40.64';
+import { phonebookName, companyContacts, sourceColumns, dird } from './3cx-phonebook.js?v=0.40.64';
 
 const W = { d: null, m: null, t: null, busy: false, msg: null, at: null };
 export function setWizard(d, m) { W.d = d; W.m = m; W.t = null; W.msg = null; ensureState(); }
@@ -84,6 +84,15 @@ async function readTenant() {
   const ten = await soft(() => tapi('GET', `/tenants/${S.tenant}`), () => null);
   const tpls = ten?.global_sip_template_uuid ? [] : unwrap(await list('/endpoints/sip/templates'));
   t.sipTpl = { global: ten?.global_sip_template_uuid || tpls.find((x) => x.label === 'global')?.uuid || null, webrtc: ten?.webrtc_sip_template_uuid || tpls.find((x) => x.label === 'webrtc')?.uuid || null, from: ten ? 'tenant' : 'libellés' };
+  // État réel de ce que les Fondations écrivent (sinon le plan disait « à modifier » après écriture,
+  // capture de Brice du 09/11/2026) : fichiers des musiques et des sons du client, moh_suggest.
+  const sp = soundPlan(W.d); t.mohFiles = {};
+  for (const m of sp.mohs) {
+    const ex = t.moh.find((x) => x.label === m.label);
+    if (ex) t.mohFiles[m.label] = await soft(async () => new Set(((await tapi('GET', `/moh/${ex.uuid}`)).files || []).map((x) => String(x.name).toLowerCase())), () => null);
+  }
+  t.soundFiles = t.sounds.some((x) => x.name === sp.cat) ? await soft(async () => new Set(((await tapi('GET', `/sounds/${sp.cat}`)).files || []).filter((x) => (x.formats || []).some((y) => !y.language || y.language === 'fr_FR')).map((x) => String(x.name).toLowerCase())), () => null) : null;
+  t.mohSuggest = t.sipTpl.global ? await soft(async () => ((await tapi('GET', `/endpoints/sip/templates/${t.sipTpl.global}`)).endpoint_section_options || []).find(([k]) => k === 'moh_suggest')?.[1] ?? null, () => undefined) : undefined;
   return t;
 }
 // Contextes cibles, selon le site choisi et les départements (3cx-sites.js) :
@@ -289,17 +298,33 @@ function buildPlan(t) {
   }
   // Sons et musiques d'attente (avant les files et SVI qui s'en servent).
   const sp = soundPlan(d);
+  // Fichiers déjà dans Wazo (même nom) : rien à envoyer. Fichiers non déposés : à régler, sauf s'ils y sont déjà.
+  const fileState = (files, names, have, ext) => {
+    const inW = (f) => !!have?.has(`${names.get(f)}${ext}`.toLowerCase());
+    return { inWazo: files.filter(inW).length, toSend: files.filter((f) => loaded(f) && !inW(f)).length, missing: files.filter((f) => !loaded(f) && !inW(f)).length };
+  };
+  const fileTxt = (s, n) => `${s.inWazo ? `${s.inWazo} déjà dans Wazo` : ''}${s.inWazo && (s.toSend || s.missing) ? ', ' : ''}${s.toSend ? `${s.toSend} à envoyer` : ''}${s.toSend && s.missing ? ', ' : ''}${s.missing ? `${s.missing} non déposé(s)` : ''} (sur ${n})`;
   for (const m of sp.mohs.filter((x) => x.files.length)) {
-    const ok = m.files.filter((f) => loaded(f)).length; const ex = t.moh.find((x) => x.label === m.label);
-    add('found', ok ? (ex ? 'update' : 'create') : 'conflict', `Musique d'attente « ${m.label} »`, `${ok} fichier(s) sur ${m.files.length} déposés${ex ? ' · existe déjà : fichiers ajoutés' : ''}${sp.def === m ? ' · par défaut du site' : ''}`);
+    const ex = t.moh.find((x) => x.label === m.label); const s = fileState(m.files, uniqueNames(m.files), t.mohFiles?.[m.label], '.wav');
+    const st = s.toSend ? (ex ? 'update' : 'create') : s.missing ? 'conflict' : 'exists';
+    add('found', st, `Musique d'attente « ${m.label} »`, `${fileTxt(s, m.files.length)}${sp.def === m ? ' · par défaut du site' : ''}`);
   }
-  if (sp.files.length) { const ok = sp.files.filter((f) => loaded(f)).length; const ex = t.sounds.some((x) => x.name === sp.cat); add('found', ok ? 'create' : 'conflict', `Sons « ${sp.cat} »`, `${ok} fichier(s) sur ${sp.files.length} déposés${ex ? ' · catégorie déjà présente' : ''}`); }
+  if (sp.files.length) {
+    const s = fileState(sp.files, uniqueNames(sp.files), t.soundFiles, '');
+    add('found', s.toSend ? 'create' : s.missing ? 'conflict' : 'exists', `Sons « ${sp.cat} »`, fileTxt(s, sp.files.length));
+  }
   const pbn = d.phonebook ? companyContacts(d).length : 0;
   if (pbn && (t.phonebooks || []).some((x) => x.name === phonebookName(d))) add('found', 'exists', `Annuaire « ${phonebookName(d)} »`, 'carnet du même nom déjà présent : rien recréé');
   else if (pbn) add('found', 'create', `Annuaire « ${phonebookName(d)} »`, `${pbn} contact(s)${d.phonebook.includePersonal ? ', contacts personnels compris' : ''} ; carnet, source d'annuaire et profil du site (wazo-dird)`);
   const pers = (d.phonebook?.personal || []).filter((x) => x.import).length;
   if (pers && !d.phonebook.includePersonal) add('finish', 'skip', `${pers} contact(s) personnels des postes`, 'non écrits par l\'outil (wazo-dird n\'accepte que le jeton de l\'utilisateur) : CSV par poste dans l\'onglet Annuaire, à importer par chaque utilisateur');
-  if (sp.def) add('found', 'update', `Musique d'attente par défaut : « ${sp.def.label} »`, 'option moh_suggest du modèle SIP global (comme le Wizard de déploiement de Wazo), les autres options du modèle inchangées');
+  if (sp.def) {
+    const name = t.moh.find((x) => x.label === sp.def.label)?.name;
+    const done = name && t.mohSuggest === name;
+    // Musique pas encore dans Wazo et aucun fichier à envoyer : rien ne pourra être réglé.
+    const willExist = name || sp.def.files.some((f) => loaded(f));
+    add('found', done ? 'exists' : willExist ? 'update' : 'conflict', `Musique d'attente par défaut : « ${sp.def.label} »`, done ? 'déjà réglée (moh_suggest du modèle SIP global)' : willExist ? 'option moh_suggest du modèle SIP global (comme le Wizard de déploiement de Wazo), les autres options du modèle inchangées' : 'musique absente de Wazo : déposer ses fichiers (onglet Sons), puis « Compléter »');
+  }
   // Personnes
   const unitCtx = new Set(c.units.map((u) => u.ctx));
   const vmIn = new Set(t.voicemails.filter((v) => unitCtx.has(v.context)).map((v) => String(v.number)));
@@ -706,7 +731,11 @@ function stepTodo(i, pre) {
       return n ? `corriger ${n} erreur(s) signalée(s) ci-dessus` : null;
     }
     case 'losses': return w.ackLosses ? null : 'cocher « J\'ai pris connaissance de ces pertes et écarts »';
-    case 'write': return PHASES.filter((p) => !p.lot).every((p) => ph(p.id).status === 'done') ? null : 'appliquer les phases disponibles';
+    case 'write': {
+      if (!PHASES.filter((p) => !p.lot).every((p) => ph(p.id).status === 'done')) return 'appliquer les phases disponibles';
+      const later = PHASES.filter((p) => p.lot).map((p) => p.title);
+      return later.length ? `${later.join(', ')} : écriture par l'outil pas encore disponible (prochaines versions) ; d'ici là, CSV de l'onglet Exports et saisie dans le Portal` : null;
+    }
     default: return 'à venir';
   }
 }
@@ -831,14 +860,19 @@ function phaseCard(p, k, items, pre, blocked, isNext) {
   const n = (x) => items.filter((y) => y.status === x).length;
   const sum = ['create', 'update', 'exists', 'conflict'].filter((x) => n(x)).map((x) => `${n(x)} ${ST[x]}`).join(' · ') || 'rien à écrire';
   const why = pre.filter((x) => ['error', 'manual', 'fix'].includes(x.sev) && x.phases.includes(p.id));
-  const can = !p.lot && W.d.write.ackLosses && !blocked && s.status !== 'done' && !W.busy;
   const state = p.lot ? `écriture au lot ${p.lot}` : PST[s.status];
+  // Phase appliquée mais tenant relu pas conforme : ce qui reste, en clair (Brice, 09/11/2026).
+  const left = s.status === 'done' ? items.filter((x) => ['create', 'update', 'conflict'].includes(x.status)) : [];
+  // Phase appliquée qui peut être complétée (fichiers déposés depuis…) : les écritures sautent ce qui existe déjà.
+  const more = left.filter((x) => x.status !== 'conflict').length;
+  const can = !p.lot && W.d.write.ackLosses && !blocked && (s.status !== 'done' || more) && !W.busy;
   return `<div class="x3w-phasebox ${isNext ? 'next' : ''} ${s.status === 'done' ? 'done' : ''} ${p.lot ? 'later' : ''}">
     <div class="x3w-head"><span class="x3w-n">${String.fromCharCode(65 + k)}</span><strong>${esc(p.title)}</strong><span class="x3w-badge ${s.status === 'done' ? 'ok' : isNext ? 'open' : ''}">${esc(state)}</span><span class="spacer"></span>
-      ${p.lot ? '' : `${s.undo.length ? `<button data-wact="undo" data-p="${p.id}" class="danger" ${W.busy ? 'disabled' : ''}>Annuler la phase</button>` : ''}${s.status === 'done' ? '' : `<button data-wact="apply" data-p="${p.id}" class="${isNext ? 'primary' : ''}" ${can ? '' : 'disabled'}>Appliquer ${esc(p.title.toLowerCase())}</button>`}`}</div>
+      ${p.lot ? '' : `${s.undo.length ? `<button data-wact="undo" data-p="${p.id}" class="danger" ${W.busy ? 'disabled' : ''}>Annuler la phase</button>` : ''}${s.status === 'done' && !more ? '' : `<button data-wact="apply" data-p="${p.id}" class="${isNext || more ? 'primary' : ''}" ${can ? '' : 'disabled'}>${s.status === 'done' ? `Compléter (${more})` : `Appliquer ${esc(p.title.toLowerCase())}`}</button>`}`}</div>
     <p class="small muted">${esc(p.help)}</p>
     ${!p.lot && blocked && s.status !== 'done' ? `<div class="compat blocking small"><strong>Bloquée par :</strong> ${why.map((x) => esc(x.title)).join(', ')} (étapes Tenant Wazo ou Site et appels sortants).</div>` : ''}
-    <details class="small"${!p.lot && n('conflict') && s.status !== 'done' ? ' open' : ''}><summary>${s.status === 'done' ? 'État du tenant relu' : 'Ce qui sera écrit'} : ${esc(sum)}</summary><table class="diff x3-edit x3w-items"><tbody>${items.map((x) => `<tr class="st-${x.status}"><td class="x3w-st">${esc(ST[x.status])}</td><td>${esc(x.label)}</td><td class="muted small">${esc(x.detail || '')}</td></tr>`).join('')}</tbody></table></details>
+    ${left.length ? `<div class="warn small"><strong>Après écriture, ${left.length} point(s) pas encore au bon état</strong> : ${left.map((x) => esc(x.label)).join(' ; ')}. Voir le détail ci-dessous et le journal ; relire le tenant après un réglage fait dans le Portal.</div>` : ''}
+    <details class="small"${(!p.lot && n('conflict') && s.status !== 'done') || left.length ? ' open' : ''}><summary>${s.status === 'done' ? 'État du tenant relu' : 'Ce qui sera écrit'} : ${esc(sum)}</summary><table class="diff x3-edit x3w-items"><tbody>${items.map((x) => `<tr class="st-${x.status}"><td class="x3w-st">${esc(ST[x.status])}</td><td>${esc(x.label)}</td><td class="muted small">${esc(x.detail || '')}</td></tr>`).join('')}</tbody></table></details>
     ${s.log.length ? `<details class="small x3w-log"><summary>Journal (${s.log.length})</summary><ul>${s.log.map((l) => `<li>${esc(new Date(l.at).toLocaleString('fr-FR'))} · ${esc(l.text)}</li>`).join('')}</ul></details>` : ''}</div>`;
 }
 
