@@ -11,16 +11,16 @@
 // de l'assistant France de Call Flow ; lues dans le code, testées sur faux tenant). Les phases
 // Personnes, Routage et Finitions sont planifiées (lecture seule) ; leur
 // écriture arrive aux lots 5b-5d.
-import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.61';
-import { I, sameTenant } from './inventory.js?v=0.40.61';
-import { buildExport, exportFileName } from './export.js?v=0.40.61';
-import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText, didWazo, numWazo, unverified } from './3cx-draft.js?v=0.40.61';
+import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.62';
+import { I, sameTenant } from './inventory.js?v=0.40.62';
+import { buildExport, exportFileName } from './export.js?v=0.40.62';
+import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText, didWazo, numWazo, unverified } from './3cx-draft.js?v=0.40.62';
 import {
-  SITE_MODES, FR_FAMILIES, FR_FORMATS, BLOCK_118, defaultSite, defaultOut, clientPatterns, unitDids, rangeIssues, occupancy, placements, unitLabels, unitCfg, futureOf, siteChecks, routeText, newRanges, multi as multiSites, wazoNum, numberIssues,
-} from './3cx-sites.js?v=0.40.61';
-import { unitList, unitOf, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.61';
-import { mohLabel, soundCategory, loaded, uniqueNames, putBinary, CATEGORY_RE } from './3cx-sounds.js?v=0.40.61';
-import { phonebookName, companyContacts, sourceColumns, dird } from './3cx-phonebook.js?v=0.40.61';
+  SITE_MODES, FR_FAMILIES, FR_FORMATS, BLOCK_118, defaultSite, defaultOut, clientPatterns, unitDids, rangeIssues, occupancy, placements, unitLabels, unitCfg, futureOf, siteChecks, routeText, newRanges, multi as multiSites, wazoNum, numberIssues, NO_TRUNK, exitOk, outcallName,
+} from './3cx-sites.js?v=0.40.62';
+import { unitList, unitOf, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.62';
+import { mohLabel, soundCategory, loaded, uniqueNames, putBinary, CATEGORY_RE } from './3cx-sounds.js?v=0.40.62';
+import { phonebookName, companyContacts, sourceColumns, dird } from './3cx-phonebook.js?v=0.40.62';
 
 const W = { d: null, m: null, t: null, busy: false, msg: null, at: null };
 export function setWizard(d, m) { W.d = d; W.m = m; W.t = null; W.msg = null; ensureState(); }
@@ -127,7 +127,7 @@ function soundPlan(d) {
 }
 const RANGE_NAMES = { user_ranges: 'postes', group_ranges: 'groupes', queue_ranges: 'files', conference_room_ranges: 'conférences' };
 const rangesTxt = (r) => Object.entries(r).map(([k, v]) => `${RANGE_NAMES[k]} ${v.map(rangeTxt).join(', ')}`).join(' ; ');
-const ocNameOf = (u, many) => `${W.d.write.clientName || 'Client'}${many ? ` - ${u.label}` : ''} - Appels sortants`;
+const ocNameOf = (u) => outcallName(W.d, u);
 
 // ---------------------------------------------------------------------------
 // Plages du contexte interne (demande de Brice, 03/11/2026) : les numéros 3CX
@@ -217,7 +217,10 @@ function prerequisites(t) {
   // Objets pas encore vérifiés, par onglet (case « Vérifié » de chaque ligne) : rappel, pas bloquant.
   const left = unverified(W.d);
   if (left.length) add('warn', 'Vérification du brouillon', `pas encore vérifiés : ${left.map((x) => `${x.n}/${x.total} ${x.label}`).join(', ')} (case « Vérifié » de chaque onglet).`, [...new Set(left.map((x) => (['users', 'vms', 'devices'].includes(x.tab) ? 'people' : 'routing')))]);
-  if (!t.trunks.length) add('manual', 'Trunk opérateur', 'aucun trunk dans le tenant. À créer dans le Portal avec le modèle de l\'opérateur (valeurs ci-dessous), puis « Relire le tenant ». Sans trunk : pas d\'appels sortants ni d\'appels entrants.', ['found']);
+  // Trunk facultatif (Brice, 09/11/2026) : 3CX reste en service pendant la migration ; un trunk
+  // déclaré aussi dans Wazo s'enregistrerait sur les deux serveurs. Rappel pour le jour de la bascule.
+  const later = c.units.filter((u) => !u.trunkId);
+  if (later.length) add('remind', 'Jour de la bascule : trunk', `${c.many ? `${later.map((u) => u.label).join(', ')} : ` : ''}créer le trunk dans le Portal (et le couper côté 3CX), l'associer à la règle « ${ocNameOf(later[0], c.many)} »${later.length > 1 ? ' (et aux règles des autres départements)' : ''} (Gestion des appels > Appels sortants) et régler son contexte entrant sur ${later.map((u) => (u.inc ? `« ${u.L.inc} »` : `« ${c.incall?.label || c.incall?.name || 'contexte entrant du tenant'} »`)).join(', ')}. Jusque-là, pas d'appels entrants ni sortants par Wazo.`, [], 'site');
   add('remind', 'Applications de l\'organisation', 'réglage du Portal (Paramètres > Applications), hors de la stack : à vérifier selon le besoin du client.');
   add('remind', 'IP publique', 'postes fixes : autoriser l\'IP publique du client dans les paramètres globaux de la stack (tenant principal).');
   // Sons : fichiers non déposés = non envoyés (pas bloquant : ils pourront l'être plus tard).
@@ -277,7 +280,7 @@ function buildPlan(t) {
     const ocName = ocNameOf(u, c.many); const sk = skipped.filter((x) => x.unit === u.key).length;
     const patTxt = `${pats.length - sk} motif(s) de l'assistant France (format ${FR_FORMATS[d.write.out.fmt]})${sk ? `, ${sk} déjà pris par une autre règle` : ''}${d.write.out.block118 ? ', 118 bloqués' : ''}`;
     if (t.outcalls.some((o) => o.name === ocName)) add('found', 'exists', `Règle « ${ocName} »`);
-    else if (!u.trunkId) add('found', 'conflict', `Règle « ${ocName} »`, 'aucun trunk choisi : à créer d\'abord dans le Portal');
+    else if (!u.trunkId) add('found', 'create', `Règle « ${ocName} », sans trunk pour l'instant`, `${patTxt}, dans ${u.outObj?.label || u.outObj?.name || '?'} ; trunk à associer le jour de la bascule`);
     else add('found', 'create', `Règle « ${ocName} » vers ${trunkLabel(t, u.trunkId)}`, `${patTxt}, dans ${u.outObj?.label || u.outObj?.name || '?'}`);
   }
   // Sons et musiques d'attente (avant les files et SVI qui s'en servent).
@@ -461,7 +464,7 @@ async function foundationOps(t) {
       for (const u of fresh) {
         const cr = { ctxId: made[u.key].ic.id, ctxName: made[u.key].ic.name, outId: made[u.key].oc.id, outName: made[u.key].oc.name, incId: made[u.key].inc.id, incName: made[u.key].inc.name, peers: u.peers };
         // Trunk proposé gardé : il ne change plus si les trunks du tenant changent ensuite.
-        if (c.many) { const cfg = unitCfg(d, u.key); cfg.created = cr; if (!cfg.trunkId) cfg.trunkId = u.trunkId; } else { s.created = { ...cr, prevCtx: d.ctx || '' }; d.ctx = cr.ctxName; }
+        if (c.many) { const cfg = unitCfg(d, u.key); cfg.created = cr; if (!cfg.trunkId) cfg.trunkId = u.trunkId || NO_TRUNK; } else { s.created = { ...cr, prevCtx: d.ctx || '' }; d.ctx = cr.ctxName; }
         outName[u.key] = cr.outName;
       }
       return { created: fresh.map((u) => `${made[u.key].ic.name}, ${made[u.key].inc.name}, ${made[u.key].oc.name}`).join(' ; '), undo: { seq: [...undo, { local: 'site', units: c.many ? fresh.map((u) => u.key) : null }] } };
@@ -521,7 +524,7 @@ async function foundationOps(t) {
   // Une règle par unité ; l'autorisation « interdit-118 » est partagée (créée une seule fois).
   const perm118 = { p: t.perms.find((x) => x.mode === 'deny' && x.enabled !== false && (x.extensions || []).includes(BLOCK_118)) || null };
   const { skipped } = futureOf(t, d);
-  for (const u of c.units.filter((x) => x.trunkId && x.outObj)) {
+  for (const u of c.units.filter((x) => x.outObj)) {
     const ocName = ocNameOf(u, c.many); const trunkId = u.trunkId;
     if (t.outcalls.some((o) => o.name === ocName)) continue;
     // Motifs de l'assistant France de Call Flow, sauf ceux déjà pris dans ce contexte sortant (confd refuse le doublon).
@@ -530,7 +533,7 @@ async function foundationOps(t) {
     // sortant, association avec sa transformation, trunk ; autorisation « interdit-118 » (refus de
     // _118XXX) reprise si elle existe, sinon créée, puis associée (PUT /outcalls/{id}/callpermissions/{id}).
     // Retour arrière si une écriture échoue.
-    ops.push({ label: `Règle « ${ocName} » : ${pats.length} motif(s) vers ${trunkLabel(t, trunkId)}${d.write.out.block118 ? ', 118 bloqués' : ''}`, run: async () => {
+    ops.push({ label: `Règle « ${ocName} » : ${pats.length} motif(s) ${trunkId ? `vers ${trunkLabel(t, trunkId)}` : 'sans trunk (à associer le jour de la bascule)'}${d.write.out.block118 ? ', 118 bloqués' : ''}`, run: async () => {
       const ctxOut = outName[u.key];
       if (!ctxOut) throw new Error(`contexte sortant de « ${u.L.ctx} » introuvable`);
       const undo = [];
@@ -543,7 +546,7 @@ async function foundationOps(t) {
           await tapi('PUT', `/outcalls/${o.id}/extensions/${ext.id}`, { strip_digits: p.strip_digits || 0, external_prefix: p.external_prefix || null, prefix: null, caller_id: null });
           undo.unshift({ method: 'DELETE', path: `/outcalls/${o.id}/extensions/${ext.id}` });
         }
-        await tapi('PUT', `/outcalls/${o.id}/trunks`, { trunks: [{ id: trunkId }] });
+        if (trunkId) await tapi('PUT', `/outcalls/${o.id}/trunks`, { trunks: [{ id: trunkId }] });
         if (d.write.out.block118) {
           if (!perm118.p) {
             perm118.p = await tapi('POST', '/callpermissions', { name: 'interdit-118', mode: 'deny', enabled: true, extensions: [BLOCK_118], description: 'Renseignements 118 XXX surtaxés (Migration Assistant)' });
@@ -691,7 +694,7 @@ function stepTodo(i, pre) {
   const w = W.d.write;
   switch (STEPS[i].id) {
     case 'client': return !w.clientId ? 'saisir l\'ID client' : !w.clientName ? 'saisir le nom du client' : null;
-    case 'tenant': return !W.t ? 'lire le tenant' : !W.t.trunks.length ? 'créer le trunk dans le Portal, puis relire le tenant' : null;
+    case 'tenant': return !W.t ? 'lire le tenant' : null;
     case 'site': {
       const c = contextsOf(W.t);
       if (!c.many && !w.site.created && !w.site.mode) return 'choisir l\'installation du client';
@@ -703,6 +706,8 @@ function stepTodo(i, pre) {
     default: return 'à venir';
   }
 }
+const TRUNK_LATER = 'Aucun pour l\'instant (3CX en service)';
+const TRUNK_TIP = 'Facultatif : tant que 3CX tourne, ne pas déclarer le trunk dans Wazo (il s\'enregistrerait sur les deux serveurs). La règle sortante est créée sans trunk.';
 const PRE_GROUPS = [
   ['error', 'Bloquant', 'compat blocking'], ['manual', 'À faire dans le Portal', 'warn'], ['fix', 'Corrigé par l\'outil à l\'écriture', 'x3w-remind small'],
   ['warn', 'À surveiller', 'warn'], ['remind', 'Rappels', 'x3w-remind small'],
@@ -720,6 +725,8 @@ export function wizardTab() {
   const todo = STEPS.map((_, i) => (i > 1 && !W.t ? 'lire le tenant' : stepTodo(i, pre)));
   // Étape la plus loin atteignable : toutes les précédentes finies (Contrôle final : après Écriture).
   let reach = 0; while (reach < STEPS.length - 1 && !todo[reach]) reach++;
+  // Une phase déjà écrite reste annulable même si une étape d'avant n'est plus « finie ».
+  if (W.t && PHASES.some((p) => ph(p.id).undo.length)) reach = Math.max(reach, STEPS.findIndex((s) => s.id === 'write'));
   // w.view gardé tel quel : après rechargement (tenant à relire), on revient où on en était.
   const i = Math.min(w.view ?? reach, reach); const st = STEPS[i];
   let html = `<div class="titlerow"><h3>Migration dans Wazo</h3>${helpButton('x3w-h', 'Aide : migration')}</div>
@@ -740,7 +747,6 @@ function stepClient() {
 function stepTenant(pre) {
   let h = `<div class="btnrow"><button data-wact="read" ${W.busy ? 'disabled' : ''} class="${W.t ? '' : 'primary'}">${W.t ? 'Relire le tenant' : 'Lire le tenant'}</button>${W.t ? `<span class="small muted">Lu à ${esc(W.t.at.toLocaleTimeString('fr-FR'))}. Relire après chaque changement fait dans le Portal.</span>` : ''}</div>`;
   if (!W.t) return h;
-  if (!W.t.trunks.length) h += trunkHelp();
   const l = pre.filter((p) => p.src !== 'site');
   return h + (l.length ? preList(l) : '<div class="mg-allok">Rien ne manque dans le tenant.</div>');
 }
@@ -748,8 +754,11 @@ function stepSite(pre) {
   const w = W.d.write; let h = '';
   const l = pre.filter((p) => p.src === 'site');
   if (l.length) h += preList(l);
-  if (!multiSites(W.d)) h += `<label class="small">Trunk du client <select data-w="trunkId">${W.t.trunks.map((t) => `<option value="${t.id}" ${String(w.trunkId || W.t.trunks[0]?.id) === String(t.id) ? 'selected' : ''}>${esc(trunkLabel(W.t, t.id))}</option>`).join('')}</select></label>`;
-  return h + siteBlock(W.t);
+  if (!multiSites(W.d)) h += `<label class="small">Trunk du client <select data-w="trunkId"><option value="" ${Number(w.trunkId) ? '' : 'selected'}>${esc(TRUNK_LATER)}</option>${W.t.trunks.map((t) => `<option value="${t.id}" ${String(w.trunkId) === String(t.id) ? 'selected' : ''}>${esc(trunkLabel(W.t, t.id))}</option>`).join('')}</select></label> <span class="small muted">${esc(TRUNK_TIP)}</span>`;
+  h += siteBlock(W.t);
+  // Valeurs du trunk à créer le jour de la bascule (sans trunk choisi).
+  if (contextsOf(W.t).units.some((u) => !u.trunkId)) h += `<details class="small"><summary>Jour de la bascule : créer le trunk dans le Portal</summary>${trunkHelp()}</details>`;
+  return h;
 }
 function stepLosses() {
   const w = W.d.write; const L = losses();
@@ -782,7 +791,7 @@ function siteBlock(t) {
       const cfg = unitCfg(W.d, u.key);
       if (u.created) return `<tr><td>${esc(u.label)}</td><td>${esc(lbl(u.ctx))}</td><td>${esc(lbl(u.inc || ''))}</td><td>${esc(lbl(u.out))}</td><td>${esc(trunkLabel(t, u.trunkId))} <span class="muted small">(créés)</span></td></tr>`;
       return `<tr><td>${esc(u.label)}${u.trunk ? `<div class="muted small">3CX : ${esc(u.trunk)}</div>` : ''}</td><td><input data-w="unit.newLabel" data-id="${esc(u.key)}" value="${esc(cfg.newLabel)}" placeholder="${esc(u.L.ctx)}" class="x3-mail"></td><td><input data-w="unit.incLabel" data-id="${esc(u.key)}" value="${esc(cfg.incLabel || '')}" placeholder="${esc(u.L.inc)}" class="x3-mail"></td><td><input data-w="unit.outLabel" data-id="${esc(u.key)}" value="${esc(cfg.outLabel)}" placeholder="${esc(u.L.out)}" class="x3-mail"></td>
-        <td><select data-w="unit.trunkId" data-id="${esc(u.key)}">${u.trunkId ? '' : opt('', 'À choisir', '')}${t.trunks.map((x) => opt(x.id, trunkLabel(t, x.id), u.trunkId)).join('')}</select></td></tr>`;
+        <td><select data-w="unit.trunkId" data-id="${esc(u.key)}">${opt(NO_TRUNK, TRUNK_LATER, u.trunkId ? '' : NO_TRUNK)}${t.trunks.map((x) => opt(x.id, trunkLabel(t, x.id), u.trunkId)).join('')}</select></td></tr>`;
     }).join('')}</tbody></table>
       <label class="inline small"><input type="checkbox" data-w="site.interUnits" ${s.interUnits ? 'checked' : ''}> Appels internes entre départements</label>
       <label class="inline small"><input type="checkbox" data-w="site.inter" ${s.inter ? 'checked' : ''}> Appels internes avec les établissements déjà présents</label>${peersBox()}`;
@@ -804,7 +813,7 @@ function siteBlock(t) {
       <label class="inline" title="Prend tout numéro qu'aucun autre motif ne prend. Incompatible avec les appels internes entre établissements : la simulation le montre."><input type="checkbox" data-w="out.catchAll" ${o.catchAll ? 'checked' : ''}> Attrape-tout _X.</label></div></div>`;
   // Simulation depuis chaque jeu de contextes.
   const chk = siteChecks(t, W.d, (id) => trunkLabel(t, id));
-  for (const { p, rows } of chk.tables) h += `<details class="small x3w-sim"${chk.issues.some((x) => x.sev === 'error') ? ' open' : ''}><summary>Simulation : appels depuis ${esc(c.many ? `« ${p.label} »` : 'le client')}</summary><table class="diff x3-edit"><thead><tr><th>Numéro</th><th>Type</th><th>Résultat</th></tr></thead><tbody>${rows.map((x) => `<tr class="${(x.r.kind === 'out' && x.r.trunks.includes(Number(p.trunkId))) || x.n.startsWith('118') ? '' : 'x3-warn'}"><td>${esc(x.n)}</td><td>${esc(x.what)}</td><td>${esc(routeText(chk.w, x.r, (id) => trunkLabel(t, id)))}${x.n.startsWith('118') && x.r.mine && o.block118 ? ' · bloqué par « interdit-118 »' : ''}</td></tr>`).join('')}</tbody></table></details>`;
+  for (const { p, rows } of chk.tables) h += `<details class="small x3w-sim"${chk.issues.some((x) => x.sev === 'error') ? ' open' : ''}><summary>Simulation : appels depuis ${esc(c.many ? `« ${p.label} »` : 'le client')}</summary><table class="diff x3-edit"><thead><tr><th>Numéro</th><th>Type</th><th>Résultat</th></tr></thead><tbody>${rows.map((x) => `<tr class="${exitOk(p, x.r) || x.n.startsWith('118') ? '' : 'x3-warn'}"><td>${esc(x.n)}</td><td>${esc(x.what)}</td><td>${esc(routeText(chk.w, x.r, (id) => trunkLabel(t, id)))}${x.n.startsWith('118') && x.r.mine && o.block118 ? ' · bloqué par « interdit-118 »' : ''}</td></tr>`).join('')}</tbody></table></details>`;
   return `${h}</div>`;
 }
 function trunkHelp() {

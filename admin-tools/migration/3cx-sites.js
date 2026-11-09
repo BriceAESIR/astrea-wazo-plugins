@@ -26,11 +26,11 @@
 // (_X.) inclus avant un autre établissement prend aussi ses numéros internes ;
 // inclus après, les numéros externes passent par l'établissement inclus, donc
 // par son trunk. Les écarts sont montrés avant écriture.
-import { matches, comparePatterns, dialedNumber } from '../callflow/dialsim.js?v=0.40.61';
-import { FR_FAMILIES, FR_FORMATS, frTransform, BLOCK_118 } from '../callflow/outcall-editor.js?v=0.40.61';
-import { imported, didWazo } from './3cx-draft.js?v=0.40.61';
-import { unitList, unitOf } from './3cx-depts.js?v=0.40.61';
-import { parseRanges, rangesText, inRanges } from './multisite.js?v=0.40.61';
+import { matches, comparePatterns, dialedNumber } from '../callflow/dialsim.js?v=0.40.62';
+import { FR_FAMILIES, FR_FORMATS, frTransform, BLOCK_118 } from '../callflow/outcall-editor.js?v=0.40.62';
+import { imported, didWazo } from './3cx-draft.js?v=0.40.62';
+import { unitList, unitOf } from './3cx-depts.js?v=0.40.62';
+import { parseRanges, rangesText, inRanges } from './multisite.js?v=0.40.62';
 
 export { FR_FAMILIES, FR_FORMATS, BLOCK_118 };
 export const SITE_MODES = {
@@ -222,6 +222,14 @@ export function guessTrunk(t, u) {
   return t.trunks.find((x) => { const n = norm(`${x.endpoint_sip?.label || ''} ${x.endpoint_sip?.name || ''}`); return keys.some((k) => n.includes(k) || k.includes(n)); })?.id || '';
 }
 export const multi = (d) => unitList(d).length > 1;
+// Trunk d'une unité : 'none' = aucun pour l'instant (choisi), '' = proposé d'après le nom, sinon l'id.
+export const NO_TRUNK = 'none';
+// Nom de la règle sortante créée pour une unité (phase Fondations).
+export const outcallName = (d, u) => `${d.write.clientName || 'Client'}${multi(d) ? ` - ${u.label}` : ''} - Appels sortants`;
+// Sortie attendue d'un numéro externe depuis l'unité p : par son trunk ; sans trunk, par la règle du
+// client (à créer, ou déjà créée sans trunk dans son contexte sortant), trunk ajouté à la bascule.
+export const exitOk = (p, r) => r.kind === 'out' && (p.trunkId ? r.trunks.includes(Number(p.trunkId)) : (r.mine && r.unit === p.key) || (r.ctx === p.out && !r.trunks.length));
+export const unitTrunk = (t, u, v) => (v === NO_TRUNK ? 0 : Number(v || guessTrunk(t, u) || 0));
 
 // Où chaque unité s'installe : [{ key, label, ctx, out, newCtx, newOut, peers, trunkId }].
 // peers = établissements déjà présents sur le site Wazo, inclus avec l'unité.
@@ -230,12 +238,15 @@ export function placements(t, d) {
   const existingPeers = s.inter ? (s.peers ?? occupancy(t).map((x) => x.name)) : [];
   if (units.length > 1) {
     return units.map((u) => {
-      const c = unitCfg(d, u.key);
-      if (c.created) return { key: u.key, label: u.label, ctx: c.created.ctxName, out: c.created.outName, inc: c.created.incName || null, newCtx: false, newOut: false, peers: c.created.peers || [], trunkId: Number(c.trunkId || guessTrunk(t, u) || 0), created: true };
-      return { key: u.key, label: u.label, ctx: NEW_CTX(u.key), out: NEW_OUT(u.key), inc: NEW_INC(u.key), newCtx: true, newOut: true, peers: existingPeers, trunkId: Number(c.trunkId || guessTrunk(t, u) || 0) };
+      const c = unitCfg(d, u.key); const trunkId = unitTrunk(t, u, c.trunkId);
+      if (c.created) return { key: u.key, label: u.label, ctx: c.created.ctxName, out: c.created.outName, inc: c.created.incName || null, newCtx: false, newOut: false, peers: c.created.peers || [], trunkId, created: true };
+      return { key: u.key, label: u.label, ctx: NEW_CTX(u.key), out: NEW_OUT(u.key), inc: NEW_INC(u.key), newCtx: true, newOut: true, peers: existingPeers, trunkId };
     });
   }
-  const u = units[0]; const trunkId = Number(d.write.trunkId || t.trunks[0]?.id || 0);
+  // Trunk facultatif (Brice, 09/11/2026) : pendant la migration, 3CX reste en service sur le trunk de
+  // l'opérateur ; le déclarer aussi dans Wazo l'enregistrerait sur les deux serveurs. Aucun par
+  // défaut (plus de « premier trunk du tenant », qui pouvait être celui d'un autre client).
+  const u = units[0]; const trunkId = Number(d.write.trunkId) || 0;
   if (s.mode === 'new') {
     if (s.created) return [{ key: u.key, label: u.label, ctx: s.created.ctxName, out: s.created.outName, inc: s.created.incName || null, newCtx: false, newOut: false, peers: s.created.peers || [], trunkId, created: true }];
     return [{ key: u.key, label: u.label, ctx: NEW_CTX(u.key), out: NEW_OUT(u.key), inc: NEW_INC(u.key), newCtx: true, newOut: true, peers: existingPeers, trunkId }];
@@ -279,8 +290,9 @@ export function futureOf(t, d) {
     const cur = clone.outs.get(p.out) || [];
     for (const pt of clientPatterns(d.write.out)) {
       const old = cur.find((x) => x.exten === pt.exten);
-      if (old) { if (!old.mine) skipped.push({ unit: p.key, exten: pt.exten, rule: old.rule }); continue; }
-      cur.push({ exten: pt.exten, dp: pt, rule: ps.length > 1 ? `règle ${p.label}` : 'règle du client', trunks: [Number(p.trunkId)], mine: true, unit: p.key });
+      // Motif de la règle du client déjà écrite (phase Fondations) : rien à signaler.
+      if (old) { if (!old.mine && old.rule !== outcallName(d, p)) skipped.push({ unit: p.key, exten: pt.exten, rule: old.rule }); continue; }
+      cur.push({ exten: pt.exten, dp: pt, rule: ps.length > 1 ? `règle ${p.label}` : 'règle du client', trunks: p.trunkId ? [Number(p.trunkId)] : [], mine: true, unit: p.key });
     }
     clone.outs.set(p.out, cur);
   }
@@ -294,7 +306,7 @@ export function route(w, from, number) {
     const ex = w.exts.get(`${n}@${c}`);
     if (ex) return { kind: 'internal', ctx: c, client: !!ex.client };
     const cand = (w.outs.get(c) || []).filter((x) => matches(x.exten, n)).sort((a, b) => comparePatterns(a.exten, b.exten));
-    if (cand.length) return { kind: 'out', ctx: c, rule: cand[0].rule, trunks: cand[0].trunks, exten: cand[0].exten, mine: cand[0].mine, sent: dialedNumber(n, cand[0].dp) };
+    if (cand.length) return { kind: 'out', ctx: c, rule: cand[0].rule, trunks: cand[0].trunks, exten: cand[0].exten, mine: cand[0].mine, unit: cand[0].unit, sent: dialedNumber(n, cand[0].dp) };
     for (const inc of w.ctx.get(c)?.includes || []) { const r = search(inc); if (r) return r; }
     return null;
   };
@@ -320,7 +332,8 @@ export function siteChecks(t, d, trunkName = (id) => `trunk ${id}`) {
   if (ps.some((p) => !p.ctx)) { add('error', 'Contexte interne', 'aucun contexte interne dans ce site Wazo.'); return { issues, tables: [], w, ps }; }
   const who = (p) => (many ? `« ${p.label} »` : 'le client');
   if (many && occ.length) add('info', 'Site Wazo partagé', `ce site Wazo contient déjà ${total(occ)} poste(s) (${occ.map((x) => `${x.label} : ${x.n}`).join(', ')}) ; les ${ps.length} départements y auront chacun leur jeu de contextes.`);
-  for (const p of ps) if (!p.trunkId) add('error', `Trunk de ${who(p)}`, 'aucun trunk choisi (à créer dans le Portal s\'il manque, puis « Relire le tenant »).');
+  const noTrunk = ps.filter((p) => !p.trunkId);
+  if (noTrunk.length) add('info', 'Trunk', `${many ? noTrunk.map((p) => p.label).join(', ') : 'le client'} : aucun trunk pour l'instant (3CX encore en service sur le trunk de l'opérateur). La règle sortante est créée sans trunk : pas d'appels vers l'extérieur depuis Wazo d'ici la bascule.`);
   if (many) { const by = {}; for (const p of ps) (by[p.trunkId] ||= []).push(p.label); for (const [k, l] of Object.entries(by)) if (k !== '0' && l.length > 1) add('warn', 'Trunks', `${l.join(', ')} partagent le même trunk : est-ce voulu (3CX : un trunk par département) ?`); }
   // Le client n'est pas encore installé : tout poste déjà présent est celui d'un autre établissement.
   if (!many && s.mode === 'dedicated' && occ.length) add('warn', 'Site Wazo dédié', `ce site Wazo contient déjà ${total(occ)} poste(s) (${occ.map((x) => `${x.label} : ${x.n}`).join(', ')}). Pour des établissements qui ne s'appellent pas, un site Wazo par établissement (Portal) ; sinon, choisir un mode « site partagé ».`);
@@ -341,7 +354,8 @@ export function siteChecks(t, d, trunkName = (id) => `trunk ${id}`) {
       if (n.startsWith('118')) { if (r.kind === 'out' && !r.mine) add('warn', where, `pris par « ${r.rule} » (${r.trunks.map(trunkName).join(', ')}) : le blocage des 118 ne s'y applique pas.`); continue; }
       if (r.kind === 'none') add('warn', where, 'non routé : aucun motif ne prend ce numéro.');
       else if (r.kind === 'internal') add('error', where, `pris comme numéro interne dans ${label(w, r.ctx)}.`);
-      else if (!r.trunks.includes(Number(p.trunkId))) add('error', where, `partirait par « ${r.rule} » (${r.trunks.map(trunkName).join(', ') || 'aucun trunk'}), pas par le trunk de ${who(p)} (chemin : ${r.path.map((c) => label(w, c)).join(' → ')}).`);
+      // Sans trunk : le numéro doit au moins arriver à la règle du client (trunk ajouté à la bascule).
+      else if (!exitOk(p, r)) add('error', where, `partirait par « ${r.rule} » (${r.trunks.map(trunkName).join(', ') || 'aucun trunk'}), pas par le trunk de ${who(p)} (chemin : ${r.path.map((c) => label(w, c)).join(' → ')}).`);
     }
   }
   // Appels internes entre unités et avec les établissements existants (inclusions cochées).

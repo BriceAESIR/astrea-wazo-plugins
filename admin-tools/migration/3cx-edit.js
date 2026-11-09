@@ -2,19 +2,19 @@
 // Modèle et règles : 3cx-draft.js. Chaque modification est enregistrée dans le
 // navigateur (brouillon par fichier et date de sauvegarde) ; rien n'est écrit
 // dans Wazo depuis ces tableaux.
-import { $, esc, toast, helpButton, helpBox, confirmModal, downloadJson } from '../common/core.js?v=0.40.61';
-import { I } from './inventory.js?v=0.40.61';
+import { $, esc, toast, helpButton, helpBox, confirmModal, downloadJson } from '../common/core.js?v=0.40.62';
+import { I } from './inventory.js?v=0.40.62';
 import {
   GROUP_STRATEGIES, MODES, HUNT_TARGETS, LICENCES, AUTH_METHODS, effectiveUsername, isVoix, applyLicence, fillCallerIds, callerIdWazo, upgradeDraft, saveDraft, clearDraft, buildDraft, acceptDraft, userBy, userName, imported,
   destLabel, destProblem, draftIssues, usersCsv, blfRows, devicesCsv, deviceDesc, macWazo, macValid, tenantIssues,
   LINE_MODES, linesOf, VM_LANGS, vmEmail, upperName, upgradeSchedules, pastHolidays, didWazo, VERIFY,
-} from './3cx-draft.js?v=0.40.61';
-import { setWizard, wizardTab, wizardChange, wizardClick, wizardDone, wizardTotal } from './3cx-wizard.js?v=0.40.61';
-import { unitCfg, unitLabels, autoRanges, RANGE_KEYS, rangeIssues, unitPrefix, wazoNum, wazoNumOf, renumbers, numberIssues } from './3cx-sites.js?v=0.40.61';
-import { rangesText } from './multisite.js?v=0.40.61';
-import { WAZO_FIELDS, tagsOf, tagLabel, tagChecked, ensurePhonebook, phonebookName, phonebookIssues, companyContacts, personalCsv, toWazoContact, csvKeys } from './3cx-phonebook.js?v=0.40.61';
-import { SORTS, CATEGORY_RE, soundUsages, ensureSounds, mohLabel, soundCategory, FILES, keyOf, loaded, addFiles, addFileAs, targetName } from './3cx-sounds.js?v=0.40.61';
-import { DEPT_MODES, deptLabel, ensureDepts, deptObjects, unitOf, unitList, setDeptMode, moveObject } from './3cx-depts.js?v=0.40.61';
+} from './3cx-draft.js?v=0.40.62';
+import { setWizard, wizardTab, wizardChange, wizardClick, wizardDone, wizardTotal } from './3cx-wizard.js?v=0.40.62';
+import { unitCfg, unitLabels, autoRanges, RANGE_KEYS, rangeIssues, unitPrefix, wazoNum, wazoNumOf, renumbers, numberIssues } from './3cx-sites.js?v=0.40.62';
+import { rangesText } from './multisite.js?v=0.40.62';
+import { WAZO_FIELDS, tagsOf, tagLabel, tagChecked, ensurePhonebook, phonebookName, phonebookIssues, companyContacts, personalCsv, toWazoContact, csvKeys } from './3cx-phonebook.js?v=0.40.62';
+import { SORTS, CATEGORY_RE, soundUsages, ensureSounds, mohLabel, soundCategory, FILES, keyOf, loaded, addFiles, addFileAs, targetName } from './3cx-sounds.js?v=0.40.62';
+import { DEPT_MODES, deptLabel, ensureDepts, deptObjects, unitOf, unitList, setDeptMode, moveObject } from './3cx-depts.js?v=0.40.62';
 
 const E = { d: null, m: null, file: '', tab: 'users', sel: { users: new Set(), dids: new Set(), vms: new Set() }, q: '', onReset: null };
 export const TABS = [
@@ -550,7 +550,7 @@ function incallOfDid(r) {
   const cfg = many ? unitCfg(d, u.key) : d.write?.site;
   if (cfg?.created?.incName) return { label: lbl(cfg.created.incName), note: many ? u.label : '' };
   if (many || d.write?.site?.mode === 'new') return { label: unitLabels(d, { key: u.key, label: u.label }).inc, note: `à créer${many ? ` · ${u.label}` : ''}` };
-  const tr = (I.lists.trunk || []).find((x) => String(x.id) === String(d.write?.trunkId || (I.lists.trunk || [])[0]?.id));
+  const tr = (I.lists.trunk || []).find((x) => String(x.id) === String(d.write?.trunkId)); // trunk facultatif : plus de « premier trunk » par défaut
   if (tr?.context) return { label: lbl(tr.context), note: 'contexte du trunk' };
   const inc = tenantCtx().incallCtx;
   return inc ? { label: lbl(inc), note: 'choisi dans Exports' } : { label: '', note: 'aucun contexte entrant lu' };
