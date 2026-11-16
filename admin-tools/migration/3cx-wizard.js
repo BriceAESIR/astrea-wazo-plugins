@@ -8,16 +8,16 @@
 // phase (sauvegarde, journal, annulation) → 5 Contrôle final (lecture seule).
 // Phases : Fondations (vérifiée en réel), Personnes (5b), Routage (5c), Finitions
 // (5d) ; écritures lues dans le code de Wazo, testées sur faux tenant.
-import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.69';
-import { I, sameTenant } from './inventory.js?v=0.40.69';
-import { buildExport, exportFileName } from './export.js?v=0.40.69';
-import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText, didWazo, numWazo, unverified, defaultVmo, vmEmail, isVoix, deviceDesc, QUEUE_STRATEGY, scheduleOf, didSchedule, destProblem } from './3cx-draft.js?v=0.40.69';
+import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.70';
+import { I, sameTenant } from './inventory.js?v=0.40.70';
+import { buildExport, exportFileName } from './export.js?v=0.40.70';
+import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText, didWazo, numWazo, unverified, defaultVmo, vmEmail, isVoix, deviceDesc, QUEUE_STRATEGY, scheduleOf, didSchedule, destProblem } from './3cx-draft.js?v=0.40.70';
 import {
   SITE_MODES, FR_FAMILIES, FR_FORMATS, BLOCK_118, defaultSite, defaultOut, clientPatterns, unitDids, rangeIssues, occupancy, placements, unitLabels, unitCfg, futureOf, siteChecks, routeText, newRanges, multi as multiSites, wazoNum, numberIssues, NO_TRUNK, exitOk, outcallName,
-} from './3cx-sites.js?v=0.40.69';
-import { unitList, unitOf, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.69';
-import { mohLabel, soundCategory, loaded, uniqueNames, putBinary, CATEGORY_RE } from './3cx-sounds.js?v=0.40.69';
-import { phonebookName, companyContacts, sourceColumns, dird, personalCsv } from './3cx-phonebook.js?v=0.40.69';
+} from './3cx-sites.js?v=0.40.70';
+import { unitList, unitOf, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.70';
+import { mohLabel, soundCategory, loaded, uniqueNames, putBinary, CATEGORY_RE } from './3cx-sounds.js?v=0.40.70';
+import { phonebookName, companyContacts, sourceColumns, dird, personalCsv } from './3cx-phonebook.js?v=0.40.70';
 
 const W = { d: null, m: null, t: null, busy: false, msg: null, at: null };
 export function setWizard(d, m) { W.d = d; W.m = m; W.t = null; W.msg = null; W.final = null; ensureState(); }
@@ -546,14 +546,22 @@ W.creds = [];
 // envoyer. .msg impossible (format binaire Outlook). Fichiers regroupés en ZIP (sans compression).
 const b64 = (s) => { const by = new TextEncoder().encode(s); let bin = ''; for (const x of by) bin += String.fromCharCode(x); return btoa(bin).replace(/.{76}/g, '$&\r\n'); };
 const hdr = (s) => (/^[\x20-\x7e]*$/.test(s) ? s : `=?UTF-8?B?${b64(s).replace(/\r\n/g, '')}?=`);
-function emlOf(c) {
+// Signature (retour de Brice, 16/11/2026 : « c'est signé au nom du tenant de l'étude ; ça devrait être
+// notre service informatique ou ma signature perso ») : saisie avant le téléchargement, gardée dans ce
+// navigateur (jamais dans le brouillon). Outlook n'ajoute pas la signature automatique à un .eml ouvert
+// (supposé, constaté par Brice) : elle est donc écrite dans le mail.
+const SIG_KEY = 'astrea-migration-mail-signature';
+const SIG_DEFAULT = 'Cordialement,\nLe service informatique';
+const getSig = () => { try { return localStorage.getItem(SIG_KEY) ?? SIG_DEFAULT; } catch { return SIG_DEFAULT; } };
+const setSig = (v) => { try { localStorage.setItem(SIG_KEY, v); } catch { /* navigateur sans stockage : signature non gardée */ } };
+function emlOf(c, sig = getSig()) {
   const host = S.base ? new URL(S.base).host : '';
   const csv = W.d.phonebook?.personal ? personalCsv(W.d, c.n3) : '';
   const hasCsv = csv.split('\r\n').length > 1;
   const text = [`Bonjour ${c.first || c.name},`, '', 'Votre compte pour l\'application Wazo (web, ordinateur et mobile) est prêt :', '',
     `  Identifiant : ${c.username}`, `  Mot de passe : ${c.password}`, host ? `  Serveur : ${host}` : '', `  Votre numéro interne : ${c.n}`, '',
     hasCsv ? 'Vous trouverez en pièce jointe vos contacts personnels repris de l\'ancien standard (fichier CSV), à importer dans vos contacts personnels de l\'application.' : '',
-    '', 'Cordialement,', W.d.write.clientName || ''].filter((l, i, a) => l !== '' || a[i - 1] !== '').join('\r\n');
+    ''].filter((l, i, a) => l !== '' || a[i - 1] !== '').concat(String(sig || '').replace(/\r\n?/g, '\n').trim().split('\n')).join('\r\n');
   const bnd = `astrea-${rnd(16, 'abcdefghijklmnopqrstuvwxyz0123456789')}`;
   const file = `contacts-${c.n}.csv`;
   return [`To: ${c.email ? `${hdr(c.name)} <${c.email}>` : ''}`, `Subject: ${hdr('Vos accès à l\'application Wazo')}`, 'X-Unsent: 1', 'MIME-Version: 1.0',
@@ -1602,10 +1610,12 @@ export async function wizardClick(b, rerender) {
     return;
   }
   if (act === 'mails') {
-    const blob = zipOf(W.creds.map((c) => ({ name: `${safeName(`${c.n} ${c.name}`)}.eml`, text: emlOf(c) })));
-    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `mails-wazo-${W.d.write.clientId || 'client'}.zip`;
-    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-    return;
+    return confirmModal(`<h3>Mails de bienvenue (${W.creds.length})</h3><label class="small">Signature, en fin de chaque mail<br><textarea id="x3w-sig" rows="6" style="width:100%">${esc(getSig())}</textarea></label><p class="small muted">Gardée dans ce navigateur pour les prochaines fois. Texte seul : Outlook n'ajoute pas votre signature automatique à un .eml ouvert.</p>`, () => {
+      const sig = document.getElementById('x3w-sig').value; setSig(sig);
+      const blob = zipOf(W.creds.map((c) => ({ name: `${safeName(`${c.n} ${c.name}`)}.eml`, text: emlOf(c, sig) })));
+      const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `mails-wazo-${W.d.write.clientId || 'client'}.zip`;
+      document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    }, 'Télécharger les mails');
   }
   if (act === 'creds') {
     // Identifiants des comptes ouverts pendant cette session : jamais gardés (ni brouillon ni navigateur).
