@@ -17,8 +17,8 @@
 //    custom (application_uuid).
 // Les champs portent data-x="…" : lus dans leur conteneur (pas d'id), donc
 // utilisables plusieurs fois dans un même dialogue.
-import { esc } from '../common/core.js?v=0.40.75';
-import { M } from './model.js?v=0.40.75';
+import { esc } from '../common/core.js?v=0.40.76';
+import { M } from './model.js?v=0.40.76';
 
 export const EXTRA_TYPES = [['outcall', 'Règle sortante'], ['application', 'Application'], ['custom', 'Commande']];
 export const APPS = [['disa', 'DISA : composer un numéro après un code'], ['callback_disa', 'Rappel DISA'], ['directory', 'Annuaire'], ['fax_to_mail', 'Fax vers e-mail'], ['voicemail', 'Consultation des messageries'], ['custom', 'Application Wazo (Stasis)']];
@@ -59,8 +59,9 @@ export function destOptsHtml(t, cur) {
     p.push(fld('Musique de distribution d\'appel', `<select data-x="moh"><option value="">Aucune : sonnerie</option>${mohs.map((m) => `<option value="${esc(m.uuid)}"${s?.moh_uuid === m.uuid ? ' selected' : ''}>${esc(m.label || m.name)}</option>`).join('')}${s?.moh_uuid && !mohs.some((m) => m.uuid === s.moh_uuid) ? `<option value="${esc(s.moh_uuid)}" selected>${esc(s.moh_uuid)} (actuelle)</option>` : ''}</select>`, 'Ce qu\'entend l\'appelant pendant que l\'utilisateur sonne.'));
   }
   if (t === 'voicemail') {
-    p.push(fld('Message d\'accueil', `<select data-x="greet">${opt([['unavailable', 'Indisponible'], ['busy', 'Occupé'], ['', 'Aucun (consignes seulement)']], s?.greeting || '')}</select>`, 'Indisponible / Occupé : message enregistré dans la messagerie ; s\'il n\'existe pas, Asterisk annonce le nom enregistré (supposé). Aucun : seulement les consignes.'));
-    p.push(box('Ne pas lire les instructions', 'data-x="vskip"', !!s?.skip_instructions, 'Bip direct après le message d\'accueil.'));
+    p.push(fld('Message d\'accueil', `<select data-x="greet">${opt([['unavailable', 'Indisponible'], ['busy', 'Occupé'], ['', 'Aucun (consignes seulement)']], s?.greeting || '')}</select>`, 'Message enregistré dans la messagerie (réglage de la messagerie). « Prénom et nom » ne se choisit pas : il sert de secours. Un 3e message : SVI « message seul ».'));
+    p.push(box('Ne pas lire les instructions', 'data-x="vskip"', !!s?.skip_instructions, 'Pas de « laissez votre message après le bip » : bip direct après le message d\'accueil.'));
+    p.push('<div class="cf-vmhint cf-dx" data-vmhint></div>');
   }
   if (t === 'sound') {
     p.push(box('L\'appelant peut l\'interrompre', 'data-x="sskip"', !!s?.skip, 'Une touche arrête la lecture.'));
@@ -73,10 +74,32 @@ export function destOptsHtml(t, cur) {
 // Affiche les champs de l'application choisie (à appeler une fois sur le conteneur).
 export function bindDestExtra(root) {
   root.addEventListener('change', (e) => {
+    if (e.target.matches?.('[data-x="greet"], [data-x="vskip"], #dd-obj, [data-do]')) refreshVmHints(e.target.closest('.cf-dp') || e.target.closest('.cf-ed') || root);
     if (!e.target.matches?.('[data-x="app"]')) return;
     const scope = e.target.closest('.cf-dp, .cf-ge-body, .cf-ed') || root;
     for (const el of scope.querySelectorAll('[data-appfor]')) el.hidden = !el.dataset.appfor.split(' ').includes(e.target.value);
   });
+  refreshVmHints(root);
+}
+// Messagerie choisie sur une sortie (demande de Brice, 16/11/2026) : état de chaque
+// message dans la liste, et ce qu'entendra l'appelant. Vérifié (app_voicemail.c) :
+// message demandé absent → « Prénom et nom » (sinon le numéro) + « est occupé » /
+// « n'est pas disponible » ; aucun → consignes seulement ; sans consignes → bip seul.
+const GL = { unavailable: 'Indisponible', busy: 'Occupé' };
+export function refreshVmHints(root) {
+  if (!root) return;
+  for (const sel of root.querySelectorAll('[data-x="greet"]')) {
+    const scope = sel.closest('.cf-dp') || sel.closest('.cf-ed') || root;
+    const hint = scope.querySelector('[data-vmhint]'); if (!hint) continue;
+    const vm = scope.querySelector('#dd-obj, [data-do]')?.value || '';
+    const st = (g) => (vm ? M.vmGreet?.get(String(vm))?.[g] : undefined);
+    for (const o of sel.options) if (GL[o.value]) { const s = st(o.value); o.textContent = `${GL[o.value]}${s === true ? ' — enregistré' : s === false ? ' — absent' : ''}`; }
+    const g = sel.value, skip = !!scope.querySelector('[data-x="vskip"]')?.checked;
+    if (GL[g] && st(g) === false) hint.innerHTML = `<p class="warn small"><span>« ${GL[g]} » n'est pas enregistré dans cette boîte : l'appelant entendra « Prénom et nom » (sinon le numéro) puis « ${g === 'busy' ? 'est occupé' : 'n\'est pas disponible'} ». Enregistrez-le dans le réglage de la messagerie${st(g === 'busy' ? 'unavailable' : 'busy') ? `, ou choisissez « ${GL[g === 'busy' ? 'unavailable' : 'busy']} »` : ''}.</span></p>`;
+    else if (!GL[g] && skip) hint.innerHTML = '<p class="warn small"><span>Sans message d\'accueil ni instructions, l\'appelant n\'entend qu\'un bip : il risque de ne pas comprendre qu\'il est sur une messagerie.</span></p>';
+    else if (!GL[g]) hint.innerHTML = '<span class="small muted">Aucun : ni message ni nom ; l\'appelant entend les consignes puis le bip.</span>';
+    else hint.innerHTML = '';
+  }
 }
 
 // Lit champs et options d'un type dans son conteneur ; lève une erreur lisible.

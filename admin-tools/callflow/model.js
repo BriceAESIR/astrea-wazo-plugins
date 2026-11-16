@@ -21,8 +21,8 @@
 // Supposé, à vérifier en réel : les listes (GET /groups, /queues,
 // /switchboards, /schedules) contiennent déjà fallbacks, membres et
 // destinations ; sinon on lit le détail de chaque objet (ensureDetails).
-import { S, api, listAll, fullName, esc } from '../common/core.js?v=0.40.75';
-import { comparePatterns, describePattern, userContext, rightsList, simulate, famLabel } from './dialsim.js?v=0.40.75';
+import { S, api, listAll, fullName, esc } from '../common/core.js?v=0.40.76';
+import { comparePatterns, describePattern, userContext, rightsList, simulate, famLabel } from './dialsim.js?v=0.40.76';
 
 export const M = { lists: {}, by: {}, ext: new Map(), extAny: new Map(), rev: null, warns: [] };
 
@@ -394,7 +394,7 @@ export function describe(type, o) {
     case 'user': return { title: fullName(o) || `#${o.id}`, sub: [userExten(o), o.ring_seconds != null ? `sonne ${o.ring_seconds} s` : '', o.services?.dnd?.enabled ? 'ne pas déranger' : ''].filter(Boolean).join(' · ') };
     case 'group': return { title: o.label || o.name, sub: [o.enabled === false ? 'désactivé : l\'appel échoue' : '', firstExten(o), STRATEGY[o.ring_strategy] || o.ring_strategy, o.timeout ? `${o.timeout} s` : 'sans limite'].filter(Boolean).join(' · ') };
     case 'queue': return { title: o.label || o.name, sub: [firstExten(o), o.timeout ? `délai ${o.timeout} s` : ''].filter(Boolean).join(' · ') };
-    case 'ivr': return { title: o.name, sub: [o.description, `${(o.choices || []).length} choix`].filter(Boolean).join(' · ') };
+    case 'ivr': return isMsgOnly(o) ? { title: o.name, sub: `Message seul : ${soundName(o.menu_sound) || '?'}`, msgOnly: true } : { title: o.name, sub: [o.description, `${(o.choices || []).length} choix`].filter(Boolean).join(' · ') };
     case 'schedule': return { title: o.name || `Horaire #${o.id}`, sub: [o.enabled === false ? 'désactivé' : '', o.timezone].filter(Boolean).join(' · ') };
     case 'voicemail': return { title: o.name, sub: [o.number, ctxLabel(o.context)].filter(Boolean).join(' · '), greet: vmGreetList(o.id) };
     case 'conference': return { title: o.name || `#${o.id}`, sub: firstExten(o) };
@@ -449,6 +449,8 @@ export function destTarget(d) {
 }
 // Durée de sonnerie portée par la destination (user, group, queue, switchboard).
 // + musique de distribution d'un appel vers un utilisateur (moh_uuid, 20/10/2026).
+// SVI « message seul » (create.js, ivrmsg) : aucun choix, délai 0, une suite réglée.
+export const isMsgOnly = (o) => !!o && !(o.choices || []).length && !Number(o.timeout) && !!o.timeout_destination && o.timeout_destination.type !== 'none';
 // Message d'accueil joué par une destination messagerie (16/11/2026, demande de Brice).
 // Vérifié (confd helpers/destination.py) : greeting busy → option b de VoiceMail,
 // unavailable → u, sinon aucune option : Asterisk passe directement aux consignes.
@@ -464,6 +466,26 @@ export function vmGreetPill(d) {
     cls: g ? (has === false ? 'miss' : '') : 'def',
     help: g ? (has === false ? `Le message « ${VM_GREET[g]} » n'est pas enregistré dans cette boîte : Asterisk annonce à la place le « Prénom et nom » enregistré (sinon le numéro de la boîte), suivi de « ${g === 'busy' ? 'est occupé' : 'n\'est pas disponible'} ».` : `La messagerie joue son message d'accueil « ${VM_GREET[g]} » avant les consignes.`) : 'Aucun message d\'accueil : la messagerie passe directement aux consignes (bip puis enregistrement).',
   };
+}
+// Rôle de chaque message d'une boîte (éditeur de messagerie, demande de Brice du 16/11/2026).
+// Vérifié (app_voicemail.c leave_voicemail / invent_message) : message demandé absent →
+// « Prénom et nom » enregistré (sinon « le correspondant » + numéro) puis « est occupé » /
+// « n'est pas disponible » ; aucun message demandé → consignes seulement.
+export const GREET_ROLE = {
+  unavailable: ['Indisponible', 'Joué par les sorties réglées sur « Indisponible ». Usage courant : répondeur habituel.', 'Absent : l\'appelant entend « Prénom et nom » (sinon le numéro) puis « n\'est pas disponible ».'],
+  busy: ['Occupé', 'Joué par les sorties réglées sur « Occupé ». Le nom n\'impose rien : c\'est un 2e texte au choix (ex. débordement).', 'Absent : l\'appelant entend « Prénom et nom » (sinon le numéro) puis « est occupé ».'],
+  name: ['Prénom et nom', 'Jamais joué seul : aucune sortie ne peut le choisir. Secours d\'Indisponible / Occupé absents, suivi de « n\'est pas disponible » ou « est occupé ».', 'Absent : en secours, Asterisk annonce « le correspondant » et le numéro de la boîte.'],
+};
+// Sorties qui demandent un message de cette boîte : { g: [« Carte › sortie »] } (g = unavailable | busy | '').
+export function vmGreetUses(vmId) {
+  const out = { unavailable: [], busy: [], '': [] };
+  for (const r of reverseIndex().get(`voicemail:${vmId}`) || []) {
+    const g = VM_GREET[r.dest?.greeting] ? r.dest.greeting : '';
+    const i = nodeInfo(r.from);
+    const s = `${i.title || '?'} › ${r.label}`;
+    if (!out[g].includes(s)) out[g].push(s); // horaire partagé : une fois
+  }
+  return out;
 }
 // Messages enregistrés d'une boîte, pour sa carte (ordre : ceux qu'une sortie peut demander, puis le nom).
 const GREET_CARD = [['unavailable', 'Indisponible'], ['busy', 'Occupé'], ['name', 'Prénom et nom']];
@@ -537,6 +559,11 @@ export function edgesOf(k) {
         fbOut('queue_fb', o.id, o, 'noanswer', after(o.timeout)), fbOut('queue_fb', o.id, o, 'busy'), fbOut('queue_fb', o.id, o, 'congestion'), fbOut('queue_fb', o.id, o, 'fail')];
     }
     case 'ivr':
+      if (isMsgOnly(o)) {
+        // Message seul : la sortie « Délai dépassé » est la suite normale (vérifié, ivr.jinja : délai 0 → t tout de suite).
+        return [W({ ...out('ivr_timeout', o.timeout_destination), label: 'Après le message', help: 'Délai 0 et aucun choix : Wazo passe ici dès la fin du son (sortie « Délai dépassé » du SVI).' }, 'ivr', o.id, 'timeout_destination'),
+          W({ ...out('ivr_invalid', o.invalid_destination), label: 'Touche tapée', help: 'L\'appelant tape une touche pendant le son : aucun choix, Wazo passe ici (sortie « Saisie invalide »). Sans destination, le son est rejoué puis l\'appel finit en « Abandon ».' }, 'ivr', o.id, 'invalid_destination')];
+      }
       return [...(o.choices || []).map((c) => W({ ...out('choice', c.destination), label: `Touche ${c.exten}`, choice: c.exten }, 'ivr_choice', o.id, c.exten)),
         W(out('ivr_timeout', o.timeout_destination, after(o.timeout)), 'ivr', o.id, 'timeout_destination'), W(out('ivr_invalid', o.invalid_destination), 'ivr', o.id, 'invalid_destination'),
         W(out('ivr_abort', o.abort_destination, o.max_tries ? `${o.max_tries} essais` : ''), 'ivr', o.id, 'abort_destination')];
@@ -926,7 +953,7 @@ export function reverseIndex() {
       // Règle sortante → trunk et inclusion de contexte : pas des arrivées d'appels entrants.
       if (!k || e.to.leaf || e.assoc || e.slot === 'trunk' || e.slot === 'include') continue;
       if (!M.rev.has(k)) M.rev.set(k, []);
-      M.rev.get(k).push({ from, slot: e.slot, label: e.label, note: e.note, help: e.help });
+      M.rev.get(k).push({ from, slot: e.slot, label: e.label, note: e.note, help: e.help, dest: e.dest || null });
     }
   }
   return M.rev;

@@ -495,6 +495,17 @@ button.cf-play.cf-play-off { opacity: .55; }
 .cf-vm-greet .cf-ge-l { min-width: 9em; margin: 0; }
 .cf-vm-greet [data-gs] { flex: 1; min-width: 12em; }
 .cf-vm-greet [data-gconf] { flex-basis: 100%; }
+/* Rôle, état et usages de chaque message (16/11/2026). */
+.cf-vm-greet .cf-vm-role, .cf-vm-greet .cf-vm-use { flex-basis: 100%; order: 1; }
+.cf-vm-greet .cf-vm-role { order: 0; margin-top: -4px; }
+.cf-vm-greet .cf-ge-l { order: -1; }
+.cf-vm-greet [data-gs].cf-ok { color: var(--ok); }
+.cf-vm-greet [data-gs].cf-ko { color: var(--warn); }
+.cf-vm-use > span:not(.muted) { color: var(--accent); }
+.cf-vm-greet > [data-gconf], .cf-vm-greet > .cf-vm-res { order: 2; }
+/* Choix d'une messagerie sur une sortie : état du message choisi. */
+.cf-vmhint:empty { display: none; }
+.cf-vmhint { flex-basis: 100%; }
 
 /* Encart d'information (accent de la charte) et résultat d'un envoi */
 .cf-info { display: flex; gap: 12px; align-items: flex-start; background: color-mix(in srgb, var(--accent) 10%, var(--panel)); color: var(--ink); border-left: 3px solid var(--accent); padding: 8px 14px; border-radius: var(--radius); margin: 4px 0 8px; font-size: .875rem; line-height: 1.43; }

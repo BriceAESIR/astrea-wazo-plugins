@@ -14,15 +14,22 @@
 //  - horaire : closed_destination obligatoire ; listes de jours / mois non vides.
 // Extension : POST /extensions {exten, context} puis PUT /<objet>/{id}/extensions/{ext}
 // (une seule par objet, contexte internal).
-import { $, esc, toast, confirmModal } from '../common/core.js?v=0.40.75';
+import { $, esc, toast, confirmModal } from '../common/core.js?v=0.40.76';
 // Créations liées au tenant des données chargées (tapi, model.js).
-import { M, tapi as api, vmTzSelect, vmTzDefault, groupTimes, groupTimesHelp } from './model.js?v=0.40.75';
-import { pickerHtml, bindPicker, readPicker, fillSoundSelect, setObjSelectHook } from './sched-editor.js?v=0.40.75';
-import { field, secretField, bindSecrets, tzSelect, langSelect } from './ed-ui.js?v=0.40.75';
-import { RANGE_KEY as RANGE, numberFieldHtml, bindNumberField, checkNumber, incallNumberHtml, bindIncallNumber, readIncallNumber, checkIncallNumber, incallOutOfRange } from './numbers.js?v=0.40.75';
+import { M, tapi as api, vmTzSelect, vmTzDefault, groupTimes, groupTimesHelp } from './model.js?v=0.40.76';
+import { pickerHtml, bindPicker, readPicker, fillSoundSelect, setObjSelectHook } from './sched-editor.js?v=0.40.76';
+import { field, secretField, bindSecrets, tzSelect, langSelect } from './ed-ui.js?v=0.40.76';
+import { RANGE_KEY as RANGE, numberFieldHtml, bindNumberField, checkNumber, incallNumberHtml, bindIncallNumber, readIncallNumber, checkIncallNumber, incallOutOfRange } from './numbers.js?v=0.40.76';
 
-export const CREATABLE = new Set(['group', 'queue', 'ivr', 'switchboard', 'voicemail', 'conference', 'schedule', 'outcall']);
-export const LABEL = { group: 'un groupe d\'appel', queue: 'une file d\'attente', ivr: 'un SVI', switchboard: 'un standard', voicemail: 'une messagerie', conference: 'une conférence', schedule: 'un horaire', outcall: 'une règle sortante' };
+export const CREATABLE = new Set(['group', 'queue', 'ivr', 'ivrmsg', 'switchboard', 'voicemail', 'conference', 'schedule', 'outcall']);
+export const LABEL = { group: 'un groupe d\'appel', queue: 'une file d\'attente', ivr: 'un SVI', ivrmsg: 'un message seul (SVI)', switchboard: 'un standard', voicemail: 'une messagerie', conference: 'une conférence', schedule: 'un horaire', outcall: 'une règle sortante' };
+// « Message seul » (demande de Brice, 16/11/2026) : SVI sans choix qui joue un son
+// puis renvoie vers une messagerie SANS message d'accueil. Sert de 3e message
+// (ex. fermeture exceptionnelle) : une boîte n'en propose que deux au choix
+// (Indisponible, Occupé). Vérifié : confd ivr/schema.py (timeout ≥ 0, destinations
+// acceptées à la création) ; wazo-confgend ivr.jinja (timeout 0 → « t » tout de
+// suite, sans répétition ; touche tapée sans choix → « i », invalid_destination).
+export const objTypeOf = (type) => (type === 'ivrmsg' ? 'ivr' : type);
 const internal = () => (M.lists.context || []).filter((c) => c.type === 'internal');
 const ctxSel = (attr) => `<select ${attr}>${internal().map((c) => `<option value="${esc(c.name)}">${esc(c.label || c.name)}</option>`).join('')}</select>`;
 const ALL7 = [1, 2, 3, 4, 5, 6, 7], ALL31 = Array.from({ length: 31 }, (_, i) => i + 1), ALL12 = Array.from({ length: 12 }, (_, i) => i + 1);
@@ -49,7 +56,9 @@ const opts = (l) => l.map(([k, x]) => `<option value="${k}">${esc(x)}</option>`)
 // aux listes du module et choisi. Le branchement reste dans le brouillon du
 // formulaire appelant.
 // ---------------------------------------------------------------------------
-const NEW = 'new';
+const NEW = 'new', NEWMSG = 'newmsg';
+// Ouvre directement « Créer un message seul » sur une liste d'objets SVI (raccourci des fermetures exceptionnelles).
+export function startNewMessage(sel) { if (!sel?.querySelector(`option[value="${NEWMSG}"]`)) return false; sel.value = NEWMSG; sel.dispatchEvent(new Event('change', { bubbles: true })); return true; }
 const idOf = (type, o) => String(type === 'switchboard' ? o.uuid : o.id);
 // Nouvel objet ajouté aux index du module (le prochain chargement le relira de Wazo).
 function remember(type, o) {
@@ -62,31 +71,32 @@ export function bindInlineCreate(sel, type) {
   if (!sel || sel.dataset.newobj || !CREATABLE.has(type)) return;
   sel.dataset.newobj = type;
   if (!sel.options.length) sel.insertAdjacentHTML('beforeend', '<option value="">— aucun pour l\'instant —</option>');
-  sel.insertAdjacentHTML('beforeend', `<option value="${NEW}">Créer ${esc(LABEL[type])}…</option>`);
-  let prev = sel.value === NEW ? '' : sel.value;
+  sel.insertAdjacentHTML('beforeend', `<option value="${NEW}">Créer ${esc(LABEL[type])}…</option>${type === 'ivr' ? `<option value="${NEWMSG}">Créer un message seul (puis messagerie)…</option>` : ''}`);
+  let prev = sel.value === NEW || sel.value === NEWMSG ? '' : sel.value;
   const pfx = `nc-${Math.random().toString(36).slice(2, 8)}`;
   sel.addEventListener('change', () => {
-    if (sel.value !== NEW) { prev = sel.value; return; }
-    if (document.getElementById(`${pfx}-box`)) return;
+    if (sel.value !== NEW && sel.value !== NEWMSG) { prev = sel.value; return; }
+    document.getElementById(`${pfx}-box`)?.remove();
+    const kind = sel.value === NEWMSG ? 'ivrmsg' : type;
     const host = sel.closest('.cf-dp, .cf-ge-f, label') || sel;
     host.insertAdjacentHTML('afterend', `<div class="cf-sch-new" id="${pfx}-box">
-      <div class="cf-ge-l">Créer ${esc(LABEL[type])}</div>
-      ${formHtml(type, pfx)}
+      <div class="cf-ge-l">Créer ${esc(LABEL[kind])}</div>
+      ${formHtml(kind, pfx)}
       <p class="small muted">« Créer » l'enregistre tout de suite dans Wazo ; ${type === 'schedule' ? 'il' : 'l\'objet'} reste créé même si ce formulaire est ensuite annulé.</p>
       <p class="error small" id="${pfx}-err"></p>
       <div class="cf-ge-row"><button type="button" class="primary" id="${pfx}-ok">Créer</button><button type="button" id="${pfx}-no">Annuler</button></div></div>`);
     const box = document.getElementById(`${pfx}-box`);
-    bindForm(type, box, pfx);
+    bindForm(kind, box, pfx);
     document.getElementById(`${pfx}-no`).onclick = () => { sel.value = prev; box.remove(); sel.dispatchEvent(new Event('change', { bubbles: true })); };
     const ok = document.getElementById(`${pfx}-ok`);
     ok.onclick = async () => {
       ok.disabled = true;
-      const created = await submitForm(type, box, pfx).finally(() => { ok.disabled = false; });
+      const created = await submitForm(kind, box, pfx).finally(() => { ok.disabled = false; });
       if (!created) return;
       remember(type, created);
       const id = idOf(type, created), label = created.label || created.name || `#${id}`;
       // Ajouté à toutes les listes du même type ouvertes, choisi dans celle-ci.
-      for (const o of document.querySelectorAll(`select[data-newobj="${type}"]`)) o.querySelector(`option[value="${NEW}"]`)?.insertAdjacentHTML('beforebegin', `<option value="${esc(id)}">${esc(label)}</option>`);
+      for (const o of document.querySelectorAll(`select[data-newobj="${type}"]`)) o.querySelector(`option[value="${NEW}"]`)?.insertAdjacentHTML('beforebegin', `<option value="${esc(id)}">${esc(label)}${kind === 'ivrmsg' ? ' — message seul' : ''}</option>`);
       sel.value = id; prev = id;
       box.remove();
       sel.dispatchEvent(new Event('change', { bubbles: true }));
@@ -192,6 +202,7 @@ function formHtml(type, pfx) {
     // xivo-dao queuefeatures DEFAULT_QUEUE_OPTIONS, QueueFeatures.timeout NULL).
     queue: () => `<div class="cf-ge-2">${field('Nom affiché', '<input data-c="label" maxlength="128" placeholder="ex. Support">')}${field('Nom technique *', '<input data-c="name" maxlength="128" placeholder="ex. support">', 'Sans espace ni accent : lettres, chiffres, - _ . Unique sur tout le serveur (tous clients), « general » interdit.')}</div>${field('Stratégie', `<select data-c="strategy">${opts(QSTRATS)}</select>`)}<div class="cf-ge-3">${field('Attente maximale (s)', '<input type="number" min="0" step="1" data-c="qto" placeholder="illimitée">', 'Avant « pas de réponse ». Vide : l\'appelant attend sans limite.')}${field('Sonnerie par agent (s)', '<input type="number" min="0" step="1" data-c="qut" value="15">', '15 = défaut de Wazo.')}${field('Pause de réessai (s)', '<input type="number" min="1" step="1" data-c="qrd" value="5">', '5 = défaut de Wazo (Asterisk ramène 0 à 5).')}</div>${field('Musique d\'attente', `<select data-c="qmoh"><option value="">Par défaut du serveur</option>${(M.lists.moh || []).map((m) => `<option value="${esc(m.name)}">${esc(m.label || m.name)}</option>`).join('')}</select>`)}${num}`,
     ivr: () => `${field('Nom *', '<input data-c="name" maxlength="128" placeholder="ex. Menu principal">')}${field('Message du menu *', `<select data-c="menu" id="${pfx}-menu"><option value="">Chargement des sons…</option></select>`, '« Tapez 1 pour… ». Les touches se règlent ensuite (« Régler le SVI… »).')}`,
+    ivrmsg: () => `${field('Nom *', '<input data-c="name" maxlength="128" placeholder="ex. Fermeture exceptionnelle">')}${field('Son à jouer *', `<select data-c="menu" id="${pfx}-menu"><option value="">Chargement des sons…</option></select>`, 'Ex. « Nous sommes fermés du … au …, laissez-nous un message. » Fichier à déposer d\'abord dans les fichiers sons du tenant.')}${field('Ensuite : messagerie *', `<select data-c="vm">${(M.lists.voicemail || []).map((x) => `<option value="${x.id}">${esc(x.name)}${x.number ? ` (${esc(x.number)})` : ''}</option>`).join('') || '<option value="">aucune messagerie</option>'}</select>`, 'Sans message d\'accueil : la boîte garde ses messages Indisponible / Occupé pour ses autres usages.')}<label class="cf-ge-b"><input type="checkbox" data-c="vskip"><span><strong>Ne pas lire les instructions</strong><span class="small muted">À cocher si votre son dit déjà « laissez un message après le bip ».</span></span></label><div class="cf-info"><span>Réglages posés : délai 0 (la messagerie suit tout de suite le son), aucun choix, « Délai dépassé » et « Saisie invalide » (touche tapée pendant le son) vers cette messagerie. Vérifié dans Wazo (confd, dialplan du SVI).</span></div>`,
     switchboard: () => field('Nom *', '<input data-c="name" maxlength="128" placeholder="ex. Standard">', 'Opérateurs, délai et débordement : « Régler le standard… » ensuite. Sans délai ni débordement, l\'appel attend sans limite qu\'un opérateur le prenne.'),
     voicemail: () => `${field('Nom *', '<input data-c="name" maxlength="80" placeholder="ex. Messagerie accueil">')}<div class="cf-ge-2">${field('Numéro *', '<input data-c="number" inputmode="numeric" placeholder="ex. 8000">', 'Numéro de la boîte, souvent celui du poste. Pas de plage à respecter, mais unique dans le contexte.')}${field('Contexte *', ctxSel('data-c="ctx"'))}</div>${field('Utilisateur associé (facultatif)', `<select data-c="vmuser"><option value="">Aucun</option>${(M.lists.user || []).slice().sort((a, b) => userName(a).localeCompare(userName(b), 'fr')).map((u) => { const cur = (M.lists.voicemail || []).find((x) => (x.users || []).some((y) => y.uuid === u.uuid)); return `<option value="${esc(u.uuid)}">${esc(userName(u))}${cur ? ` (a « ${esc(cur.name)} » : elle lui sera retirée)` : ''}</option>`; }).join('')}</select>`, 'Pour consulter la boîte depuis son poste. Autres utilisateurs et messages d\'accueil : dans le réglage de la messagerie (carte, mode édition).')}<div class="cf-ge-2">${field('Langue des messages', langSelect('data-c="lang"', 'fr_FR'), 'Vide : langue du serveur (souvent l\'anglais).')}${field('Fuseau horaire', vmTzSelect('data-c="vtz"', vmTzDefault()), 'Heure annoncée des messages.')}</div>${field('E-mail (facultatif)', '<input type="email" data-c="email" placeholder="aucun">')}${secretField('data-c="password"', 'Code (facultatif)', '', 'Chiffres. Masqué partout, jamais dans une sauvegarde.')}`,
     conference: () => `${field('Nom *', '<input data-c="name" maxlength="128" placeholder="ex. Réunion">', 'Wazo l\'accepte vide, mais la conférence ne s\'afficherait que par son numéro interne (#id). Défauts de Wazo : 50 participants, sans code.')}${num}`,
@@ -202,7 +213,7 @@ function formHtml(type, pfx) {
   return forms[type]();
 }
 function bindForm(type, root, pfx) {
-  if (type === 'ivr') fillSoundSelect(document.getElementById(`${pfx}-menu`), '');
+  if (type === 'ivr' || type === 'ivrmsg') fillSoundSelect(document.getElementById(`${pfx}-menu`), '');
   if (type === 'schedule') bindPicker(`${pfx}-closed`);
   if (type === 'voicemail') bindSecrets(root);
   if (type === 'group') { const s = root.querySelector('[data-c="strategy"]'); s?.addEventListener('change', () => { root.querySelector('[data-c-times]').textContent = groupTimesHelp(s.value); }); }
@@ -237,6 +248,11 @@ async function submitForm(type, root, pfx) {
     body = { name: v('name'), label: v('label') || v('name'), options: opt, timeout: v('qto') === '' ? null : Number(v('qto')), music_on_hold: v('qmoh') || null }; path = '/queues';
   }
   if (type === 'ivr') { if (!v('name')) return err('Nom obligatoire.'); if (!v('menu')) return err('Choisissez le message du menu.'); body = { name: v('name'), menu_sound: v('menu'), timeout: 5, max_tries: 3 }; path = '/ivr'; }
+  if (type === 'ivrmsg') {
+    if (!v('name')) return err('Nom obligatoire.'); if (!v('menu')) return err('Choisissez le son à jouer.'); if (!v('vm')) return err('Choisissez la messagerie.');
+    const to = { type: 'voicemail', voicemail_id: Number(v('vm')), greeting: null, skip_instructions: !!root.querySelector('[data-c="vskip"]')?.checked };
+    body = { name: v('name'), description: 'Message seul (Astrea Call Flow) : son puis messagerie', menu_sound: v('menu'), timeout: 0, max_tries: 1, choices: [], timeout_destination: to, invalid_destination: { ...to } }; path = '/ivr';
+  }
   if (type === 'switchboard') { if (!v('name')) return err('Nom obligatoire.'); body = { name: v('name') }; path = '/switchboards'; }
   if (type === 'voicemail') {
     if (!v('name')) return err('Nom obligatoire.'); if (!/^[0-9]{1,40}$/.test(v('number'))) return err('Numéro : chiffres seulement.');
@@ -288,7 +304,7 @@ async function submitForm(type, root, pfx) {
       toast(`Messagerie créée, mais utilisateur non associé : ${e.message}${oldId != null ? ' (son ancienne messagerie lui a été rendue)' : ''}`, 9000);
     }
   }
-  console.info('[astrea] Call Flow : création', path, idOf(type, created));
+  console.info('[astrea] Call Flow : création', path, idOf(objTypeOf(type), created));
   toast(`${LABEL[type][0].toUpperCase()}${LABEL[type].slice(1)} : ${['queue', 'voicemail', 'conference', 'outcall'].includes(type) ? 'créée' : 'créé'} dans Wazo.`, 5000);
   return created;
 }
@@ -304,7 +320,7 @@ export function openCreate(type, onCreated, reload, fromList = false) {
     const created = await submitForm(type, $('modal-body'), 'cr');
     if (!created) return false;
     await reload?.();
-    setTimeout(() => onCreated?.(type === 'switchboard' ? created.uuid : created.id), 0);
+    setTimeout(() => onCreated?.(type === 'switchboard' ? created.uuid : created.id, objTypeOf(type)), 0);
     return true;
   }, 'Créer');
   bindForm(type, $('modal-body'), 'cr');

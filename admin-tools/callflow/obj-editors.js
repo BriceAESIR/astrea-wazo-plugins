@@ -10,13 +10,14 @@
 // Codes (messagerie, conférence) : champ masqué avec « Afficher » / « Générer » ;
 // jamais en clair dans le brouillon, l'aperçu ni la sauvegarde JSON (redact).
 // Le mot de passe de connexion d'un utilisateur reste dans User Manager.
-import { $, esc, toast, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.40.75';
-import { M, vmTzSelect } from './model.js?v=0.40.75';
-import { fillSoundSelect, pickerHtml, bindPicker, readPicker } from './sched-editor.js?v=0.40.75';
-import { GREETINGS, greetingExists, playGreeting, playBtn, saveGreeting, deleteGreeting, toWav8k, moTxt } from './sound-play.js?v=0.40.75';
-import { incallNumberHtml, bindIncallNumber, readIncallNumber, checkIncallNumber } from './numbers.js?v=0.40.75';
-import { sec, field, check, setSums, openSec, secretField, bindSecrets, tzSelect, langSelect } from './ed-ui.js?v=0.40.75';
-import { bindNewSchedule, schedValue } from './create.js?v=0.40.75';
+import { $, esc, toast, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.40.76';
+import { M, vmTzSelect, GREET_ROLE, vmGreetUses } from './model.js?v=0.40.76';
+const GREET_ORDER = ['unavailable', 'busy', 'name'];
+import { fillSoundSelect, pickerHtml, bindPicker, readPicker } from './sched-editor.js?v=0.40.76';
+import { GREETINGS, greetingExists, playGreeting, playBtn, saveGreeting, deleteGreeting, toWav8k, moTxt } from './sound-play.js?v=0.40.76';
+import { incallNumberHtml, bindIncallNumber, readIncallNumber, checkIncallNumber } from './numbers.js?v=0.40.76';
+import { sec, field, check, setSums, openSec, secretField, bindSecrets, tzSelect, langSelect } from './ed-ui.js?v=0.40.76';
+import { bindNewSchedule, schedValue } from './create.js?v=0.40.76';
 
 const pickFields = (o, keys) => { const f = {}; for (const k of keys) f[k] = o?.[k] ?? null; return f; };
 const diffKeys = (a, b, keys, L) => keys.filter((k) => JSON.stringify(a?.fields?.[k] ?? null) !== JSON.stringify(b?.fields?.[k] ?? null)).map((k) => L[k] || k);
@@ -173,6 +174,7 @@ export function openVmEditor(o, onSave) {
   const users = (o.users || []).map((u) => fullName(u)).filter(Boolean);
   const b = (k, l, h) => check(`vme-${k}`, l, h, !!f[k], `data-b="${k}"`);
   let vu = [...vmCfgOf(o).users];
+  const uses = vmGreetUses(o.id);
   // Messagerie actuelle de chaque utilisateur (listes du module, brouillon compris).
   const vmOf = new Map(); for (const x of M.lists.voicemail || []) for (const u of x.users || []) vmOf.set(u.uuid, x);
   confirmModal(`<div class="cf-ed">
@@ -191,9 +193,10 @@ export function openVmEditor(o, onSave) {
       <div class="cf-ge-row"><select id="vme-uadd"></select><button type="button" id="vme-uaddb">Ajouter</button></div>
       <p class="warn small" id="vme-glob" hidden><span>Messagerie partagée : les utilisateurs seront retirés à l'écriture.</span></p>`)}
     ${sec('greet', 'Messages d\'accueil', `
-      <p class="small muted">Sons joués à l'appelant selon le statut de l'appelé. Envoi et suppression <strong>immédiats</strong> dans Wazo (hors brouillon).</p>
+      <p class="small muted">Chaque sortie vers cette messagerie choisit le message joué : <strong>Indisponible</strong>, <strong>Occupé</strong> ou aucun (consignes seulement). Envoi et suppression <strong>immédiats</strong> dans Wazo (hors brouillon).</p>
       <div class="cf-info"><span><strong>Limites de Wazo : 2 Mo envoyés, 90 secondes au plus.</strong> Tout fichier audio est accepté (wav, mp3…) : il est converti en WAV 8 kHz, 16 bits, mono. Après chaque envoi, le module relit Wazo et indique sur la ligne si le message est bien enregistré.</span></div>
-      ${GREETINGS.map(([g, l]) => `<div class="cf-vm-greet" data-g="${g}"><span class="cf-ge-l">${esc(l)}</span><span class="small muted" data-gs>…</span><span class="cf-ge-row">${playBtn('data-gplay hidden')}<button type="button" data-gup>Envoyer un fichier…</button><button type="button" data-gdel hidden>Supprimer</button></span><input type="file" accept="audio/*,.wav,.mp3" data-gfile hidden><span class="cf-ge-row" data-gconf hidden></span><span class="small cf-vm-res" data-gres hidden></span></div>`).join('')}`)}
+      ${GREET_ORDER.map((g) => { const [l, role] = GREET_ROLE[g]; const u = g === 'name' ? null : uses[g]; return `<div class="cf-vm-greet" data-g="${g}"><span class="cf-ge-l">${esc(l)}</span><span class="small muted cf-vm-role">${esc(role)}</span><span class="small" data-gs>…</span><span class="small cf-vm-use">${u ? (u.length ? `Utilisé par : <span>${u.map(esc).join('</span> · <span>')}</span>` : '<span class="muted">Aucune sortie ne le demande pour l\'instant.</span>') : ''}</span><span class="cf-ge-row">${playBtn('data-gplay hidden')}<button type="button" data-gup>Envoyer un fichier…</button><button type="button" data-gdel hidden>Supprimer</button></span><input type="file" accept="audio/*,.wav,.mp3" data-gfile hidden><span class="cf-ge-row" data-gconf hidden></span><span class="small cf-vm-res" data-gres hidden></span></div>`; }).join('')}
+      <div class="cf-info"><span><strong>Besoin d'un 3e message</strong> (ex. fermeture exceptionnelle) ? Une boîte n'en propose que deux au choix. Sur la sortie concernée, choisissez « SVI » puis « Créer un message seul (puis messagerie)… » : il joue votre son puis renvoie ici, sans message d'accueil.</span></div>`)}
     ${sec('mail', 'Messages par e-mail', `
       ${field('E-mail', `<input type="email" data-f="email" value="${esc(f.email || '')}" maxlength="80" placeholder="aucun">`, 'Chaque nouveau message y est signalé.')}
       ${b('attach_audio', 'Joindre le message audio', 'Jamais réglé (case grisée à l\'ouverture) : réglage général du serveur.')}
@@ -249,7 +252,7 @@ export function openVmEditor(o, onSave) {
     const st = row.querySelector('[data-gs]'), play = row.querySelector('[data-gplay]'), del = row.querySelector('[data-gdel]'), up = row.querySelector('[data-gup]'), file = row.querySelector('[data-gfile]'), conf = row.querySelector('[data-gconf]'), res = row.querySelector('[data-gres]');
     const hm = () => new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
     const result = (ok, msg) => { res.hidden = false; res.className = `small cf-vm-res ${ok ? 'ok' : 'ko'}`; res.textContent = msg; };
-    const show = (s) => { exists = s; st.textContent = s ? 'Enregistré' : 'Aucun (message par défaut de Wazo)'; play.hidden = !s; del.hidden = !s; up.textContent = s ? 'Remplacer…' : 'Envoyer un fichier…'; };
+    const show = (s) => { exists = s; st.textContent = s ? 'Enregistré' : GREET_ROLE[g][2]; st.className = `small ${s ? 'cf-ok' : 'cf-ko'}`; play.hidden = !s; del.hidden = !s; up.textContent = s ? 'Remplacer…' : 'Envoyer un fichier…'; };
     const ask = (html, onYes) => { conf.innerHTML = `${html}<button type="button" class="primary" data-y>Confirmer</button><button type="button" data-n>Annuler</button>`; conf.hidden = false; conf.querySelector('[data-n]').onclick = () => { conf.hidden = true; }; conf.querySelector('[data-y]').onclick = async (e) => { e.target.disabled = true; try { await onYes(); conf.hidden = true; } catch (x) { conf.hidden = true; result(false, `Échec (${hm()}) : ${x.message}`); } }; };
     greetingExists(o.id, g).then(show).catch((e) => { st.textContent = `Illisible : ${e.message}`; up.disabled = true; });
     play.onclick = () => playGreeting(o.id, g, play);

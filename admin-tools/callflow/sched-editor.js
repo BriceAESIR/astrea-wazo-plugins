@@ -21,10 +21,10 @@
 //    modifiable (15/10/2026) ;
 //  - fermeture liée à un jour de semaine ou valable tous les mois : conservée
 //    telle quelle et listée (supprimable).
-import { $, esc, confirmModal, helpButton, helpBox } from '../common/core.js?v=0.40.75';
-import { M, listOf, destLabel, loadSounds, soundName } from './model.js?v=0.40.75';
-import { attachPlay } from './sound-play.js?v=0.40.75';
-import { EXTRA_TYPES, destFieldsHtml, destOptsHtml, readDestExtra, bindDestExtra, hasOpts } from './dest-opts.js?v=0.40.75';
+import { $, esc, confirmModal, helpButton, helpBox } from '../common/core.js?v=0.40.76';
+import { M, listOf, destLabel, loadSounds, soundName } from './model.js?v=0.40.76';
+import { attachPlay } from './sound-play.js?v=0.40.76';
+import { EXTRA_TYPES, destFieldsHtml, destOptsHtml, readDestExtra, bindDestExtra, hasOpts, refreshVmHints } from './dest-opts.js?v=0.40.76';
 
 const SLOT = 15, N = 96;
 const DAYS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
@@ -168,7 +168,7 @@ let objSelectHook = null;
 export const setObjSelectHook = (fn) => { objSelectHook = fn; };
 export function bindPicker(id) {
   const el = $(id); if (!el) return;
-  const fill = () => { const s = el.querySelector('[data-df]'); if (s) fillSoundSelect(s, s.dataset.cur); const o = el.querySelector('[data-do]'); if (o) objSelectHook?.(o, el.querySelector('[data-dt]').value); };
+  const fill = () => { const s = el.querySelector('[data-df]'); if (s) fillSoundSelect(s, s.dataset.cur); const o = el.querySelector('[data-do]'); if (o) objSelectHook?.(o, el.querySelector('[data-dt]').value); refreshVmHints(el); };
   bindDestExtra(el);
   el.querySelector('[data-dt]').onchange = (e) => { el.querySelector('[data-dx]').innerHTML = pickerExtra(e.target.value, null); el.parentElement?.querySelectorAll(':scope > .cf-sch-new').forEach((b) => b.remove()); fill(); };
   fill();
@@ -249,6 +249,8 @@ export function openScheduleEditor(s, onSave) {
   const opt = (n, sel) => Array.from({ length: n }, (_, i) => `<option value="${i + 1}"${i + 1 === sel ? ' selected' : ''}>${i + 1}</option>`).join('');
   const mopt = (sel) => MONTHS.map((m, i) => `<option value="${i + 1}"${i + 1 === sel ? ' selected' : ''}>${m}</option>`).join('');
   const range = (r) => !(r.m1 === r.m2 && r.d1 === r.d2);
+  const canMsg = !!objSelectHook; // création en ligne disponible (create.js chargé)
+  const MSGBTN = (pid) => (canMsg ? `<button type="button" data-msgclose="${pid}" title="Crée un SVI « message seul » : votre son de fermeture, puis la messagerie choisie sans message d'accueil. Créé tout de suite dans Wazo.">Message de fermeture…</button>` : '');
   const rowHtml = (r, i) => `<div class="cf-xr" data-x="${i}">
       <span class="cf-xr-l">Le</span><select data-d1>${opt(31, r.d1)}</select><select data-m1>${mopt(r.m1)}</select>
       <label class="inline"><input type="checkbox" data-rg${range(r) ? ' checked' : ''}> jusqu'au</label>
@@ -256,6 +258,7 @@ export function openScheduleEditor(s, onSave) {
       <label class="inline"><input type="checkbox" data-all${r.all ? ' checked' : ''}> toute la journée</label>
       <span data-hrs${r.all ? ' hidden' : ''}>de <input type="time" data-hs value="${esc(r.hs)}"> à <input type="time" data-he value="${esc(r.he)}"></span>
       <span class="cf-xr-l">→</span>${pickerHtml(`se-xd${i}`, r.dest)}
+      ${MSGBTN(`se-xd${i}`)}
       <button class="icon" data-delrow title="Supprimer cette fermeture">×</button></div>`;
   const keptHtml = () => keptExc.length ? `<p class="small muted">Autres fermetures conservées telles quelles (liées à un jour de semaine ou valables tous les mois) :</p><ul class="cf-kept">${keptExc.map((p, i) => `<li>${esc(periodTxt(p))} → ${esc(destLabel(p.destination))} <button class="icon" data-delkept="${i}" title="Supprimer cette fermeture">×</button></li>`).join('')}</ul>` : '';
   const help = `Ouvert : tirez un rectangle dans la grille (jours × heures) pour ouvrir tout le bloc ; partez d'une case déjà ouverte pour le fermer. Au quart d'heure ; les jours aux créneaux identiques sont regroupés, et une plage 09:00–12:00 couvre 12:00 (bornes incluses, comme dans Wazo). Si fermé : où part l'appel hors des plages d'ouverture. Fermetures exceptionnelles : vérifiées AVANT les plages d'ouverture ; chacune a sa date (ou sa période « jusqu'au »), ses heures et sa destination. Jours fériés : option qui ajoute les fériés français à date fixe (pas Pâques, l'Ascension ni la Pentecôte, dont la date change). Fuseau : ${s.timezone || '?'}. Rien n'est écrit avant « Appliquer… ».`;
@@ -277,8 +280,9 @@ export function openScheduleEditor(s, onSave) {
     <div class="cf-holopt">
       <label class="inline"><input type="checkbox" id="se-hol"${H.on ? ' checked' : ''}> <strong>Fermer les jours fériés français à date fixe</strong></label>
       <div class="small muted">1er janvier, 1er mai, 8 mai, 14 juillet, 15 août, 1er novembre, 11 novembre, 25 décembre — pas Pâques, l'Ascension ni la Pentecôte, dont la date change chaque année. Un jour férié qui a aussi sa propre ligne ci-dessous suit cette ligne.</div>
-      <div id="se-holx"${H.on ? '' : ' hidden'}><label class="inline"><input type="checkbox" id="se-als"${H.alsace ? ' checked' : ''}> et le 26 décembre (Alsace-Moselle)</label> <span class="cf-xr-l">→</span>${pickerHtml('se-holdest', H.dest || defDest())}</div>
+      <div id="se-holx"${H.on ? '' : ' hidden'}><label class="inline"><input type="checkbox" id="se-als"${H.alsace ? ' checked' : ''}> et le 26 décembre (Alsace-Moselle)</label> <span class="cf-xr-l">→</span>${pickerHtml('se-holdest', H.dest || defDest())} ${MSGBTN('se-holdest')}</div>
     </div>
+    ${canMsg ? '<div class="cf-info"><span><strong>Annoncer la fermeture puis prendre un message</strong> : « Message de fermeture… » crée un SVI sans choix (votre son, puis la messagerie choisie sans message d\'accueil). La messagerie garde ses messages Indisponible / Occupé pour le reste de l\'année.</span></div>' : ''}
     <div id="se-xlist">${rows.map(rowHtml).join('')}</div>
     <div class="btnrow"><button data-tool="addrow">+ Fermeture exceptionnelle</button></div>
     <div id="se-kept">${keptHtml()}</div>
@@ -369,6 +373,16 @@ export function openScheduleEditor(s, onSave) {
     if (dk) { keptExc.splice(+dk.dataset.delkept, 1); $('se-kept').innerHTML = keptHtml(); return; }
     const ds = e.target.closest('[data-delseas]');
     if (ds) { seas = readSeas(false); seas.splice(+ds.closest('.cf-sr').dataset.s, 1); renderSeas(); return; }
+    // Raccourci « Message de fermeture… » (16/11/2026) : la destination passe en SVI et le
+    // formulaire « message seul » (create.js, option newmsg de la liste) s'ouvre sous la ligne.
+    const mc = e.target.closest('[data-msgclose]');
+    if (mc) {
+      const dp = $(mc.dataset.msgclose); const dt = dp?.querySelector('[data-dt]'); if (!dt) return;
+      if (dt.value !== 'ivr') { dt.value = 'ivr'; dt.dispatchEvent(new Event('change')); }
+      const os = dp.querySelector('[data-do]');
+      if (os?.querySelector('option[value="newmsg"]')) { os.value = 'newmsg'; os.dispatchEvent(new Event('change', { bubbles: true })); }
+      return;
+    }
     const dr = e.target.closest('[data-delrow]');
     if (dr) { rows = readRows(false); rows.splice(+dr.closest('.cf-xr').dataset.x, 1); renderRows(); return; }
     const t = e.target.closest('[data-tool]')?.dataset.tool; if (!t) return;

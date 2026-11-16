@@ -5,11 +5,11 @@
 // renvoie la destination au brouillon (onSave). Champs vérifiés dans le schéma
 // des destinations de wazo-confd (ring_time, greeting, skip_instructions,
 // filename, skip, no_answer, cause, exten + context).
-import { $, esc, confirmModal, helpButton, helpBox } from '../common/core.js?v=0.40.75';
-import { TYPES, M, listOf, destLabel } from './model.js?v=0.40.75';
-import { fillSoundSelect } from './sched-editor.js?v=0.40.75';
-import { sec, field, setSums, openSec } from './ed-ui.js?v=0.40.75';
-import { EXTRA_TYPES, destFieldsHtml, destOptsHtml, readDestExtra, bindDestExtra, hasOpts } from './dest-opts.js?v=0.40.75';
+import { $, esc, confirmModal, helpButton, helpBox } from '../common/core.js?v=0.40.76';
+import { TYPES, M, listOf, destLabel } from './model.js?v=0.40.76';
+import { fillSoundSelect } from './sched-editor.js?v=0.40.76';
+import { sec, field, setSums, openSec } from './ed-ui.js?v=0.40.76';
+import { EXTRA_TYPES, destFieldsHtml, destOptsHtml, readDestExtra, bindDestExtra, hasOpts, refreshVmHints } from './dest-opts.js?v=0.40.76';
 
 export const DEST_TYPES = [
   ['user', 'Utilisateur'], ['group', 'Groupe'], ['queue', 'File d\'attente'], ['ivr', 'SVI'], ['voicemail', 'Messagerie'],
@@ -56,7 +56,7 @@ export function openDestEditor(o, onSave) {
       const items = listOf(type);
       return `${field('Rechercher', '<input id="dd-q" placeholder="Nom, numéro…" autocomplete="off">')}
         <select id="dd-obj" size="8" class="cf-dd-list">${items.map((x) => { const id = x.key.slice(x.key.indexOf(':') + 1); return `<option value="${esc(id)}"${id === sel ? ' selected' : ''}>${esc(x.title)}${x.sub ? ` — ${esc(x.sub)}` : ''}</option>`; }).join('') || '<option value="" disabled>Aucun objet de ce type</option>'}</select>
-        ${o.onCreate && o.creatable?.has(type) ? `<div class="btnrow"><button type="button" data-create="${type}" title="Crée l'objet tout de suite dans Wazo, puis le choisit pour cette sortie">Créer un nouveau…</button></div>` : ''}`;
+        ${o.onCreate && o.creatable?.has(type) ? `<div class="btnrow"><button type="button" data-create="${type}" title="Crée l'objet tout de suite dans Wazo, puis le choisit pour cette sortie">Créer un nouveau…</button>${type === 'ivr' ? '<button type="button" data-create="ivrmsg" title="SVI sans choix : joue un son puis renvoie vers une messagerie sans message d\'accueil (ex. fermeture exceptionnelle). Créé tout de suite dans Wazo.">Créer un message seul (puis messagerie)…</button>' : ''}</div>` : ''}`;
     }
     if (type === 'extension') {
       const ctx = (M.lists.context || []).filter((c) => c.type !== 'incall');
@@ -131,6 +131,7 @@ export function openDestEditor(o, onSave) {
       (list.selectedOptions[0] || list).scrollIntoView?.({ block: 'nearest' });
       q.focus();
     }
+    refreshVmHints(box);
     recap();
   };
   box.addEventListener('input', recap);
