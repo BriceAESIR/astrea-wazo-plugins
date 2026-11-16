@@ -8,11 +8,11 @@
 //  - live reload coupé pendant toute l'opération, réactivé AVANT le dernier
 //    déplacement (une écriture identique ne recharge rien, lu dans le notifier) ;
 //  - journal de chaque écriture, annulation depuis le journal.
-import { S, api, ApiError } from '../common/core.js?v=0.40.76';
-import { I, sameTenant, membersOf, objLabel } from './inventory.js?v=0.40.76';
-import { patternMatch, allDests } from './checks.js?v=0.40.76';
-import { worldOf, route, siteSlug, clientPatterns, defaultOut, BLOCK_118 } from './3cx-sites.js?v=0.40.76';
-import { userContext } from '../callflow/dialsim.js?v=0.40.76';
+import { S, api, ApiError } from '../common/core.js?v=0.40.77';
+import { I, sameTenant, membersOf, objLabel } from './inventory.js?v=0.40.77';
+import { patternMatch, allDests } from './checks.js?v=0.40.77';
+import { worldOf, route, siteSlug, clientPatterns, defaultOut, BLOCK_118 } from './3cx-sites.js?v=0.40.77';
+import { userContext } from '../callflow/dialsim.js?v=0.40.77';
 
 // ---------------------------------------------------------------------------
 // Jeu de contextes par site et cloisonnement (demande de Brice, 06/11/2026)

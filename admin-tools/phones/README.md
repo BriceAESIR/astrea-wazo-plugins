@@ -9,6 +9,13 @@ Sous-menu **Astrea Admin Tools > Phone Manager** (ex-DECT Manager), deux vues :
 - **Configuration des appareils** (Yealink, postes et bases DECT) : options du
   catalogue `catalog.js` cochées par appareil ou appliquées en masse.
 
+## Pré-déclaration du modèle
+Appareil Yealink jamais connecté (reprise de parc, déclaré par sa MAC) : la
+vue Configuration propose de déclarer son modèle et son plugin (confd
+`PUT /devices/{id}`). Sans modèle, le plugin Yealink n'écrit aucune touche ;
+déclaré, le fichier est complet (BLF compris) dès la première connexion.
+provd ne corrige pas un modèle faux. Détail : `docs/PHONE-MANAGER.md`.
+
 ## État de connexion (0.21)
 - Pastille par appareil (listes) et par compte (tableau DECT), état dans l'en-tête : vert connecté, bleu en appel, rouge non connecté, vide inconnu. Source : `GET /api/calld/1.0/lines` (ACL `calld.lines.read`, un seul appel, tenant courant) : `registered` = contact PJSIP joignable (vérifié dans le code wazo-calld). Appareil connecté si une de ses lignes est enregistrée. Rafraîchi chaque minute.
 - Avertissement avant une synchronisation vers un appareil non connecté (le NOTIFY check-sync ne l'atteindra pas).

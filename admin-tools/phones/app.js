@@ -13,8 +13,8 @@
 //  - un appareil qui n'a plus aucune ligne est remis en autoprov : options
 //    provd et modèle de provisionnement perdus (voir snapshotDevices()).
 // Audit du 21/10/2026 (wazo-confd master, xivo-dao) : docs/PHONE-MANAGER.md.
-import { S, $, esc, toast, api, listAll, confirmModal, connect, fullName, canWrite, setReadonly, showCompat, loaded, loadFailed, provd, provdDevice, updateProvdOptions, downloadJson, calldGet } from '../common/core.js?v=0.40.76';
-import { CATALOG, randomPassword, checkField } from './catalog.js?v=0.40.76';
+import { S, $, esc, toast, api, listAll, confirmModal, connect, fullName, canWrite, setReadonly, showCompat, loaded, loadFailed, provd, provdDevice, updateProvdOptions, downloadJson, calldGet } from '../common/core.js?v=0.40.77';
+import { CATALOG, randomPassword, checkField } from './catalog.js?v=0.40.77';
 
 // Comptes SIP par modèle (_NB_SIP_ACCOUNTS / plugin-info des plugins provd).
 const DECT_MAX = {
@@ -562,6 +562,74 @@ const isYealink = (d) => /yealink/i.test(`${d.vendor} ${d.plugin}`) || YEALINK_O
 // template, les options n'auraient aucun effet → pas dans « Configuration ».
 const kindOf = (d) => (!d || !isYealink(d) ? null : isDect(d) ? 'dect' : 'phone');
 const modelLabel = (d) => d.model || 'modèle inconnu';
+
+// ---------------------------------------------------------------------------
+// Pré-déclaration du modèle (reprise d'un parc : poste créé par sa MAC, jamais
+// connecté). Vérifié dans le code (16/11/2026) :
+//  - sans modèle, le plugin Yealink ne configure AUCUNE touche (common.py
+//    _nb_linekey_by_model : « No model information; no linekey will be
+//    configured ») : BLF et touches ligne absents du fichier tant que le poste
+//    ne s'est pas présenté ;
+//  - à la connexion, provd ne fait qu'AJOUTER les champs absents
+//    (updater.py.conf.default : AddInfoDeviceUpdater) et ne force que ip et
+//    version : un modèle déclaré n'est jamais corrigé, il doit être exact ;
+//  - changer model / plugin reconfigure l'appareil (device.py _RECONF_KEYS) ;
+//  - écriture par confd PUT /devices/{id} (vendor, model, plugin ; plugin
+//    contrôlé par confd : installé sur la stack).
+// Noms exacts de device.model = clés de MODEL_INFO de wazo-provd-plugins
+// plugins/wazo_yealink/<version>/entry.py (le plugin-info dit « T53(W) »,
+// inutilisable). À compléter si un autre plugin Yealink est utilisé.
+const PLUGIN_MODELS = {
+  v86: ['CP920', 'CP925', 'CP965', 'T27G', 'T30', 'T30P', 'T31', 'T31P', 'T31G', 'T31W', 'T33', 'T33P', 'T33G', 'T34W', 'T41S', 'T42S', 'T46S', 'T48S', 'T41U', 'T42U', 'T43U', 'T44U', 'T44W', 'T46U', 'T48U', 'T53', 'T53C', 'T53W', 'T54W', 'T57', 'T57W', 'T56', 'T58', 'T58W', 'AX83H'],
+  v87: ['T53W', 'T54W', 'T57W', 'T58W', 'T73U', 'T73W', 'T74U', 'T74W', 'T77U', 'T85W', 'T87W', 'T88W', 'T88V', 'AX83H', 'AX86R', 'W70B', 'W75DM', 'W75B', 'W80DM', 'W80B', 'W90DM', 'W90B'],
+};
+const pluginModels = (pg) => PLUGIN_MODELS[(String(pg || '').match(/^wazo-yealink-(v\d+)$/) || [])[1]] || null;
+// Jamais connecté : provd n'a reçu aucune requête du poste (pas de version).
+const neverSeen = (d) => !d.version;
+let yealinkPlugins = null; // plugins Yealink installés à liste connue (provd GET /pg_mgr/plugins)
+async function loadPlugins() {
+  try { yealinkPlugins = Object.keys((await provd('GET', '/pg_mgr/plugins'))?.plugins || {}).filter(pluginModels).sort().reverse(); } catch (e) { yealinkPlugins = []; console.warn('[astrea] plugins provd', e.message); }
+}
+// Rendu seulement si l'appareil ou son état change (renderCfg est rappelé à
+// chaque saisie : ne pas perdre le choix en cours).
+function renderModel(d) {
+  const box = $('c-model');
+  const key = `${d.id}|${d.model}|${d.plugin}|${d.version}|${yealinkPlugins ? yealinkPlugins.join() : '?'}`;
+  if (box.dataset.key === key) return;
+  box.dataset.key = key;
+  if (!isYealink(d) || !neverSeen(d)) { box.innerHTML = ''; return; }
+  if (yealinkPlugins === null) { box.innerHTML = '<p class="muted small">Lecture des plugins provd…</p>'; loadPlugins().then(() => { if (C.sel === d.id) renderModel(d); }); return; }
+  if (!yealinkPlugins.length) { box.innerHTML = '<div class="warn">Aucun plugin Yealink v86 / v87 installé (ou plugins provd illisibles) : modèle non déclarable ici.</div>'; return; }
+  const pg = pluginModels(d.plugin) ? d.plugin : yealinkPlugins[0];
+  const opts = (p) => pluginModels(p).map((m) => `<option${m === d.model ? ' selected' : ''}>${esc(m)}</option>`).join('');
+  box.innerHTML = `<div class="page">
+    <div class="opthead"><strong>${d.model ? `Modèle déclaré : ${esc(d.model)}` : 'Modèle à pré-déclarer'}</strong><span class="tag">appareil jamais connecté</span></div>
+    <p class="muted small">Sans modèle, le plugin Yealink n'écrit aucune touche (BLF, touches ligne) dans le fichier du poste. Déclaré à l'avance, le fichier est complet dès la première connexion. provd ne corrige jamais le modèle quand le poste se connecte : choisissez le modèle exact (étiquette sous le poste).</p>
+    <div class="fields"><label>Plugin <select id="c-pg">${yealinkPlugins.map((p) => `<option${p === pg ? ' selected' : ''}>${esc(p)}</option>`).join('')}</select></label>
+    <label>Modèle <select id="c-mdl"><option value="">—</option>${opts(pg)}</select></label>
+    <button id="c-declare">${d.model ? 'Changer le modèle' : 'Déclarer le modèle'}</button></div></div>`;
+  $('c-pg').onchange = () => { $('c-mdl').innerHTML = `<option value="">—</option>${opts($('c-pg').value)}`; };
+  $('c-declare').onclick = () => declareModel(d, $('c-pg').value, $('c-mdl').value);
+}
+function declareModel(d, plugin, model) {
+  if (!canWrite()) return;
+  if (!model) { toast('Choisissez un modèle.'); return; }
+  if (model === d.model && plugin === d.plugin) { toast('Rien à changer.'); return; }
+  const lines = D.lines.filter((l) => l.device_id === d.id).length;
+  confirmModal(`<h3>Déclarer le modèle de ${esc(devName(d))}</h3>
+    <table class="diff"><tr><th></th><th>Avant</th><th>Après</th></tr>
+    <tr><td>Marque</td><td class="muted">${esc(d.vendor || '—')}</td><td><strong>Yealink</strong></td></tr>
+    <tr><td>Modèle</td><td class="muted">${esc(d.model || '—')}</td><td><strong>${esc(model)}</strong></td></tr>
+    <tr><td>Plugin</td><td class="muted">${esc(d.plugin || '—')}</td><td><strong>${esc(plugin)}</strong></td></tr></table>
+    <p class="muted small">${lines ? `${lines} ligne(s) associée(s) : provd régénère le fichier du poste tout de suite, touches comprises.` : 'Aucune ligne associée : le fichier sera complet quand une ligne lui sera affectée.'} Le poste le récupérera à sa première connexion.</p>
+    <div class="warn">Le modèle ne sera pas corrigé automatiquement si le poste réel est différent : un mauvais modèle donne de mauvaises touches.</div>`, async () => {
+    try {
+      await api('PUT', `/devices/${d.id}`, { vendor: 'Yealink', model, plugin });
+      toast(`${devName(d)} : modèle ${model} déclaré`);
+    } catch (e) { toast(e.message, 9000); }
+    try { await reload(); } catch (e) { toast(e.message, 6000); }
+  }, 'Déclarer');
+}
 // Appareils nommés par leur MAC (la description est un texte libre, souvent
 // long) ; la description reste au survol et dans la recherche.
 const devName = (d) => d.mac || d.description || `Appareil ${d.id}`;
@@ -643,6 +711,7 @@ function renderCfg() {
   $('cfg').hidden = !d;
   $('empty').hidden = !!d;
   if (!d) { $('empty').textContent = 'Choisissez un appareil.'; return; }
+  renderModel(d);
   $('c-name').textContent = `${[d.vendor, d.model].filter(Boolean).join(' ')} · ${devName(d)}`;
   $('c-tech').textContent = [stText(d), d.mac && `MAC ${d.mac}`, d.ip && `IP publique ${kindOf(d) === 'dect' ? 'de la base' : 'de l\'appareil'} ${d.ip}`, d.version && `firmware ${d.version}`, d.plugin && `plugin ${d.plugin}`, devUsers(d).length && `utilisateur(s) : ${devUsers(d).join(', ')}`].filter(Boolean).join(' · ');
   const warn = [];
