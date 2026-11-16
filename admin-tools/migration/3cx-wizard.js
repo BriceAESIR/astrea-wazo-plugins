@@ -5,25 +5,22 @@
 // toute perte avant écriture, comme le mode édition de Call Flow.
 // Parcours : 1 Préparer (relecture du tenant, prérequis) → 2 Plan (ordonné par
 // l'outil, par phases) → 3 Pertes et écarts (à accepter) → 4 Appliquer par
-// phase (sauvegarde, journal, annulation) → 5 Contrôle final (à venir).
-// Écritures disponibles : phase Fondations (contextes du client selon le site
-// choisi, 3cx-sites.js ; plages, pays, conservation, numéros, règle sortante
-// de l'assistant France de Call Flow ; lues dans le code, testées sur faux tenant). Les phases
-// Personnes, Routage et Finitions sont planifiées (lecture seule) ; leur
-// écriture arrive aux lots 5b-5d.
-import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.67';
-import { I, sameTenant } from './inventory.js?v=0.40.67';
-import { buildExport, exportFileName } from './export.js?v=0.40.67';
-import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText, didWazo, numWazo, unverified, defaultVmo, vmEmail, isVoix, deviceDesc, QUEUE_STRATEGY, scheduleOf } from './3cx-draft.js?v=0.40.67';
+// phase (sauvegarde, journal, annulation) → 5 Contrôle final (lecture seule).
+// Phases : Fondations (vérifiée en réel), Personnes (5b), Routage (5c), Finitions
+// (5d) ; écritures lues dans le code de Wazo, testées sur faux tenant.
+import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.68';
+import { I, sameTenant } from './inventory.js?v=0.40.68';
+import { buildExport, exportFileName } from './export.js?v=0.40.68';
+import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText, didWazo, numWazo, unverified, defaultVmo, vmEmail, isVoix, deviceDesc, QUEUE_STRATEGY, scheduleOf } from './3cx-draft.js?v=0.40.68';
 import {
   SITE_MODES, FR_FAMILIES, FR_FORMATS, BLOCK_118, defaultSite, defaultOut, clientPatterns, unitDids, rangeIssues, occupancy, placements, unitLabels, unitCfg, futureOf, siteChecks, routeText, newRanges, multi as multiSites, wazoNum, numberIssues, NO_TRUNK, exitOk, outcallName,
-} from './3cx-sites.js?v=0.40.67';
-import { unitList, unitOf, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.67';
-import { mohLabel, soundCategory, loaded, uniqueNames, putBinary, CATEGORY_RE } from './3cx-sounds.js?v=0.40.67';
-import { phonebookName, companyContacts, sourceColumns, dird, personalCsv } from './3cx-phonebook.js?v=0.40.67';
+} from './3cx-sites.js?v=0.40.68';
+import { unitList, unitOf, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.68';
+import { mohLabel, soundCategory, loaded, uniqueNames, putBinary, CATEGORY_RE } from './3cx-sounds.js?v=0.40.68';
+import { phonebookName, companyContacts, sourceColumns, dird, personalCsv } from './3cx-phonebook.js?v=0.40.68';
 
 const W = { d: null, m: null, t: null, busy: false, msg: null, at: null };
-export function setWizard(d, m) { W.d = d; W.m = m; W.t = null; W.msg = null; ensureState(); }
+export function setWizard(d, m) { W.d = d; W.m = m; W.t = null; W.msg = null; W.final = null; ensureState(); }
 
 function ensureState() {
   const d = W.d;
@@ -110,6 +107,11 @@ async function readTenant() {
     for (const f of files) { const p = (f.formats || []).find((y) => y.path)?.path; if (p) t.soundPaths.set(String(f.name).toLowerCase(), p); }
     return new Set(files.map((x) => String(x.name).toLowerCase()));
   }, () => null) : null;
+  // Finitions : codes de service (messagerie, renvois de profil) et touches des utilisateurs créés par l'outil.
+  t.features = await soft(() => listAll('/extensions/features'), () => []);
+  t.funckeys = new Map();
+  const mine = Object.values(W.d.write.made?.users || {}).filter((uu) => t.users.some((x) => x.uuid === uu));
+  await Promise.all(mine.map(async (uu) => { const r = await soft(() => tapi('GET', `/users/${uu}/funckeys`), () => null); if (r) { const k = {}; for (const [p, x] of Object.entries(r.keys || {})) if (!x.inherited) k[p] = x; t.funckeys.set(uu, k); } }));
   t.mohSuggest = t.sipTpl.global ? await soft(async () => ((await tapi('GET', `/endpoints/sip/templates/${t.sipTpl.global}`)).endpoint_section_options || []).find(([k]) => k === 'moh_suggest')?.[1] ?? null, () => undefined) : undefined;
   return t;
 }
@@ -278,7 +280,7 @@ const PHASES = [
   { id: 'found', title: 'Fondations', help: 'Réglages du tenant et ce dont dépendent les appels : pays, conservation des données, numéros publics, appels sortants.', lot: null },
   { id: 'people', title: 'Personnes', help: 'Messageries communes, appareils (par MAC), puis utilisateurs : licence, ligne(s), numéro, messagerie, appareil associé, compte des applications. Un utilisateur à la fois, comme le portail ; si son compte est refusé, il est supprimé. Les identifiants des comptes ouverts se téléchargent après la phase (jamais gardés).', lot: null },
   { id: 'routing', title: 'Routage', help: 'Groupes et files (numéro, membres), SVI (message, touches), débordements des groupes et files, horaires (plages, fermé, fermetures exceptionnelles), SDA (destination, horaire) : dans cet ordre, chaque objet après ses cibles. Un objet refusé n\'arrête pas les autres.', lot: null },
-  { id: 'finish', title: 'Finitions', help: 'Renvois et débordements (deuxième passe, quand toutes les cibles existent), touches de fonction. L\'annuaire de la société est écrit par les Fondations.', lot: '5c / 5d' },
+  { id: 'finish', title: 'Finitions', help: 'Quand toutes les cibles existent : débordements des utilisateurs (pas de réponse, occupé, non joignable), profil 3CX actuel des postes absents (renvoi immédiat, ou « ne pas déranger » s\'il vise sa messagerie), touches de fonction (positions libres seulement). L\'annuaire de la société est écrit par les Fondations.', lot: null },
 ];
 function buildPlan(t) {
   const d = W.d; const c = contextsOf(t);
@@ -365,13 +367,12 @@ function buildPlan(t) {
   for (const x of rs.scheds) add('routing', x.status, `Horaire « ${x.s.name} »`, x.why);
   // SDA déclarées en E.164 français sans « + » dans le contexte entrant (33251712525).
   for (const x of rs.dids) add('routing', x.status, `SDA ${x.n}`, `${x.ic ? `dans « ${x.ic.label || x.ic.name} » · ` : ''}${x.n !== x.r.did ? `${x.r.did} dans 3CX · ` : ''}${x.why}`);
-  // Finitions
-  const fbUsers = imported(d).filter((u) => Object.values(u.fb).some((x) => x && x.t !== 'none')).length;
-  add('finish', fbUsers ? 'create' : 'skip', `Débordements de ${fbUsers} utilisateur(s)`);
-  const prof = imported(d).filter((u) => W.m.extensions.find((e) => e.number === u.n)?.currentProfile !== 'Available');
-  if (prof.length) add('finish', d.write.keepProfiles ? 'create' : 'skip', `Profil 3CX actuel de ${prof.length} poste(s) repris en renvoi`, prof.map((u) => u.n).join(', '));
-  const blf = blfRows(d, W.m).filter((b) => b.ok);
-  add('finish', blf.length ? 'create' : 'skip', `${blf.length} touche(s) de fonction`);
+  // Finitions : état calculé par finishState (même calcul que les écritures).
+  const fs = finishState(t, c);
+  for (const x of fs.ufb) add('finish', x.status, `Débordements de ${x.u.n} ${userName(x.u)}`, x.why);
+  for (const x of fs.prof) add('finish', x.status, `Profil 3CX « ${x.pname} » de ${x.u.n} ${userName(x.u)}`, x.why);
+  if (!d.write.keepProfiles) { const n = imported(d).filter((u) => u.mode === 'user' && W.m.extensions.find((e) => e.number === u.n)?.currentProfile !== 'Available').length; if (n) add('finish', 'skip', `Profil 3CX actuel de ${n} poste(s)`, 'non repris (option décochée à l\'étape Pertes et écarts)'); }
+  for (const x of fs.keys) add('finish', x.status, `Touches de ${x.u.n} ${userName(x.u)}`, x.why);
   return P;
 }
 
@@ -406,7 +407,12 @@ function losses() {
     const pname = PROFILE_FR[e.currentProfile] || e.currentProfile;
     add('warn', `Poste ${u.n} ${userName(u)} : profil 3CX actuel « ${pname} »`,
       p ? `Dans 3CX : appels externes → ${sideTxt(p.external)}, internes → ${sideTxt(p.internal)}${p.noRingGroups ? ' ; retiré des groupes' : ''}${p.queueLogout ? ' ; déconnecté des files' : ''}. Wazo n'a qu'un renvoi immédiat, sans distinguer appels internes et externes.` : 'profil illisible dans la sauvegarde.',
-      d.write.keepProfiles ? `Repris en renvoi immédiat vers ${p?.external?.all && p.external.all.to !== 'None' ? destLabel(d, convert(p.external.all)) : 'la destination des appels externes'} (option ci-dessous, phase Finitions) : internes et externes seront renvoyés ; à désactiver quand la personne revient.` : 'Non repris : le poste sonnera normalement.');
+      !d.write.keepProfiles ? 'Non repris : le poste sonnera normalement.' : u.mode !== 'user' ? 'Messagerie seule dans Wazo : rien à reprendre.' : (() => {
+        const r = profTarget(W.t || { features: [] }, u);
+        if (r.dnd) return 'Repris en « ne pas déranger » (phase Finitions) : tous les appels vont à sa messagerie ; à désactiver quand la personne revient (appli Wazo ou code de service).';
+        if (r.number) return `Repris en renvoi immédiat vers ${r.label} (phase Finitions) : internes et externes seront renvoyés ; à désactiver quand la personne revient.`;
+        return `Non repris : ${r.skip || r.why}. Le poste sonnera normalement.`;
+      })());
   }
   // Départements 3CX : fusions avec des horaires différents, numéro principal unique dans Wazo.
   for (const x of (d.depts || []).filter((y) => y.mode === 'merge')) {
@@ -860,6 +866,146 @@ function routingOps(t) {
   }
   return ops;
 }
+// ---------------------------------------------------------------------------
+// Phase Finitions (lot 5d, 16/11/2026). Lu dans le code de Wazo :
+//  - débordements d'un utilisateur : GET / PUT /users/{uuid}/fallbacks (confd user_fallback) ; clés
+//    noanswer_destination, busy_destination, congestion_destination, fail_destination (= chanunavail,
+//    poste non joignable : « NotRegistered » de 3CX). Corps chargé sans partial : toutes les clés
+//    renvoyées (relues avant, comme les groupes) ;
+//  - profil 3CX courant (option de l'étape Pertes) : renvoi immédiat PUT /users/{uuid}/forwards/unconditional
+//    {enabled, destination} (user/sub_resources/schema.py) ; wazo-agid (userfeatures.py _set_enableunc)
+//    compose ce numéro dans le contexte du poste. Vers sa propre messagerie : « ne pas déranger »
+//    (PUT /users/{uuid}/services/dnd {enabled}) : le dialplan (extensions_lib_user.conf, DND) envoie
+//    alors l'appel à la messagerie. Vers la messagerie d'un autre : code de service vmuserslt (*97<poste>)
+//    ou vmboxslt (messagerie seule), qui déposent un message (extensions_lib_features.conf vmuser /
+//    vmbox → VoiceMail(…,u)) ; préfixe lu dans GET /extensions/features. Renvoi vers un code de service
+//    depuis le contexte du poste : SUPPOSÉ (à tester) ;
+//  - touches : GET puis PUT /users/{uuid}/funckeys {keys} (remplacement complet, comme BLF Manager) ;
+//    seules les positions libres sont prises ; une destination déjà sur une autre touche n'est pas
+//    doublée (confd refuse deux touches vers la même destination). Collègue = BLF ; groupe ou file =
+//    numérotation rapide (blf false : supervision d'un groupe non vérifiée dans provd).
+// ---------------------------------------------------------------------------
+const FMADE = () => { const m = RMADE(); m.ufb ||= {}; m.prof ||= {}; m.keys ||= {}; return m; };
+const FB_KEYS = [['noanswer', 'noanswer_destination', 'pas de réponse'], ['busy', 'busy_destination', 'occupé'], ['fail', 'fail_destination', 'non joignable']];
+const createdUser = (t, n) => { const uu = FMADE().users[n]; return uu ? t.users.find((y) => y.uuid === uu) || null : null; };
+// Préfixe d'un code de service (« _*97. » → « *97 ») ; null si illisible.
+const featPrefix = (t, name) => { const f = (t.features || []).find((x) => x.feature === name && x.enabled !== false); const m = f && String(f.exten).replace(/^_/, '').match(/^[*#0-9]+/); return m ? m[0] : null; };
+const LABEL_BAD = /[;\r\n\t]/g;
+const keyLabel = (s) => String(s ?? '').replace(LABEL_BAD, ' ').slice(0, 128);
+const DEST_FIELDS = ['user_id', 'group_id', 'queue_id', 'ivr_id', 'voicemail_id', 'exten', 'context', 'filename'];
+const destSig = (x) => JSON.stringify([x?.type || 'none', ...DEST_FIELDS.map((k) => x?.[k] ?? null)]);
+const cleanKey = (k) => { const dst = { type: k.destination?.type }; for (const [p, v] of Object.entries(k.destination || {})) if (p !== 'type' && v != null && !/^(href|.+_(name|firstname|lastname|label))$/.test(p)) dst[p] = v; return { blf: !!k.blf, label: k.label || null, destination: dst }; };
+// Profil 3CX courant d'un poste → { dnd } | { number, label } | { skip } | { why }.
+function profTarget(t, u) {
+  const d = W.d; const e = W.m?.extensions.find((x) => x.number === u.n);
+  const p = e?.profiles?.[e.currentProfile]; if (!p) return { why: 'profil illisible dans la sauvegarde' };
+  const real = (s) => (s?.all && s.all.to !== 'None' ? s.all : null);
+  const side = real(p.external) || real(p.internal); if (!side) return { skip: 'pas de renvoi dans ce profil' };
+  const x = convert(side);
+  switch (x.t) {
+    case 'vm': {
+      if (x.ref === u.n) return u.vm ? { dnd: true, label: 'ne pas déranger : appels vers sa messagerie' } : { why: 'vers sa messagerie, mais le poste n\'en a pas dans Wazo' };
+      const o = userBy(d, x.ref);
+      if (o?.mode === 'voicemail') { const pre = featPrefix(t, 'vmboxslt'); return pre ? { number: `${pre}${wazoNum(d, o)}`, label: `messagerie ${wazoNum(d, o)} (code ${pre})` } : { why: 'code de service « messagerie » (vmboxslt) illisible' }; }
+      if (o?.mode === 'user' && o.vm) { const pre = featPrefix(t, 'vmuserslt'); return pre ? { number: `${pre}${wazoNum(d, o)}`, label: `messagerie de ${wazoNum(d, o)} (code ${pre})` } : { why: 'code de service « messagerie d\'un utilisateur » (vmuserslt) illisible' }; }
+      return { why: `messagerie ${x.ref} non reprise` };
+    }
+    case 'user': {
+      if (x.ref === u.n) return { skip: 'renvoi vers lui-même' };
+      const o = userBy(d, x.ref); return o?.mode === 'user' ? { number: wazoNum(d, o), label: `poste ${wazoNum(d, o)} ${userName(o)}` } : { why: `poste ${x.ref} non repris` };
+    }
+    case 'hunt': { const h = huntBy(d, x.ref); return h && h.target !== 'skip' ? { number: wazoNum(d, h), label: `${h.target === 'group' ? 'groupe' : 'file'} ${wazoNum(d, h)} ${h.name}` } : { why: `groupe / file ${x.ref} non repris` }; }
+    case 'ext': return /^\+?\d{2,}$/.test(x.num || '') ? { number: String(x.num).replace(/^\+/, '00'), label: `numéro externe ${x.num}` } : { why: 'numéro externe invalide' };
+    case 'ivr': return { why: 'vers un SVI : pas de numéro dans Wazo, renvoi impossible' };
+    case 'hangup': return { why: 'fin d\'appel : pas d\'équivalent en renvoi' };
+    default: return { why: `destination « ${x.t} » non reprise` };
+  }
+}
+// Touches attendues d'un poste : [{ pos, key, label, why? }] (why : non posable).
+function keysFor(t, u) {
+  const d = W.d; const out = [];
+  for (const b of blfRows(d, W.m).filter((y) => y.ok && y.owner === u.n)) {
+    const kind = W.m.dn.get(b.target)?.kind; let dest = null; let why = ''; let blf = true; let label = b.targetName;
+    if (kind === 'Extension') { const o = createdUser(t, b.target); if (o) dest = { type: 'user', user_id: o.id }; else why = `collègue ${b.target} pas créé`; }
+    else if (kind === 'RingGroup' || kind === 'Queue') { const h = huntBy(d, b.target); const r = wazoDest(t, { t: 'hunt', ref: b.target }); if (r.dest) { dest = r.dest; blf = false; label = h?.name || label; } else why = r.why; }
+    else why = `cible 3CX de type ${kind || '?'} non reprise en touche`;
+    out.push({ pos: b.wpos, label: keyLabel(label), key: dest ? { blf, label: keyLabel(label) || null, destination: dest } : null, why, target: b.target });
+  }
+  return out;
+}
+function finishState(t, c) {
+  const d = W.d; const mk = FMADE();
+  const ctxOf = (u) => unitOfUser(c, u)?.ctx;
+  const users = imported(d).filter((u) => u.mode === 'user');
+  const ufb = users.filter((u) => FB_KEYS.some(([k]) => u.fb?.[k] && u.fb[k].t !== 'none')).map((u) => {
+    const wu = createdUser(t, u.n);
+    const res = FB_KEYS.filter(([k]) => u.fb[k] && u.fb[k].t !== 'none').map(([k, key, l]) => ({ k, key, l, r: wazoDest(t, u.fb[k], { ctx: ctxOf(u) }) }));
+    const bad = res.filter((x) => !x.r.dest);
+    const st = mk.ufb[u.n] ? ['exists', 'réglés par l\'outil'] : !wu ? ['conflict', 'utilisateur pas encore créé (Personnes)'] : bad.length === res.length ? ['conflict', bad.map((x) => `${x.l} : ${x.r.why}`).join(' ; ')]
+      : ['create', `${res.filter((x) => x.r.dest).map((x) => `${x.l} → ${destLabel(d, u.fb[x.k])}`).join(' ; ')}${bad.length ? ` · sautés : ${bad.map((x) => `${x.l} (${x.r.why})`).join(', ')}` : ''}`];
+    return { u, wu, res, status: st[0], why: st[1] };
+  });
+  const prof = !d.write.keepProfiles ? [] : users.filter((u) => { const e = W.m?.extensions.find((x) => x.number === u.n); return e && e.currentProfile !== 'Available'; }).map((u) => {
+    const wu = createdUser(t, u.n); const r = profTarget(t, u);
+    const pname = PROFILE_FR[W.m.extensions.find((x) => x.number === u.n).currentProfile] || 'autre';
+    const st = mk.prof[u.n] ? ['exists', 'repris par l\'outil'] : r.skip ? ['skip', r.skip] : r.why ? ['conflict', r.why] : !wu ? ['conflict', 'utilisateur pas encore créé (Personnes)'] : ['create', r.dnd ? r.label : `renvoi immédiat vers ${r.label}`];
+    return { u, wu, r, pname, status: st[0], why: st[1] };
+  });
+  const keys = users.filter((u) => blfRows(d, W.m).some((b) => b.ok && b.owner === u.n)).map((u) => {
+    const wu = createdUser(t, u.n); const want = keysFor(t, u);
+    if (!wu) return { u, want, add: [], status: 'conflict', why: 'utilisateur pas encore créé (Personnes)' };
+    const cur = t.funckeys?.get(wu.uuid);
+    if (!cur) return { u, wu, want, add: [], status: mk.keys[u.n] ? 'exists' : 'conflict', why: mk.keys[u.n] ? 'posées par l\'outil' : 'touches actuelles illisibles (droit funckeys ?)' };
+    const sigs = new Map(Object.entries(cur).map(([p, k]) => [destSig(k.destination), Number(p)]));
+    const add = []; const notes = []; let present = 0;
+    for (const w of want) {
+      if (!w.key) { notes.push(`touche ${w.pos} : ${w.why}`); continue; }
+      const at = sigs.get(destSig(w.key.destination));
+      if (at === w.pos) { present++; continue; }
+      if (at != null) { notes.push(`touche ${w.pos} : ${w.label} déjà sur la touche ${at}`); present++; continue; }
+      if (cur[w.pos]) { notes.push(`touche ${w.pos} déjà prise (${cur[w.pos].label || cur[w.pos].destination?.type})`); continue; }
+      add.push(w);
+    }
+    const st = add.length ? 'create' : notes.some((x) => !/déjà sur la touche/.test(x)) && !present ? 'conflict' : 'exists';
+    return { u, wu, want, add, status: st, why: `${add.length ? `${add.length} touche(s) à poser (${add.map((w) => `${w.pos} ${w.label}`).join(', ')})` : `${present} déjà en place`}${notes.length ? ` · ${notes.join(' ; ')}` : ''}` };
+  });
+  return { ufb, prof, keys };
+}
+function finishOps(t) {
+  const d = W.d; const c = contextsOf(t); const F = finishState(t, c); const ops = []; const mk = FMADE();
+  for (const x of F.ufb.filter((y) => y.status === 'create')) {
+    ops.push({ soft: true, label: `Débordements de ${x.u.n} ${userName(x.u)} (PUT /users/…/fallbacks)`, run: async () => {
+      const base = `/users/${x.wu.uuid}/fallbacks`; const prev = await tapi('GET', base);
+      const next = { ...prev }; for (const y of x.res.filter((z) => z.r.dest)) next[y.key] = y.r.dest;
+      await tapi('PUT', base, next); mk.ufb[x.u.n] = true;
+      return { created: x.res.filter((z) => z.r.dest).map((z) => z.l).join(', '), undo: { seq: [{ method: 'PUT', path: base, body: prev }, { local: 'fmade', kind: 'ufb', n: x.u.n }] } };
+    } });
+  }
+  for (const x of F.prof.filter((y) => y.status === 'create')) {
+    ops.push({ soft: true, label: `Profil 3CX « ${x.pname} » de ${x.u.n} ${userName(x.u)} : ${x.why}`, run: async () => {
+      if (x.r.dnd) {
+        const path = `/users/${x.wu.uuid}/services/dnd`; const prev = await tapi('GET', path);
+        await tapi('PUT', path, { enabled: true }); mk.prof[x.u.n] = true;
+        return { created: 'ne pas déranger activé', undo: { seq: [{ method: 'PUT', path, body: { enabled: !!prev?.enabled } }, { local: 'fmade', kind: 'prof', n: x.u.n }] } };
+      }
+      const path = `/users/${x.wu.uuid}/forwards/unconditional`; const prev = await tapi('GET', path);
+      await tapi('PUT', path, { enabled: true, destination: x.r.number }); mk.prof[x.u.n] = true;
+      return { created: `renvoi immédiat ${x.r.number}`, undo: { seq: [{ method: 'PUT', path, body: { enabled: !!prev?.enabled, destination: prev?.destination ?? null } }, { local: 'fmade', kind: 'prof', n: x.u.n }] } };
+    } });
+  }
+  for (const x of F.keys.filter((y) => y.status === 'create')) {
+    ops.push({ soft: true, label: `Touches de ${x.u.n} ${userName(x.u)} : ${x.add.length} (PUT /users/…/funckeys)`, run: async () => {
+      const path = `/users/${x.wu.uuid}/funckeys`;
+      const cur = {}; for (const [p, k] of Object.entries((await tapi('GET', path))?.keys || {})) if (!k.inherited) cur[p] = cleanKey(k);
+      const prev = JSON.parse(JSON.stringify(cur)); const sigs = new Set(Object.values(cur).map((k) => destSig(k.destination)));
+      let n = 0; for (const w of x.add) if (!cur[w.pos] && !sigs.has(destSig(w.key.destination))) { cur[w.pos] = w.key; sigs.add(destSig(w.key.destination)); n++; }
+      if (!n) return { created: 'rien à poser (relu : déjà en place)' };
+      await tapi('PUT', path, { keys: cur }); mk.keys[x.u.n] = true;
+      return { created: `${n} touche(s)`, undo: { seq: [{ method: 'PUT', path, body: { keys: prev } }, { local: 'fmade', kind: 'keys', n: x.u.n }] } };
+    } });
+  }
+  return ops;
+}
 async function foundationOps(t) {
   const d = W.d; const c = contextsOf(t); const ops = [];
   for (const x of zeroDidCtx(t, c)) {
@@ -1120,6 +1266,8 @@ async function foundationOps(t) {
 async function runUndo(u) {
   if (!u) return;
   if (u.seq) { for (const x of u.seq) { try { await runUndo(x); } catch (e) { if (e.status !== 404) throw e; } } return; }
+  // Finitions annulées : l'objet n'est plus « réglé par l'outil ».
+  if (u.local === 'fmade') { delete FMADE()[u.kind][u.n]; return; }
   // Contextes du client supprimés : le brouillon revient au contexte d'avant.
   if (u.local === 'site') {
     if (u.units) { for (const k of u.units) unitCfg(W.d, k).created = null; return; }
@@ -1129,6 +1277,98 @@ async function runUndo(u) {
   if (u.api === 'auth') return authd(u.method, u.path, u.body);
   if (u.api === 'dird') { guard(); return dird(u.method, u.path, u.body); }
   return tapi(u.method, u.path, u.body);
+}
+
+// ---------------------------------------------------------------------------
+// 5. Contrôle final (lecture seule, 16/11/2026) : tenant relu, chaque SDA comparée à la
+// sauvegarde 3CX par la même conversion que les écritures (wazoDest) : destination,
+// horaire, plages d'ouverture, sortie « fermé », fermetures exceptionnelles. Puis ce qui
+// reste au plan et les gestes du jour de la bascule.
+// ---------------------------------------------------------------------------
+function wazoLabel(t, x) {
+  if (!x || !x.type || x.type === 'none') return 'aucune (appel rejeté)';
+  const f = (l, id) => (l || []).find((y) => y.id === id);
+  switch (x.type) {
+    case 'user': { const u = f(t.users, x.user_id); return u ? `utilisateur ${[u.firstname, u.lastname].filter(Boolean).join(' ')}` : `utilisateur ${x.user_id} (introuvable)`; }
+    case 'group': return `groupe ${f(t.groups, x.group_id)?.label || x.group_id}`;
+    case 'queue': { const q = f(t.queues, x.queue_id); return `file ${q?.label || q?.name || x.queue_id}`; }
+    case 'ivr': return `SVI ${f(t.ivrs, x.ivr_id)?.name || x.ivr_id}`;
+    case 'voicemail': { const v = f(t.voicemails, x.voicemail_id); return `messagerie ${v ? `${v.number} ${v.name}` : x.voicemail_id}`; }
+    case 'extension': return `numéro ${x.exten}`;
+    case 'sound': return `message ${String(x.filename || '').split('/').pop()}`;
+    case 'hangup': return 'raccrocher';
+    default: return x.type;
+  }
+}
+const perSig = (l) => (l || []).map((p) => `${p.hours_start}-${p.hours_end}|${(p.week_days || []).join(',')}|${(p.month_days || []).length >= 31 ? '*' : (p.month_days || []).join(',')}|${(p.months || []).length >= 12 ? '*' : (p.months || []).join(',')}`).sort().join(' ; ');
+async function runFinal() {
+  const t = await readTenant(); const d = W.d; const c = contextsOf(t);
+  const ctxOf = (o) => unitOfUser(c, o)?.ctx;
+  const scheds = new Map();
+  for (const id of new Set(t.incalls.flatMap((i) => (i.schedules || []).map((s) => s.id)))) scheds.set(id, await soft(() => tapi('GET', `/schedules/${id}`), () => null));
+  const rows = [];
+  for (const r of d.dids.filter((x) => x.import)) {
+    const n = didWazo(r.did); const ic = c.incallOf(r);
+    const inc = t.incalls.find((i) => (i.extensions || []).some((e) => e.exten === n && (!ic || ic.virtual || e.context === ic.name)));
+    const s3 = r.schedule ? scheduleOf(d, r.schedule) : null;
+    const row = { did: n, d3: destLabel(d, r.dest), dw: '', s3: s3?.name || '', sw: '', c3: s3 ? destLabel(d, s3.closed) : '', cw: '', issues: [] };
+    rows.push(row);
+    const exp = wazoDest(t, r.dest, { ctx: ctxOf(r) });
+    if (!inc) { row.dw = 'absente'; row.issues.push(`SDA absente de Wazo${exp.why ? ` (${exp.why})` : ''}`); continue; }
+    row.dw = wazoLabel(t, inc.destination);
+    if (!exp.dest) row.issues.push(`destination 3CX non convertible : ${exp.why}`);
+    else if (destSig(exp.dest) !== destSig(inc.destination)) row.issues.push(`destination différente (attendu : ${wazoLabel(t, exp.dest)})`);
+    const ws = (inc.schedules || [])[0];
+    if (s3 && !ws) row.issues.push('horaire absent : la SDA est toujours ouverte');
+    if (!s3 && ws) row.issues.push(`horaire « ${ws.name} » en plus dans Wazo`);
+    if (!ws) continue;
+    const S = scheds.get(ws.id); row.sw = ws.name || S?.name || `horaire ${ws.id}`;
+    if (!s3) continue;
+    if (!S) { row.issues.push('horaire illisible'); continue; }
+    row.cw = wazoLabel(t, S.closed_destination);
+    const ec = wazoDest(t, s3.closed, { ctx: ctxOf(r) });
+    if (ec.dest && destSig(ec.dest) !== destSig(S.closed_destination)) row.issues.push(`sortie « fermé » différente (attendu : ${wazoLabel(t, ec.dest)})`);
+    if (perSig(openPeriods(s3)) !== perSig(S.open_periods)) row.issues.push('plages d\'ouverture différentes');
+    const expExc = schedHolidays(s3).flatMap((h) => { const x = wazoDest(t, holidayDest(s3), { ctx: ctxOf(r), holiday: h }); return holidayPeriods(h, x.dest || null); });
+    const got = S.exceptional_periods || [];
+    if (got.length !== expExc.length) row.issues.push(`${got.length} période(s) de fermeture exceptionnelle dans Wazo, ${expExc.length} attendue(s)`);
+    else if (expExc.map((p) => destSig(p.destination)).sort().join() !== got.map((p) => destSig(p.destination)).sort().join()) row.issues.push('destination d\'une fermeture exceptionnelle différente');
+  }
+  // Ce qui reste au plan (toutes phases), et les gestes du jour de la bascule.
+  const plan = buildPlan(t);
+  const residual = PHASES.flatMap((p) => plan[p.id].filter((x) => ['create', 'update', 'conflict'].includes(x.status)).map((x) => ({ phase: p.title, ...x })));
+  const pre = prerequisites(t).filter((x) => ['error', 'manual'].includes(x.sev));
+  const bascule = [];
+  for (const u of c.units) {
+    const oc = t.outcalls.find((o) => o.name === ocNameOf(u, c.many));
+    if (oc && !(oc.trunks || []).length) bascule.push(`Créer le trunk dans le Portal et l'associer à la règle « ${oc.name} » (Gestion des appels > Appels sortants) ; le couper côté 3CX.`);
+    const tr = u.trunkId && t.trunks.find((x) => String(x.id) === String(u.trunkId));
+    if (!u.trunkId) bascule.push(`Régler le contexte entrant du nouveau trunk sur « ${u.inc ? u.L.inc : (c.incall?.label || c.incall?.name || 'contexte entrant du tenant')} ».`);
+    else if (tr && u.inc && tr.context !== u.inc) bascule.push(`Trunk ${trunkLabel(t, u.trunkId)} : contexte entrant à régler sur « ${u.L.inc} ».`);
+  }
+  bascule.push('Redémarrer les postes pour qu\'ils prennent leur configuration Wazo (appareils créés par MAC).', 'Envoyer à chacun ses accès à l\'application Wazo (phase Personnes : Identifiants, Mails).', 'Appeler quelques SDA (ouvert, puis fermé) et un numéro externe depuis un poste.');
+  if (Object.keys(FMADE().prof).length) bascule.push(`Renvois repris des profils 3CX (${Object.keys(FMADE().prof).join(', ')}) : à désactiver au retour des personnes.`);
+  W.final = { at: new Date(), rows, residual, pre, bascule };
+  W.t = t;
+}
+function finalCsv() {
+  const F = W.final; const q = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const lines = [['sda', 'destination_3cx', 'destination_wazo', 'horaire_3cx', 'horaire_wazo', 'ferme_3cx', 'ferme_wazo', 'ecarts'].join(';'),
+    ...F.rows.map((r) => [r.did, r.d3, r.dw, r.s3, r.sw, r.c3, r.cw, r.issues.join(' | ') || 'conforme'].map(q).join(';')),
+    '', ['phase', 'etat', 'objet', 'detail'].join(';'), ...F.residual.map((x) => [x.phase, ST[x.status], x.label, x.detail].map(q).join(';'))];
+  return '﻿' + lines.join('\r\n');
+}
+function stepFinal() {
+  const F = W.final;
+  let h = `<div class="btnrow"><button data-wact="final" class="${F ? '' : 'primary'}" ${W.busy ? 'disabled' : ''}>${F ? 'Relancer le contrôle' : 'Lancer le contrôle'}</button>${F ? `<button data-wact="report">Rapport (CSV)</button><span class="small muted">Contrôle de ${esc(F.at.toLocaleTimeString('fr-FR'))}.</span>` : ''}</div>`;
+  if (!F) return `${h}<p class="small muted">Rien n'est écrit : le tenant est relu et comparé au brouillon.</p>`;
+  const bad = F.rows.filter((r) => r.issues.length);
+  h += `<h4 class="x3w-gh">SDA : ${F.rows.length - bad.length} conforme(s) sur ${F.rows.length}</h4>`;
+  h += F.rows.length ? `<div class="x3-edit-wrap"><table class="diff x3-edit"><thead><tr><th>SDA</th><th>3CX</th><th>Wazo</th><th>Horaire</th><th>Fermé (3CX / Wazo)</th><th>Résultat</th></tr></thead><tbody>${F.rows.map((r) => `<tr class="${r.issues.length ? 'x3-warn' : ''}"><td>${esc(r.did)}</td><td>${esc(r.d3)}</td><td>${esc(r.dw)}</td><td>${esc(r.s3 || '—')}${r.sw && r.sw !== r.s3 ? ` <span class="muted">/ ${esc(r.sw)}</span>` : ''}</td><td>${r.s3 ? `${esc(r.c3)} / ${esc(r.cw || '?')}` : '—'}</td><td>${r.issues.length ? esc(r.issues.join(' ; ')) : 'conforme'}</td></tr>`).join('')}</tbody></table></div>` : '<p class="small muted">Aucune SDA reprise.</p>';
+  h += F.residual.length ? `<h4 class="x3w-gh">Pas encore au bon état (${F.residual.length})</h4><table class="diff x3-edit x3w-items"><tbody>${F.residual.map((x) => `<tr class="st-${x.status}"><td class="x3w-st">${esc(ST[x.status])}</td><td>${esc(x.phase)} · ${esc(x.label)}</td><td class="muted small">${esc(x.detail || '')}</td></tr>`).join('')}</tbody></table>` : '<div class="mg-allok">Toutes les phases sont au bon état dans le tenant.</div>';
+  if (F.pre.length) h += `<h4 class="x3w-gh">À régler</h4>${F.pre.map((p) => `<div class="warn small"><strong>${esc(p.title)}</strong> : ${esc(p.text)}</div>`).join('')}`;
+  h += `<h4 class="x3w-gh">Jour de la bascule</h4><ol class="small x3w-todo">${F.bascule.map((x) => `<li>${esc(x)}</li>`).join('')}</ol>`;
+  return h;
 }
 
 // ---------------------------------------------------------------------------
@@ -1144,7 +1384,7 @@ const STEPS = [
   { id: 'site', title: 'Site et appels sortants', help: 'Où le client s\'installe (contextes), par quel trunk il sort, et simulation des appels avant toute écriture.' },
   { id: 'losses', title: 'Pertes et écarts', help: 'Ce qui ne sera pas reproduit à l\'identique de 3CX. À lire et à accepter avant d\'écrire.' },
   { id: 'write', title: 'Écriture', help: 'Phase par phase, dans l\'ordre. Sauvegarde du tenant avant la première écriture, journal, annulation possible de chaque phase.' },
-  { id: 'final', title: 'Contrôle final', help: 'Après Routage et Finitions : comparaison du parcours de chaque SDA, 3CX et Wazo (ouvert, fermé, férié).' },
+  { id: 'final', title: 'Contrôle final', help: 'Lecture seule : le tenant est relu et chaque SDA est comparée à la sauvegarde 3CX (ouvert, fermé, fermetures exceptionnelles), puis ce qui reste à faire pour la bascule. Rapport CSV téléchargeable.' },
 ];
 // Ce qui manque pour finir l'étape i (null = finie).
 function stepTodo(i, pre) {
@@ -1160,11 +1400,12 @@ function stepTodo(i, pre) {
     }
     case 'losses': return w.ackLosses ? null : 'cocher « J\'ai pris connaissance de ces pertes et écarts »';
     case 'write': {
-      if (!PHASES.filter((p) => !p.lot).every((p) => ph(p.id).status === 'done')) return 'appliquer les phases disponibles';
-      const later = PHASES.filter((p) => p.lot).map((p) => p.title);
-      return later.length ? `${later.join(', ')} : écriture par l'outil pas encore disponible (prochaines versions) ; d'ici là, CSV de l'onglet Exports et saisie dans le Portal` : null;
+      // Phase interrompue (objets refusés) : le Contrôle final reste ouvert, il sert justement à voir les écarts.
+      const left = PHASES.filter((p) => ph(p.id).status === 'todo').map((p) => p.title);
+      return left.length ? `appliquer ${left.join(', ')}` : null;
     }
-    default: return 'à venir';
+    case 'final': return W.final ? null : 'lancer le contrôle';
+    default: return null;
   }
 }
 const TRUNK_LATER = 'Aucun pour l\'instant (3CX en service)';
@@ -1195,7 +1436,7 @@ export function wizardTab() {
     <ol class="x3w-bar">${STEPS.map((s, k) => `<li><button type="button" data-wact="goto" data-s="${k}" class="${k === i ? 'cur' : !todo[k] ? 'done' : ''}" ${k > reach ? 'disabled' : ''}><span class="x3w-n">${k + 1}</span>${esc(s.title)}</button></li>`).join('')}</ol>
     <div class="card x3w-step open"><div class="x3w-head"><span class="x3w-n">${i + 1}</span><strong>${esc(st.title)}</strong><span class="spacer"></span>${todo[i] ? '' : '<span class="x3w-badge ok">Fait</span>'}</div>
     <p class="small muted">${esc(st.help)}</p>`;
-  html += { client: stepClient, tenant: stepTenant, site: stepSite, losses: stepLosses, write: stepWrite, final: () => '' }[st.id](pre);
+  html += { client: stepClient, tenant: stepTenant, site: stepSite, losses: stepLosses, write: stepWrite, final: stepFinal }[st.id](pre);
   // Boutons groupés à gauche : à droite, ils sortaient de l'écran dans le Portal (capture de Brice, 09/11/2026).
   html += `<div class="x3w-nav">${i ? `<button type="button" data-wact="goto" data-s="${i - 1}">Précédent</button>` : ''}
     ${i < STEPS.length - 1 ? `<button type="button" class="primary" data-wact="goto" data-s="${i + 1}" ${todo[i] ? 'disabled' : ''}>Suivant : ${esc(STEPS[i + 1].title)}</button>${todo[i] ? `<span class="small x3w-why">Pour continuer : ${esc(todo[i])}.</span>` : ''}` : ''}</div></div>`;
@@ -1339,6 +1580,17 @@ export async function wizardClick(b, rerender) {
     } catch (e) { toast(`Lecture du tenant impossible : ${e.message}`, 8000); }
     W.busy = false; return rerender();
   }
+  if (act === 'final') {
+    W.busy = true; rerender();
+    try { await runFinal(); } catch (e) { toast(`Contrôle impossible : ${e.message}`, 8000); }
+    W.busy = false; return rerender();
+  }
+  if (act === 'report') {
+    if (!W.final) return;
+    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([finalCsv()], { type: 'text/csv;charset=utf-8' }));
+    a.download = `controle-migration-${W.d.write.clientId || 'client'}.csv`; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    return;
+  }
   if (act === 'mails') {
     const blob = zipOf(W.creds.map((c) => ({ name: `${safeName(`${c.n} ${c.name}`)}.eml`, text: emlOf(c) })));
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `mails-wazo-${W.d.write.clientId || 'client'}.zip`;
@@ -1359,7 +1611,7 @@ export async function wizardClick(b, rerender) {
   if (act === 'apply') {
     if (!canWrite()) return;
     let ops;
-    try { W.t = await readTenant(); ops = id === 'found' ? await foundationOps(W.t) : id === 'people' ? peopleOps(W.t) : id === 'routing' ? routingOps(W.t) : []; } catch (e) { W.msg = { bad: true, text: `Relecture impossible : ${e.message}` }; return rerender(); }
+    try { W.t = await readTenant(); ops = id === 'found' ? await foundationOps(W.t) : id === 'people' ? peopleOps(W.t) : id === 'routing' ? routingOps(W.t) : id === 'finish' ? finishOps(W.t) : []; } catch (e) { W.msg = { bad: true, text: `Relecture impossible : ${e.message}` }; return rerender(); }
     if (!ops.length) { s.status = 'done'; log('rien à écrire : déjà conforme'); save(); W.msg = { text: `${p.title} : déjà conforme, rien à écrire.` }; return rerender(); }
     return confirmModal(`<h3>Appliquer : ${esc(p.title)}</h3><ol class="small">${ops.map((o) => `<li>${esc(o.label)}</li>`).join('')}</ol><p class="small">Tenant ${esc(I.tenant || '?')}. ${W.d.write.backupAt ? '' : 'Un export JSON du tenant est d\'abord téléchargé (sauvegarde). '}Chaque écriture est notée dans le journal de la phase et peut être annulée.</p>`, async () => {
       W.busy = true; rerender();
