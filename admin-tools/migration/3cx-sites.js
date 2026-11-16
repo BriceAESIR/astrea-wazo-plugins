@@ -26,11 +26,11 @@
 // (_X.) inclus avant un autre établissement prend aussi ses numéros internes ;
 // inclus après, les numéros externes passent par l'établissement inclus, donc
 // par son trunk. Les écarts sont montrés avant écriture.
-import { matches, comparePatterns, dialedNumber } from '../callflow/dialsim.js?v=0.40.73';
-import { FR_FAMILIES, FR_FORMATS, frTransform, BLOCK_118 } from '../callflow/outcall-editor.js?v=0.40.73';
-import { imported, didWazo } from './3cx-draft.js?v=0.40.73';
-import { unitList, unitOf } from './3cx-depts.js?v=0.40.73';
-import { parseRanges, rangesText, inRanges } from './multisite.js?v=0.40.73';
+import { matches, comparePatterns, dialedNumber } from '../callflow/dialsim.js?v=0.40.74';
+import { FR_FAMILIES, FR_FORMATS, frTransform, BLOCK_118 } from '../callflow/outcall-editor.js?v=0.40.74';
+import { imported, didWazo } from './3cx-draft.js?v=0.40.74';
+import { unitList, unitOf } from './3cx-depts.js?v=0.40.74';
+import { parseRanges, rangesText, inRanges } from './multisite.js?v=0.40.74';
 
 export { FR_FAMILIES, FR_FORMATS, BLOCK_118 };
 export const SITE_MODES = {
@@ -261,11 +261,20 @@ export function placements(t, d) {
 // <ID client>-<site>-<type>, site en minuscules sans accent ni espace, types du
 // Portal (internal, from-extern, to-extern) : 44000-nantes-internal.
 export const siteSlug = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'site';
+// Noms saisis (onglet Départements ou étape Site) : rangés par département avec plusieurs jeux de
+// contextes, pour le client avec un seul. Retour de Brice (16/11/2026) : noms saisis dans l'onglet
+// Départements puis contextes créés avec les noms par défaut. Un changement de mode des départements
+// (fusion, séparation) faisait lire l'autre rangement : avec un seul jeu, les noms saisis pour son
+// département (ou pour le seul département qui en a) sont repris.
 export function unitLabels(d, p) {
   const w = d.write; const id = w.clientId || '<ID>';
   const c = multi(d) ? unitCfg(d, p.key) : w.site;
+  const saved = Object.values(w.units || {}).filter((x) => x.newLabel || x.incLabel || x.outLabel);
+  const alt = multi(d) ? {} : (w.units?.[p.key] || (saved.length === 1 ? saved[0] : {}));
+  const pick = (k) => c[k] || alt[k] || '';
   const site = siteSlug(multi(d) || (p.label && p.key !== '__DEFAULT__' && p.key !== '_') ? p.label : w.clientName);
-  return { ctx: c.newLabel || `${id}-${site}-internal`, inc: c.incLabel || `${id}-${site}-from-extern`, out: c.outLabel || `${id}-${site}-to-extern` };
+  // custom : noms saisis seulement (renommage des contextes déjà créés, phase Fondations).
+  return { ctx: pick('newLabel') || `${id}-${site}-internal`, inc: pick('incLabel') || `${id}-${site}-from-extern`, out: pick('outLabel') || `${id}-${site}-to-extern`, custom: { ctx: pick('newLabel'), inc: pick('incLabel'), out: pick('outLabel') } };
 }
 export function futureOf(t, d) {
   const w = worldOf(t); const ps = placements(t, d); const s = d.write.site;

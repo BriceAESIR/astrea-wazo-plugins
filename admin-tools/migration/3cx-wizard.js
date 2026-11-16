@@ -8,16 +8,16 @@
 // phase (sauvegarde, journal, annulation) → 5 Contrôle final (lecture seule).
 // Phases : Fondations (vérifiée en réel), Personnes (5b), Routage (5c), Finitions
 // (5d) ; écritures lues dans le code de Wazo, testées sur faux tenant.
-import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.73';
-import { I, sameTenant } from './inventory.js?v=0.40.73';
-import { buildExport, exportFileName } from './export.js?v=0.40.73';
-import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText, didWazo, numWazo, unverified, defaultVmo, vmEmail, isVoix, deviceDesc, QUEUE_STRATEGY, scheduleOf, didSchedule, destProblem } from './3cx-draft.js?v=0.40.73';
+import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.74';
+import { I, sameTenant } from './inventory.js?v=0.40.74';
+import { buildExport, exportFileName } from './export.js?v=0.40.74';
+import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText, didWazo, numWazo, unverified, defaultVmo, vmEmail, isVoix, deviceDesc, QUEUE_STRATEGY, scheduleOf, didSchedule, destProblem } from './3cx-draft.js?v=0.40.74';
 import {
   SITE_MODES, FR_FAMILIES, FR_FORMATS, BLOCK_118, defaultSite, defaultOut, clientPatterns, unitDids, rangeIssues, occupancy, placements, unitLabels, unitCfg, futureOf, siteChecks, routeText, newRanges, multi as multiSites, wazoNum, numberIssues, NO_TRUNK, exitOk, outcallName,
-} from './3cx-sites.js?v=0.40.73';
-import { unitList, unitOf, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.73';
-import { mohLabel, soundCategory, loaded, uniqueNames, putBinary, CATEGORY_RE } from './3cx-sounds.js?v=0.40.73';
-import { phonebookName, companyContacts, sourceColumns, dird, personalCsv } from './3cx-phonebook.js?v=0.40.73';
+} from './3cx-sites.js?v=0.40.74';
+import { unitList, unitOf, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.74';
+import { mohLabel, soundCategory, loaded, uniqueNames, putBinary, CATEGORY_RE } from './3cx-sounds.js?v=0.40.74';
+import { phonebookName, companyContacts, sourceColumns, dird, personalCsv } from './3cx-phonebook.js?v=0.40.74';
 
 const W = { d: null, m: null, t: null, busy: false, msg: null, at: null };
 export function setWizard(d, m) { W.d = d; W.m = m; W.t = null; W.msg = null; W.final = null; ensureState(); }
@@ -308,7 +308,8 @@ function buildPlan(t) {
       for (const peer of u.peers) { const x = t.contexts.find((y) => y.name === peer); add('found', 'update', `Inclusions de « ${x?.label || peer} »`, `« ${u.L.ctx} » ajouté en fin de liste (appels vers lui), et inclus par lui (appels depuis lui)`); }
     } else if (u.newOut && u.ctxObj) add('found', 'create', `Contexte sortant « ${u.L.out} »`, `inclus en tête par « ${u.ctxObj.label || u.ctxObj.name} »`);
   }
-  for (const x of zeroDidCtx(t, c)) add('found', 'update', `Longueur des SDA du contexte entrant « ${x.label || x.name} »`, 'did_length 0 → longueur du numéro, comme Wazo (contexte créé avant la 0.40.65)');
+  for (const x of ctxRenames(t, c)) add('found', 'update', `Nom du contexte ${x.kind} « ${x.cx.label || x.cx.name} »`, `→ « ${x.want} » (nom saisi)`);
+  for (const x of zeroDidCtx(t, c)) add('found', 'update',`Longueur des SDA du contexte entrant « ${x.label || x.name} »`, 'did_length 0 → longueur du numéro, comme Wazo (contexte créé avant la 0.40.65)');
   // Fondations : d'abord les plages du contexte interne (les numéros en dépendent).
   for (const { ctx, unit } of rangeTargets(c)) for (const f of rangeFixes(ctx, unit)) add('found', 'update', `Plages ${f.label} du contexte ${ctx.label || ctx.name}`, `ajouter ${f.add.map(rangeTxt).join(', ')} (actuelles : ${f.current.map(rangeTxt).join(', ') || 'aucune'} ; ${f.missing.length} numéro(s) hors plages)`);
   if (t.localization?.error) add('found', 'conflict', 'Pays', `lecture impossible : ${t.localization.error}`);
@@ -478,6 +479,10 @@ const didRange = (n) => ({ start: n, end: n, did_length: String(n).length });
 // SDA dans une plage du contexte entrant, comme xivo-dao (contextnumbers.in_range, lu) : numéro entier
 // comparé aux did_length derniers chiffres des bornes (int(limit[-did_length:]), 0 = borne entière).
 const inDidRange = (n, g) => { const L = Number(g.did_length) || 0; const cut = (s) => Number(L ? String(s).slice(-L) : String(s)); const v = Number(n); return /^\d+$/.test(String(g.start)) && cut(g.start) <= v && v <= cut(g.end ?? g.start); };
+// Contextes déjà créés dont le nom saisi (onglet Départements ou étape Site) diffère du nom actuel :
+// renommés par les Fondations (PUT /contexts/{id} {label}, partiel, lu). Retour de Brice, 16/11/2026.
+const ctxRenames = (t, c) => c.units.filter((u) => u.created).flatMap((u) => [[u.ctx, u.L.custom.ctx, 'interne'], [u.inc, u.L.custom.inc, 'entrant'], [u.out, u.L.custom.out, 'sortant']]
+  .filter(([n, want]) => n && want).map(([n, want, kind]) => ({ cx: t.contexts.find((x) => x.name === n), want: want.trim(), kind })).filter((x) => x.cx && x.want && x.cx.label !== x.want));
 // Contextes entrants créés par l'outil avant la 0.40.65 : plages sans did_length.
 const zeroDidCtx = (t, c) => c.units.filter((u) => u.created && u.inc).map((u) => t.contexts.find((x) => x.name === u.inc)).filter((x) => x && (x.incall_ranges || []).some((r) => !r.did_length && /^\d+$/.test(r.start)));
 // ---------------------------------------------------------------------------
@@ -1081,6 +1086,13 @@ function finishOps(t) {
 }
 async function foundationOps(t) {
   const d = W.d; const c = contextsOf(t); const ops = [];
+  for (const x of ctxRenames(t, c)) {
+    ops.push({ label: `Contexte ${x.kind} « ${x.cx.label || x.cx.name} » renommé « ${x.want} » (PUT /contexts/…)`, run: async () => {
+      const cur = await tapi('GET', `/contexts/${x.cx.id}`);
+      await tapi('PUT', `/contexts/${x.cx.id}`, { label: x.want });
+      return { created: x.want, undo: { method: 'PUT', path: `/contexts/${x.cx.id}`, body: { label: cur.label } } };
+    } });
+  }
   for (const x of zeroDidCtx(t, c)) {
     ops.push({ label: `Contexte entrant « ${x.label || x.name} » : longueur des SDA (did_length) comme Wazo`, run: async () => {
       const cur = await tapi('GET', `/contexts/${x.id}`); const prev = cur.incall_ranges || [];
@@ -1565,13 +1577,19 @@ function siteBlock(t) {
     h += `<p class="small">${c.units.length} jeux de contextes, un par département 3CX (onglet Départements) : chacun son contexte interne, son contexte entrant (son trunk y est pointé), son contexte sortant et son trunk. Noms : &lt;ID client&gt;-&lt;site&gt;-&lt;type&gt;.</p>
       <table class="diff x3-edit"><thead><tr><th>Département</th><th>Contexte interne</th><th>Contexte entrant</th><th>Contexte sortant</th><th>Trunk Wazo</th></tr></thead><tbody>${c.units.map((u) => {
       const cfg = unitCfg(W.d, u.key);
-      if (u.created) return `<tr><td>${esc(u.label)}</td><td>${esc(lbl(u.ctx))}</td><td>${esc(lbl(u.inc || ''))}</td><td>${esc(lbl(u.out))}</td><td>${esc(trunkLabel(t, u.trunkId))} <span class="muted small">(créés)</span></td></tr>`;
+      // Créés : noms toujours modifiables, renommage par « Compléter » des Fondations.
+      if (u.created) return `<tr><td>${esc(u.label)}</td><td><input data-w="unit.newLabel" data-id="${esc(u.key)}" value="${esc(cfg.newLabel || '')}" placeholder="${esc(u.L.ctx)}" class="x3-mail"></td><td><input data-w="unit.incLabel" data-id="${esc(u.key)}" value="${esc(cfg.incLabel || '')}" placeholder="${esc(u.L.inc)}" class="x3-mail"></td><td><input data-w="unit.outLabel" data-id="${esc(u.key)}" value="${esc(cfg.outLabel || '')}" placeholder="${esc(u.L.out)}" class="x3-mail"></td><td>${esc(trunkLabel(t, u.trunkId))} <span class="muted small">(créés ; nom changé : « Compléter » les Fondations)</span></td></tr>`;
       return `<tr><td>${esc(u.label)}${u.trunk ? `<div class="muted small">3CX : ${esc(u.trunk)}</div>` : ''}</td><td><input data-w="unit.newLabel" data-id="${esc(u.key)}" value="${esc(cfg.newLabel)}" placeholder="${esc(u.L.ctx)}" class="x3-mail"></td><td><input data-w="unit.incLabel" data-id="${esc(u.key)}" value="${esc(cfg.incLabel || '')}" placeholder="${esc(u.L.inc)}" class="x3-mail"></td><td><input data-w="unit.outLabel" data-id="${esc(u.key)}" value="${esc(cfg.outLabel)}" placeholder="${esc(u.L.out)}" class="x3-mail"></td>
         <td><select data-w="unit.trunkId" data-id="${esc(u.key)}">${opt(NO_TRUNK, TRUNK_LATER, u.trunkId ? '' : NO_TRUNK)}${t.trunks.map((x) => opt(x.id, trunkLabel(t, x.id), u.trunkId)).join('')}</select></td></tr>`;
     }).join('')}</tbody></table>
       <label class="inline small"><input type="checkbox" data-w="site.interUnits" ${s.interUnits ? 'checked' : ''}> Appels internes entre départements</label>
       <label class="inline small"><input type="checkbox" data-w="site.inter" ${s.inter ? 'checked' : ''}> Appels internes avec les établissements déjà présents</label>${peersBox()}`;
-  } else if (s.created) h += `<p class="small">Contextes du client créés : « ${esc(lbl(s.created.ctxName))} »${s.created.incName ? `, « ${esc(lbl(s.created.incName))} »` : ''}, « ${esc(lbl(s.created.outName))} » (annulables avec la phase Fondations).</p>`;
+  } else if (s.created) {
+    // Noms toujours modifiables : « Compléter » des Fondations renomme (retour de Brice, 16/11/2026).
+    const L = c.units[0].L;
+    h += `<p class="small">Contextes du client créés : « ${esc(lbl(s.created.ctxName))} »${s.created.incName ? `, « ${esc(lbl(s.created.incName))} »` : ''}, « ${esc(lbl(s.created.outName))} » (annulables avec la phase Fondations). Un nom changé ci-dessous est appliqué par « Compléter » de la phase Fondations.</p>
+      <div class="ms-tools"><label class="small">Contexte interne <input data-w="site.newLabel" value="${esc(s.newLabel || '')}" placeholder="${esc(L.ctx)}" class="x3-mail"></label><label class="small">Contexte entrant <input data-w="site.incLabel" value="${esc(s.incLabel || '')}" placeholder="${esc(L.inc)}" class="x3-mail"></label><label class="small">Contexte sortant <input data-w="site.outLabel" value="${esc(s.outLabel || '')}" placeholder="${esc(L.out)}" class="x3-mail"></label></div>`;
+  }
   else {
     const u = c.units[0]; const L = u.L;
     h += `<label class="small">Installation <select data-w="site.mode">${s.mode ? '' : opt('', 'À choisir', '')}${Object.entries(SITE_MODES).map(([k, l]) => opt(k, l, s.mode)).join('')}</select></label>`;
