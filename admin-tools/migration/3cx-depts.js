@@ -13,7 +13,7 @@
 //    département des SDA qui le visent, s'il n'y en a qu'un, sinon à celui
 //    dont le nom figure dans le sien (« Fermeture exceptionnelle - Site B »).
 // Supposé : un poste dans deux départements réels (le premier est retenu, signalé).
-import { imported } from './3cx-draft.js?v=0.40.68';
+import { imported } from './3cx-draft.js?v=0.40.69';
 
 export const DEFAULT = '__DEFAULT__';
 export const DEPT_MODES = { own: 'Jeu de contextes propre', merge: 'Fusionné dans un autre', skip: 'Site Wazo séparé (non importé ici)' };
@@ -86,7 +86,7 @@ export const unitOf = (d, o) => unitKey(d, o?.dept);
 // Jeux de contextes à créer : départements « propres » qui ont au moins un objet repris.
 export function unitList(d) {
   if (!d.depts?.length) return [{ key: '_', label: '' }];
-  const used = new Set([...imported(d), ...d.hunts.filter((h) => h.target !== 'skip'), ...d.ivrs.filter((v) => v.import), ...d.dids.filter((r) => r.import), ...d.users.filter((u) => u.mode === 'voicemail')].map((o) => unitOf(d, o)).filter(Boolean));
+  const used = new Set([...imported(d), ...d.hunts.filter((h) => h.target !== 'skip'), ...d.ivrs.filter((v) => v.import), ...d.dids.filter((r) => r.import), ...d.users.filter((u) => u.mode === 'voicemail' && u.vm)].map((o) => unitOf(d, o)).filter(Boolean));
   const list = d.depts.filter((x) => x.mode === 'own' && used.has(x.key)).map((x) => ({ key: x.key, label: deptLabel(x.key), trunk: x.trunk }));
   return list.length ? list : [{ key: '_', label: '' }];
 }

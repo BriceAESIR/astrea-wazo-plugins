@@ -26,11 +26,11 @@
 // (_X.) inclus avant un autre établissement prend aussi ses numéros internes ;
 // inclus après, les numéros externes passent par l'établissement inclus, donc
 // par son trunk. Les écarts sont montrés avant écriture.
-import { matches, comparePatterns, dialedNumber } from '../callflow/dialsim.js?v=0.40.68';
-import { FR_FAMILIES, FR_FORMATS, frTransform, BLOCK_118 } from '../callflow/outcall-editor.js?v=0.40.68';
-import { imported, didWazo } from './3cx-draft.js?v=0.40.68';
-import { unitList, unitOf } from './3cx-depts.js?v=0.40.68';
-import { parseRanges, rangesText, inRanges } from './multisite.js?v=0.40.68';
+import { matches, comparePatterns, dialedNumber } from '../callflow/dialsim.js?v=0.40.69';
+import { FR_FAMILIES, FR_FORMATS, frTransform, BLOCK_118 } from '../callflow/outcall-editor.js?v=0.40.69';
+import { imported, didWazo } from './3cx-draft.js?v=0.40.69';
+import { unitList, unitOf } from './3cx-depts.js?v=0.40.69';
+import { parseRanges, rangesText, inRanges } from './multisite.js?v=0.40.69';
 
 export { FR_FAMILIES, FR_FORMATS, BLOCK_118 };
 export const SITE_MODES = {
@@ -71,7 +71,7 @@ export function wazoNumOf(d, n) {
 // même jeu de contextes (confd refuserait le second : numéro déjà pris dans le contexte).
 export function numberIssues(d) {
   const out = []; const by = new Map();
-  const objs = [...imported(d).map((o) => [o, 'Utilisateur']), ...d.users.filter((u) => u.mode === 'voicemail').map((o) => [o, 'Messagerie']), ...d.hunts.filter((h) => h.target !== 'skip').map((o) => [o, o.target === 'queue' ? 'File' : 'Groupe']), ...d.ivrs.filter((v) => v.import).map((o) => [o, 'SVI'])];
+  const objs = [...imported(d).map((o) => [o, 'Utilisateur']), ...d.users.filter((u) => u.mode === 'voicemail' && u.vm).map((o) => [o, 'Messagerie']), ...d.hunts.filter((h) => h.target !== 'skip').map((o) => [o, o.target === 'queue' ? 'File' : 'Groupe']), ...d.ivrs.filter((v) => v.import).map((o) => [o, 'SVI'])];
   for (const [o, what] of objs) {
     const n = wazoNum(d, o); const area = `${what} ${o.n}`;
     if (!/^\d{1,16}$/.test(String(n || ''))) { out.push({ sev: 'error', area, text: `numéro Wazo « ${n ?? ''} » invalide (chiffres seuls).` }); continue; }

@@ -2,19 +2,19 @@
 // Modèle et règles : 3cx-draft.js. Chaque modification est enregistrée dans le
 // navigateur (brouillon par fichier et date de sauvegarde) ; rien n'est écrit
 // dans Wazo depuis ces tableaux.
-import { $, esc, toast, helpButton, helpBox, confirmModal, downloadJson } from '../common/core.js?v=0.40.68';
-import { I } from './inventory.js?v=0.40.68';
+import { $, esc, toast, helpButton, helpBox, confirmModal, downloadJson } from '../common/core.js?v=0.40.69';
+import { I } from './inventory.js?v=0.40.69';
 import {
   GROUP_STRATEGIES, MODES, HUNT_TARGETS, LICENCES, AUTH_METHODS, effectiveUsername, isVoix, applyLicence, fillCallerIds, callerIdWazo, upgradeDraft, saveDraft, clearDraft, buildDraft, acceptDraft, userBy, userName, imported,
   destLabel, destProblem, draftIssues, usersCsv, blfRows, devicesCsv, deviceDesc, macWazo, macValid, tenantIssues,
   LINE_MODES, linesOf, VM_LANGS, vmEmail, upperName, upgradeSchedules, pastHolidays, didWazo, VERIFY,
-} from './3cx-draft.js?v=0.40.68';
-import { setWizard, wizardTab, wizardChange, wizardClick, wizardDone, wizardTotal } from './3cx-wizard.js?v=0.40.68';
-import { unitCfg, unitLabels, autoRanges, RANGE_KEYS, rangeIssues, unitPrefix, wazoNum, wazoNumOf, renumbers, numberIssues } from './3cx-sites.js?v=0.40.68';
-import { rangesText } from './multisite.js?v=0.40.68';
-import { WAZO_FIELDS, tagsOf, tagLabel, tagChecked, ensurePhonebook, phonebookName, phonebookIssues, companyContacts, personalCsv, toWazoContact, csvKeys } from './3cx-phonebook.js?v=0.40.68';
-import { SORTS, CATEGORY_RE, soundUsages, ensureSounds, mohLabel, soundCategory, FILES, keyOf, loaded, addFiles, addFileAs, targetName } from './3cx-sounds.js?v=0.40.68';
-import { DEPT_MODES, deptLabel, ensureDepts, deptObjects, unitOf, unitList, setDeptMode, moveObject } from './3cx-depts.js?v=0.40.68';
+} from './3cx-draft.js?v=0.40.69';
+import { setWizard, wizardTab, wizardChange, wizardClick, wizardDone, wizardTotal } from './3cx-wizard.js?v=0.40.69';
+import { unitCfg, unitLabels, autoRanges, RANGE_KEYS, rangeIssues, unitPrefix, wazoNum, wazoNumOf, renumbers, numberIssues } from './3cx-sites.js?v=0.40.69';
+import { rangesText } from './multisite.js?v=0.40.69';
+import { WAZO_FIELDS, tagsOf, tagLabel, tagChecked, ensurePhonebook, phonebookName, phonebookIssues, companyContacts, personalCsv, toWazoContact, csvKeys } from './3cx-phonebook.js?v=0.40.69';
+import { SORTS, CATEGORY_RE, soundUsages, ensureSounds, mohLabel, soundCategory, FILES, keyOf, loaded, addFiles, addFileAs, targetName } from './3cx-sounds.js?v=0.40.69';
+import { DEPT_MODES, deptLabel, ensureDepts, deptObjects, unitOf, unitList, setDeptMode, moveObject } from './3cx-depts.js?v=0.40.69';
 
 const E = { d: null, m: null, file: '', tab: 'users', sel: { users: new Set(), dids: new Set(), vms: new Set() }, q: '', onReset: null };
 export const TABS = [
@@ -38,7 +38,7 @@ export function tabCounts() {
   const d = E.d; if (!d) return {};
   const iss = [...draftIssues(d), ...tenantChecks()];
   const snd = Object.entries(d.sounds?.files || {}).filter(([, x]) => x.to !== 'skip');
-  return { phonebook: (d.phonebook?.contacts || []).filter((c) => c.import).length, depts: unitList(d).filter((u) => u.key !== '_').length || undefined, sounds: `${snd.filter(([f]) => loaded(f)).length}/${snd.length}`, users: imported(d).length, vms: d.users.filter((u) => u.mode !== 'skip' && u.vm).length, devices: (d.devices || []).filter((x) => x.import).length, hunts: d.hunts.filter((h) => h.target !== 'skip').length, ivrs: d.ivrs.filter((v) => v.import).length, dids: d.dids.filter((r) => r.import).length, scheds: d.schedules.length, checks: iss.filter((x) => x.sev !== 'info').length, write: `${wizardDone()}/${wizardTotal()}` };
+  return { phonebook: (d.phonebook?.contacts || []).filter((c) => c.import).length, depts: unitList(d).filter((u) => u.key !== '_').length || undefined, sounds: `${snd.filter(([f]) => loaded(f)).length}/${snd.length}`, users: imported(d).length, vms: d.users.filter((u) => u.mode !== 'skip' && u.vm).length, devices: (d.devices || []).filter((x) => x.import).length, hunts: d.hunts.filter((h) => h.target !== 'skip').length, ivrs: d.ivrs.filter((v) => v.import).length, dids: d.dids.filter((r) => r.import).length, scheds: d.schedules.filter((s) => s.import !== false).length, checks: iss.filter((x) => x.sev !== 'info').length, write: `${wizardDone()}/${wizardTotal()}` };
 }
 
 // ---------------------------------------------------------------------------
@@ -162,7 +162,26 @@ const was3cx = (d, o) => (wazoNum(d, o) !== o.n ? `<div class="muted small">${es
 // Vérification objet par objet (comme les utilisateurs) : compteur et « tout marquer vérifié ».
 const VERIFIED_TIP = 'Objet contrôlé : case à cocher une fois relu (rappel dans l\'onglet Écriture tant qu\'il en reste)';
 const verifyBar = (tab) => { const v = VERIFY[tab]; const l = v.list(E.d); const done = l.filter((o) => o[v.key]).length; return l.length ? `<span class="small ${done < l.length ? 'x3-warn' : 'muted'}">${done}/${l.length} vérifié(s)</span>${done < l.length ? `<button data-act="verify-all" data-tab="${tab}" title="Cocher « Vérifié » pour tous les objets repris de cet onglet">Tout marquer vérifié</button>` : ''}` : ''; };
-const VOIX_NOTE = 'Licence Voix : pas d\'accès aux applications Wazo, rien à saisir (identifiant, méthode, accès), comme dans User Manager. Le CSV laisse l\'identifiant vide : Wazo prend l\'e-mail, sinon l\'identifiant interne. Aucun mot de passe généré.';
+// Reprise, même présentation dans chaque onglet (demande de Brice, 16/11/2026 : « il faut que j'aie
+// l'option de reprise pour les différents objets, sinon ils vont être importés pour rien ») : case
+// « Reprise » en première colonne, « Tout reprendre » / « Ne rien reprendre ». Index = position dans
+// le tableau complet du brouillon (list). Groupes et files : décocher = « Non repris », recocher
+// rend le choix groupe / file d'avant. Horaire non repris : ses SDA restent, toujours ouvertes.
+const KEEP = {
+  vms: { list: (d) => d.users, shown: (u) => u.mode !== 'skip', get: (u) => !!u.vm, set: (u, v) => { u.vm = v; } },
+  devices: { list: (d) => d.devices || [], get: (x) => !!x.import, set: (x, v) => { x.import = v; } },
+  hunts: {
+    list: (d) => d.hunts, get: (h) => h.target !== 'skip',
+    set: (h, v) => { if (!v && h.target !== 'skip') { h.prevTarget = h.target; h.target = 'skip'; } else if (v && h.target === 'skip') { h.target = h.prevTarget || (h.src === 'Queue' ? 'queue' : 'group'); delete h.prevTarget; } },
+  },
+  ivrs: { list: (d) => d.ivrs, get: (v) => !!v.import, set: (v, x) => { v.import = x; } },
+  dids: { list: (d) => d.dids, get: (r) => !!r.import, set: (r, v) => { r.import = v; } },
+  scheds: { list: (d) => d.schedules, get: (s) => s.import !== false, set: (s, v) => { s.import = v; } },
+};
+const KEEP_TIP = 'Reprendre cet objet dans Wazo (décoché : rien n\'est créé)';
+const keepCell = (tab, i) => `<td class="x3-c"><input type="checkbox" data-keep="${tab}" data-i="${i}" ${KEEP[tab].get(KEEP[tab].list(E.d)[i]) ? 'checked' : ''} title="${esc(KEEP_TIP)}"></td>`;
+const keepBar = (tab) => { const K = KEEP[tab]; const l = K.list(E.d).filter((o) => !K.shown || K.shown(o)); const n = l.filter(K.get).length; return `<span class="small muted">${n}/${l.length} repris</span><button data-act="keep-all" data-tab="${tab}" data-v="1" ${n === l.length ? 'disabled' : ''}>Tout reprendre</button><button data-act="keep-all" data-tab="${tab}" data-v="0" ${n ? '' : 'disabled'}>Ne rien reprendre</button>`; };
+const VOIX_NOTE ='Licence Voix : pas d\'accès aux applications Wazo, rien à saisir (identifiant, méthode, accès), comme dans User Manager. Le CSV laisse l\'identifiant vide : Wazo prend l\'e-mail, sinon l\'identifiant interne. Aucun mot de passe généré.';
 function usersTab(opts) {
   const d = E.d; const q = E.q.trim().toLowerCase();
   const list = d.users.map((u, i) => [u, i]).filter(([u]) => !q || `${u.n} ${userName(u)} ${u.email}`.toLowerCase().includes(q));
@@ -444,23 +463,23 @@ function vmsTab() {
       <td class="x3-c">${check(`${p}.vmo.ask`, 'Demander le code d\'accès')}</td>
       <td class="x3-c">${pin ? check(`${p}.vmPin`, 'Reprendre le code 3CX') : '<span class="muted small">aucun</span>'}</td>
       <td>${nullInt(`${p}.vmo.max`, 'défaut')}</td>
-      <td>${sel(`${p}.vmo.lang`, VM_LANGS)}</td>` : '<td colspan="8" class="muted small">messagerie désactivée</td>';
+      <td>${sel(`${p}.vmo.lang`, VM_LANGS)}</td>` : '<td colspan="8" class="muted small">messagerie non reprise</td>';
     return `<tr class="${u.vm ? '' : 'x3-off'}${E.sel.vms.has(i) ? ' sel' : ''}${u.vm && !u.vmChecked ? ' x3-unchecked' : ''}">
       <td><input type="checkbox" data-sel="vms" data-i="${i}" ${E.sel.vms.has(i) ? 'checked' : ''}></td>
+      ${keepCell('vms', i)}
       <td class="x3-c">${u.vm ? check(`${p}.vmChecked`, 'Vérifié') : ''}</td>
-      <td>${esc(u.n)}</td><td>${esc(userName(u))}<div class="muted small">${esc(MODES[u.mode])}</div></td>
-      <td class="x3-c">${check(`${p}.vm`, 'Messagerie active')}</td>${cells}</tr>`;
+      <td>${esc(u.n)}</td><td>${esc(userName(u))}<div class="muted small">${esc(MODES[u.mode])}</div></td>${cells}</tr>`;
   }).join('');
   const n = E.sel.vms.size;
   const yn = (id, l) => `<label>${esc(l)} <select id="${id}"><option value="">inchangé</option><option value="1">oui</option><option value="0">non</option></select></label>`;
-  return `${intro('vms', 'Messageries', VM_HELP, `${verifyBar('vms')}<input id="x3e-q" type="search" placeholder="Filtrer" value="${esc(E.q)}" class="x3-q">`)}
+  return `${intro('vms', 'Messageries', VM_HELP, `${keepBar('vms')}${verifyBar('vms')}<input id="x3e-q" type="search" placeholder="Filtrer" value="${esc(E.q)}" class="x3-q">`)}
     ${n ? '' : '<p class="x3-bulk-hint muted small">Cochez des lignes pour les modifier en groupe.</p>'}
     <div class="x3-bulk"${n ? '' : ' hidden'}><strong>${n} sélectionnée(s)</strong>
       ${VM_BULK.map(([, l], j) => yn(`xv-${j}`, l)).join('')}
       <label>Langue <select id="xv-lang"><option value="">inchangée</option>${Object.entries(VM_LANGS).map(([k, l]) => `<option value="${k}">${esc(l)}</option>`).join('')}</select></label>
       <label>Max <input id="xv-max" type="number" min="0" placeholder="inchangé" class="x3-short"></label>
       <button data-act="bulk-vms" ${n ? '' : 'disabled'}>Appliquer</button></div>
-    <div class="x3-edit-wrap"><table class="diff x3-edit">${head([['[all:vms]'], ['Vérifié', VERIFIED_TIP], ['N°'], ['Nom'], ['Active'], ['Notification', 'E-mail à chaque nouveau message'], ['Adresse', 'Vide : e-mail de l\'utilisateur'], ['Audio joint', 'attach_audio'], ['Supprimer après envoi', 'delete_messages : exige adresse et audio joint'], ['Code demandé', 'ask_password'], ['Code 3CX', 'Reprendre le code de la sauvegarde 3CX'], ['Max', 'max_messages ; vide = défaut du serveur'], ['Langue', 'language']])}<tbody>${rows || '<tr><td colspan="13" class="muted">Aucun poste repris.</td></tr>'}</tbody></table></div>`;
+    <div class="x3-edit-wrap"><table class="diff x3-edit">${head([['[all:vms]'], ['Reprise', KEEP_TIP], ['Vérifié', VERIFIED_TIP], ['N°'], ['Nom'], ['Notification', 'E-mail à chaque nouveau message'], ['Adresse', 'Vide : e-mail de l\'utilisateur'], ['Audio joint', 'attach_audio'], ['Supprimer après envoi', 'delete_messages : exige adresse et audio joint'], ['Code demandé', 'ask_password'], ['Code 3CX', 'Reprendre le code de la sauvegarde 3CX'], ['Max', 'max_messages ; vide = défaut du serveur'], ['Langue', 'language']])}<tbody>${rows || '<tr><td colspan="13" class="muted">Aucun poste repris.</td></tr>'}</tbody></table></div>`;
 }
 function bulkVms(root) {
   const d = E.d; const ids = [...E.sel.vms];
@@ -485,8 +504,8 @@ function devicesTab() {
     const inWazo = wazo.get(String(dv.mac).toLowerCase());
     const owner = dv.owner ? userBy(d, dv.owner) : null;
     return `<tr class="${dv.import ? '' : 'x3-off'}${dv.import && !dv.checked ? ' x3-unchecked' : ''}">
+      ${keepCell('devices', i)}
       <td class="x3-c">${dv.import ? check(`${p}.checked`, 'Vérifié') : ''}</td>
-      <td class="x3-c">${check(`${p}.import`, 'Reprendre cet appareil')}</td>
       <td><input data-p="${p}.mac" data-type="mac" value="${esc(dv.mac)}" class="x3-mac${macValid(dv.mac) ? '' : ' bad'}">${inWazo ? `<div class="x3-warn small" title="${esc(`Déjà dans Wazo : ${inWazo.description || ''} ${inWazo.model || ''}`)}">déjà dans ce tenant</div>` : ''}</td>
       <td class="x3-nowrap">${esc(dv.model)}${dv.vendor && !dv.model.toLowerCase().startsWith(dv.vendor.toLowerCase()) ? `<div class="muted small">${esc(dv.vendor)}</div>` : ''}</td>
       <td><select data-p="${p}.owner" data-val="${esc(dv.owner || '')}">${owners}</select>${owner && owner.mode !== 'user' ? '<div class="x3-warn small">poste non repris</div>' : ''}</td>
@@ -494,7 +513,7 @@ function devicesTab() {
       <td class="x3-c">${check(`${p}.descAuto`, 'Description = Prénom Nom de l\'utilisateur, mise à jour automatiquement')}</td>
     </tr>`;
   }).join('');
-  return `${intro('devices', 'Appareils', DEVICE_HELP, verifyBar('devices'))}<div class="x3-edit-wrap"><table class="diff x3-edit">${head([['Vérifié', VERIFIED_TIP], ['Reprise'], ['MAC'], ['Modèle'], ['Utilisateur', 'Ligne associée à l\'appareil'], ['Description'], ['Auto', 'Description automatique (Prénom Nom)']])}<tbody>${rows || '<tr><td colspan="7" class="muted">Aucun appareil dans la sauvegarde.</td></tr>'}</tbody></table></div>`;
+  return `${intro('devices', 'Appareils', DEVICE_HELP, `${keepBar('devices')}${verifyBar('devices')}`)}<div class="x3-edit-wrap"><table class="diff x3-edit">${head([['Reprise', KEEP_TIP], ['Vérifié', VERIFIED_TIP], ['MAC'], ['Modèle'], ['Utilisateur', 'Ligne associée à l\'appareil'], ['Description'], ['Auto', 'Description automatique (Prénom Nom)']])}<tbody>${rows || '<tr><td colspan="7" class="muted">Aucun appareil dans la sauvegarde.</td></tr>'}</tbody></table></div>`;
 }
 
 const HUNT_HELP = 'Groupes de sonnerie et files 3CX. Wazo : choisissez groupe d\'appel ou file d\'attente pour chacun (une file 3CX à 2 membres en « Hunt » devient souvent un groupe « un par un »). Les destinations qui visent cet objet le suivent automatiquement. Durée totale : délai avant le débordement « sans réponse » (timeout) ; sonnerie par membre : user_timeout pour un groupe, délai de sonnerie d\'un agent pour une file. Membres : utilisateurs repris seulement.';
@@ -505,9 +524,10 @@ function huntsTab(opts) {
     const p = `hunts.${i}`;
     const add = users.filter((u) => !h.members.includes(u.n)).map((u) => `<option value="${esc(u.n)}">${esc(u.n)} ${esc(userName(u))}</option>`).join('');
     return `<tr class="${h.target === 'skip' ? 'x3-off' : ''}${h.target !== 'skip' && !h.checked ? ' x3-unchecked' : ''}">
+      ${keepCell('hunts', i)}
       <td class="x3-c">${h.target !== 'skip' ? check(`${p}.checked`, 'Vérifié') : ''}</td>
       <td>${numInput(`hunts.${i}.wn`, h)}${was3cx(d, h)}</td><td class="small">${h.src === 'Queue' ? 'File' : 'Groupe'} 3CX</td>
-      <td>${sel(`${p}.target`, HUNT_TARGETS)}</td>
+      <td>${h.target === 'skip' ? '<span class="muted small">non repris</span>' : sel(`${p}.target`, Object.fromEntries(Object.entries(HUNT_TARGETS).filter(([k]) => k !== 'skip')))}</td>
       <td>${input(`${p}.name`)}</td>
       <td>${sel(`${p}.strategy`, GROUP_STRATEGIES)}</td>
       <td>${num(`${p}.timeout`, 5, 3600)}</td>
@@ -518,7 +538,7 @@ function huntsTab(opts) {
       <td class="small">${esc(h.music || '')}${h.music ? soundSlot(h.music, { player: false }) : ''}</td>
     </tr>`;
   }).join('');
-  return `${intro('hunts', 'Groupes et files', HUNT_HELP, verifyBar('hunts'))}<div class="x3-edit-wrap"><table class="diff x3-edit">${head([['Vérifié', VERIFIED_TIP], ['N°'], ['Origine'], ['Wazo'], ['Nom'], ['Stratégie'], ['Durée totale', 'Secondes avant « sans réponse »'], ['Par membre', 'Secondes de sonnerie par membre'], ['Membres'], ['Sans réponse'], ['Musique 3CX']])}<tbody>${rows}</tbody></table></div>`;
+  return `${intro('hunts', 'Groupes et files', HUNT_HELP, `${keepBar('hunts')}${verifyBar('hunts')}`)}<div class="x3-edit-wrap"><table class="diff x3-edit">${head([['Reprise', KEEP_TIP], ['Vérifié', VERIFIED_TIP], ['N°'], ['Origine'], ['Wazo', 'Groupe d\'appel ou file d\'attente'], ['Nom'], ['Stratégie'], ['Durée totale', 'Secondes avant « sans réponse »'], ['Par membre', 'Secondes de sonnerie par membre'], ['Membres'], ['Sans réponse'], ['Musique 3CX']])}<tbody>${rows}</tbody></table></div>`;
 }
 
 const IVR_HELP = 'SVI 3CX (les SVI internes de 3CX sont exclus). Touches : destination de chaque touche ; « + touche » ajoute la première touche libre. Délai : secondes d\'attente d\'une saisie avant « sans saisie ». Le message est à téléverser dans les sons Wazo.';
@@ -527,15 +547,16 @@ function ivrsTab(opts) {
   const rows = E.d.ivrs.map((v, i) => {
     const p = `ivrs.${i}`;
     return `<tr class="${v.import ? '' : 'x3-off'}${v.import && !v.checked ? ' x3-unchecked' : ''}">
+      ${keepCell('ivrs', i)}
       <td class="x3-c">${v.import ? check(`${p}.checked`, 'Vérifié') : ''}</td>
-      <td>${numInput(`${p}.wn`, v)}${was3cx(d, v)}</td><td class="x3-c">${check(`${p}.import`, 'Reprendre')}</td><td>${input(`${p}.name`)}</td><td class="small">${esc(v.prompt || '')}${v.prompt ? soundSlot(v.prompt, { player: false }) : ''}</td>
+      <td>${numInput(`${p}.wn`, v)}${was3cx(d, v)}</td><td>${input(`${p}.name`)}</td><td class="small">${esc(v.prompt || '')}${v.prompt ? soundSlot(v.prompt, { player: false }) : ''}</td>
       <td>${num(`${p}.timeout`, 1, 120)}</td>
       <td>${v.choices.map((c, k) => `<div class="x3-choice"><input data-p="${p}.choices.${k}.key" value="${esc(c.key)}" class="x3-key">${destCell(`${p}.choices.${k}.dest`, opts)}<button class="icon" data-act="rm-choice" data-i="${i}" data-k="${k}" title="Retirer la touche">×</button></div>`).join('')}
         <button class="x3-link" data-act="add-choice" data-i="${i}">+ touche</button></td>
       <td>${destCell(`${p}.timeoutDest`, opts)}</td>
     </tr>`;
   }).join('');
-  return `${intro('ivrs', 'SVI', IVR_HELP, verifyBar('ivrs'))}<div class="x3-edit-wrap"><table class="diff x3-edit">${head([['Vérifié', VERIFIED_TIP], ['N°'], ['Reprise'], ['Nom'], ['Message'], ['Délai'], ['Touches'], ['Sans saisie']])}<tbody>${rows}</tbody></table></div>`;
+  return `${intro('ivrs', 'SVI', IVR_HELP, `${keepBar('ivrs')}${verifyBar('ivrs')}`)}<div class="x3-edit-wrap"><table class="diff x3-edit">${head([['Reprise', KEEP_TIP], ['Vérifié', VERIFIED_TIP], ['N°'], ['Nom'], ['Message'], ['Délai'], ['Touches'], ['Sans saisie']])}<tbody>${rows}</tbody></table></div>`;
 }
 
 const DID_HELP = 'Une ligne par SDA du trunk (les SDA sans règle 3CX sont décochées), au format Wazo 33… (numéro 3CX en dessous). Contexte entrant : celui où la SDA sera déclarée ; en multi-site, celui du département de la SDA (onglet Départements), dont le trunk est à régler sur ce contexte dans le Portal. Destination : en heures d\'ouverture, ou toujours si aucun horaire. Horaire : celui déduit de la règle 3CX, modifiable ; ses sorties « fermé » et « férié » se règlent dans l\'onglet Horaires (comme dans le Portal, elles appartiennent à l\'horaire, pas à la SDA). Par le CSV : créer cette SDA avec l\'utilisateur dans le CSV d\'import (destination utilisateur seulement) ; le CSV de Wazo n\'associe pas d\'horaire, la SDA perdrait donc ses sorties fermé et férié jusqu\'à ce qu\'on associe l\'horaire à la main.';
@@ -557,13 +578,14 @@ function incallOfDid(r) {
 }
 function didsTab(opts) {
   const d = E.d; const q = E.q.trim().toLowerCase();
-  const schedOpts = (cur) => `<option value="">Toujours ouvert</option>${d.schedules.map((s) => `<option value="${esc(s.key)}" ${s.key === cur ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}`;
+  const schedOpts = (cur) => `<option value="">Toujours ouvert</option>${d.schedules.map((s) => `<option value="${esc(s.key)}" ${s.key === cur ? 'selected' : ''}>${esc(s.name)}${s.import === false ? ' (non repris : toujours ouvert)' : ''}</option>`).join('')}`;
   const rows = d.dids.map((r, i) => [r, i]).filter(([r]) => !q || `${r.did} ${r.name} ${destLabel(d, r.dest)}`.toLowerCase().includes(q)).map(([r, i]) => {
     const p = `dids.${i}`;
     return `<tr class="${r.import ? '' : 'x3-off'}${E.sel.dids.has(i) ? ' sel' : ''}${r.import && !r.checked ? ' x3-unchecked' : ''}">
       <td><input type="checkbox" data-sel="dids" data-i="${i}" ${E.sel.dids.has(i) ? 'checked' : ''}></td>
+      ${keepCell('dids', i)}
       <td class="x3-c">${r.import ? check(`${p}.checked`, 'Vérifiée') : ''}</td>
-      <td>${esc(didWazo(r.did))}<div class="muted small">${didWazo(r.did) !== r.did ? `${esc(r.did)} dans 3CX` : ''}${r.name ? `${didWazo(r.did) !== r.did ? ' · ' : ''}${esc(r.name)}` : ''}</div></td><td class="x3-c">${check(`${p}.import`, 'Reprendre')}</td>
+      <td>${esc(didWazo(r.did))}<div class="muted small">${didWazo(r.did) !== r.did ? `${esc(r.did)} dans 3CX` : ''}${r.name ? `${didWazo(r.did) !== r.did ? ' · ' : ''}${esc(r.name)}` : ''}</div></td>
       <td class="small">${(() => { const x = incallOfDid(r); return `${x.label ? esc(x.label) : '<span class="x3-warn">aucun</span>'}${x.note ? `<div class="muted">${esc(x.note)}</div>` : ''}`; })()}</td>
       <td>${destCell(`${p}.dest`, opts)}</td>
       <td><select data-p="${p}.schedule">${schedOpts(r.schedule)}</select></td>
@@ -571,14 +593,14 @@ function didsTab(opts) {
     </tr>`;
   }).join('');
   const n = E.sel.dids.size;
-  return `${intro('dids', 'SDA', DID_HELP, `${verifyBar('dids')}<input id="x3e-q" type="search" placeholder="Filtrer" value="${esc(E.q)}" class="x3-q">`)}
+  return `${intro('dids', 'SDA', DID_HELP, `${keepBar('dids')}${verifyBar('dids')}<input id="x3e-q" type="search" placeholder="Filtrer" value="${esc(E.q)}" class="x3-q">`)}
     ${n ? '' : '<p class="x3-bulk-hint muted small">Cochez des lignes pour les modifier en groupe (reprise, destination, horaire).</p>'}
     <div class="x3-bulk"${n ? '' : ' hidden'}><strong>${n} sélectionnée(s)</strong>
       <label>Reprise <select id="xd-imp"><option value="">inchangée</option><option value="1">oui</option><option value="0">non</option></select></label>
       <label>Destination <select id="xd-dest"><option value="keep">inchangée</option>${opts}</select></label><input id="xd-num" placeholder="numéro externe" class="x3-num">
       <label>Horaire <select id="xd-sched"><option value="keep">inchangé</option>${schedOpts('__')}</select></label>
       <button data-act="bulk-dids" ${n ? '' : 'disabled'}>Appliquer</button></div>
-    <div class="x3-edit-wrap"><table class="diff x3-edit">${head([['[all:dids]'], ['Vérifiée', VERIFIED_TIP], ['SDA'], ['Reprise'], ['Contexte entrant', 'Où la SDA sera déclarée : contexte entrant de son jeu de contextes (département en multi-site), sinon celui du trunk'], ['Destination', 'Où va l\'appel (ou pendant les heures d\'ouverture, si la SDA a un horaire)'], ['Horaire', 'Horaire Wazo de la SDA ; ses sorties « fermé » et « férié » se règlent dans l\'onglet Horaires, comme dans le Portal'], ['Par le CSV', 'SDA créée dans le CSV d\'import des utilisateurs (destination utilisateur seulement). Le CSV n\'associe pas d\'horaire : décocher si la SDA en a un']])}<tbody>${rows}</tbody></table></div>`;
+    <div class="x3-edit-wrap"><table class="diff x3-edit">${head([['[all:dids]'], ['Reprise', KEEP_TIP], ['Vérifiée', VERIFIED_TIP], ['SDA'], ['Contexte entrant', 'Où la SDA sera déclarée : contexte entrant de son jeu de contextes (département en multi-site), sinon celui du trunk'], ['Destination', 'Où va l\'appel (ou pendant les heures d\'ouverture, si la SDA a un horaire)'], ['Horaire', 'Horaire Wazo de la SDA ; ses sorties « fermé » et « férié » se règlent dans l\'onglet Horaires, comme dans le Portal'], ['Par le CSV', 'SDA créée dans le CSV d\'import des utilisateurs (destination utilisateur seulement). Le CSV n\'associe pas d\'horaire : décocher si la SDA en a un']])}<tbody>${rows}</tbody></table></div>`;
 }
 
 function schedsTab(opts) {
@@ -586,8 +608,8 @@ function schedsTab(opts) {
   const used = (k) => d.dids.filter((r) => r.import && r.schedule === k).length;
   const past = pastHolidays(E.m);
   const where = (h) => (h.depts || ['tenant']).map((k) => (k === 'tenant' ? 'tous' : deptLabel(k))).join(', ');
-  return `${intro('scheds', 'Horaires', 'Horaires Wazo à créer, déduits des règles entrantes 3CX. Une règle « heures de bureau » prend celles du département de sa SDA (heures de bureau moins la pause) ; une règle à plages propres garde les siennes. Le nom est modifiable ; les plages se modifieront dans Call Flow Manager après création. Comme dans Wazo, l\'horaire porte ses sorties : « Fermé » (hors des plages) et « Férié » (pendant les fermetures exceptionnelles) ; les SDA ne font que le viser. Des SDA 3CX aux mêmes plages mais aux sorties différentes ont donné des horaires distincts ; « Dupliquer » en crée un autre, à choisir ensuite dans l\'onglet SDA. Fermetures exceptionnelles : celles de 3CX pour tous les départements et celles d\'un département, ajoutées aux horaires concernés si cochées ; les fermetures passées ne sont pas reprises. Les jours fériés légaux français autres que ceux de la sauvegarde sont à ajouter.', verifyBar('scheds'))}
-    <div class="x3-edit-wrap"><table class="diff x3-edit">${head([['Vérifié', VERIFIED_TIP], ['Nom'], ['Département', 'Département 3CX dont l\'horaire reprend les heures de bureau, ou règle entrante dont il reprend les heures spécifiques'], ['Plages'], ['Fermé', 'Où va l\'appel hors des plages (closed_destination)'], ['Férié', 'Où va l\'appel pendant les fermetures exceptionnelles de l\'horaire'], ['SDA'], ['']])}<tbody>${d.schedules.map((s, i) => `<tr class="${used(s.key) && !s.checked ? 'x3-unchecked' : ''}"><td class="x3-c">${used(s.key) ? check(`schedules.${i}.checked`, 'Vérifié') : ''}</td><td>${input(`schedules.${i}.name`)}</td><td class="small">${s.dept ? esc(deptLabel(s.dept)) : `<span class="muted">heures spécifiques de la règle entrante${(() => { const l = d.dids.filter((r) => r.schedule === s.key).map((r) => didWazo(r.did)); return l.length ? ` (${esc(l.join(', '))})` : ''; })()}</span>`}</td><td>${esc(s.text)}</td><td>${destCell(`schedules.${i}.closed`, opts)}</td><td>${destCell(`schedules.${i}.holiday`, opts)}</td><td>${used(s.key)}</td><td><button data-act="sched-dup" data-i="${i}" class="x3-mini" title="Même plages, autres sorties : à choisir ensuite pour certaines SDA">Dupliquer</button></td></tr>`).join('') || '<tr><td colspan="8" class="muted">Aucun horaire.</td></tr>'}</tbody></table></div>
+  return `${intro('scheds', 'Horaires', 'Horaires Wazo à créer, déduits des règles entrantes 3CX. Une règle « heures de bureau » prend celles du département de sa SDA (heures de bureau moins la pause) ; une règle à plages propres garde les siennes. Le nom est modifiable ; les plages se modifieront dans Call Flow Manager après création. Comme dans Wazo, l\'horaire porte ses sorties : « Fermé » (hors des plages) et « Férié » (pendant les fermetures exceptionnelles) ; les SDA ne font que le viser. Des SDA 3CX aux mêmes plages mais aux sorties différentes ont donné des horaires distincts ; « Dupliquer » en crée un autre, à choisir ensuite dans l\'onglet SDA. Fermetures exceptionnelles : celles de 3CX pour tous les départements et celles d\'un département, ajoutées aux horaires concernés si cochées ; les fermetures passées ne sont pas reprises. Les jours fériés légaux français autres que ceux de la sauvegarde sont à ajouter. Reprise décochée : l\'horaire n\'est pas créé, ses SDA sont créées toujours ouvertes (sans sortie « fermé » ni « férié »).', `${keepBar('scheds')}${verifyBar('scheds')}`)}
+    <div class="x3-edit-wrap"><table class="diff x3-edit">${head([['Reprise', KEEP_TIP], ['Vérifié', VERIFIED_TIP], ['Nom'], ['Département', 'Département 3CX dont l\'horaire reprend les heures de bureau, ou règle entrante dont il reprend les heures spécifiques'], ['Plages'], ['Fermé', 'Où va l\'appel hors des plages (closed_destination)'], ['Férié', 'Où va l\'appel pendant les fermetures exceptionnelles de l\'horaire'], ['SDA'], ['']])}<tbody>${d.schedules.map((s, i) => `<tr class="${s.import === false ? 'x3-off' : used(s.key) && !s.checked ? 'x3-unchecked' : ''}">${keepCell('scheds', i)}<td class="x3-c">${used(s.key) && s.import !== false ? check(`schedules.${i}.checked`, 'Vérifié') : ''}</td><td>${input(`schedules.${i}.name`)}</td><td class="small">${s.dept ? esc(deptLabel(s.dept)) : `<span class="muted">heures spécifiques de la règle entrante${(() => { const l = d.dids.filter((r) => r.schedule === s.key).map((r) => didWazo(r.did)); return l.length ? ` (${esc(l.join(', '))})` : ''; })()}</span>`}</td><td>${esc(s.text)}</td><td>${destCell(`schedules.${i}.closed`, opts)}</td><td>${destCell(`schedules.${i}.holiday`, opts)}</td><td>${used(s.key)}</td><td><button data-act="sched-dup" data-i="${i}" class="x3-mini" title="Même plages, autres sorties : à choisir ensuite pour certaines SDA">Dupliquer</button></td></tr>`).join('') || '<tr><td colspan="9" class="muted">Aucun horaire.</td></tr>'}</tbody></table></div>
     <h3 class="x3-h">Fermetures exceptionnelles</h3>${past ? `<p class="small muted">${past} fermeture(s) passée(s) dans la sauvegarde, non reprises.</p>` : ''}
     <div class="x3-edit-wrap"><table class="diff x3-edit">${head([['Reprise'], ['Nom'], ['Départements'], ['Dates'], ['Heures']])}<tbody>${d.holidays.map((h, i) => `<tr class="${h.include ? '' : 'x3-off'}"><td class="x3-c">${check(`holidays.${i}.include`)}</td><td>${input(`holidays.${i}.name`)}</td><td class="small">${esc(where(h))}</td><td>${h.day}/${h.month}${h.recurrent ? ' (tous les ans)' : `/${h.year}`}${h.dayEnd !== h.day || h.monthEnd !== h.month ? ` → ${h.dayEnd}/${h.monthEnd}` : ''}</td><td>${esc(h.from)}-${esc(h.to)}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">Aucune à venir.</td></tr>'}</tbody></table></div>`;
 }
@@ -677,6 +699,7 @@ function onChange(e, root) {
     if (!t.checked) { if (x.to !== 'skip') x.prev = x.to; x.to = 'skip'; } else { const r = soundUsages(E.m).find((u) => u.file === t.dataset.sndKeep) || { uses: [] }; x.to = x.prev || keepTo(r); delete x.prev; }
     return changed(root);
   }
+  if (t.dataset.keep) { const K = KEEP[t.dataset.keep]; K.set(K.list(E.d)[Number(t.dataset.i)], t.checked); return changed(root); }
   if (t.dataset.mohDef) { E.d.sounds.defaultMoh = t.dataset.mohDef; return changed(root); }
   if (t.dataset.moh) { const [i, f] = t.dataset.moh.split('|'); E.d.sounds.moh[Number(i)][f] = t.value.trim(); return changed(root); }
   if (t.dataset.pbName) { E.d.phonebook.name = t.value.trim(); return changed(root); }
@@ -757,6 +780,7 @@ function onClick(e, root) {
     case 'pb-csv': return download(`contacts-personnels-${b.dataset.o}-${base()}.csv`, personalCsv(d, b.dataset.o));
     case 'pb-csv-all': return download(`contacts-personnels-${base()}.csv`, personalCsv(d, null, { bom: true }));
     case 'pb-all': for (const c of d.phonebook.contacts) c.import = b.dataset.v === '1'; return changed(root);
+    case 'keep-all': { const K = KEEP[b.dataset.tab]; for (const o of K.list(d).filter((x) => !K.shown || K.shown(x))) K.set(o, b.dataset.v === '1'); return changed(root); }
     case 'verify-all': { const v = VERIFY[b.dataset.tab]; for (const o of v.list(d)) o[v.key] = true; return changed(root); }
     case 'sched-dup': { const s = d.schedules[Number(b.dataset.i)]; d.schedules.splice(Number(b.dataset.i) + 1, 0, { ...JSON.parse(JSON.stringify(s)), key: `${s.key.split('#')[0]}#${Date.now().toString(36)}`, name: `${s.name} (copie)` }); return changed(root); }
     case 'moh-add': { const k = `moh${Date.now().toString(36)}`; d.sounds.moh.push({ key: k, label: '', sort: 'alphabetical' }); return changed(root); }

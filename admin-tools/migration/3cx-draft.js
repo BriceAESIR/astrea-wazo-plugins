@@ -13,7 +13,7 @@
 // Les objets Wazo correspondants (destinations confd user_id, group_id…) ne
 // sont résolus qu'à l'écriture : convertir une file en groupe ne demande donc
 // aucune reprise des destinations qui la visent.
-import { nameOf, schedulesOf, STRATEGY } from './3cx.js?v=0.40.68';
+import { nameOf, schedulesOf, STRATEGY } from './3cx.js?v=0.40.69';
 
 export const DRAFT_FORMAT = 'astrea-3cx-draft';
 const KEY = 'astrea-migration-3cx-draft-v1';
@@ -168,12 +168,15 @@ export const VERIFY = {
   hunts: { label: 'groupes et files', key: 'checked', list: (d) => d.hunts.filter((h) => h.target !== 'skip') },
   ivrs: { label: 'SVI', key: 'checked', list: (d) => d.ivrs.filter((v) => v.import) },
   dids: { label: 'SDA', key: 'checked', list: (d) => d.dids.filter((r) => r.import) },
-  scheds: { label: 'horaires', key: 'checked', list: (d) => d.schedules.filter((s) => d.dids.some((r) => r.import && r.schedule === s.key)) },
+  scheds: { label: 'horaires', key: 'checked', list: (d) => d.schedules.filter((s) => s.import !== false && d.dids.some((r) => r.import && r.schedule === s.key)) },
 };
 // Objets pas encore vérifiés, par onglet : [{ tab, label, n, total }].
 export const unverified = (d) => Object.entries(VERIFY).map(([tab, v]) => { const l = v.list(d); return { tab, label: v.label, total: l.length, n: l.filter((o) => !o[v.key]).length }; }).filter((x) => x.n);
 // Sorties d'un horaire du brouillon (pour les contrôles et les départements).
 export const scheduleOf = (d, key) => (d.schedules || []).find((s) => s.key === key) || null;
+// Horaire réellement créé pour une SDA : null si elle n'en a pas, ou si sa reprise est décochée
+// (demande de Brice, 16/11/2026) : la SDA est alors créée toujours ouverte.
+export const didSchedule = (d, r) => { const s = r.schedule ? scheduleOf(d, r.schedule) : null; return s && s.import !== false ? s : null; };
 const keyOfPeriods = (p) => p.map((x) => `${x.day}:${x.from}-${x.to}`).join('|');
 function schedulesFrom(m, scheds = schedulesOf(m)) {
   const schedules = scheds.map((s) => ({ key: keyOfPeriods(s.periods), name: s.name, text: s.text, periods: s.periods, dept: s.dept || '' }));
@@ -400,7 +403,7 @@ export function draftIssues(d) {
   }
   const unchecked = imported(d).filter((u) => !u.checked).map((u) => u.n);
   if (unchecked.length) add('warn', 'Vérification', `${unchecked.length} utilisateur(s) pas encore vérifiés : ${unchecked.join(', ')} (onglet Utilisateurs, « Vérifier un par un »).`);
-  for (const u of d.users.filter((x) => x.mode === 'voicemail')) if (!u.vm) add('warn', `Messagerie ${u.n}`, 'reprise en « messagerie seule » mais la messagerie est décochée.');
+  for (const u of d.users.filter((x) => x.mode === 'voicemail')) if (!u.vm) add('info', `Messagerie ${u.n}`, 'messagerie seule décochée : non reprise.');
   // Réglages des messageries (règles de confd voicemail/schema.py).
   for (const u of d.users.filter((x) => x.mode !== 'skip' && x.vm)) {
     const w = `Messagerie ${u.n}`; const o = u.vmo || defaultVmo(); const mail = vmEmail(u);
@@ -441,10 +444,12 @@ export function draftIssues(d) {
     const p = destProblem(d, r.dest);
     if (p) add('warn', `SDA ${r.did} ouvert`, r.dest?.t === 'none' ? `${p}.` : `${destLabel(d, r.dest)} : ${p}.`);
     if (r.dest.t === 'none' && !r.dest.todo) noDest.push(r.did);
-    if (r.viaCsv && r.dest.t === 'user' && r.schedule) csvNoSched.push(r.did);
+    if (r.viaCsv && r.dest.t === 'user' && didSchedule(d, r)) csvNoSched.push(r.did);
   }
+  const noSched = d.dids.filter((r) => r.import && r.schedule && !didSchedule(d, r)).map((r) => r.did);
+  if (noSched.length) add('info', 'SDA', `${noSched.length} SDA dont l'horaire n'est pas repris : toujours ouvertes dans Wazo (${noSched.join(', ')}).`);
   // Sorties des horaires utilisés par une SDA reprise (portées par l'horaire, comme dans Wazo).
-  for (const s of d.schedules.filter((x) => d.dids.some((r) => r.import && r.schedule === x.key))) {
+  for (const s of d.schedules.filter((x) => x.import !== false && d.dids.some((r) => r.import && r.schedule === x.key))) {
     for (const [k, l] of [['closed', 'fermé'], ['holiday', 'fermetures exceptionnelles']]) {
       const p = destProblem(d, s[k]);
       if (p) add('warn', `Horaire « ${s.name} » ${l}`, s[k]?.t === 'none' ? `${p}.` : `${destLabel(d, s[k])} : ${p}.`);

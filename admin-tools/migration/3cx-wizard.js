@@ -8,16 +8,16 @@
 // phase (sauvegarde, journal, annulation) → 5 Contrôle final (lecture seule).
 // Phases : Fondations (vérifiée en réel), Personnes (5b), Routage (5c), Finitions
 // (5d) ; écritures lues dans le code de Wazo, testées sur faux tenant.
-import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.68';
-import { I, sameTenant } from './inventory.js?v=0.40.68';
-import { buildExport, exportFileName } from './export.js?v=0.40.68';
-import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText, didWazo, numWazo, unverified, defaultVmo, vmEmail, isVoix, deviceDesc, QUEUE_STRATEGY, scheduleOf } from './3cx-draft.js?v=0.40.68';
+import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.69';
+import { I, sameTenant } from './inventory.js?v=0.40.69';
+import { buildExport, exportFileName } from './export.js?v=0.40.69';
+import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText, didWazo, numWazo, unverified, defaultVmo, vmEmail, isVoix, deviceDesc, QUEUE_STRATEGY, scheduleOf, didSchedule, destProblem } from './3cx-draft.js?v=0.40.69';
 import {
   SITE_MODES, FR_FAMILIES, FR_FORMATS, BLOCK_118, defaultSite, defaultOut, clientPatterns, unitDids, rangeIssues, occupancy, placements, unitLabels, unitCfg, futureOf, siteChecks, routeText, newRanges, multi as multiSites, wazoNum, numberIssues, NO_TRUNK, exitOk, outcallName,
-} from './3cx-sites.js?v=0.40.68';
-import { unitList, unitOf, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.68';
-import { mohLabel, soundCategory, loaded, uniqueNames, putBinary, CATEGORY_RE } from './3cx-sounds.js?v=0.40.68';
-import { phonebookName, companyContacts, sourceColumns, dird, personalCsv } from './3cx-phonebook.js?v=0.40.68';
+} from './3cx-sites.js?v=0.40.69';
+import { unitList, unitOf, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.69';
+import { mohLabel, soundCategory, loaded, uniqueNames, putBinary, CATEGORY_RE } from './3cx-sounds.js?v=0.40.69';
+import { phonebookName, companyContacts, sourceColumns, dird, personalCsv } from './3cx-phonebook.js?v=0.40.69';
 
 const W = { d: null, m: null, t: null, busy: false, msg: null, at: null };
 export function setWizard(d, m) { W.d = d; W.m = m; W.t = null; W.msg = null; W.final = null; ensureState(); }
@@ -445,7 +445,7 @@ function losses() {
   const blf = blfAll.filter((b) => !b.ok && !parkKeys.includes(b));
   if (blf.length) add('info', `${blf.length} touche(s) BLF non reprises`, 'Cibles absentes (anciens postes), postes non repris ou doublons.', 'Liste exacte dans l\'onglet Exports (CSV des touches).');
   if (m.parks.length) add('info', `Parking 3CX non repris${parkKeys.length ? ` (${parkKeys.length} touche(s) de place sur ${new Set(parkKeys.map((b) => b.owner)).size} poste(s))` : ''}`, 'Plusieurs appels en attente : touches ligne du poste Wazo (un appel par touche) ou appli Wazo. Un appel en attente ne se reprend que depuis le poste qui l\'a mis en attente ; pour le passer à un collègue, le transférer.', 'Si un collègue doit reprendre l\'appel depuis son poste, créer un parking Wazo à la main (touches « place de parking »).');
-  if (d.schedules.some((s) => d.dids.some((r) => r.import && r.schedule === s.key) && [s.holiday, s.closed].some((x) => x?.t === 'sound'))) add('info', 'Message de fermeture des jours fériés', 'Le son du jour férié doit exister dans Wazo, sinon la fermeture n\'a rien à jouer.', 'Fournir les sons (phase musiques), ou viser la messagerie.');
+  if (d.schedules.some((s) => d.dids.some((r) => r.import && didSchedule(d, r) === s) && [s.holiday, s.closed].some((x) => x?.t === 'sound'))) add('info', 'Message de fermeture des jours fériés', 'Le son du jour férié doit exister dans Wazo, sinon la fermeture n\'a rien à jouer.', 'Fournir les sons (phase musiques), ou viser la messagerie.');
   if (m.ivrs.some((v) => v.system)) add('info', 'SVI internes de 3CX (code PIN, rappel de file)', 'Sans équivalent : non repris.', '—');
   if (m.others.length) add('info', m.others.map((o) => `${o.kind.replace('Extension', '')} ${o.number}`).join(', '), 'Fax, conférence et menu spécial 3CX : non repris.', 'À créer à la main si utilisés.');
   add('info', 'Messages vocaux, enregistrements et journaux d\'appels 3CX', 'Non migrables par l\'API de Wazo.', 'Les exporter depuis 3CX si le client veut les garder.');
@@ -498,7 +498,8 @@ function peopleState(t, c) {
   const byMac = new Map(t.devices.map((x) => [String(x.mac || '').toLowerCase(), x]));
   const busy = new Set(t.lines.map((l) => l.device_id).filter(Boolean));
   const noCtx = (un) => !un?.ctxObj || un.ctxObj.virtual;
-  const vms = d.users.filter((u) => u.mode === 'voicemail').map((u) => {
+  // Messagerie seule décochée (case « Reprise » de l'onglet Messageries) : non créée.
+  const vms = d.users.filter((u) => u.mode === 'voicemail' && u.vm).map((u) => {
     const un = unitOfUser(c, u); const num = wazoNum(d, u); const ctx = un?.ctx;
     const done = mk.vms[u.n] && vmIds.has(mk.vms[u.n]);
     const st = done ? ['exists', 'créée par l\'outil'] : noCtx(un) ? ['conflict', 'contexte du client pas encore créé (Fondations)'] : vmTaken.has(`${num}@${ctx}`) ? ['conflict', 'numéro de messagerie déjà pris dans le contexte']
@@ -681,6 +682,7 @@ function wazoDest(t, x, { ctx, holiday } = {}) {
     }
     case 'vm': {
       const owner = userBy(d, x.ref);
+      if (owner?.mode === 'voicemail' && !owner.vm) return { why: `messagerie ${x.ref} non reprise` };
       if (owner?.mode === 'voicemail') { const id = mk.vms[x.ref]; return id && t.voicemails.some((v) => v.id === id) ? { dest: { type: 'voicemail', voicemail_id: id } } : { why: `messagerie ${x.ref} pas encore créée (Personnes)` }; }
       const uu = mk.users[x.ref]; const u = uu && t.users.find((y) => y.uuid === uu);
       return u?.voicemail?.id ? { dest: { type: 'voicemail', voicemail_id: u.voicemail.id } } : { why: `messagerie de ${x.ref} absente (utilisateur pas créé, ou sans messagerie)` };
@@ -749,7 +751,15 @@ function routingState(t, c) {
     const r = res(x.h.noanswer, x.h); const done = mk.fb[x.h.n];
     return { ...x, r, status: done ? 'exists' : okLater(r, will(x.h.noanswer)) ? 'create' : 'conflict', why: done ? 'réglé par l\'outil' : r.dest || r.pending ? destLabel(d, x.h.noanswer) : r.why };
   });
-  const used = new Set(d.dids.filter((r) => r.import).map((r) => r.schedule).filter(Boolean));
+  // Horaire à reprise décochée : pas créé, ses SDA sont créées toujours ouvertes (didSchedule).
+  // Horaire dont aucune SDA ne pourra être créée (destination non reprise, à définir, SDA déjà
+  // présente) : pas créé non plus, il serait créé pour rien (retour de Brice, 16/11/2026). Seuls les
+  // blocages définitifs comptent (destProblem du brouillon) : un contexte ou un utilisateur pas
+  // encore créé le sera par les phases d'avant.
+  const incTaken = new Set(t.extensions.map((e) => `${e.exten}@${e.context}`));
+  const didBlock = (r) => { const ic = c.incallOf(r); return ic && !ic.virtual && incTaken.has(`${didWazo(r.did)}@${ic.name}`) ? 'déjà présente' : destProblem(d, r.dest); };
+  const used = new Set(d.dids.filter((r) => r.import && (!didBlock(r) || (mk.dids[r.did] && t.incalls.some((y) => y.id === mk.dids[r.did])))).map((r) => didSchedule(d, r)?.key).filter(Boolean));
+  for (const s of d.schedules) if (mk.scheds[s.key] && t.schedules.some((y) => y.id === mk.scheds[s.key])) used.add(s.key);
   const scheds = d.schedules.filter((s) => used.has(s.key)).map((s) => {
     const done = mk.scheds[s.key] && t.schedules.some((y) => y.id === mk.scheds[s.key]);
     const o = d.dids.find((r) => r.import && r.schedule === s.key) || {};
@@ -759,12 +769,11 @@ function routingState(t, c) {
     return { s, closed, hol, status: done ? 'exists' : bad.length ? 'conflict' : 'create', why: done ? 'créé par l\'outil' : bad.length ? bad.map(([w, , r]) => `${w} : ${r.why}`).join(' ; ') : `${openPeriods(s).length} plage(s), ${hol.length} fermeture(s)${yearly ? ` dont ${yearly} datée(s) d'une année : annuelles dans Wazo` : ''}` };
   });
   const schedOk = new Set(scheds.filter((x) => x.status !== 'conflict').map((x) => x.s.key));
-  const incTaken = new Set(t.extensions.map((e) => `${e.exten}@${e.context}`));
   const dids = d.dids.filter((r) => r.import).map((r) => {
     const n = didWazo(r.did); const ic = c.incallOf(r); const done = mk.dids[r.did] && t.incalls.some((y) => y.id === mk.dids[r.did]);
     const dr = res(r.dest, r);
     const st = done ? ['exists', 'créée par l\'outil'] : !ic || ic.virtual ? ['conflict', 'contexte entrant pas encore créé (Fondations)'] : incTaken.has(`${n}@${ic.name}`) ? ['conflict', `déjà présente dans « ${ic.label || ic.name} »`]
-      : !okLater(dr, will(r.dest)) ? ['conflict', dr.why] : r.schedule && !schedOk.has(r.schedule) ? ['conflict', 'son horaire ne peut pas être créé'] : ['create', `${destLabel(d, r.dest)}${r.schedule ? ` · horaire « ${scheduleOf(d, r.schedule)?.name} »` : ''}`];
+      : !okLater(dr, will(r.dest)) ? ['conflict', dr.why] : didSchedule(d, r) && !schedOk.has(r.schedule) ? ['conflict', 'son horaire ne peut pas être créé'] : ['create', `${destLabel(d, r.dest)}${didSchedule(d, r) ? ` · horaire « ${didSchedule(d, r).name} »` : r.schedule ? ' · horaire non repris : toujours ouverte' : ''}`];
     return { r, n, ic, status: st[0], why: st[1] };
   });
   return { hunts, ivrs, fbs, scheds, dids, ctxOf };
@@ -848,7 +857,8 @@ function routingOps(t) {
   }
   for (const x of R.dids.filter((y) => y.status === 'create')) {
     const r = x.r;
-    ops.push({ soft: true, label: `SDA ${x.n} → ${destLabel(d, r.dest)}${r.schedule ? ' + horaire' : ''} (POST /incalls)`, run: async () => {
+    const sk = didSchedule(d, r)?.key || '';
+    ops.push({ soft: true, label: `SDA ${x.n} → ${destLabel(d, r.dest)}${sk ? ' + horaire' : ''} (POST /incalls)`, run: async () => {
       await relire();
       const dest = must(wazoDest(T, r.dest, { ctx: R.ctxOf(r) }), `SDA ${x.n}`);
       const inc = await tapi('POST', '/incalls', { destination: dest });
@@ -857,7 +867,7 @@ function routingOps(t) {
         const e = await tapi('POST', '/extensions', { exten: x.n, context: x.ic.name });
         undo.unshift({ method: 'DELETE', path: `/extensions/${e.id}` });
         await tapi('PUT', `/incalls/${inc.id}/extensions/${e.id}`);
-        if (r.schedule) { const sid = mk.scheds[r.schedule]; if (!sid) throw new Error('horaire pas créé'); await tapi('PUT', `/incalls/${inc.id}/schedules/${sid}`); }
+        if (sk) { const sid = mk.scheds[sk]; if (!sid) throw new Error('horaire pas créé'); await tapi('PUT', `/incalls/${inc.id}/schedules/${sid}`); }
       } catch (e) { for (const u of undo) { try { await runUndo(u); } catch { /* */ } } throw e; }
       mk.dids[r.did] = inc.id;
       // Ordre d'annulation : SDA d'abord (libère le numéro), puis numéro.
@@ -1310,7 +1320,7 @@ async function runFinal() {
   for (const r of d.dids.filter((x) => x.import)) {
     const n = didWazo(r.did); const ic = c.incallOf(r);
     const inc = t.incalls.find((i) => (i.extensions || []).some((e) => e.exten === n && (!ic || ic.virtual || e.context === ic.name)));
-    const s3 = r.schedule ? scheduleOf(d, r.schedule) : null;
+    const s3 = didSchedule(d, r);
     const row = { did: n, d3: destLabel(d, r.dest), dw: '', s3: s3?.name || '', sw: '', c3: s3 ? destLabel(d, s3.closed) : '', cw: '', issues: [] };
     rows.push(row);
     const exp = wazoDest(t, r.dest, { ctx: ctxOf(r) });
