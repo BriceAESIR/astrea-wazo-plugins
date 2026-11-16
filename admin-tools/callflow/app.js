@@ -3,22 +3,23 @@
 // déposer (lot 2a, brouillon puis aperçu, sauvegarde, écriture).
 // Cadrage : astrea-wazo-dev/docs/CALLFLOW-MANAGER.md.
 // Modèle (sources confd vérifiées) : model.js ; canevas : canvas.js ; écriture : write.js.
-import { S, $, esc, fullName, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.40.74';
-import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, loadTrunkOperators, scanGroupKeys, buildTree, landingAt, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel, periodText, STRATEGY, QSTRAT, baseKey, gateOf, loadBlocklist, blockedBy, dialUser, entryChains, isGlob, numMatch, showNum, usagesOf, destTarget, tapi, groupTimes } from './model.js?v=0.40.74';
-import { createCanvas } from './canvas.js?v=0.40.74';
-import { getDest, setDest, sameValue, prepare, execute, conflictsOf } from './write.js?v=0.40.74';
-import { openScheduleEditor, pickerHtml, bindPicker, readPicker } from './sched-editor.js?v=0.40.74';
-import { openGroupEditor, groupCfgDiff } from './group-editor.js?v=0.40.74';
-import { openQueueEditor, queueCfgDiff, agentName } from './queue-editor.js?v=0.40.74';
-import { openIvrEditor, ivrCfgDiff } from './ivr-editor.js?v=0.40.74';
-import { openSbEditor, sbCfgDiff } from './sb-editor.js?v=0.40.74';
-import { redact } from './ed-ui.js?v=0.40.74';
-import { openRestore } from './restore.js?v=0.40.74';
-import { openIncallEditor, incallCfgDiff, openUserEditor, userCfgDiff, openVmEditor, vmCfgDiff, openConfEditor, confCfgDiff, openSchedGenEditor, schedCfgDiff } from './obj-editors.js?v=0.40.74';
-import { openDestEditor, ENTITY_DEST } from './dest-editor.js?v=0.40.74';
-import { openOutcallEditor, outcallCfgDiff } from './outcall-editor.js?v=0.40.74';
-import { openCreate, openCreateIncall, CREATABLE, LABEL, bindNewSchedule, schedValue } from './create.js?v=0.40.74';
-import { simulate, userContext, simPath } from './dialsim.js?v=0.40.74';
+import { S, $, esc, fullName, toast, connect, setReadonly, showCompat, loaded, loadFailed, stackVersion, helpButton, helpBox, canWrite, confirmModal, downloadJson } from '../common/core.js?v=0.40.75';
+import { M, TYPES, loadAll, ensureAllDetails, loadLiveMembers, loadTrunkOperators, scanGroupKeys, buildTree, landingAt, reverseIndex, facts, listOf, nodeInfo, entity, applyTime, whenOf, dayBands, schedulesIn, landingSegments, destLabel, periodText, STRATEGY, QSTRAT, baseKey, gateOf, loadBlocklist, blockedBy, dialUser, entryChains, isGlob, numMatch, showNum, usagesOf, destTarget, tapi, groupTimes } from './model.js?v=0.40.75';
+import { createCanvas } from './canvas.js?v=0.40.75';
+import { loadVmGreetings } from './sound-play.js?v=0.40.75';
+import { getDest, setDest, sameValue, prepare, execute, conflictsOf } from './write.js?v=0.40.75';
+import { openScheduleEditor, pickerHtml, bindPicker, readPicker } from './sched-editor.js?v=0.40.75';
+import { openGroupEditor, groupCfgDiff } from './group-editor.js?v=0.40.75';
+import { openQueueEditor, queueCfgDiff, agentName } from './queue-editor.js?v=0.40.75';
+import { openIvrEditor, ivrCfgDiff } from './ivr-editor.js?v=0.40.75';
+import { openSbEditor, sbCfgDiff } from './sb-editor.js?v=0.40.75';
+import { redact } from './ed-ui.js?v=0.40.75';
+import { openRestore } from './restore.js?v=0.40.75';
+import { openIncallEditor, incallCfgDiff, openUserEditor, userCfgDiff, openVmEditor, vmCfgDiff, openConfEditor, confCfgDiff, openSchedGenEditor, schedCfgDiff } from './obj-editors.js?v=0.40.75';
+import { openDestEditor, ENTITY_DEST } from './dest-editor.js?v=0.40.75';
+import { openOutcallEditor, outcallCfgDiff } from './outcall-editor.js?v=0.40.75';
+import { openCreate, openCreateIncall, CREATABLE, LABEL, bindNewSchedule, schedValue } from './create.js?v=0.40.75';
+import { simulate, userContext, simPath } from './dialsim.js?v=0.40.75';
 
 const TESTED_STACK = ['26.07'];
 const NAV = [
@@ -57,7 +58,7 @@ async function boot() {
 }
 async function reload() {
   await loadAll();
-  await Promise.all([ensureAllDetails(), loadLiveMembers(), loadTrunkOperators()]);
+  await Promise.all([ensureAllDetails(), loadLiveMembers(), loadTrunkOperators(), loadVmGreetings()]);
   selfCheck();
   $('lookwarn').innerHTML = M.warns.map((w) => `<div class="warn">${esc(w)}</div>`).join('');
   if (C.root && !nodeExists(C.root)) C.root = null;
@@ -463,7 +464,7 @@ function showDetail(n) {
   const t = TYPES[info.type] || { label: info.type };
   $('d-name').textContent = info.title;
   const rows = facts(n.key, n.leaf).map(([l, v, h]) => `<dt${h ? ` title="${esc(h)}"` : ''}>${esc(l)}</dt><dd>${esc(v)}</dd>`).join('');
-  const outs = (n.ports || []).filter((p) => p.to).map((p) => `<dt title="${esc(p.help || '')}">${esc(p.label)}</dt><dd>${esc(p.note || '')}</dd>`).join('');
+  const outs = (n.ports || []).filter((p) => p.to).map((p) => `<dt title="${esc(p.help || '')}">${esc(p.label)}</dt><dd>${esc([p.note, p.vmg?.text].filter(Boolean).join(' · '))}</dd>`).join('');
   let refs = '';
   if (!n.leaf) {
     const from = reverseIndex().get(baseKey(n.key)) || [];

@@ -21,8 +21,8 @@
 // Supposé, à vérifier en réel : les listes (GET /groups, /queues,
 // /switchboards, /schedules) contiennent déjà fallbacks, membres et
 // destinations ; sinon on lit le détail de chaque objet (ensureDetails).
-import { S, api, listAll, fullName, esc } from '../common/core.js?v=0.40.74';
-import { comparePatterns, describePattern, userContext, rightsList, simulate, famLabel } from './dialsim.js?v=0.40.74';
+import { S, api, listAll, fullName, esc } from '../common/core.js?v=0.40.75';
+import { comparePatterns, describePattern, userContext, rightsList, simulate, famLabel } from './dialsim.js?v=0.40.75';
 
 export const M = { lists: {}, by: {}, ext: new Map(), extAny: new Map(), rev: null, warns: [] };
 
@@ -158,7 +158,7 @@ export async function loadAll() {
   M.userByUuid = new Map(M.lists.user.map((u) => [u.uuid, u]));
   indexExtensions();
   // Caches liés au tenant : remis à zéro (la liste de blocage restait celle du tenant précédent).
-  M.rev = null; M.keys = null; M.live = null; M.liveState = ''; M.sounds = null; M.blocklist = undefined; M.deleting = null;
+  M.rev = null; M.keys = null; M.live = null; M.liveState = ''; M.sounds = null; M.blocklist = undefined; M.deleting = null; M.vmGreet = null; M.vmGreetErr = '';
   await loadVmZones();
   return M;
 }
@@ -396,7 +396,7 @@ export function describe(type, o) {
     case 'queue': return { title: o.label || o.name, sub: [firstExten(o), o.timeout ? `délai ${o.timeout} s` : ''].filter(Boolean).join(' · ') };
     case 'ivr': return { title: o.name, sub: [o.description, `${(o.choices || []).length} choix`].filter(Boolean).join(' · ') };
     case 'schedule': return { title: o.name || `Horaire #${o.id}`, sub: [o.enabled === false ? 'désactivé' : '', o.timezone].filter(Boolean).join(' · ') };
-    case 'voicemail': return { title: o.name, sub: [o.number, ctxLabel(o.context)].filter(Boolean).join(' · ') };
+    case 'voicemail': return { title: o.name, sub: [o.number, ctxLabel(o.context)].filter(Boolean).join(' · '), greet: vmGreetList(o.id) };
     case 'conference': return { title: o.name || `#${o.id}`, sub: firstExten(o) };
     case 'switchboard': return { title: o.name, sub: firstExten(o) };
     case 'context': return { title: o.label || o.name, sub: o.type };
@@ -449,6 +449,28 @@ export function destTarget(d) {
 }
 // Durée de sonnerie portée par la destination (user, group, queue, switchboard).
 // + musique de distribution d'un appel vers un utilisateur (moh_uuid, 20/10/2026).
+// Message d'accueil joué par une destination messagerie (16/11/2026, demande de Brice).
+// Vérifié (confd helpers/destination.py) : greeting busy → option b de VoiceMail,
+// unavailable → u, sinon aucune option : Asterisk passe directement aux consignes.
+export const VM_GREET = { unavailable: 'Indisponible', busy: 'Occupé' };
+// État du message dans la boîte (M.vmGreet, lu par calld, sound-play.js) : true / false / undefined (non lu).
+export const vmGreetKnown = (vmId, g) => M.vmGreet?.get(String(vmId))?.[g];
+export function vmGreetPill(d) {
+  if (d?.type !== 'voicemail') return null;
+  const g = VM_GREET[d.greeting] ? d.greeting : '';
+  const has = g ? vmGreetKnown(d.voicemail_id, g) : undefined;
+  return {
+    text: g ? `Message d'accueil : ${VM_GREET[g]}${has === false ? ' (non enregistré)' : ''}` : 'Sans message d\'accueil',
+    cls: g ? (has === false ? 'miss' : '') : 'def',
+    help: g ? (has === false ? `Le message « ${VM_GREET[g]} » n'est pas enregistré dans cette boîte : Asterisk annonce à la place le « Prénom et nom » enregistré (sinon le numéro de la boîte), suivi de « ${g === 'busy' ? 'est occupé' : 'n\'est pas disponible'} ».` : `La messagerie joue son message d'accueil « ${VM_GREET[g]} » avant les consignes.`) : 'Aucun message d\'accueil : la messagerie passe directement aux consignes (bip puis enregistrement).',
+  };
+}
+// Messages enregistrés d'une boîte, pour sa carte (ordre : ceux qu'une sortie peut demander, puis le nom).
+const GREET_CARD = [['unavailable', 'Indisponible'], ['busy', 'Occupé'], ['name', 'Prénom et nom']];
+function vmGreetList(id) {
+  const e = M.vmGreet?.get(String(id));
+  return e ? GREET_CARD.map(([g, label]) => ({ label, ok: e[g] })) : null;
+}
 const ringNote = (d) => [d?.ring_time ? `sonne ${d.ring_time} s` : '', d?.moh_uuid ? `musique ${((M.lists.moh || []).find((m) => m.uuid === d.moh_uuid) || {}).label || 'choisie'}` : ''].filter(Boolean).join(' · ');
 // Libellé lisible d'une destination (aperçu avant / après du brouillon).
 export function destLabel(d) {
@@ -457,7 +479,7 @@ export function destLabel(d) {
   let txt;
   if (t.leaf) txt = t.leaf.type === 'hangup' ? `${t.leaf.title} (${t.leaf.sub})` : `${TYPES[t.leaf.type]?.label || ''} ${t.leaf.title}${t.leaf.sub && t.leaf.type !== 'missing' ? ` (${t.leaf.sub})` : ''}`;
   else { const e = entity(t.key); const k = e.owner || t.key; const i = nodeInfo(k); txt = `${TYPES[i.type]?.label || ''} ${i.title}`; }
-  return [txt.trim(), ringNote(d)].filter(Boolean).join(' · ');
+  return [txt.trim(), ringNote(d), vmGreetPill(d)?.text].filter(Boolean).join(' · ');
 }
 
 // ---------------------------------------------------------------------------
@@ -467,7 +489,7 @@ export function destLabel(d) {
 function out(slot, d, extraLabel = '') {
   const t = destTarget(d);
   const note = [extraLabel, t?.note, ringNote(d)].filter(Boolean).join(' · ');
-  return { slot, label: SLOTS[slot]?.label || slot, note, help: SLOTS[slot]?.help || '', dest: d || null, to: t };
+  return { slot, label: SLOTS[slot]?.label || slot, note, help: SLOTS[slot]?.help || '', dest: d || null, to: t, vmg: t ? vmGreetPill(d) : null };
 }
 const link = (slot, k, note = '') => ({ slot, label: SLOTS[slot]?.label || slot, note, help: SLOTS[slot]?.help || '', to: { key: k } });
 const fb = (o, k) => o?.fallbacks?.[`${k}_destination`];
@@ -1353,7 +1375,9 @@ export function facts(k, leafInfo) {
         ['Fermetures exceptionnelles', (o.exceptional_periods || []).map(periodText).join(' ; ') || '—'],
         ['Utilisé par', ['incalls', 'users', 'groups', 'queues', 'outcalls'].map((x) => (o[x] || []).length).reduce((a, b) => a + b, 0) || '—']);
       break;
-    case 'voicemail': f.push(['Numéro', o.number], ['Contexte', ctxLabel(o.context)], ['E-mail', o.email], ['Type', o.accesstype]); break;
+    case 'voicemail': { const gl = vmGreetList(o.id); f.push(['Numéro', o.number], ['Contexte', ctxLabel(o.context)], ['E-mail', o.email], ['Type', o.accesstype],
+      ['Messages d\'accueil', gl ? gl.map((x) => `${x.label} : ${x.ok ? 'enregistré' : x.ok === false ? 'absent' : '?'}`).join(' ; ') : `non lisibles${M.vmGreetErr ? ` (${M.vmGreetErr})` : ''}`,
+        'Lus dans Wazo (calld). Chaque sortie vers cette messagerie choisit le message joué : Indisponible, Occupé ou aucun. Absent : Asterisk annonce le « Prénom et nom » enregistré, sinon le numéro de la boîte.']); break; }
     case 'conference': f.push(['Numéro', exts], ['Participants max', o.max_users || '—'], ['Code PIN', o.pin ? 'oui' : 'non']); break;
     case 'switchboard': f.push(['Numéro', exts], ['Délai', sec(o.timeout)]); break;
     case 'context': f.push(['Nom technique', o.name], ['Type', o.type], ['SDA (plages)', (o.incall_ranges || []).map((r) => `${r.start}–${r.end}`).join(', ')], ['Utilisateurs (plages)', (o.user_ranges || []).map((r) => `${r.start}–${r.end}`).join(', ')], ['Inclut', (o.contexts || []).map((c) => c.label || c.name).join(', ')]); break;

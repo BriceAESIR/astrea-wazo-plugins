@@ -102,6 +102,12 @@ body.in-portal.ready #workbench { height: 100vh; }
 .cf-pl { font-weight: 600; color: var(--ink); }
 .cf-pn { color: var(--muted); font-size: .75rem; }
 .cf-pn.cf-self { color: var(--accent); font-weight: 600; }
+/* Message d'accueil d'une sortie vers une messagerie (A) et messages enregistrés sur sa carte (C). */
+.cf-vmg { font-size: .7rem; line-height: 1.3; padding: 0 7px; border-radius: 10px; border: 1px solid var(--accent); color: var(--accent); max-width: 100%; box-sizing: border-box; }
+.cf-vmg.def { border-color: var(--cf-edge); color: var(--muted); }
+.cf-vmg.miss { border-color: var(--warn); color: var(--warn); }
+.cf-vmrec { margin-top: 2px; font-size: .72rem; color: var(--muted); }
+.cf-vmrec b { color: var(--ink); font-weight: 600; }
 .cf-ports li.empty .cf-pl { color: var(--muted); font-weight: 400; }
 .cf-ports li.assoc .cf-pl { color: var(--muted); font-weight: 400; font-style: italic; }
 .cf-dot { position: absolute; right: -5px; top: 50%; width: 9px; height: 9px; margin-top: -4.5px; border-radius: 50%; background: var(--c); border: 2px solid var(--panel); }

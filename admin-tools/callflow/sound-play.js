@@ -10,8 +10,8 @@
 // PCM. Les autres (gsm, g722…) ne sont pas lisibles : message, pas d'erreur
 // silencieuse. Supposé : un son système dans un sous-dossier (« digits/1 »)
 // passe encodé (%2F) dans l'URL — à tester en réel.
-import { S, toast } from '../common/core.js?v=0.40.74';
-import { M, sameTenant } from './model.js?v=0.40.74';
+import { S, toast } from '../common/core.js?v=0.40.75';
+import { M, sameTenant } from './model.js?v=0.40.75';
 
 // Bouton de lecture : icône ▶ / ■ comme Astrea Desk (demande de Brice,
 // 02/11/2026). data-tip garde une infobulle propre au bouton au repos.
@@ -115,9 +115,39 @@ const gUrl = (vm, g) => `${S.base}/api/calld/1.0/voicemails/${encodeURIComponent
 const tenantGuard = (t) => { if (!sameTenant(t)) throw new Error('Le tenant a changé dans le portail : opération arrêtée.'); };
 export async function greetingExists(vm, g) {
   const r = await fetch(gUrl(vm, g), { method: 'HEAD', headers: headers(), cache: 'no-store' });
-  if (r.status === 404) return false;
+  if (r.status === 404) { known(vm, g, false); return false; }
   if (!r.ok) throw httpErr(r, `calld.voicemails.${vm}.greetings.${g}.read`);
+  known(vm, g, true);
   return true;
+}
+// État connu des messages de chaque boîte (cartes messagerie et pastilles des
+// sorties, model.js) : tenu à jour par chaque lecture, envoi ou suppression.
+const known = (vm, g, v) => { const e = M.vmGreet?.get(String(vm)); if (e) e[g] = v; };
+// Lecture de tous les messages du tenant au chargement : 3 HEAD par boîte, 6 à la fois.
+// Échec (droits calld absents, calld injoignable) : rien d'affiché, raison dans la console.
+export async function loadVmGreetings() {
+  const t = M.tenant;
+  M.vmGreet = null; M.vmGreetErr = '';
+  const vms = M.lists?.voicemail || [];
+  if (!vms.length) return;
+  const map = new Map(vms.map((v) => [String(v.id), {}]));
+  const jobs = vms.flatMap((v) => GREETINGS.map(([g]) => [v.id, g]));
+  let i = 0; let err = null;
+  const worker = async () => {
+    while (!err && i < jobs.length) {
+      const [vm, g] = jobs[i++];
+      try {
+        const r = await fetch(gUrl(vm, g), { method: 'HEAD', headers: headers(), cache: 'no-store' });
+        if (r.status === 404) map.get(String(vm))[g] = false;
+        else if (r.ok) map.get(String(vm))[g] = true;
+        else err = httpErr(r, `calld.voicemails.${vm}.greetings.${g}.read`);
+      } catch (e) { err = e; }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(6, jobs.length) }, worker));
+  if (!sameTenant(t)) return;
+  if (err) { M.vmGreetErr = err.message; console.info('[astrea] Call Flow : messages d\'accueil illisibles', err); return; }
+  M.vmGreet = map;
 }
 export const playGreeting = (vm, g, btn) => playFrom(btn, async () => {
   const r = await fetch(gUrl(vm, g), { headers: headers({ Accept: 'audio/wav' }), cache: 'no-store' });
