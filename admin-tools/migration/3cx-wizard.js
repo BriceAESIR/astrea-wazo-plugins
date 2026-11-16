@@ -8,16 +8,16 @@
 // phase (sauvegarde, journal, annulation) → 5 Contrôle final (lecture seule).
 // Phases : Fondations (vérifiée en réel), Personnes (5b), Routage (5c), Finitions
 // (5d) ; écritures lues dans le code de Wazo, testées sur faux tenant.
-import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.72';
-import { I, sameTenant } from './inventory.js?v=0.40.72';
-import { buildExport, exportFileName } from './export.js?v=0.40.72';
-import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText, didWazo, numWazo, unverified, defaultVmo, vmEmail, isVoix, deviceDesc, QUEUE_STRATEGY, scheduleOf, didSchedule, destProblem } from './3cx-draft.js?v=0.40.72';
+import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.73';
+import { I, sameTenant } from './inventory.js?v=0.40.73';
+import { buildExport, exportFileName } from './export.js?v=0.40.73';
+import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText, didWazo, numWazo, unverified, defaultVmo, vmEmail, isVoix, deviceDesc, QUEUE_STRATEGY, scheduleOf, didSchedule, destProblem } from './3cx-draft.js?v=0.40.73';
 import {
   SITE_MODES, FR_FAMILIES, FR_FORMATS, BLOCK_118, defaultSite, defaultOut, clientPatterns, unitDids, rangeIssues, occupancy, placements, unitLabels, unitCfg, futureOf, siteChecks, routeText, newRanges, multi as multiSites, wazoNum, numberIssues, NO_TRUNK, exitOk, outcallName,
-} from './3cx-sites.js?v=0.40.72';
-import { unitList, unitOf, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.72';
-import { mohLabel, soundCategory, loaded, uniqueNames, putBinary, CATEGORY_RE } from './3cx-sounds.js?v=0.40.72';
-import { phonebookName, companyContacts, sourceColumns, dird, personalCsv } from './3cx-phonebook.js?v=0.40.72';
+} from './3cx-sites.js?v=0.40.73';
+import { unitList, unitOf, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.73';
+import { mohLabel, soundCategory, loaded, uniqueNames, putBinary, CATEGORY_RE } from './3cx-sounds.js?v=0.40.73';
+import { phonebookName, companyContacts, sourceColumns, dird, personalCsv } from './3cx-phonebook.js?v=0.40.73';
 
 const W = { d: null, m: null, t: null, busy: false, msg: null, at: null };
 export function setWizard(d, m) { W.d = d; W.m = m; W.t = null; W.msg = null; W.final = null; ensureState(); }
@@ -113,8 +113,17 @@ async function readTenant() {
   const mine = Object.values(W.d.write.made?.users || {}).filter((uu) => t.users.some((x) => x.uuid === uu));
   await Promise.all(mine.map(async (uu) => { const r = await soft(() => tapi('GET', `/users/${uu}/funckeys`), () => null); if (r) { const k = {}; for (const [p, x] of Object.entries(r.keys || {})) if (!x.inherited) k[p] = x; t.funckeys.set(uu, k); } }));
   t.mohSuggest = t.sipTpl.global ? await soft(async () => ((await tapi('GET', `/endpoints/sip/templates/${t.sipTpl.global}`)).endpoint_section_options || []).find(([k]) => k === 'moh_suggest')?.[1] ?? null, () => undefined) : undefined;
+  // Zone horaire des messageries : nom d'une zone Asterisk (zonemessages), contrôlé par confd
+  // (voicemail/validator.py, MemberOfSequence) ; celle dont le fuseau est Europe/Paris. GET permis hors
+  // tenant principal (voicemail_zonemessages/resource.py, seul PUT est réservé). null : aucune ; undefined : illisible.
+  t.vmZone = await soft(async () => ((await tapi('GET', '/asterisk/voicemail/zonemessages'))?.items || []).find((x) => x.timezone === TZ)?.name ?? null, () => undefined);
   return t;
 }
+// Langue et fuseau écrits par défaut sur ce que l'outil crée (retour de Brice, 16/11/2026 : « jamais un
+// objet en langue française ou avec le bon fuseau horaire »). Lu dans confd : user/schema.py (language
+// LANGUAGE_REGEX, timezone libre, IANA comme les horaires), voicemail/schema.py (language, timezone = zone).
+const LANG = 'fr_FR';
+const TZ = 'Europe/Paris';
 // Contextes cibles, selon le site choisi et les départements (3cx-sites.js) :
 // une entrée par jeu de contextes (unité), avec son contexte interne existant ou
 // à créer (objet virtuel, plages calculées, tant qu'il n'est pas créé) et son
@@ -263,7 +272,8 @@ function prerequisites(t) {
   const later = c.units.filter((u) => !u.trunkId);
   if (later.length) add('remind', 'Jour de la bascule : trunk', `${c.many ? `${later.map((u) => u.label).join(', ')} : ` : ''}créer le trunk dans le Portal (et le couper côté 3CX), l'associer à la règle « ${ocNameOf(later[0], c.many)} »${later.length > 1 ? ' (et aux règles des autres départements)' : ''} (Gestion des appels > Appels sortants) et régler son contexte entrant sur ${later.map((u) => (u.inc ? `« ${u.L.inc} »` : `« ${c.incall?.label || c.incall?.name || 'contexte entrant du tenant'} »`)).join(', ')}. Jusque-là, pas d'appels entrants ni sortants par Wazo.`, [], 'site');
   add('remind', 'Applications de l\'organisation', 'réglage du Portal (Paramètres > Applications), hors de la stack : à vérifier selon le besoin du client.');
-  add('remind', 'IP publique', 'postes fixes : autoriser l\'IP publique du client dans les paramètres globaux de la stack (tenant principal).');
+  if (t.vmZone == null) add('remind', 'Fuseau des messageries', t.vmZone === null ? `aucune zone de messagerie au fuseau ${TZ} sur le serveur (zonemessages) : les messageries sont créées sans zone, avec l'heure par défaut du serveur. Langue française écrite quand même.` : 'zones de messagerie illisibles avec ce jeton (GET /asterisk/voicemail/zonemessages) : les messageries sont créées sans zone, avec l\'heure par défaut du serveur.');
+  add('remind', 'IP publique','postes fixes : autoriser l\'IP publique du client dans les paramètres globaux de la stack (tenant principal).');
   // Sons : fichiers non déposés = non envoyés (pas bloquant : ils pourront l'être plus tard).
   const sp = soundPlan(W.d);
   if (sp.missing.length) add('warn', 'Fichiers son', `${sp.missing.length} fichier(s) prévus mais non déposés (onglet Sons) : ${sp.missing.slice(0, 5).join(', ')}${sp.missing.length > 5 ? '…' : ''}. Ils ne seront pas envoyés.`);
@@ -369,6 +379,8 @@ function buildPlan(t) {
   for (const x of rs.dids) add('routing', x.status, `SDA ${x.n}`, `${x.ic ? `dans « ${x.ic.label || x.ic.name} » · ` : ''}${x.n !== x.r.did ? `${x.r.did} dans 3CX · ` : ''}${x.why}`);
   // Finitions : état calculé par finishState (même calcul que les écritures).
   const fs = finishState(t, c);
+  if (fs.localeUsers.length || fs.localeVms.length) add('finish', 'update', `Langue français et fuseau ${TZ} : ${fs.localeUsers.length} utilisateur(s), ${fs.localeVms.length} messagerie(s)`, 'créés par l\'outil sans langue ni fuseau (avant la 0.40.73)');
+  else if (fs.localeDone) add('finish', 'exists', `Langue français et fuseau ${TZ}`, `objets créés par l'outil${t.vmZone ? '' : ' ; messageries sans zone horaire (voir rappel)'}`);
   for (const x of fs.ufb) add('finish', x.status, `Débordements de ${x.u.n} ${userName(x.u)}`, x.why);
   for (const x of fs.prof) add('finish', x.status, `Profil 3CX « ${x.pname} » de ${x.u.n} ${userName(x.u)}`, x.why);
   if (!d.write.keepProfiles) { const n = imported(d).filter((u) => u.mode === 'user' && W.m.extensions.find((e) => e.number === u.n)?.currentProfile !== 'Available').length; if (n) add('finish', 'skip', `Profil 3CX actuel de ${n} poste(s)`, 'non repris (option décochée à l\'étape Pertes et écarts)'); }
@@ -530,10 +542,11 @@ function peopleState(t, c) {
   });
   return { vms, devices, users };
 }
-function vmBody(u, number, context) {
+function vmBody(u, number, context, zone = W.t?.vmZone) {
   const o = { ...defaultVmo(), ...(u.vmo || {}) }; const mail = vmEmail(u) || null;
   // Comme l'import (voicemail_* du CSV) : supprimer après envoi seulement avec e-mail et pièce jointe (validates_schema).
-  return { name: userName(u).slice(0, 80), number, context, password: needsPin(u) ? (pinOf(u) || null) : null, email: mail, attach_audio: !!(mail && o.attach), delete_messages: !!(mail && o.attach && o.del), ask_password: o.ask !== false, language: o.lang || 'fr_FR', max_messages: o.max ?? null, enabled: true };
+  // Zone horaire : seulement si une zone Europe/Paris existe (sinon confd refuserait la messagerie).
+  return { name: userName(u).slice(0, 80), number, context, password: needsPin(u) ? (pinOf(u) || null) : null, email: mail, attach_audio: !!(mail && o.attach), delete_messages: !!(mail && o.attach && o.del), ask_password: o.ask !== false, language: o.lang || LANG, max_messages: o.max ?? null, enabled: true, ...(zone ? { timezone: zone } : {}) };
 }
 function lineBody(t, type, exten, context, deviceId) {
   const name = rnd(8, 'abcdefghijklmnopqrstuvwxyz');
@@ -623,7 +636,7 @@ function peopleOps(t) {
       // Champs de l'import (colonnes de csvparse.py reprises par le CSV de l'onglet Exports).
       const body = {
         firstname: u.first || (u.last ? '' : `Poste ${x.num}`), lastname: u.last || null, email: u.email || null, mobile_phone_number: u.mobile || null,
-        outgoing_caller_id: u.callerId || 'default', enabled: true, subscription_type: u.sub, ring_seconds: u.ring,
+        outgoing_caller_id: u.callerId || 'default', enabled: true, subscription_type: u.sub, ring_seconds: u.ring, language: LANG, timezone: TZ,
         lines: linesOf(u).map((ty, i) => lineBody(t, ty, x.num, x.ctx, ty === 'sip' && i === linesOf(u).indexOf('sip') ? devId : null)),
         ...(u.vm ? { voicemail: vmBody(u, x.num, x.ctx) } : {}),
       };
@@ -1010,10 +1023,29 @@ function finishState(t, c) {
     const st = add.length ? 'create' : notes.some((x) => !/déjà sur la touche/.test(x)) && !present ? 'conflict' : 'exists';
     return { u, wu, want, add, status: st, why: `${add.length ? `${add.length} touche(s) à poser (${add.map((w) => `${w.pos} ${w.label}`).join(', ')})` : `${present} déjà en place`}${notes.length ? ` · ${notes.join(' ; ')}` : ''}` };
   });
-  return { ufb, prof, keys };
+  // Langue et fuseau des objets créés par l'outil avant la 0.40.73 (créés sans) : corrigés ici.
+  const zone = t.vmZone;
+  const localeUsers = users.map((u) => createdUser(t, u.n)).filter(Boolean).filter((wu) => wu.language !== LANG || wu.timezone !== TZ);
+  const vmIds = new Set([...Object.values(mk.vms || {}), ...users.map((u) => createdUser(t, u.n)?.voicemail?.id)].filter(Boolean));
+  const localeVms = t.voicemails.filter((v) => vmIds.has(v.id) && (v.language !== LANG || (zone && v.timezone !== zone)));
+  return { ufb, prof, keys, localeUsers, localeVms, localeDone: vmIds.size + users.filter((u) => createdUser(t, u.n)).length };
 }
 function finishOps(t) {
   const d = W.d; const c = contextsOf(t); const F = finishState(t, c); const ops = []; const mk = FMADE();
+  for (const wu of F.localeUsers) {
+    ops.push({ soft: true, label: `Langue et fuseau de ${[wu.firstname, wu.lastname].filter(Boolean).join(' ')} (PUT /users/…)`, run: async () => {
+      const prev = await tapi('GET', `/users/${wu.uuid}`);
+      await tapi('PUT', `/users/${wu.uuid}`, { language: LANG, timezone: TZ });
+      return { created: `${LANG}, ${TZ}`, undo: { method: 'PUT', path: `/users/${wu.uuid}`, body: { language: prev.language ?? null, timezone: prev.timezone ?? null } } };
+    } });
+  }
+  for (const v of F.localeVms) {
+    ops.push({ soft: true, label: `Langue et fuseau de la messagerie ${v.number} ${v.name || ''} (PUT /voicemails/…)`, run: async () => {
+      const prev = await tapi('GET', `/voicemails/${v.id}`); const zone = t.vmZone;
+      await tapi('PUT', `/voicemails/${v.id}`, { language: LANG, ...(zone ? { timezone: zone } : {}) });
+      return { created: `${LANG}${zone ? `, zone ${zone}` : ''}`, undo: { method: 'PUT', path: `/voicemails/${v.id}`, body: { language: prev.language ?? null, ...(zone ? { timezone: prev.timezone ?? null } : {}) } } };
+    } });
+  }
   for (const x of F.ufb.filter((y) => y.status === 'create')) {
     ops.push({ soft: true, label: `Débordements de ${x.u.n} ${userName(x.u)} (PUT /users/…/fallbacks)`, run: async () => {
       const base = `/users/${x.wu.uuid}/fallbacks`; const prev = await tapi('GET', base);
