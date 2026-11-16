@@ -12,11 +12,11 @@
 //    queue_label, voicemail_name, ivr_name… ajoutés par confd.
 // Supposé, à vérifier en réel : le token du portail peut lire /moh,
 // /voicemails, /callpermissions, /schedules (sinon libellés techniques).
-import { S, $, esc, toast, api, listAll, connect, fullName, setReadonly, showCompat, loaded, loadFailed, canWrite, confirmModal, downloadJson, helpButton, helpBox } from '../common/core.js?v=0.40.71';
-import { SETTINGS, settingById, same, LANG, subLabel, authApi, IDX, readLines } from './settings.js?v=0.40.71';
-import { openCreate, openPersonalImport } from './create.js?v=0.40.71';
+import { S, $, esc, toast, api, listAll, connect, fullName, setReadonly, showCompat, loaded, loadFailed, canWrite, confirmModal, downloadJson, helpButton, helpBox } from '../common/core.js?v=0.40.72';
+import { SETTINGS, settingById, same, LANG, subLabel, authApi, IDX, readLines } from './settings.js?v=0.40.72';
+import { openCreate, openPersonalImport } from './create.js?v=0.40.72';
 
-const A = { auth: new Map(), authErr: '', users: [], byId: new Map(), moh: new Map(), groups: new Map(), vms: new Map(), perms: new Map(), scheds: new Map(), queues: new Map(), sbs: new Map(), contexts: [], callerOpts: [], callerOptsErr: '', lr: null, picked: new Set(), sort: { col: 'name', dir: 1 }, sel: null, scope: null, cols: null };
+const A = { ivrs: [], confs: [], outcalls: [], apps: [], mohs: [], sounds: [], auth: new Map(), authErr: '', users: [], byId: new Map(), moh: new Map(), groups: new Map(), vms: new Map(), perms: new Map(), scheds: new Map(), queues: new Map(), sbs: new Map(), contexts: [], callerOpts: [], callerOptsErr: '', lr: null, picked: new Set(), sort: { col: 'name', dir: 1 }, sel: null, scope: null, cols: null };
 
 // ---------------------------------------------------------------------------
 // Libellés
@@ -31,22 +31,26 @@ const GREET = { busy: 'occupé', unavailable: 'indisponible' };
 // Destination confd (débordements) → texte lisible.
 function destText(d) {
   if (!d || !d.type || d.type === 'none') return '';
+  const t = destBase(d);
+  return d.ring_time != null && ['user', 'group', 'queue', 'switchboard'].includes(d.type) ? `${t} (${d.ring_time} s)` : t;
+}
+function destBase(d) {
   switch (d.type) {
     // Libellés ajoutés par confd à la lecture, sinon listes chargées (destinations
     // construites par la masse, sans libellés).
     case 'user': { const n = [d.user_firstname, d.user_lastname].filter(Boolean).join(' ') || fullName(A.byId.get(d.user_id)) || `#${d.user_id}`; return `Utilisateur ${n}`; }
     case 'group': { const g = [...A.groups.values()].find((x) => x.id === d.group_id); return `Groupe ${d.group_label || g?.label || d.group_name || g?.name || `#${d.group_id}`}`; }
     case 'queue': return `File ${d.queue_label || A.queues.get(d.queue_id)?.label || `#${d.queue_id}`}`;
-    case 'voicemail': return `Messagerie ${d.voicemail_name || A.vms.get(d.voicemail_id)?.name || `#${d.voicemail_id}`}${GREET[d.greeting] ? ` (message ${GREET[d.greeting]})` : ''}`;
-    case 'ivr': return `SVI ${d.ivr_name || `#${d.ivr_id}`}`;
-    case 'conference': return `Conférence ${d.conference_name || `#${d.conference_id}`}`;
+    case 'voicemail': return `Messagerie ${d.voicemail_name || A.vms.get(d.voicemail_id)?.name || `#${d.voicemail_id}`}${GREET[d.greeting] ? ` (message ${GREET[d.greeting]})` : ''}${d.skip_instructions ? ', sans instructions' : ''}`;
+    case 'ivr': { const i = A.ivrs.find((x) => x.id === d.ivr_id); return `SVI ${d.ivr_name || i?.label || i?.name || `#${d.ivr_id}`}`; }
+    case 'conference': return `Conférence ${d.conference_name || A.confs.find((x) => x.id === d.conference_id)?.name || `#${d.conference_id}`}`;
     // Contexte omis : nom technique (ctx-…) illisible, vu en réel le 13/10/2026.
     case 'extension': return `Numéro ${d.exten}`;
-    case 'outcall': return `Sortant ${d.exten || ''}`;
-    case 'sound': return `Son ${d.filename || ''}`;
+    case 'outcall': { const o = A.outcalls.find((x) => x.id === d.outcall_id); return `Sortant ${d.exten || ''}${o ? ` (${o.label || o.name})` : ''}`; }
+    case 'sound': return `Son ${String(d.filename || '').split('/').pop()}`;
     case 'switchboard': return `POPC ${d.switchboard_name || A.sbs.get(d.switchboard_uuid)?.name || ''}`; // nom du portail pour un standard
     case 'hangup': return `Raccrocher (${HANGUP[d.cause] || d.cause || ''})`;
-    case 'application': return `Application ${d.application_name || d.application || ''}`;
+    case 'application': return `Application ${d.application_name || { disa: 'DISA', callback_disa: 'rappel DISA', directory: 'annuaire', fax_to_mail: `fax vers ${d.email || 'e-mail'}`, voicemail: 'consultation des messageries', custom: A.apps.find((x) => x.uuid === d.application_uuid)?.name || 'Stasis' }[d.application] || d.application || ''}`;
     case 'custom': return `Commande ${d.command || ''}`;
     default: return d.type;
   }
@@ -178,6 +182,23 @@ async function loadUsers() {
 async function lookup(path, what, warns) {
   try { return await listAll(path); } catch (e) { warns?.push(`${what} indisponibles (${e.status || ''} ${path}) : valeurs techniques affichées.`); console.warn('[astrea]', path, e); return []; }
 }
+// Fichiers son du tenant (destination « Fichier son »), comme Call Flow
+// (model.js loadSounds, vérifié dans wazo-confd plugins/sound) : la valeur
+// est formats[].path sans extension. Sons système (Asterisk) non proposés :
+// plusieurs centaines, à choisir dans Call Flow.
+async function loadSounds() {
+  const out = [];
+  try {
+    for (const c of (await listAll('/sounds')).filter((x) => x.name !== 'system')) {
+      try {
+        const d = await api('GET', `/sounds/${encodeURIComponent(c.name)}`);
+        const files = (d?.files || []).map((f) => ({ label: f.name, value: (f.formats || []).find((x) => x.path)?.path || f.name }));
+        if (files.length) out.push({ category: c.name, files: files.sort((a, b) => a.label.localeCompare(b.label, 'fr')) });
+      } catch (e) { console.warn('[astrea] sons', c.name, e); }
+    }
+  } catch (e) { console.warn('[astrea] sons', e); }
+  return out;
+}
 // Comptes de connexion (wazo-auth, onglet « Compte » du portail), lecture
 // seule : GET /api/auth/0.1/users (ACL auth.users.read), tenant courant,
 // même uuid que l'utilisateur confd. Licence et accès aux applications sont
@@ -210,13 +231,16 @@ async function loadCallerOpts(users) {
 }
 async function reload() {
   const warns = [];
-  const [users, moh, groups, vms, perms, scheds, queues, sbs, contexts, lines, extens, devices, tpls] = await Promise.all([
+  const [users, moh, groups, vms, perms, scheds, queues, sbs, contexts, lines, extens, devices, tpls, , , ivrs, confs, outcalls, apps, sounds] = await Promise.all([
     loadUsers(), lookup('/moh', 'Libellés des musiques d\'attente', warns), lookup('/groups', 'Libellés des groupes', warns), lookup('/voicemails', 'Détails des messageries', warns),
     lookup('/callpermissions', 'Droits d\'appel', warns), lookup('/schedules', 'Horaires', warns),
     lookup('/queues', 'Files d\'attente', null), lookup('/switchboards', 'Standards', null), lookup('/contexts', 'Contextes', null),
     lookup('/lines', 'Détails des lignes', warns), lookup('/extensions', 'Numéros', warns), lookup('/devices', 'Appareils', null), lookup('/endpoints/sip/templates', 'Modèles SIP', warns),
     checkLiveReload(), loadAuth(),
+    // Destinations des renvois par défaut (tous les types confd).
+    lookup('/ivr', 'SVI', null), lookup('/conferences', 'Conférences', null), lookup('/outcalls', 'Règles sortantes', null), lookup('/applications', 'Applications', null), loadSounds(),
   ]);
+  Object.assign(A, { ivrs, confs, outcalls, apps, sounds, mohs: moh });
   A.queues = new Map(queues.map((q) => [q.id, q]));
   A.sbs = new Map(sbs.map((s) => [s.uuid, s]));
   A.contexts = contexts.filter((c) => c.type !== 'incall' && c.type !== 'outcall').sort((a, b) => (a.label || a.name).localeCompare(b.label || b.name, 'fr'));
@@ -388,7 +412,7 @@ function openEdit(id) {
     await runMass([{ s, desc: spec.desc, target: spec.target }], [u], `${fullName(u)} — ${spec.desc}`, { download: false });
   }, 'Enregistrer');
   const vals = s.prefill ? s.prefill(cur, u) : { 'm-v': cur ?? '' };
-  for (const [k, v] of Object.entries(vals)) { const e = document.getElementById(k); if (e && v != null) e.value = String(v); }
+  for (const [k, v] of Object.entries(vals)) { const e = document.getElementById(k); if (!e || v == null) continue; if (typeof v === 'boolean') e.checked = v; else e.value = String(v); }
   s.wire?.();
   const preview = () => { try { $('m-prev').innerHTML = planHtml(s, plan(s, s.parse(ctx()).target, [u])); } catch (e) { $('m-prev').innerHTML = `<p class="error small">${esc(e.message)}</p>`; } };
   $('m-form').oninput = preview;
@@ -404,7 +428,7 @@ function openEdit(id) {
 // valeurs cibles recalculées sur cette lecture. Sauvegarde (valeurs relues)
 // téléchargée AVANT la première écriture, copie dans le navigateur.
 // ---------------------------------------------------------------------------
-const ctx = () => ({ vms: A.vms, moh: A.moh, groups: A.groups, perms: A.perms, scheds: A.scheds, queues: A.queues, sbs: A.sbs, contexts: A.contexts, users: A.users, callerOpts: A.callerOpts, callerOptsErr: A.callerOptsErr, destText });
+const ctx = () => ({ vms: A.vms, moh: A.moh, groups: A.groups, perms: A.perms, scheds: A.scheds, queues: A.queues, sbs: A.sbs, ivrs: A.ivrs, confs: A.confs, outcalls: A.outcalls, apps: A.apps, mohs: A.mohs, sounds: A.sounds, contexts: A.contexts, users: A.users, callerOpts: A.callerOpts, callerOptsErr: A.callerOptsErr, destText });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // Historique des sauvegardes dans le navigateur (localStorage du site, propre
 // à ce poste) : les 20 dernières opérations, la plus récente d'abord.
@@ -498,7 +522,7 @@ function openMass() {
       $('modal-body').innerHTML = `${head(s.label, s.help)}${common || s.showsCurrent ? '' : '<p class="muted small">Valeurs actuelles différentes selon les utilisateurs (voir l\'aperçu).</p>'}<div id="m-form">${s.form(ctx(), undefined, undefined, users)}</div><div id="m-prev" class="mprev"></div>${back}`;
       if (!W.vals[s.id] && common) {
         const vals = s.prefill ? s.prefill(curs[0], users[0]) : { 'm-v': curs[0] ?? '' };
-        for (const [k, v] of Object.entries(vals)) { const e = document.getElementById(k); if (e && v != null) e.value = String(v); }
+        for (const [k, v] of Object.entries(vals)) { const e = document.getElementById(k); if (!e || v == null) continue; if (typeof v === 'boolean') e.checked = v; else e.value = String(v); }
       }
       for (const [id, v] of Object.entries(W.vals[s.id] || {})) { const e = document.getElementById(id); if (!e) continue; if (typeof v === 'boolean') e.checked = v; else e.value = v; }
       s.wire?.();

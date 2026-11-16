@@ -19,7 +19,7 @@
 //                     rechargement à redéclencher à la fin ('user')
 // Routes et sémantique vérifiées dans le code de wazo-confd (13/10/2026),
 // voir docs/USER-MANAGER.md. Écritures non encore testées en réel.
-import { S, api, esc, fullName } from '../common/core.js?v=0.40.71';
+import { S, api, esc, fullName } from '../common/core.js?v=0.40.72';
 
 // Comparaison indépendante de l'ordre des clés (objets relus vs construits).
 const canon = (v) => (Array.isArray(v) ? v.map(canon) : v && typeof v === 'object' ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, canon(v[k])])) : v ?? null);
@@ -130,39 +130,93 @@ const showSub = (sel, attr) => { const f = () => document.querySelectorAll(`[${a
 // Renvoi par défaut (fallback) : PUT /users/{uuid}/fallbacks REMPLACE les 4
 // destinations (vérifié dans le code, « delete all fields that are not
 // defined ») : on renvoie les 3 autres telles que relues juste avant.
+// Tous les types de destination acceptés par confd (helpers/destination.py,
+// relu le 16/11/2026, demande de Brice : « toutes les options ») avec leurs
+// options : durée de sonnerie (user, group, queue, switchboard), musique de
+// distribution (user), message d'accueil et consignes (voicemail), son
+// (skip, no_answer), délai avant de raccrocher (busy, congestion).
+const FB_TYPES = [['none', 'Aucune'], ['selfvm', 'Sa propre messagerie'], ['voicemail', 'Une messagerie précise'], ['user', 'Un utilisateur'], ['group', 'Un groupe d\'appel'], ['queue', 'Une file d\'attente'],
+  ['switchboard', 'Un standard (POPC)'], ['ivr', 'Un SVI'], ['conference', 'Une conférence'], ['sound', 'Un fichier son'], ['extension', 'Un numéro'], ['outcall', 'Une règle sortante'],
+  ['application', 'Une application'], ['custom', 'Une commande Asterisk'], ['hangup', 'Raccrocher']];
+const FB_APPS = [['disa', 'DISA : composer un numéro après un code'], ['callback_disa', 'Rappel DISA'], ['directory', 'Annuaire'], ['fax_to_mail', 'Fax vers e-mail'], ['voicemail', 'Consultation des messageries'], ['custom', 'Application Wazo (Stasis)']];
+const byLabel = (list) => list.sort((a, b) => String(a[1]).localeCompare(String(b[1]), 'fr'));
+// Bloc visible pour un ou plusieurs types (data-dt="user group …").
+const showTypes = (sel, attr) => { const f = () => document.querySelectorAll(`[${attr}]`).forEach((x) => (x.hidden = !x.getAttribute(attr).split(' ').includes($v(sel)))); document.getElementById(sel).addEventListener('change', f); f(); };
+const chk = (id) => !!document.getElementById(id)?.checked;
+const numOrNull = (id, what) => { const x = $v(id).trim(); if (x === '') return null; if (!/^\d+(\.\d+)?$/.test(x)) throw new Error(`${what} : nombre positif.`); return Number(x); };
 const fallback = (k, label) => ({
   id: `fb_${k}`, label: `Défaut ${label}`, grp: 'Renvois par défaut (admin)',
-  form: (c) => `<label>Destination <select id="m-dt">${options([['none', 'Aucune'], ['selfvm', 'Sa propre messagerie'], ['user', 'Un utilisateur'], ['group', 'Un groupe d\'appel'], ['queue', 'Une file d\'attente'], ['switchboard', 'Un standard (POPC)'], ['extension', 'Un numéro'], ['hangup', 'Raccrocher']])}</select></label>
+  form: (c) => `<label>Destination <select id="m-dt">${options(FB_TYPES)}</select></label>
+    <div data-dt="voicemail"><label>Messagerie <select id="m-dv">${options(byLabel([...c.vms.values()].map((v) => [v.id, `${v.name || ''}${v.number ? ` (${v.number})` : ''}`])))}</select></label></div>
     <div data-dt="user"><label>Utilisateur <select id="m-du">${options(c.users.map((u) => [u.id, fullName(u)]))}</select></label></div>
-    <div data-dt="group"><label>Groupe <select id="m-dg">${options([...c.groups.values()].map((g) => [g.id, g.label || g.name]).sort((a, b) => a[1].localeCompare(b[1], 'fr')))}</select></label></div>
-    <div data-dt="queue"><label>File d'attente <select id="m-dq">${options([...c.queues.values()].map((q) => [q.id, q.label || q.name]).sort((a, b) => a[1].localeCompare(b[1], 'fr')))}</select></label></div>
-    <div data-dt="switchboard"><label>Standard <select id="m-ds">${options([...c.sbs.values()].map((s) => [s.uuid, s.name]).sort((a, b) => a[1].localeCompare(b[1], 'fr')))}</select></label></div>
+    <div data-dt="group"><label>Groupe <select id="m-dg">${options(byLabel([...c.groups.values()].map((g) => [g.id, g.label || g.name])))}</select></label></div>
+    <div data-dt="queue"><label>File d'attente <select id="m-dq">${options(byLabel([...c.queues.values()].map((q) => [q.id, q.label || q.name])))}</select></label></div>
+    <div data-dt="switchboard"><label>Standard <select id="m-ds">${options(byLabel([...c.sbs.values()].map((s) => [s.uuid, s.name])))}</select></label></div>
+    <div data-dt="ivr"><label>SVI <select id="m-di">${options(byLabel((c.ivrs || []).map((i) => [i.id, i.label || i.name || `#${i.id}`])))}</select></label></div>
+    <div data-dt="conference"><label>Conférence <select id="m-dk">${options(byLabel((c.confs || []).map((x) => [x.id, x.name || `#${x.id}`])))}</select></label></div>
+    <div data-dt="sound"><label>Fichier son <select id="m-dso">${(c.sounds || []).map((g) => `<optgroup label="${esc(g.category)}">${options(g.files.map((f) => [f.value, f.label]))}</optgroup>`).join('') || '<option value="">aucun son dans ce tenant</option>'}</select></label>
+      <label class="inline"><input type="checkbox" id="m-dsk"> L'appelant peut l'interrompre (une touche arrête la lecture)</label>
+      <label class="inline"><input type="checkbox" id="m-dna"> Sans décrocher (joué avant le décroché)</label></div>
     <div data-dt="extension"><label>Numéro <input id="m-dn" inputmode="tel" placeholder="0612345678"></label>
       <label>Contexte <select id="m-dc">${options([['@line', 'Celui de la ligne de chaque utilisateur'], ...c.contexts.map((x) => [x.name, `${x.label || x.name}${x.type ? ` (${x.type})` : ''}`])])}</select></label></div>
-    <div data-dt="hangup"><label>Cause <select id="m-dh">${options([['normal', 'Normale'], ['busy', 'Occupé'], ['congestion', 'Encombré']])}</select></label></div>
-    <div data-dt="selfvm"><label>Message d'accueil <select id="m-dvg">${options([['busy', 'Occupé'], ['unavailable', 'Indisponible'], ['', 'Non précisé (choix de la messagerie)']], k === 'busy' ? 'busy' : 'unavailable')}</select></label></div>`,
-  wire: () => showSub('m-dt', 'data-dt'),
+    <div data-dt="outcall"><label>Règle sortante <select id="m-do">${options(byLabel((c.outcalls || []).map((o) => [o.id, o.label || o.name || `#${o.id}`])))}</select></label>
+      <label>Numéro composé <input id="m-dox" inputmode="numeric" placeholder="0612345678"></label></div>
+    <div data-dt="application"><label>Application <select id="m-da">${options(FB_APPS)}</select></label>
+      <div data-da="disa callback_disa"><label>Code (facultatif, chiffres) <input id="m-dap" inputmode="numeric" maxlength="40"></label></div>
+      <div data-da="disa callback_disa directory voicemail"><label>Contexte <select id="m-dac">${options(c.contexts.filter((x) => x.type === 'internal').map((x) => [x.name, x.label || x.name]))}</select></label></div>
+      <div data-da="fax_to_mail"><label>E-mail <input id="m-dam" type="email" maxlength="80"></label></div>
+      <div data-da="custom"><label>Application Wazo <select id="m-dau">${options((c.apps || []).map((a) => [a.uuid, a.name || a.uuid]))}</select></label></div></div>
+    <div data-dt="custom"><label>Commande <input id="m-dcm" maxlength="255" placeholder="Playback(beep)"></label><p class="small muted">Nom(arguments). System() refusé par Wazo.</p></div>
+    <div data-dt="hangup"><label>Cause <select id="m-dh">${options([['normal', 'Normale'], ['busy', 'Occupé'], ['congestion', 'Encombré']])}</select></label>
+      <label>Délai avant de raccrocher (s, occupé / encombré) <input id="m-dht" type="number" min="0" placeholder="immédiat"></label></div>
+    <div data-dt="selfvm voicemail"><label>Message d'accueil <select id="m-dvg">${options([['busy', 'Occupé'], ['unavailable', 'Indisponible'], ['', 'Non précisé (choix de la messagerie)']], k === 'busy' ? 'busy' : 'unavailable')}</select></label>
+      <label class="inline"><input type="checkbox" id="m-dvs"> Ne pas lire les instructions (bip direct)</label></div>
+    <div data-dt="user group queue switchboard"><label>Durée de sonnerie (s) <input id="m-drt" type="number" min="0" placeholder="celle de l'objet"></label></div>
+    <div data-dt="user"><label>Musique de distribution <select id="m-dmo">${options([['', 'Aucune : sonnerie'], ...(c.mohs || []).filter((m) => m.uuid).map((m) => [m.uuid, m.label || m.name])])}</select></label></div>`,
+  wire: () => { showTypes('m-dt', 'data-dt'); showTypes('m-da', 'data-da'); },
   parse: (c) => {
     const t = $v('m-dt');
     const fixed = (d) => ({ target: () => d, desc: `Renvoi par défaut ${label} : ${c.destText(d) || 'aucun'}` });
     if (t === 'none') return fixed(null);
+    const g = $v('m-dvg') || null, skipI = chk('m-dvs');
     if (t === 'selfvm') {
-      // Message d'accueil (greeting, schéma VoicemailDestinationSchema : busy,
-      // unavailable ou null) choisi et affiché, pas laissé au défaut caché.
-      // Déjà sur sa propre messagerie : consignes (skip_instructions) gardées.
-      const g = $v('m-dvg') || null;
+      // Message d'accueil (greeting : busy, unavailable ou null) et consignes
+      // (skip_instructions) choisis et affichés, pas laissés au défaut caché.
       const gt = { busy: 'message « occupé »', unavailable: 'message « indisponible »' }[g] || 'message non précisé';
       return {
-        target: (cur, u) => (cur?.type === 'voicemail' && u.voicemail && cur.voicemail_id === u.voicemail.id ? normDest({ ...cur, greeting: g }) : normDest({ type: 'voicemail', voicemail_id: u.voicemail?.id ?? null, skip_instructions: false, greeting: g })),
-        desc: `Renvoi par défaut ${label} : sa propre messagerie (${gt})`,
+        target: (cur, u) => normDest({ type: 'voicemail', voicemail_id: u.voicemail?.id ?? null, skip_instructions: skipI, greeting: g }),
+        desc: `Renvoi par défaut ${label} : sa propre messagerie (${gt}${skipI ? ', sans instructions' : ''})`,
       };
     }
     const need = (v, what) => { if (!v) throw new Error(`Aucun(e) ${what} disponible.`); return v; };
-    if (t === 'user') return fixed({ type: 'user', user_id: Number(need($v('m-du'), 'utilisateur')) });
-    if (t === 'group') return fixed({ type: 'group', group_id: Number(need($v('m-dg'), 'groupe')) });
-    if (t === 'queue') return fixed({ type: 'queue', queue_id: Number(need($v('m-dq'), 'file d\'attente')) });
-    if (t === 'switchboard') return fixed({ type: 'switchboard', switchboard_uuid: need($v('m-ds'), 'standard') });
-    if (t === 'hangup') return fixed({ type: 'hangup', cause: $v('m-dh') });
+    const ring = () => numOrNull('m-drt', 'Durée de sonnerie');
+    if (t === 'voicemail') return fixed(normDest({ type: 'voicemail', voicemail_id: Number(need($v('m-dv'), 'messagerie')), skip_instructions: skipI, greeting: g }));
+    if (t === 'user') return fixed(normDest({ type: 'user', user_id: Number(need($v('m-du'), 'utilisateur')), ring_time: ring(), moh_uuid: $v('m-dmo') || null }));
+    if (t === 'group') return fixed(normDest({ type: 'group', group_id: Number(need($v('m-dg'), 'groupe')), ring_time: ring() }));
+    if (t === 'queue') return fixed(normDest({ type: 'queue', queue_id: Number(need($v('m-dq'), 'file d\'attente')), ring_time: ring() }));
+    if (t === 'switchboard') return fixed(normDest({ type: 'switchboard', switchboard_uuid: need($v('m-ds'), 'standard'), ring_time: ring() }));
+    if (t === 'ivr') return fixed({ type: 'ivr', ivr_id: Number(need($v('m-di'), 'SVI')) });
+    if (t === 'conference') return fixed({ type: 'conference', conference_id: Number(need($v('m-dk'), 'conférence')) });
+    if (t === 'sound') return fixed({ type: 'sound', filename: need($v('m-dso'), 'fichier son'), skip: chk('m-dsk'), no_answer: chk('m-dna') });
+    if (t === 'hangup') { const cause = $v('m-dh'); return fixed(normDest({ type: 'hangup', cause, timeout: cause === 'normal' ? null : numOrNull('m-dht', 'Délai avant de raccrocher') })); }
+    if (t === 'outcall') {
+      const x = $v('m-dox').trim();
+      if (!/^\d{1,255}$/.test(x)) throw new Error('Numéro composé : chiffres seulement.');
+      return fixed({ type: 'outcall', outcall_id: Number(need($v('m-do'), 'règle sortante')), exten: x });
+    }
+    if (t === 'custom') {
+      const cmd = $v('m-dcm').trim();
+      if (!/^(?!(try)?system\()[a-zA-Z]{3,}\((.*)\)$/i.test(cmd)) throw new Error('Commande : Nom(arguments), System() refusé.');
+      return fixed({ type: 'custom', command: cmd });
+    }
+    if (t === 'application') {
+      const a = $v('m-da'); const d = { type: 'application', application: a };
+      if (a === 'disa' || a === 'callback_disa') { const p = $v('m-dap').trim(); if (p && !/^\d{1,40}$/.test(p)) throw new Error('Code : chiffres seulement.'); if (p) d.pin = p; }
+      if (['disa', 'callback_disa', 'directory', 'voicemail'].includes(a)) d.context = need($v('m-dac'), 'contexte interne');
+      if (a === 'fax_to_mail') { const m = $v('m-dam').trim(); if (!/^[^@\s]+@[^@\s]+$/.test(m)) throw new Error('E-mail invalide.'); d.email = m; }
+      if (a === 'custom') d.application_uuid = need($v('m-dau'), 'application Wazo');
+      return fixed(d);
+    }
     const n = $v('m-dn').trim(), cx = $v('m-dc');
     if (!/^[0-9*#]{1,255}$/.test(n)) throw new Error('Numéro invalide (chiffres, * et # seulement).');
     if (cx !== '@line') return fixed({ type: 'extension', exten: n, context: cx });
@@ -170,10 +224,19 @@ const fallback = (k, label) => ({
   },
   prefill: (v, u) => {
     if (!v) return { 'm-dt': 'none' };
-    if (v.type === 'voicemail' && u?.voicemail && v.voicemail_id === u.voicemail.id) return { 'm-dt': 'selfvm', 'm-dvg': v.greeting || '' };
-    const f = { user: ['m-du', v.user_id], group: ['m-dg', v.group_id], queue: ['m-dq', v.queue_id], switchboard: ['m-ds', v.switchboard_uuid], hangup: ['m-dh', v.cause] }[v.type];
-    if (f) return { 'm-dt': v.type, [f[0]]: f[1] };
+    const ring = v.ring_time != null ? { 'm-drt': v.ring_time } : {};
+    if (v.type === 'voicemail') {
+      const own = u?.voicemail && v.voicemail_id === u.voicemail.id;
+      return { 'm-dt': own ? 'selfvm' : 'voicemail', 'm-dv': v.voicemail_id, 'm-dvg': v.greeting || '', 'm-dvs': !!v.skip_instructions };
+    }
+    const f = { user: ['m-du', v.user_id], group: ['m-dg', v.group_id], queue: ['m-dq', v.queue_id], switchboard: ['m-ds', v.switchboard_uuid], ivr: ['m-di', v.ivr_id], conference: ['m-dk', v.conference_id] }[v.type];
+    if (f) return { 'm-dt': v.type, [f[0]]: f[1], ...ring, ...(v.type === 'user' ? { 'm-dmo': v.moh_uuid || '' } : {}) };
+    if (v.type === 'hangup') return { 'm-dt': 'hangup', 'm-dh': v.cause, 'm-dht': v.timeout ?? '' };
+    if (v.type === 'sound') return { 'm-dt': 'sound', 'm-dso': v.filename, 'm-dsk': !!v.skip, 'm-dna': !!v.no_answer };
     if (v.type === 'extension') return { 'm-dt': 'extension', 'm-dn': v.exten, 'm-dc': v.context };
+    if (v.type === 'outcall') return { 'm-dt': 'outcall', 'm-do': v.outcall_id, 'm-dox': v.exten };
+    if (v.type === 'custom') return { 'm-dt': 'custom', 'm-dcm': v.command };
+    if (v.type === 'application') return { 'm-dt': 'application', 'm-da': v.application, 'm-dap': v.pin || '', 'm-dac': v.context || '', 'm-dam': v.email || '', 'm-dau': v.application_uuid || '' };
     return {};
   },
   read: (u) => normDest(u.fallbacks?.[`${k}_destination`]),
