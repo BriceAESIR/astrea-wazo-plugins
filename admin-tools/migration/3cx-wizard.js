@@ -8,16 +8,16 @@
 // phase (sauvegarde, journal, annulation) → 5 Contrôle final (lecture seule).
 // Phases : Fondations (vérifiée en réel), Personnes (5b), Routage (5c), Finitions
 // (5d) ; écritures lues dans le code de Wazo, testées sur faux tenant.
-import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.70';
-import { I, sameTenant } from './inventory.js?v=0.40.70';
-import { buildExport, exportFileName } from './export.js?v=0.40.70';
-import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText, didWazo, numWazo, unverified, defaultVmo, vmEmail, isVoix, deviceDesc, QUEUE_STRATEGY, scheduleOf, didSchedule, destProblem } from './3cx-draft.js?v=0.40.70';
+import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.71';
+import { I, sameTenant } from './inventory.js?v=0.40.71';
+import { buildExport, exportFileName } from './export.js?v=0.40.71';
+import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText, didWazo, numWazo, unverified, defaultVmo, vmEmail, isVoix, deviceDesc, QUEUE_STRATEGY, scheduleOf, didSchedule, destProblem } from './3cx-draft.js?v=0.40.71';
 import {
   SITE_MODES, FR_FAMILIES, FR_FORMATS, BLOCK_118, defaultSite, defaultOut, clientPatterns, unitDids, rangeIssues, occupancy, placements, unitLabels, unitCfg, futureOf, siteChecks, routeText, newRanges, multi as multiSites, wazoNum, numberIssues, NO_TRUNK, exitOk, outcallName,
-} from './3cx-sites.js?v=0.40.70';
-import { unitList, unitOf, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.70';
-import { mohLabel, soundCategory, loaded, uniqueNames, putBinary, CATEGORY_RE } from './3cx-sounds.js?v=0.40.70';
-import { phonebookName, companyContacts, sourceColumns, dird, personalCsv } from './3cx-phonebook.js?v=0.40.70';
+} from './3cx-sites.js?v=0.40.71';
+import { unitList, unitOf, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.71';
+import { mohLabel, soundCategory, loaded, uniqueNames, putBinary, CATEGORY_RE } from './3cx-sounds.js?v=0.40.71';
+import { phonebookName, companyContacts, sourceColumns, dird, personalCsv } from './3cx-phonebook.js?v=0.40.71';
 
 const W = { d: null, m: null, t: null, busy: false, msg: null, at: null };
 export function setWizard(d, m) { W.d = d; W.m = m; W.t = null; W.msg = null; W.final = null; ensureState(); }
@@ -463,6 +463,9 @@ function losses() {
 // d'un incall : { start, end, did_length: len(numéro) }). 0 marche aussi (numéro entier comparé,
 // contextnumbers.in_range) mais le Portal affiche 0 ; question de Brice du 09/11/2026.
 const didRange = (n) => ({ start: n, end: n, did_length: String(n).length });
+// SDA dans une plage du contexte entrant, comme xivo-dao (contextnumbers.in_range, lu) : numéro entier
+// comparé aux did_length derniers chiffres des bornes (int(limit[-did_length:]), 0 = borne entière).
+const inDidRange = (n, g) => { const L = Number(g.did_length) || 0; const cut = (s) => Number(L ? String(s).slice(-L) : String(s)); const v = Number(n); return /^\d+$/.test(String(g.start)) && cut(g.start) <= v && v <= cut(g.end ?? g.start); };
 // Contextes entrants créés par l'outil avant la 0.40.65 : plages sans did_length.
 const zeroDidCtx = (t, c) => c.units.filter((u) => u.created && u.inc).map((u) => t.contexts.find((x) => x.name === u.inc)).filter((x) => x && (x.incall_ranges || []).some((r) => !r.did_length && /^\d+$/.test(r.start)));
 // ---------------------------------------------------------------------------
@@ -554,14 +557,23 @@ const SIG_KEY = 'astrea-migration-mail-signature';
 const SIG_DEFAULT = 'Cordialement,\nLe service informatique';
 const getSig = () => { try { return localStorage.getItem(SIG_KEY) ?? SIG_DEFAULT; } catch { return SIG_DEFAULT; } };
 const setSig = (v) => { try { localStorage.setItem(SIG_KEY, v); } catch { /* navigateur sans stockage : signature non gardée */ } };
-function emlOf(c, sig = getSig()) {
+// Liens de téléchargement et tutos d'installation (demande de Brice, 16/11/2026) : bloc modifiable, gardé
+// dans ce navigateur comme la signature, placé avant elle. Adresses non connues de l'outil : « <lien> »
+// à remplacer, le téléchargement est refusé tant qu'il en reste.
+const LINKS_KEY = 'astrea-migration-mail-links';
+const LINKS_DEFAULT = 'Pour installer l\'application :\n  - Ordinateur (Windows, Mac) : <lien>\n  - Mobile (iPhone, Android) : <lien>\n  - Tutoriels d\'installation : <lien>';
+const getLinks = () => { try { return localStorage.getItem(LINKS_KEY) ?? LINKS_DEFAULT; } catch { return LINKS_DEFAULT; } };
+const setLinks = (v) => { try { localStorage.setItem(LINKS_KEY, v); } catch { /* */ } };
+const textLines = (s) => { const t = String(s || '').replace(/\r\n?/g, '\n').replace(/^\n+|\s+$/g, ''); return t ? t.split('\n') : []; };
+function emlOf(c, sig = getSig(), links = getLinks()) {
   const host = S.base ? new URL(S.base).host : '';
   const csv = W.d.phonebook?.personal ? personalCsv(W.d, c.n3) : '';
   const hasCsv = csv.split('\r\n').length > 1;
   const text = [`Bonjour ${c.first || c.name},`, '', 'Votre compte pour l\'application Wazo (web, ordinateur et mobile) est prêt :', '',
     `  Identifiant : ${c.username}`, `  Mot de passe : ${c.password}`, host ? `  Serveur : ${host}` : '', `  Votre numéro interne : ${c.n}`, '',
+    ...textLines(links), textLines(links).length ? '' : null,
     hasCsv ? 'Vous trouverez en pièce jointe vos contacts personnels repris de l\'ancien standard (fichier CSV), à importer dans vos contacts personnels de l\'application.' : '',
-    ''].filter((l, i, a) => l !== '' || a[i - 1] !== '').concat(String(sig || '').replace(/\r\n?/g, '\n').trim().split('\n')).join('\r\n');
+    ''].filter((l) => l !== null).filter((l, i, a) => l !== '' || a[i - 1] !== '').concat(textLines(sig)).join('\r\n');
   const bnd = `astrea-${rnd(16, 'abcdefghijklmnopqrstuvwxyz0123456789')}`;
   const file = `contacts-${c.n}.csv`;
   return [`To: ${c.email ? `${hdr(c.name)} <${c.email}>` : ''}`, `Subject: ${hdr('Vos accès à l\'application Wazo')}`, 'X-Unsent: 1', 'MIME-Version: 1.0',
@@ -869,8 +881,19 @@ function routingOps(t) {
     ops.push({ soft: true, label: `SDA ${x.n} → ${destLabel(d, r.dest)}${sk ? ' + horaire' : ''} (POST /incalls)`, run: async () => {
       await relire();
       const dest = must(wazoDest(T, r.dest, { ctx: R.ctxOf(r) }), `SDA ${x.n}`);
-      const inc = await tapi('POST', '/incalls', { destination: dest });
-      const undo = [{ method: 'DELETE', path: `/incalls/${inc.id}` }];
+      // Plage de la SDA dans le contexte entrant (test réel de Brice, 16/11/2026 : SDA absentes du contexte
+      // entrant). confd refuse une SDA hors des incall_ranges (extension/validator.py, ExtensionRangeValidator) ;
+      // Wazo ajoute lui-même la plage manquante (user/middleware.py, update_context) : même chose ici, sinon
+      // seul un contexte créé par l'outil avait les plages. Annulation : plages d'avant.
+      let rangeUndo = null;
+      const cx = await tapi('GET', `/contexts/${x.ic.id}`); const prevR = cx.incall_ranges || [];
+      if (!prevR.some((g) => inDidRange(x.n, g))) {
+        await tapi('PUT', `/contexts/${x.ic.id}`, { incall_ranges: [...prevR, didRange(x.n)] });
+        rangeUndo = { method: 'PUT', path: `/contexts/${x.ic.id}`, body: { incall_ranges: prevR } };
+      }
+      let inc;
+      try { inc = await tapi('POST', '/incalls', { destination: dest }); } catch (e) { if (rangeUndo) { try { await runUndo(rangeUndo); } catch { /* */ } } throw e; }
+      const undo = [{ method: 'DELETE', path: `/incalls/${inc.id}` }, ...(rangeUndo ? [rangeUndo] : [])];
       try {
         const e = await tapi('POST', '/extensions', { exten: x.n, context: x.ic.name });
         undo.unshift({ method: 'DELETE', path: `/extensions/${e.id}` });
@@ -878,8 +901,8 @@ function routingOps(t) {
         if (sk) { const sid = mk.scheds[sk]; if (!sid) throw new Error('horaire pas créé'); await tapi('PUT', `/incalls/${inc.id}/schedules/${sid}`); }
       } catch (e) { for (const u of undo) { try { await runUndo(u); } catch { /* */ } } throw e; }
       mk.dids[r.did] = inc.id;
-      // Ordre d'annulation : SDA d'abord (libère le numéro), puis numéro.
-      return { created: `${inc.id}`, undo: { seq: [{ method: 'DELETE', path: `/incalls/${inc.id}` }, ...undo.filter((u) => u.path.startsWith('/extensions'))] } };
+      // Ordre d'annulation : SDA d'abord (libère le numéro), puis numéro, puis plages d'avant.
+      return { created: `${inc.id}${rangeUndo ? ' · plage ajoutée au contexte entrant' : ''}`, undo: { seq: [{ method: 'DELETE', path: `/incalls/${inc.id}` }, ...undo.filter((u) => u.path.startsWith('/extensions')), ...(rangeUndo ? [rangeUndo] : [])] } };
     } });
   }
   return ops;
@@ -1610,9 +1633,14 @@ export async function wizardClick(b, rerender) {
     return;
   }
   if (act === 'mails') {
-    return confirmModal(`<h3>Mails de bienvenue (${W.creds.length})</h3><label class="small">Signature, en fin de chaque mail<br><textarea id="x3w-sig" rows="6" style="width:100%">${esc(getSig())}</textarea></label><p class="small muted">Gardée dans ce navigateur pour les prochaines fois. Texte seul : Outlook n'ajoute pas votre signature automatique à un .eml ouvert.</p>`, () => {
-      const sig = document.getElementById('x3w-sig').value; setSig(sig);
-      const blob = zipOf(W.creds.map((c) => ({ name: `${safeName(`${c.n} ${c.name}`)}.eml`, text: emlOf(c, sig) })));
+    return confirmModal(`<h3>Mails de bienvenue (${W.creds.length})</h3>
+      <label class="small">Téléchargements et tutos d'installation (après les identifiants ; vide = aucun)<br><textarea id="x3w-links" rows="6" style="width:100%">${esc(getLinks())}</textarea></label>
+      <label class="small">Signature, en fin de chaque mail<br><textarea id="x3w-sig" rows="5" style="width:100%">${esc(getSig())}</textarea></label>
+      <p class="small muted">Gardés dans ce navigateur pour les prochaines fois. Texte seul : Outlook n'ajoute pas votre signature automatique à un .eml ouvert ; une adresse en https:// devient un lien cliquable dans Outlook.</p>`, () => {
+      const sig = document.getElementById('x3w-sig').value; const links = document.getElementById('x3w-links').value;
+      if (/<lien>/i.test(links)) { toast('Remplacer chaque « <lien> » par une adresse, ou retirer la ligne.', 6000); return false; }
+      setSig(sig); setLinks(links);
+      const blob = zipOf(W.creds.map((c) => ({ name: `${safeName(`${c.n} ${c.name}`)}.eml`, text: emlOf(c, sig, links) })));
       const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `mails-wazo-${W.d.write.clientId || 'client'}.zip`;
       document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
     }, 'Télécharger les mails');
