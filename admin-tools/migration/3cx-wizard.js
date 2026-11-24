@@ -8,16 +8,16 @@
 // phase (sauvegarde, journal, annulation) → 5 Contrôle final (lecture seule).
 // Phases : Fondations (vérifiée en réel), Personnes (5b), Routage (5c), Finitions
 // (5d) ; écritures lues dans le code de Wazo, testées sur faux tenant.
-import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.80';
-import { I, sameTenant } from './inventory.js?v=0.40.80';
-import { buildExport, exportFileName } from './export.js?v=0.40.80';
-import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText, didWazo, numWazo, unverified, defaultVmo, vmEmail, isVoix, deviceDesc, QUEUE_STRATEGY, scheduleOf, didSchedule, destProblem } from './3cx-draft.js?v=0.40.80';
+import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.81';
+import { I, sameTenant } from './inventory.js?v=0.40.81';
+import { buildExport, exportFileName } from './export.js?v=0.40.81';
+import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText, didWazo, numWazo, unverified, defaultVmo, vmEmail, isVoix, deviceDesc, QUEUE_STRATEGY, scheduleOf, didSchedule, destProblem, holidayPast } from './3cx-draft.js?v=0.40.81';
 import {
   SITE_MODES, FR_FAMILIES, FR_FORMATS, BLOCK_118, defaultSite, defaultOut, clientPatterns, unitDids, rangeIssues, occupancy, placements, unitLabels, unitCfg, futureOf, siteChecks, routeText, newRanges, multi as multiSites, wazoNum, numberIssues, NO_TRUNK, exitOk, outcallName,
-} from './3cx-sites.js?v=0.40.80';
-import { unitList, unitOf, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.80';
-import { mohLabel, soundCategory, loaded, uniqueNames, putBinary, CATEGORY_RE } from './3cx-sounds.js?v=0.40.80';
-import { phonebookName, companyContacts, sourceColumns, dird, personalCsv } from './3cx-phonebook.js?v=0.40.80';
+} from './3cx-sites.js?v=0.40.81';
+import { unitList, unitOf, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.81';
+import { mohLabel, soundCategory, loaded, uniqueNames, putBinary, CATEGORY_RE } from './3cx-sounds.js?v=0.40.81';
+import { phonebookName, companyContacts, sourceColumns, dird, personalCsv } from './3cx-phonebook.js?v=0.40.81';
 
 const W = { d: null, m: null, t: null, busy: false, msg: null, at: null };
 export function setWizard(d, m) { W.d = d; W.m = m; W.t = null; W.msg = null; W.final = null; ensureState(); }
@@ -765,11 +765,14 @@ function openPeriods(s) {
   return [...by.values()].map((x) => ({ hours_start: x.hours_start, hours_end: x.hours_end, week_days: [...new Set(x.days)].sort(), month_days: ALL31, months: ALL12 }));
 }
 // Fermeture 3CX → périodes Wazo (jours regroupés par mois, comme l'éditeur d'horaire de Call Flow).
+// week_days : les 7 jours. confd refuse une liste vide (schedule/schema.py, validate_week_days_length :
+// « week_days cannot be empty », 400 du test réel de Brice, 24/11/2026) ; une date tombe un jour quelconque.
+const ALL7 = [1, 2, 3, 4, 5, 6, 7];
 function holidayPeriods(h, dest) {
   const out = []; const y = 2001; // année non bissextile quelconque : seuls jour et mois comptent
   let cur = new Date(Date.UTC(y, h.month - 1, h.day)); const end = new Date(Date.UTC(y, (h.monthEnd || h.month) - 1, h.dayEnd || h.day));
   const by = new Map(); for (let i = 0; i < 366 && cur <= end; i++) { const m = cur.getUTCMonth() + 1; if (!by.has(m)) by.set(m, []); by.get(m).push(cur.getUTCDate()); cur = new Date(cur.getTime() + 86400000); }
-  for (const [m, days] of by) out.push({ hours_start: h.from || '00:00', hours_end: h.to || '23:59', week_days: [], month_days: days, months: [m], destination: dest });
+  for (const [m, days] of by) out.push({ hours_start: h.from || '00:00', hours_end: h.to || '23:59', week_days: ALL7, month_days: days, months: [m], destination: dest });
   return out;
 }
 // Sortie d'une fermeture exceptionnelle : celle « férié » de l'horaire ; sans elle (aucune), celle « fermé »
@@ -783,7 +786,8 @@ function holidayTarget(t, s, h, ctx) {
   if (r.dest || r.pending || x?.t !== 'sound') return { r, x, fb: false };
   return { r: wazoDest(t, s.closed, { ctx }), x: s.closed, fb: true };
 }
-const schedHolidays = (s) => (W.d.holidays || []).filter((h) => h.include !== false && (!s.dept || (h.depts || []).some((x) => x === 'tenant' || x === s.dept)));
+// Fermetures reprises : cochées, et pas déjà passées (holidayPast, calculé aujourd'hui).
+const schedHolidays = (s) => (W.d.holidays || []).filter((h) => h.include !== false && !holidayPast(h) && (!s.dept || (h.depts || []).some((x) => x === 'tenant' || x === s.dept)));
 function routingState(t, c) {
   const d = W.d; const mk = RMADE();
   const taken = new Set(t.extensions.map((e) => `${e.exten}@${e.context}`));

@@ -13,7 +13,7 @@
 // Les objets Wazo correspondants (destinations confd user_id, group_id…) ne
 // sont résolus qu'à l'écriture : convertir une file en groupe ne demande donc
 // aucune reprise des destinations qui la visent.
-import { nameOf, schedulesOf, STRATEGY } from './3cx.js?v=0.40.80';
+import { nameOf, schedulesOf, STRATEGY } from './3cx.js?v=0.40.81';
 
 export const DRAFT_FORMAT = 'astrea-3cx-draft';
 const KEY = 'astrea-migration-3cx-draft-v1';
@@ -177,6 +177,14 @@ export const VERIFY = {
 };
 // Objets pas encore vérifiés, par onglet : [{ tab, label, n, total }].
 export const unverified = (d) => Object.entries(VERIFY).map(([tab, v]) => { const l = v.list(d); return { tab, label: v.label, total: l.length, n: l.filter((o) => !o[v.key]).length }; }).filter((x) => x.n);
+// Fermeture datée (non annuelle) déjà passée aujourd'hui (retour de Brice, 24/11/2026 : « 11 novembre »
+// à venir au chargement de la sauvegarde, passé à l'écriture : « ne pas reprendre les jours fériés passés »).
+// Calculé au moment de l'usage, pas seulement à la construction du brouillon : jamais reprise.
+export function holidayPast(h, now = new Date()) {
+  if (h.recurrent || !h.year) return false;
+  const end = new Date(h.yearEnd || h.year, (h.monthEnd || h.month) - 1, h.dayEnd || h.day, 23, 59, 59);
+  return end < now;
+}
 // Sorties d'un horaire du brouillon (pour les contrôles et les départements).
 export const scheduleOf = (d, key) => (d.schedules || []).find((s) => s.key === key) || null;
 // Horaire réellement créé pour une SDA : null si elle n'en a pas, ou si sa reprise est décochée

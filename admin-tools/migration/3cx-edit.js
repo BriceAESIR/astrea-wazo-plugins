@@ -2,19 +2,19 @@
 // Modèle et règles : 3cx-draft.js. Chaque modification est enregistrée dans le
 // navigateur (brouillon par fichier et date de sauvegarde) ; rien n'est écrit
 // dans Wazo depuis ces tableaux.
-import { $, esc, toast, helpButton, helpBox, confirmModal, downloadJson } from '../common/core.js?v=0.40.80';
-import { I } from './inventory.js?v=0.40.80';
+import { $, esc, toast, helpButton, helpBox, confirmModal, downloadJson } from '../common/core.js?v=0.40.81';
+import { I } from './inventory.js?v=0.40.81';
 import {
   GROUP_STRATEGIES, MODES, HUNT_TARGETS, LICENCES, AUTH_METHODS, effectiveUsername, isVoix, applyLicence, fillCallerIds, callerIdWazo, upgradeDraft, saveDraft, clearDraft, buildDraft, acceptDraft, userBy, userName, imported,
   destLabel, destProblem, draftIssues, usersCsv, blfRows, devicesCsv, deviceDesc, macWazo, macValid, tenantIssues,
-  LINE_MODES, linesOf, VM_LANGS, vmEmail, upperName, upgradeSchedules, pastHolidays, didWazo, VERIFY,
-} from './3cx-draft.js?v=0.40.80';
-import { setWizard, wizardTab, wizardChange, wizardClick, wizardDone, wizardTotal } from './3cx-wizard.js?v=0.40.80';
-import { unitCfg, unitLabels, autoRanges, RANGE_KEYS, rangeIssues, unitPrefix, wazoNum, wazoNumOf, renumbers, numberIssues } from './3cx-sites.js?v=0.40.80';
-import { rangesText } from './multisite.js?v=0.40.80';
-import { WAZO_FIELDS, tagsOf, tagLabel, tagChecked, ensurePhonebook, phonebookName, phonebookIssues, companyContacts, personalCsv, toWazoContact, csvKeys } from './3cx-phonebook.js?v=0.40.80';
-import { SORTS, CATEGORY_RE, soundUsages, ensureSounds, mohLabel, soundCategory, FILES, keyOf, loaded, addFiles, addFileAs, targetName } from './3cx-sounds.js?v=0.40.80';
-import { DEPT_MODES, deptLabel, ensureDepts, deptObjects, unitOf, unitList, setDeptMode, moveObject } from './3cx-depts.js?v=0.40.80';
+  LINE_MODES, linesOf, VM_LANGS, vmEmail, upperName, upgradeSchedules, pastHolidays, holidayPast, didWazo, VERIFY,
+} from './3cx-draft.js?v=0.40.81';
+import { setWizard, wizardTab, wizardChange, wizardClick, wizardDone, wizardTotal } from './3cx-wizard.js?v=0.40.81';
+import { unitCfg, unitLabels, autoRanges, RANGE_KEYS, rangeIssues, unitPrefix, wazoNum, wazoNumOf, renumbers, numberIssues } from './3cx-sites.js?v=0.40.81';
+import { rangesText } from './multisite.js?v=0.40.81';
+import { WAZO_FIELDS, tagsOf, tagLabel, tagChecked, ensurePhonebook, phonebookName, phonebookIssues, companyContacts, personalCsv, toWazoContact, csvKeys } from './3cx-phonebook.js?v=0.40.81';
+import { SORTS, CATEGORY_RE, soundUsages, ensureSounds, mohLabel, soundCategory, FILES, keyOf, loaded, addFiles, addFileAs, targetName } from './3cx-sounds.js?v=0.40.81';
+import { DEPT_MODES, deptLabel, ensureDepts, deptObjects, unitOf, unitList, setDeptMode, moveObject } from './3cx-depts.js?v=0.40.81';
 
 const E = { d: null, m: null, file: '', tab: 'users', sel: { users: new Set(), dids: new Set(), vms: new Set() }, q: '', onReset: null };
 export const TABS = [
@@ -613,7 +613,7 @@ function schedsTab(opts) {
   return `${intro('scheds', 'Horaires', 'Horaires Wazo à créer, déduits des règles entrantes 3CX. Une règle « heures de bureau » prend celles du département de sa SDA (heures de bureau moins la pause) ; une règle à plages propres garde les siennes. Le nom est modifiable ; les plages se modifieront dans Call Flow Manager après création. Comme dans Wazo, l\'horaire porte ses sorties : « Fermé » (hors des plages) et « Férié » (pendant les fermetures exceptionnelles) ; les SDA ne font que le viser. Des SDA 3CX aux mêmes plages mais aux sorties différentes ont donné des horaires distincts ; « Dupliquer » en crée un autre, à choisir ensuite dans l\'onglet SDA. Fermetures exceptionnelles : celles de 3CX pour tous les départements et celles d\'un département, ajoutées aux horaires concernés si cochées ; les fermetures passées ne sont pas reprises. Les jours fériés légaux français autres que ceux de la sauvegarde sont à ajouter. Reprise décochée : l\'horaire n\'est pas créé, ses SDA sont créées toujours ouvertes (sans sortie « fermé » ni « férié »).', `${keepBar('scheds')}${verifyBar('scheds')}`)}
     <div class="x3-edit-wrap"><table class="diff x3-edit">${head([['Reprise', KEEP_TIP], ['Vérifié', VERIFIED_TIP], ['Nom'], ['Département', 'Département 3CX dont l\'horaire reprend les heures de bureau, ou règle entrante dont il reprend les heures spécifiques'], ['Plages'], ['Fermé', 'Où va l\'appel hors des plages (closed_destination)'], ['Férié', 'Où va l\'appel pendant les fermetures exceptionnelles de l\'horaire'], ['SDA'], ['']])}<tbody>${d.schedules.map((s, i) => `<tr class="${s.import === false ? 'x3-off' : used(s.key) && !s.checked ? 'x3-unchecked' : ''}">${keepCell('scheds', i)}<td class="x3-c">${used(s.key) && s.import !== false ? check(`schedules.${i}.checked`, 'Vérifié') : ''}</td><td>${input(`schedules.${i}.name`)}</td><td class="small">${s.dept ? esc(deptLabel(s.dept)) : `<span class="muted">heures spécifiques de la règle entrante${(() => { const l = d.dids.filter((r) => r.schedule === s.key).map((r) => didWazo(r.did)); return l.length ? ` (${esc(l.join(', '))})` : ''; })()}</span>`}</td><td>${esc(s.text)}</td><td>${destCell(`schedules.${i}.closed`, opts)}</td><td>${destCell(`schedules.${i}.holiday`, opts)}</td><td>${used(s.key)}</td><td><button data-act="sched-dup" data-i="${i}" class="x3-mini" title="Même plages, autres sorties : à choisir ensuite pour certaines SDA">Dupliquer</button></td></tr>`).join('') || '<tr><td colspan="9" class="muted">Aucun horaire.</td></tr>'}</tbody></table></div>
     <h3 class="x3-h">Fermetures exceptionnelles</h3>${past ? `<p class="small muted">${past} fermeture(s) passée(s) dans la sauvegarde, non reprises.</p>` : ''}
-    <div class="x3-edit-wrap"><table class="diff x3-edit">${head([['Reprise'], ['Nom'], ['Départements'], ['Dates'], ['Heures']])}<tbody>${d.holidays.map((h, i) => `<tr class="${h.include ? '' : 'x3-off'}"><td class="x3-c">${check(`holidays.${i}.include`)}</td><td>${input(`holidays.${i}.name`)}</td><td class="small">${esc(where(h))}</td><td>${h.day}/${h.month}${h.recurrent ? ' (tous les ans)' : `/${h.year}`}${h.dayEnd !== h.day || h.monthEnd !== h.month ? ` → ${h.dayEnd}/${h.monthEnd}` : ''}</td><td>${esc(h.from)}-${esc(h.to)}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">Aucune à venir.</td></tr>'}</tbody></table></div>`;
+    <div class="x3-edit-wrap"><table class="diff x3-edit">${head([['Reprise'], ['Nom'], ['Départements'], ['Dates'], ['Heures']])}<tbody>${d.holidays.map((h, i) => `<tr class="${h.include && !holidayPast(h) ? '' : 'x3-off'}"><td class="x3-c">${holidayPast(h) ? '<span class="muted small" title="Fermeture datée déjà passée : jamais reprise">passée</span>' : check(`holidays.${i}.include`)}</td><td>${input(`holidays.${i}.name`)}</td><td class="small">${esc(where(h))}</td><td>${h.day}/${h.month}${h.recurrent ? ' (tous les ans)' : `/${h.year}`}${h.dayEnd !== h.day || h.monthEnd !== h.month ? ` → ${h.dayEnd}/${h.monthEnd}` : ''}</td><td>${esc(h.from)}-${esc(h.to)}</td></tr>`).join('') || '<tr><td colspan="5" class="muted">Aucune à venir.</td></tr>'}</tbody></table></div>`;
 }
 
 const SEV_FR = { error: 'Erreur', warn: 'À vérifier', info: 'Info' };
