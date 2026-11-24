@@ -8,16 +8,16 @@
 // phase (sauvegarde, journal, annulation) → 5 Contrôle final (lecture seule).
 // Phases : Fondations (vérifiée en réel), Personnes (5b), Routage (5c), Finitions
 // (5d) ; écritures lues dans le code de Wazo, testées sur faux tenant.
-import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.78';
-import { I, sameTenant } from './inventory.js?v=0.40.78';
-import { buildExport, exportFileName } from './export.js?v=0.40.78';
-import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText, didWazo, numWazo, unverified, defaultVmo, vmEmail, isVoix, deviceDesc, QUEUE_STRATEGY, scheduleOf, didSchedule, destProblem } from './3cx-draft.js?v=0.40.78';
+import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.79';
+import { I, sameTenant } from './inventory.js?v=0.40.79';
+import { buildExport, exportFileName } from './export.js?v=0.40.79';
+import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText, didWazo, numWazo, unverified, defaultVmo, vmEmail, isVoix, deviceDesc, QUEUE_STRATEGY, scheduleOf, didSchedule, destProblem } from './3cx-draft.js?v=0.40.79';
 import {
   SITE_MODES, FR_FAMILIES, FR_FORMATS, BLOCK_118, defaultSite, defaultOut, clientPatterns, unitDids, rangeIssues, occupancy, placements, unitLabels, unitCfg, futureOf, siteChecks, routeText, newRanges, multi as multiSites, wazoNum, numberIssues, NO_TRUNK, exitOk, outcallName,
-} from './3cx-sites.js?v=0.40.78';
-import { unitList, unitOf, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.78';
-import { mohLabel, soundCategory, loaded, uniqueNames, putBinary, CATEGORY_RE } from './3cx-sounds.js?v=0.40.78';
-import { phonebookName, companyContacts, sourceColumns, dird, personalCsv } from './3cx-phonebook.js?v=0.40.78';
+} from './3cx-sites.js?v=0.40.79';
+import { unitList, unitOf, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.79';
+import { mohLabel, soundCategory, loaded, uniqueNames, putBinary, CATEGORY_RE } from './3cx-sounds.js?v=0.40.79';
+import { phonebookName, companyContacts, sourceColumns, dird, personalCsv } from './3cx-phonebook.js?v=0.40.79';
 
 const W = { d: null, m: null, t: null, busy: false, msg: null, at: null };
 export function setWizard(d, m) { W.d = d; W.m = m; W.t = null; W.msg = null; W.final = null; ensureState(); }
@@ -484,14 +484,23 @@ const inDidRange = (n, g) => { const L = Number(g.did_length) || 0; const cut = 
 // renommés par les Fondations (PUT /contexts/{id} {label}, partiel, lu). Retour de Brice, 16/11/2026.
 const ctxRenames = (t, c) => c.units.filter((u) => u.created).flatMap((u) => [[u.ctx, u.L.custom.ctx, 'interne'], [u.inc, u.L.custom.inc, 'entrant'], [u.out, u.L.custom.out, 'sortant']]
   .filter(([n, want]) => n && want).map(([n, want, kind]) => ({ cx: t.contexts.find((x) => x.name === n), want: want.trim(), kind })).filter((x) => x.cx && x.want && x.cx.label !== x.want));
-// SDA reprises absentes des plages d'un contexte entrant déjà créé par l'outil (retour de Brice, 24/11/2026 :
-// « dans incall je n'ai pas les SDA ») : SDA cochées après la création, ou notées sans le 0 par 3CX avant
-// la 0.40.78 (déclarées à 9 chiffres). Ajoutées en 33 + 9 chiffres par « Compléter » des Fondations.
-const missingDidCtx = (t, c) => c.units.filter((u) => u.created && u.inc).map((u) => {
-  const cx = t.contexts.find((x) => x.name === u.inc); if (!cx) return null;
-  const miss = unitDids(W.d, c.many ? u.key : null).filter((n) => !(cx.incall_ranges || []).some((g) => inDidRange(n, g)));
-  return miss.length ? { cx, miss } : null;
-}).filter(Boolean);
+// SDA reprises absentes des plages du contexte entrant où elles seront créées (retour de Brice, 24/11/2026 :
+// « dans incall je n'ai pas les SDA »). Capture du 24/11 : contexte entrant déjà présent dans le tenant
+// (« choisi dans Exports »), que l'outil ne remplissait jamais (seul un contexte qu'il créait recevait
+// les SDA). Désormais : tout contexte entrant existant visé par une SDA reprise (même règle que le Routage,
+// contextsOf.incallOf), qu'il ait été créé par l'outil ou non. Ajoutées en 33 + 9 chiffres par les Fondations.
+// Un contexte entrant à créer (virtuel) reçoit ses SDA à sa création.
+const missingDidCtx = (t, c) => {
+  const by = new Map();
+  for (const r of W.d.dids.filter((x) => x.import)) {
+    const ic = c.incallOf(r); if (!ic || ic.virtual) continue;
+    const cx = t.contexts.find((x) => x.name === ic.name && x.type === 'incall'); if (!cx) continue;
+    const n = didWazo(r.did); if (!/^\d+$/.test(n) || (cx.incall_ranges || []).some((g) => inDidRange(n, g))) continue;
+    if (!by.has(cx.id)) by.set(cx.id, { cx, miss: [] });
+    if (!by.get(cx.id).miss.includes(n)) by.get(cx.id).miss.push(n);
+  }
+  return [...by.values()];
+};
 // Contextes entrants créés par l'outil avant la 0.40.65 : plages sans did_length.
 const zeroDidCtx = (t, c) => c.units.filter((u) => u.created && u.inc).map((u) => t.contexts.find((x) => x.name === u.inc)).filter((x) => x && (x.incall_ranges || []).some((r) => !r.did_length && /^\d+$/.test(r.start)));
 // ---------------------------------------------------------------------------

@@ -5,11 +5,11 @@
 // renvoie la destination au brouillon (onSave). Champs vérifiés dans le schéma
 // des destinations de wazo-confd (ring_time, greeting, skip_instructions,
 // filename, skip, no_answer, cause, exten + context).
-import { $, esc, confirmModal, helpButton, helpBox } from '../common/core.js?v=0.40.78';
-import { TYPES, M, listOf, destLabel } from './model.js?v=0.40.78';
-import { fillSoundSelect } from './sched-editor.js?v=0.40.78';
-import { sec, field, setSums, openSec } from './ed-ui.js?v=0.40.78';
-import { EXTRA_TYPES, destFieldsHtml, destOptsHtml, readDestExtra, bindDestExtra, hasOpts, refreshVmHints } from './dest-opts.js?v=0.40.78';
+import { $, esc, confirmModal, helpButton, helpBox } from '../common/core.js?v=0.40.79';
+import { TYPES, M, listOf, destLabel } from './model.js?v=0.40.79';
+import { fillSoundSelect } from './sched-editor.js?v=0.40.79';
+import { sec, field, setSums, openSec } from './ed-ui.js?v=0.40.79';
+import { EXTRA_TYPES, destFieldsHtml, destOptsHtml, readDestExtra, bindDestExtra, hasOpts, refreshVmHints } from './dest-opts.js?v=0.40.79';
 
 export const DEST_TYPES = [
   ['user', 'Utilisateur'], ['group', 'Groupe'], ['queue', 'File d\'attente'], ['ivr', 'SVI'], ['voicemail', 'Messagerie'],

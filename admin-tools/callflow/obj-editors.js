@@ -10,14 +10,14 @@
 // Codes (messagerie, conférence) : champ masqué avec « Afficher » / « Générer » ;
 // jamais en clair dans le brouillon, l'aperçu ni la sauvegarde JSON (redact).
 // Le mot de passe de connexion d'un utilisateur reste dans User Manager.
-import { $, esc, toast, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.40.78';
-import { M, vmTzSelect, GREET_ROLE, vmGreetUses } from './model.js?v=0.40.78';
+import { $, esc, toast, confirmModal, helpButton, helpBox, fullName } from '../common/core.js?v=0.40.79';
+import { M, vmTzSelect, GREET_ROLE, vmGreetUses } from './model.js?v=0.40.79';
 const GREET_ORDER = ['unavailable', 'busy', 'name'];
-import { fillSoundSelect, pickerHtml, bindPicker, readPicker } from './sched-editor.js?v=0.40.78';
-import { GREETINGS, greetingExists, playGreeting, playBtn, saveGreeting, deleteGreeting, toWav8k, moTxt } from './sound-play.js?v=0.40.78';
-import { incallNumberHtml, bindIncallNumber, readIncallNumber, checkIncallNumber } from './numbers.js?v=0.40.78';
-import { sec, field, check, setSums, openSec, secretField, bindSecrets, tzSelect, langSelect } from './ed-ui.js?v=0.40.78';
-import { bindNewSchedule, schedValue } from './create.js?v=0.40.78';
+import { fillSoundSelect, pickerHtml, bindPicker, readPicker } from './sched-editor.js?v=0.40.79';
+import { GREETINGS, greetingExists, playGreeting, playBtn, saveGreeting, deleteGreeting, toWav8k, moTxt } from './sound-play.js?v=0.40.79';
+import { incallNumberHtml, bindIncallNumber, readIncallNumber, checkIncallNumber } from './numbers.js?v=0.40.79';
+import { sec, field, check, setSums, openSec, secretField, bindSecrets, tzSelect, langSelect } from './ed-ui.js?v=0.40.79';
+import { bindNewSchedule, schedValue } from './create.js?v=0.40.79';
 
 const pickFields = (o, keys) => { const f = {}; for (const k of keys) f[k] = o?.[k] ?? null; return f; };
 const diffKeys = (a, b, keys, L) => keys.filter((k) => JSON.stringify(a?.fields?.[k] ?? null) !== JSON.stringify(b?.fields?.[k] ?? null)).map((k) => L[k] || k);
