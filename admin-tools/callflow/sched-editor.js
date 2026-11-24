@@ -9,22 +9,27 @@
 //     français à date fixe » (+ 26 décembre Alsace-Moselle en option).
 // Règles Wazo (wazo-agid schedule.py, lu) : critères d'une période en ET,
 // champ vide = sans restriction, heures (h, min) bornes incluses ; confd exige
-// hours_start / hours_end. Conversions :
+// hours_start / hours_end et REFUSE une liste vide (schedule/schema.py,
+// validate_*_length : « week_days cannot be empty », idem month_days, months ;
+// 400 vu en réel le 24/11/2026). « Tous » s'envoie donc en liste complète
+// (ALL7, ALL31, ALL12) ; la relecture traite vide et complet de la même façon.
+// write.js complète aussi les listes vides avant le PUT (filet). Conversions :
 //  - grille : une case = 15 min [t, t+15[ ; une suite [a, b[ devient
 //    hours_start a, hours_end b (12:00 couvre 12:00, comme une saisie du
 //    portail) ou 23:59 si b = 24:00 ; jours aux créneaux identiques regroupés ;
 //  - fermetures : chaque jour d'une ligne (période « du … au … » comprise,
 //    même à cheval sur deux mois) est regroupé par mois, heures et
-//    destination : { months: [m], month_days: [...], week_days: [] } ;
+//    destination : { months: [m], month_days: [...], week_days: ALL7 } (une
+//    date tombe un jour de semaine quelconque) ;
 //  - plage d'ouverture limitée à certains mois / jours du mois : section
 //    « Plages saisonnières » (cases mois et jours, jours du mois, heures),
 //    modifiable (15/10/2026) ;
 //  - fermeture liée à un jour de semaine ou valable tous les mois : conservée
 //    telle quelle et listée (supprimable).
-import { $, esc, confirmModal, helpButton, helpBox } from '../common/core.js?v=0.40.81';
-import { M, listOf, destLabel, loadSounds, soundName } from './model.js?v=0.40.81';
-import { attachPlay } from './sound-play.js?v=0.40.81';
-import { EXTRA_TYPES, destFieldsHtml, destOptsHtml, readDestExtra, bindDestExtra, hasOpts, refreshVmHints } from './dest-opts.js?v=0.40.81';
+import { $, esc, confirmModal, helpButton, helpBox } from '../common/core.js?v=0.40.82';
+import { M, listOf, destLabel, loadSounds, soundName } from './model.js?v=0.40.82';
+import { attachPlay } from './sound-play.js?v=0.40.82';
+import { EXTRA_TYPES, destFieldsHtml, destOptsHtml, readDestExtra, bindDestExtra, hasOpts, refreshVmHints } from './dest-opts.js?v=0.40.82';
 
 const SLOT = 15, N = 96;
 const DAYS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
@@ -37,6 +42,7 @@ const pad = (n) => String(n).padStart(2, '0');
 const hhmm = (m) => `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
 const hm = (s) => { const [h, m] = String(s || '').split(':').map(Number); return Number.isFinite(h) ? h * 60 + (m || 0) : null; };
 const partial = (a, full) => Array.isArray(a) && a.length > 0 && a.length < full;
+const ALL7 = [1, 2, 3, 4, 5, 6, 7], ALL31 = Array.from({ length: 31 }, (_, i) => i + 1), ALL12 = Array.from({ length: 12 }, (_, i) => i + 1);
 const sameD = (a, b) => JSON.stringify(a || null) === JSON.stringify(b || null);
 // « 1-5, 7 » ↔ [1,2,3,4,5,7] ; null si la saisie est invalide.
 const toList = (s) => { const out = []; for (const part of String(s || '').split(',').map((x) => x.trim()).filter(Boolean)) { const m = part.match(/^(\d+)\s*-\s*(\d+)$/); if (m) { if (+m[1] > 31 || +m[2] > 31) return null; for (let i = +m[1]; i <= +m[2]; i++) out.push(i); } /* bornes 1-31 avant la boucle (audit : « 1-999999999 » figeait l'onglet) */ else if (/^\d+$/.test(part)) out.push(+part); else return null; } return [...new Set(out)].sort((a, b) => a - b); };
@@ -64,7 +70,7 @@ function periodsFromGrid(grid) {
   const groups = new Map();
   grid.forEach((row, d) => { const segs = segmentsOf(row); if (!segs.length) return; const k = JSON.stringify(segs); if (!groups.has(k)) groups.set(k, { segs, days: [] }); groups.get(k).days.push(d + 1); });
   const out = [];
-  for (const { segs, days } of groups.values()) for (const [a, b] of segs) out.push({ hours_start: hhmm(a), hours_end: b === 1440 ? '23:59' : hhmm(b), week_days: days.length === 7 ? [] : days, month_days: [], months: [] });
+  for (const { segs, days } of groups.values()) for (const [a, b] of segs) out.push({ hours_start: hhmm(a), hours_end: b === 1440 ? '23:59' : hhmm(b), week_days: [...days], month_days: [...ALL31], months: [...ALL12] });
   return out;
 }
 
@@ -118,7 +124,7 @@ function excFromRows(rows, hol) {
   // Fériés : une ligne explicite le même jour l'emporte (sinon Wazo prendrait la première période trouvée).
   if (hol.on) for (const [m, d] of [...HOL, ...(hol.alsace ? [ALSACE] : [])]) if (!explicit.has(`${m}-${d}`)) add(m, d, '00:00', '23:59', hol.dest);
   return [...groups.values()].sort((a, b) => a.m - b.m || a.hs.localeCompare(b.hs))
-    .map((g) => ({ hours_start: g.hs, hours_end: g.he, week_days: [], month_days: [...g.days].sort((a, b) => a - b), months: [g.m], destination: g.dest || { type: 'none' } }));
+    .map((g) => ({ hours_start: g.hs, hours_end: g.he, week_days: [...ALL7], month_days: [...g.days].sort((a, b) => a - b), months: [g.m], destination: g.dest || { type: 'none' } }));
 }
 
 // ---------------------------------------------------------------------------
@@ -241,7 +247,7 @@ export function openScheduleEditor(s, onSave) {
       return r;
     });
   }
-  const seasPeriods = (list) => list.map((r) => ({ hours_start: r.hs, hours_end: r.he, week_days: r.wd.length === 7 ? [] : r.wd, month_days: toList(r.md) || [], months: r.months.length === 12 ? [] : r.months }));
+  const seasPeriods = (list) => list.map((r) => ({ hours_start: r.hs, hours_end: r.he, week_days: [...r.wd].sort((a, b) => a - b), month_days: toList(r.md)?.length ? toList(r.md) : [...ALL31], months: [...r.months].sort((a, b) => a - b) }));
   const renderSeas = () => { $('se-slist').innerHTML = seas.map(seasHtml).join(''); };
 
   const gridHtml = () => `<div class="cf-wg"><div class="cf-wg-h"><span></span><div>${Array.from({ length: 9 }, (_, k) => `<b style="left:${(k * 3 / 24) * 100}%">${k * 3} h</b>`).join('')}</div><span></span></div>

@@ -60,6 +60,15 @@ courant. Cadrage, sources et décisions : `docs/CALLFLOW-MANAGER.md` (dépôt de
        L'option à cocher « jours fériés français à date fixe » (Alsace-Moselle
        en plus) complète la liste. Attention : Wazo ne connaît pas l'année,
        donc une fermeture revient chaque année ;
+    - format envoyé à confd : `week_days`, `month_days` et `months` ne sont
+      **jamais vides** (confd répond 400 « week_days cannot be empty », idem
+      pour les deux autres ; `schedule/schema.py`, vu en réel le 24/11/2026
+      via Migration Assistant). « Tous » = liste complète (1-7, 1-31, 1-12),
+      y compris pour une fermeture exceptionnelle (7 jours de semaine, la date
+      tombant un jour quelconque). L'éditeur produit ce format depuis la
+      0.40.82 ; `write.js` complétait déjà les listes vides avant le PUT. À la
+      relecture, une liste vide (ancien format, ou créée ailleurs) et une liste
+      complète s'affichent pareil ;
   - la carte « Horaire » de la palette se dépose sur une **carte** (SDA,
     utilisateur, groupe, file d'attente) pour lui associer un horaire. On peut
     aussi passer par la fiche : « Associer un horaire… » ou « Remplacer par un autre horaire… ». Ces boutons choisissent QUEL horaire garde l'objet ; « Modifier les heures de … » change le CONTENU de l'horaire, pour tous les objets qui l'utilisent ;
