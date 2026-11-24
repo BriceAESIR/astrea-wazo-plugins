@@ -8,16 +8,16 @@
 // phase (sauvegarde, journal, annulation) → 5 Contrôle final (lecture seule).
 // Phases : Fondations (vérifiée en réel), Personnes (5b), Routage (5c), Finitions
 // (5d) ; écritures lues dans le code de Wazo, testées sur faux tenant.
-import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.82';
-import { I, sameTenant } from './inventory.js?v=0.40.82';
-import { buildExport, exportFileName } from './export.js?v=0.40.82';
-import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText, didWazo, numWazo, unverified, defaultVmo, vmEmail, isVoix, deviceDesc, QUEUE_STRATEGY, scheduleOf, didSchedule, destProblem, holidayPast } from './3cx-draft.js?v=0.40.82';
+import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.83';
+import { I, sameTenant } from './inventory.js?v=0.40.83';
+import { buildExport, exportFileName } from './export.js?v=0.40.83';
+import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText, didWazo, numWazo, unverified, defaultVmo, vmEmail, isVoix, deviceDesc, QUEUE_STRATEGY, scheduleOf, didSchedule, destProblem, holidayPast } from './3cx-draft.js?v=0.40.83';
 import {
   SITE_MODES, FR_FAMILIES, FR_FORMATS, BLOCK_118, defaultSite, defaultOut, clientPatterns, unitDids, rangeIssues, occupancy, placements, unitLabels, unitCfg, futureOf, siteChecks, routeText, newRanges, multi as multiSites, wazoNum, numberIssues, NO_TRUNK, exitOk, outcallName,
-} from './3cx-sites.js?v=0.40.82';
-import { unitList, unitOf, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.82';
-import { mohLabel, soundCategory, loaded, uniqueNames, putBinary, CATEGORY_RE } from './3cx-sounds.js?v=0.40.82';
-import { phonebookName, companyContacts, sourceColumns, dird, personalCsv } from './3cx-phonebook.js?v=0.40.82';
+} from './3cx-sites.js?v=0.40.83';
+import { unitList, unitOf, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.83';
+import { mohLabel, soundCategory, loaded, uniqueNames, putBinary, CATEGORY_RE } from './3cx-sounds.js?v=0.40.83';
+import { phonebookName, companyContacts, sourceColumns, dird, personalCsv } from './3cx-phonebook.js?v=0.40.83';
 
 const W = { d: null, m: null, t: null, busy: false, msg: null, at: null };
 export function setWizard(d, m) { W.d = d; W.m = m; W.t = null; W.msg = null; W.final = null; ensureState(); }
@@ -477,6 +477,11 @@ function losses() {
 // d'un incall : { start, end, did_length: len(numéro) }). 0 marche aussi (numéro entier comparé,
 // contextnumbers.in_range) mais le Portal affiche 0 ; question de Brice du 09/11/2026.
 const didRange = (n) => ({ start: n, end: n, did_length: String(n).length });
+// Numéro orphelin : rattaché à rien (champs de extension/schema.py de confd, lus : incall, lines, group,
+// queue, outcall, conference, parking_lot). Laissé par le retour arrière d'une SDA avant la 0.40.83 :
+// réutilisé par le Routage au lieu de bloquer la SDA (« déjà présente »).
+const extFree = (e) => !e.incall && !(e.lines || []).length && !e.group && !e.queue && !e.outcall && !e.conference && !e.parking_lot;
+const orphanExt = (t, exten, ctx) => (t.extensions || []).find((e) => e.exten === exten && e.context === ctx && extFree(e)) || null;
 // SDA dans une plage du contexte entrant, comme xivo-dao (contextnumbers.in_range, lu) : numéro entier
 // comparé aux did_length derniers chiffres des bornes (int(limit[-did_length:]), 0 = borne entière).
 const inDidRange = (n, g) => { const L = Number(g.did_length) || 0; const cut = (s) => Number(L ? String(s).slice(-L) : String(s)); const v = Number(n); return /^\d+$/.test(String(g.start)) && cut(g.start) <= v && v <= cut(g.end ?? g.start); };
@@ -824,7 +829,8 @@ function routingState(t, c) {
   // présente) : pas créé non plus, il serait créé pour rien (retour de Brice, 16/11/2026). Seuls les
   // blocages définitifs comptent (destProblem du brouillon) : un contexte ou un utilisateur pas
   // encore créé le sera par les phases d'avant.
-  const incTaken = new Set(t.extensions.map((e) => `${e.exten}@${e.context}`));
+  // Numéro pris = rattaché à quelque chose ; un numéro orphelin sera réutilisé par la SDA (orphanExt).
+  const incTaken = new Set(t.extensions.filter((e) => !extFree(e)).map((e) => `${e.exten}@${e.context}`));
   const didBlock = (r) => { const ic = c.incallOf(r); return ic && !ic.virtual && incTaken.has(`${didWazo(r.did)}@${ic.name}`) ? 'déjà présente' : destProblem(d, r.dest); };
   const used = new Set(d.dids.filter((r) => r.import && (!didBlock(r) || (mk.dids[r.did] && t.incalls.some((y) => y.id === mk.dids[r.did])))).map((r) => didSchedule(d, r)?.key).filter(Boolean));
   for (const s of d.schedules) if (mk.scheds[s.key] && t.schedules.some((y) => y.id === mk.scheds[s.key])) used.add(s.key);
@@ -929,6 +935,10 @@ function routingOps(t) {
     ops.push({ soft: true, label: `SDA ${x.n} → ${destLabel(d, r.dest)}${sk ? ' + horaire' : ''} (POST /incalls)`, run: async () => {
       await relire();
       const dest = must(wazoDest(T, r.dest, { ctx: R.ctxOf(r) }), `SDA ${x.n}`);
+      // Horaire vérifié AVANT toute écriture (test réel de Brice, 24/11/2026 : horaire refusé, puis 8 SDA
+      // créées à moitié ; leur retour arrière laissait le numéro en place).
+      const sid = sk ? mk.scheds[sk] : null;
+      if (sk && !sid) throw new Error(`horaire « ${didSchedule(d, r).name} » pas créé : SDA non créée`);
       // Plage de la SDA dans le contexte entrant (test réel de Brice, 16/11/2026 : SDA absentes du contexte
       // entrant). confd refuse une SDA hors des incall_ranges (extension/validator.py, ExtensionRangeValidator) ;
       // Wazo ajoute lui-même la plage manquante (user/middleware.py, update_context) : même chose ici, sinon
@@ -941,16 +951,25 @@ function routingOps(t) {
       }
       let inc;
       try { inc = await tapi('POST', '/incalls', { destination: dest }); } catch (e) { if (rangeUndo) { try { await runUndo(rangeUndo); } catch { /* */ } } throw e; }
-      const undo = [{ method: 'DELETE', path: `/incalls/${inc.id}` }, ...(rangeUndo ? [rangeUndo] : [])];
+      // Ordre du retour arrière, lu dans confd : un numéro rattaché à une SDA ne se supprime pas
+      // (extension/validator.py, ExtensionAssociationValidator) ; supprimer la SDA détache son numéro
+      // (xivo-dao incall/persistor.py, _delete_associations). Donc SDA, puis numéro, puis plages d'avant.
+      // L'ancien ordre (numéro d'abord) laissait un numéro orphelin, vu ensuite « déjà présente ».
+      const undo = { inc: { method: 'DELETE', path: `/incalls/${inc.id}` }, ext: null, range: rangeUndo };
+      const rollback = async () => { for (const u of [undo.inc, undo.ext, undo.range]) if (u) { try { await runUndo(u); } catch { /* signalé par l'erreur d'origine */ } } };
+      let reused = false;
       try {
-        const e = await tapi('POST', '/extensions', { exten: x.n, context: x.ic.name });
-        undo.unshift({ method: 'DELETE', path: `/extensions/${e.id}` });
+        // Numéro orphelin du même nom dans le contexte entrant (laissé par une version précédente) : réutilisé.
+        const orphan = orphanExt(T, x.n, x.ic.name);
+        const e = orphan || await tapi('POST', '/extensions', { exten: x.n, context: x.ic.name });
+        reused = !!orphan;
+        undo.ext = { method: 'DELETE', path: `/extensions/${e.id}` };
         await tapi('PUT', `/incalls/${inc.id}/extensions/${e.id}`);
-        if (sk) { const sid = mk.scheds[sk]; if (!sid) throw new Error('horaire pas créé'); await tapi('PUT', `/incalls/${inc.id}/schedules/${sid}`); }
-      } catch (e) { for (const u of undo) { try { await runUndo(u); } catch { /* */ } } throw e; }
+        if (orphan) orphan.incall = { id: inc.id };
+        if (sid) await tapi('PUT', `/incalls/${inc.id}/schedules/${sid}`);
+      } catch (e) { await rollback(); throw e; }
       mk.dids[r.did] = inc.id;
-      // Ordre d'annulation : SDA d'abord (libère le numéro), puis numéro, puis plages d'avant.
-      return { created: `${inc.id}${rangeUndo ? ' · plage ajoutée au contexte entrant' : ''}`, undo: { seq: [{ method: 'DELETE', path: `/incalls/${inc.id}` }, ...undo.filter((u) => u.path.startsWith('/extensions')), ...(rangeUndo ? [rangeUndo] : [])] } };
+      return { created: `${inc.id}${reused ? ' · numéro orphelin réutilisé' : ''}${rangeUndo ? ' · plage ajoutée au contexte entrant' : ''}`, undo: { seq: [undo.inc, undo.ext, ...(rangeUndo ? [rangeUndo] : [])] } };
     } });
   }
   return ops;
