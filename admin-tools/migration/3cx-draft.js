@@ -13,7 +13,7 @@
 // Les objets Wazo correspondants (destinations confd user_id, group_id…) ne
 // sont résolus qu'à l'écriture : convertir une file en groupe ne demande donc
 // aucune reprise des destinations qui la visent.
-import { nameOf, schedulesOf, STRATEGY } from './3cx.js?v=0.40.77';
+import { nameOf, schedulesOf, STRATEGY } from './3cx.js?v=0.40.78';
 
 export const DRAFT_FORMAT = 'astrea-3cx-draft';
 const KEY = 'astrea-migration-3cx-draft-v1';
@@ -60,11 +60,16 @@ export const upperName = (s) => String(s || '').toLocaleUpperCase('fr-FR');
 // SDA dans le contexte entrant Wazo : E.164 français sans « + » (demande de
 // Brice, 04/11/2026) : 0240000000 → 33240000000 ; +33… et 0033… → 33… ; un
 // numéro déjà international sans 0 de tête est gardé tel quel.
+// Retour de Brice (24/11/2026) : SDA attendues en 33 + 9 chiffres (11 chiffres, sans « + ») dans le
+// contexte entrant, sinon l'appel du trunk n'y est pas trouvé. 3CX note parfois la SDA sans le 0
+// (240804007, voir last9) : elle restait à 9 chiffres. Aussi « +33 0… » / « 0033 0… » (0 de trop).
 export function didWazo(n) {
-  const s = String(n || '').replace(/[^\d+]/g, '');
-  if (s.startsWith('+')) return s.slice(1);
-  if (s.startsWith('00')) return s.slice(2);
-  if (/^0\d{9}$/.test(s)) return `33${s.slice(1)}`;
+  let s = String(n || '').replace(/[^\d+]/g, '');
+  if (s.startsWith('+')) s = s.slice(1);
+  else if (s.startsWith('00')) s = s.slice(2);
+  else if (/^0\d{9}$/.test(s)) return `33${s.slice(1)}`;
+  else if (/^[1-9]\d{8}$/.test(s)) return `33${s}`;
+  if (/^330\d{9}$/.test(s)) return `33${s.slice(3)}`;
   return s;
 }
 
@@ -445,6 +450,7 @@ export function draftIssues(d) {
     if (p) add('warn', `SDA ${r.did} ouvert`, r.dest?.t === 'none' ? `${p}.` : `${destLabel(d, r.dest)} : ${p}.`);
     if (r.dest.t === 'none' && !r.dest.todo) noDest.push(r.did);
     if (r.viaCsv && r.dest.t === 'user' && didSchedule(d, r)) csvNoSched.push(r.did);
+    if (!/^33\d{9}$/.test(didWazo(r.did))) add('warn', `SDA ${r.did}`, `déclarée « ${didWazo(r.did)} » dans Wazo : pas un numéro français en 33 + 9 chiffres ; vérifier le format envoyé par le trunk.`);
   }
   const noSched = d.dids.filter((r) => r.import && r.schedule && !didSchedule(d, r)).map((r) => r.did);
   if (noSched.length) add('info', 'SDA', `${noSched.length} SDA dont l'horaire n'est pas repris : toujours ouvertes dans Wazo (${noSched.join(', ')}).`);

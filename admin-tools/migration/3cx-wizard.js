@@ -8,16 +8,16 @@
 // phase (sauvegarde, journal, annulation) → 5 Contrôle final (lecture seule).
 // Phases : Fondations (vérifiée en réel), Personnes (5b), Routage (5c), Finitions
 // (5d) ; écritures lues dans le code de Wazo, testées sur faux tenant.
-import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.77';
-import { I, sameTenant } from './inventory.js?v=0.40.77';
-import { buildExport, exportFileName } from './export.js?v=0.40.77';
-import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText, didWazo, numWazo, unverified, defaultVmo, vmEmail, isVoix, deviceDesc, QUEUE_STRATEGY, scheduleOf, didSchedule, destProblem } from './3cx-draft.js?v=0.40.77';
+import { S, api, listAll, ApiError, esc, toast, canWrite, confirmModal, helpButton, helpBox, downloadJson } from '../common/core.js?v=0.40.78';
+import { I, sameTenant } from './inventory.js?v=0.40.78';
+import { buildExport, exportFileName } from './export.js?v=0.40.78';
+import { saveDraft, imported, userBy, huntBy, userName, draftIssues, tenantIssues, blfRows, destLabel, LICENCES, linesOf, linesText, didWazo, numWazo, unverified, defaultVmo, vmEmail, isVoix, deviceDesc, QUEUE_STRATEGY, scheduleOf, didSchedule, destProblem } from './3cx-draft.js?v=0.40.78';
 import {
   SITE_MODES, FR_FAMILIES, FR_FORMATS, BLOCK_118, defaultSite, defaultOut, clientPatterns, unitDids, rangeIssues, occupancy, placements, unitLabels, unitCfg, futureOf, siteChecks, routeText, newRanges, multi as multiSites, wazoNum, numberIssues, NO_TRUNK, exitOk, outcallName,
-} from './3cx-sites.js?v=0.40.77';
-import { unitList, unitOf, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.77';
-import { mohLabel, soundCategory, loaded, uniqueNames, putBinary, CATEGORY_RE } from './3cx-sounds.js?v=0.40.77';
-import { phonebookName, companyContacts, sourceColumns, dird, personalCsv } from './3cx-phonebook.js?v=0.40.77';
+} from './3cx-sites.js?v=0.40.78';
+import { unitList, unitOf, deptBy, deptLabel, deptObjects } from './3cx-depts.js?v=0.40.78';
+import { mohLabel, soundCategory, loaded, uniqueNames, putBinary, CATEGORY_RE } from './3cx-sounds.js?v=0.40.78';
+import { phonebookName, companyContacts, sourceColumns, dird, personalCsv } from './3cx-phonebook.js?v=0.40.78';
 
 const W = { d: null, m: null, t: null, busy: false, msg: null, at: null };
 export function setWizard(d, m) { W.d = d; W.m = m; W.t = null; W.msg = null; W.final = null; ensureState(); }
@@ -302,13 +302,14 @@ function buildPlan(t) {
       add('found', 'create', `Contexte interne « ${u.L.ctx} »`, `plages ${rangesTxt(newRanges(d, c.many ? u.key : null))}`);
       add('found', 'create', `Contexte sortant « ${u.L.out} »`, `inclus par « ${u.L.ctx} » en premier`);
       const dids = unitDids(d, c.many ? u.key : null);
-      add('found', 'create', `Contexte entrant « ${u.L.inc} »`, `${dids.length} SDA déclarées dans ses plages (${dids.slice(0, 3).join(', ')}${dids.length > 3 ? '…' : ''})`);
+      add('found', 'create', `Contexte entrant « ${u.L.inc} »`, dids.length ? `${dids.length} SDA déclarées dans ses plages, en 33 + 9 chiffres (${dids.slice(0, 3).join(', ')}${dids.length > 3 ? '…' : ''})` : `aucune SDA reprise pour ${c.many ? 'ce département' : 'ce client'} : contexte créé vide (onglets SDA et Départements)`);
       if (u.trunkId) add('found', 'skip', `Trunk ${trunkLabel(t, u.trunkId)}`, `non modifié par l'outil : son contexte entrant sera à régler dans le Portal sur « ${u.L.inc} », après la phase Fondations`);
       if (c.many && d.write.site.interUnits) add('found', 'create', `Inclusions de « ${u.L.ctx} »`, `les ${c.units.length - 1} autre(s) département(s), pour les appels internes entre eux`);
       for (const peer of u.peers) { const x = t.contexts.find((y) => y.name === peer); add('found', 'update', `Inclusions de « ${x?.label || peer} »`, `« ${u.L.ctx} » ajouté en fin de liste (appels vers lui), et inclus par lui (appels depuis lui)`); }
     } else if (u.newOut && u.ctxObj) add('found', 'create', `Contexte sortant « ${u.L.out} »`, `inclus en tête par « ${u.ctxObj.label || u.ctxObj.name} »`);
   }
-  for (const x of ctxRenames(t, c)) add('found', 'update', `Nom du contexte ${x.kind} « ${x.cx.label || x.cx.name} »`, `→ « ${x.want} » (nom saisi)`);
+  for (const x of missingDidCtx(t, c)) add('found', 'update', `SDA du contexte entrant « ${x.cx.label || x.cx.name} »`, `${x.miss.length} à déclarer en 33 + 9 chiffres (${x.miss.slice(0, 3).join(', ')}${x.miss.length > 3 ? '…' : ''})`);
+  for (const x of ctxRenames(t, c)) add('found', 'update',`Nom du contexte ${x.kind} « ${x.cx.label || x.cx.name} »`, `→ « ${x.want} » (nom saisi)`);
   for (const x of zeroDidCtx(t, c)) add('found', 'update',`Longueur des SDA du contexte entrant « ${x.label || x.name} »`, 'did_length 0 → longueur du numéro, comme Wazo (contexte créé avant la 0.40.65)');
   // Fondations : d'abord les plages du contexte interne (les numéros en dépendent).
   for (const { ctx, unit } of rangeTargets(c)) for (const f of rangeFixes(ctx, unit)) add('found', 'update', `Plages ${f.label} du contexte ${ctx.label || ctx.name}`, `ajouter ${f.add.map(rangeTxt).join(', ')} (actuelles : ${f.current.map(rangeTxt).join(', ') || 'aucune'} ; ${f.missing.length} numéro(s) hors plages)`);
@@ -483,6 +484,14 @@ const inDidRange = (n, g) => { const L = Number(g.did_length) || 0; const cut = 
 // renommés par les Fondations (PUT /contexts/{id} {label}, partiel, lu). Retour de Brice, 16/11/2026.
 const ctxRenames = (t, c) => c.units.filter((u) => u.created).flatMap((u) => [[u.ctx, u.L.custom.ctx, 'interne'], [u.inc, u.L.custom.inc, 'entrant'], [u.out, u.L.custom.out, 'sortant']]
   .filter(([n, want]) => n && want).map(([n, want, kind]) => ({ cx: t.contexts.find((x) => x.name === n), want: want.trim(), kind })).filter((x) => x.cx && x.want && x.cx.label !== x.want));
+// SDA reprises absentes des plages d'un contexte entrant déjà créé par l'outil (retour de Brice, 24/11/2026 :
+// « dans incall je n'ai pas les SDA ») : SDA cochées après la création, ou notées sans le 0 par 3CX avant
+// la 0.40.78 (déclarées à 9 chiffres). Ajoutées en 33 + 9 chiffres par « Compléter » des Fondations.
+const missingDidCtx = (t, c) => c.units.filter((u) => u.created && u.inc).map((u) => {
+  const cx = t.contexts.find((x) => x.name === u.inc); if (!cx) return null;
+  const miss = unitDids(W.d, c.many ? u.key : null).filter((n) => !(cx.incall_ranges || []).some((g) => inDidRange(n, g)));
+  return miss.length ? { cx, miss } : null;
+}).filter(Boolean);
 // Contextes entrants créés par l'outil avant la 0.40.65 : plages sans did_length.
 const zeroDidCtx = (t, c) => c.units.filter((u) => u.created && u.inc).map((u) => t.contexts.find((x) => x.name === u.inc)).filter((x) => x && (x.incall_ranges || []).some((r) => !r.did_length && /^\d+$/.test(r.start)));
 // ---------------------------------------------------------------------------
@@ -1086,6 +1095,15 @@ function finishOps(t) {
 }
 async function foundationOps(t) {
   const d = W.d; const c = contextsOf(t); const ops = [];
+  for (const x of missingDidCtx(t, c)) {
+    ops.push({ label: `Contexte entrant « ${x.cx.label || x.cx.name} » : ${x.miss.length} SDA déclarée(s) (PUT /contexts/…)`, run: async () => {
+      const cur = await tapi('GET', `/contexts/${x.cx.id}`); const prev = cur.incall_ranges || [];
+      const add = x.miss.filter((n) => !prev.some((g) => inDidRange(n, g)));
+      if (!add.length) return { created: 'déjà déclarées' };
+      await tapi('PUT', `/contexts/${x.cx.id}`, { incall_ranges: [...prev, ...add.map(didRange)] });
+      return { created: add.join(', '), undo: { method: 'PUT', path: `/contexts/${x.cx.id}`, body: { incall_ranges: prev } } };
+    } });
+  }
   for (const x of ctxRenames(t, c)) {
     ops.push({ label: `Contexte ${x.kind} « ${x.cx.label || x.cx.name} » renommé « ${x.want} » (PUT /contexts/…)`, run: async () => {
       const cur = await tapi('GET', `/contexts/${x.cx.id}`);
